@@ -47,7 +47,7 @@ router.post("/register", async (req, res) => {
   // 3. Create the user profile
   const { error: profileError } = await supabase
     .from("users")
-    .insert({ id: authData.user.id, org_id: org.id, name, email, role: "Owner" });
+    .insert({ id: authData.user.id, org_id: org.id, name, email, role: "Owner", active: true });
   if (profileError) {
     res.status(500).json({ error: "Failed to create user profile." });
     return;
@@ -89,7 +89,11 @@ router.post("/login", async (req, res) => {
     .eq("id", data.user.id)
     .single();
 
-  if (!profile?.active) {
+  if (!profile) {
+    res.status(500).json({ error: "User profile not found. Please contact support." });
+    return;
+  }
+  if (!profile.active) {
     res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
     return;
   }
