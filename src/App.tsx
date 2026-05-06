@@ -11817,7 +11817,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
 
               {/* ── Email Settings ─────────────────────────────── */}
-              {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+              {(auth.getUser()?.role === "Owner" || auth.getUser()?.role === "Admin") && (
                 <section className="space-y-3">
                   <h2 className="text-base font-bold text-gray-800">Email Notifications</h2>
                   <p className="text-sm text-gray-500">Send transactional emails to customers via Mailjet. Only owners and admins can configure this.</p>
