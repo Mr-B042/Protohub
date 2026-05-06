@@ -1406,7 +1406,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const filteredStockMovements = stockMovements.filter((movement) => {
     const matchesProduct = historyProductFilter === "All Products" || movement.productId === historyProductFilter;
     const matchesType = historyTypeFilter === "All Types" || movement.type === historyTypeFilter;
-    const movementDate = movement.date.slice(0, 10);
+    const movementDate = (movement.date ?? "").slice(0, 10);
     const matchesStart = !historyStartDate || movementDate >= historyStartDate;
     const matchesEnd = !historyEndDate || movementDate <= historyEndDate;
     return matchesProduct && matchesType && matchesStart && matchesEnd;
@@ -3192,7 +3192,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (flat.length) setAgentStock(flat as any);
         }
         if (apiMovements.status === "fulfilled" && apiMovements.value?.data?.length) {
-          setStockMovements(apiMovements.value.data as any);
+          const normalized: StockMovement[] = (apiMovements.value.data as any[]).map((row) => ({
+            id: row.id ?? makeMovementId(),
+            date: row.date ?? row.created_at ?? new Date().toISOString(),
+            productId: row.productId ?? row.product_id ?? "",
+            productName: row.productName ?? row.product_name ?? "",
+            type: row.type ?? "Correction",
+            qty: typeof row.qty === "number" ? row.qty : Number(row.qty) || 0,
+            balanceAfter: typeof row.balanceAfter === "number" ? row.balanceAfter : (typeof row.balance_after === "number" ? row.balance_after : 0),
+            agent: row.agent ?? row.agent_name ?? undefined,
+            order: row.order ?? row.order_id ?? undefined,
+            by: row.by ?? row.created_by ?? "System",
+            note: row.note ?? undefined
+          }));
+          setStockMovements(normalized);
         }
         if (apiExpenses.status === "fulfilled" && apiExpenses.value?.length) {
           setExpenses(apiExpenses.value as any);
