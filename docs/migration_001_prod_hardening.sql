@@ -12,12 +12,7 @@ create table if not exists public.login_audit (
   created_at timestamptz not null default now()
 );
 
--- Index for fast lookups by email (abuse detection)
 create index if not exists login_audit_email_idx on public.login_audit (email, created_at desc);
-
--- Auto-purge rows older than 90 days (keeps the table small)
--- Run this as a cron job in Supabase or schedule it manually:
--- delete from public.login_audit where created_at < now() - interval '90 days';
 
 -- ── 2. Order status audit log ────────────────────────────────────────
 create table if not exists public.order_audit (
@@ -35,30 +30,18 @@ create index if not exists order_audit_order_idx on public.order_audit (order_id
 create index if not exists order_audit_org_idx   on public.order_audit (org_id, created_at desc);
 
 -- ── 3. Performance indexes ───────────────────────────────────────────
--- Orders — most queried table
-create index if not exists orders_org_created_idx    on public.orders (org_id, created_at desc);
-create index if not exists orders_org_status_idx     on public.orders (org_id, status);
-create index if not exists orders_org_rep_idx        on public.orders (org_id, assigned_rep_id);
-create index if not exists orders_customer_idx       on public.orders (org_id, customer);
-create index if not exists orders_phone_idx          on public.orders (org_id, phone);
-
--- Products
-create index if not exists products_org_idx          on public.products (org_id);
-
--- Stock movements
-create index if not exists stock_movements_org_idx   on public.stock_movements (org_id, created_at desc);
-create index if not exists stock_movements_prod_idx  on public.stock_movements (product_id, created_at desc);
-
--- Expenses
-create index if not exists expenses_org_created_idx  on public.expenses (org_id, created_at desc);
-
--- Agents
-create index if not exists agents_org_idx            on public.agents (org_id);
+create index if not exists orders_org_created_idx   on public.orders (org_id, created_at desc);
+create index if not exists orders_org_status_idx    on public.orders (org_id, status);
+create index if not exists orders_org_rep_idx       on public.orders (org_id, assigned_rep_id);
+create index if not exists orders_customer_idx      on public.orders (org_id, customer);
+create index if not exists orders_phone_idx         on public.orders (org_id, phone);
+create index if not exists products_org_idx         on public.products (org_id);
+create index if not exists stock_movements_org_idx  on public.stock_movements (org_id, created_at desc);
+create index if not exists stock_movements_prod_idx on public.stock_movements (product_id, created_at desc);
+create index if not exists expenses_org_created_idx on public.expenses (org_id, created_at desc);
+create index if not exists agents_org_idx           on public.agents (org_id);
 
 -- ── 4. Row Level Security ────────────────────────────────────────────
--- Enable RLS on all tables (service-role key bypasses this;
--- anon/user keys must pass the policies below)
-
 alter table public.organizations   enable row level security;
 alter table public.users           enable row level security;
 alter table public.products        enable row level security;
@@ -70,58 +53,71 @@ alter table public.waybills        enable row level security;
 alter table public.login_audit     enable row level security;
 alter table public.order_audit     enable row level security;
 
--- Helper: get the org_id for the calling user
+-- ── 5. Helper function ───────────────────────────────────────────────
 create or replace function public.auth_org_id()
 returns uuid language sql stable security definer as $$
   select org_id from public.users where id = auth.uid();
 $$;
 
--- Organizations: users can only see their own org
-create policy if not exists "org members only"
+-- ── 6. RLS Policies ─────────────────────────────────────────────────
+-- Drop first so re-running this script is safe (PG15 has no CREATE POLICY IF NOT EXISTS)
+
+-- organizations
+drop policy if exists "org members only" on public.organizations;
+create policy "org members only"
   on public.organizations for all
   using (id = public.auth_org_id());
 
--- Users: only see users in same org
-create policy if not exists "same org users"
+-- users
+drop policy if exists "same org users" on public.users;
+create policy "same org users"
   on public.users for all
   using (org_id = public.auth_org_id());
 
--- Products: only see products in same org
-create policy if not exists "same org products"
+-- products
+drop policy if exists "same org products" on public.products;
+create policy "same org products"
   on public.products for all
   using (org_id = public.auth_org_id());
 
--- Orders: only see orders in same org
-create policy if not exists "same org orders"
+-- orders
+drop policy if exists "same org orders" on public.orders;
+create policy "same org orders"
   on public.orders for all
   using (org_id = public.auth_org_id());
 
--- Agents: only see agents in same org
-create policy if not exists "same org agents"
+-- agents
+drop policy if exists "same org agents" on public.agents;
+create policy "same org agents"
   on public.agents for all
   using (org_id = public.auth_org_id());
 
--- Stock movements: only see movements in same org
-create policy if not exists "same org stock_movements"
+-- stock_movements
+drop policy if exists "same org stock_movements" on public.stock_movements;
+create policy "same org stock_movements"
   on public.stock_movements for all
   using (org_id = public.auth_org_id());
 
--- Expenses: only see expenses in same org
-create policy if not exists "same org expenses"
+-- expenses
+drop policy if exists "same org expenses" on public.expenses;
+create policy "same org expenses"
   on public.expenses for all
   using (org_id = public.auth_org_id());
 
--- Waybills: only see waybills in same org
-create policy if not exists "same org waybills"
+-- waybills
+drop policy if exists "same org waybills" on public.waybills;
+create policy "same org waybills"
   on public.waybills for all
   using (org_id = public.auth_org_id());
 
--- Login audit: no user-level access (server-side only via service role)
-create policy if not exists "no direct access login_audit"
+-- login_audit: no direct user access (service-role only)
+drop policy if exists "no direct access login_audit" on public.login_audit;
+create policy "no direct access login_audit"
   on public.login_audit for all
   using (false);
 
--- Order audit: users can read their own org's audit trail
-create policy if not exists "same org order_audit read"
+-- order_audit: org members can read their own audit trail
+drop policy if exists "same org order_audit read" on public.order_audit;
+create policy "same org order_audit read"
   on public.order_audit for select
   using (org_id = public.auth_org_id());
