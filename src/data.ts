@@ -47,7 +47,6 @@ export const navItems = [
   { label: "Embed Form", icon: Code2 },
   { label: "AI Agent", icon: Headphones },
   { label: "AI Sandbox", icon: Bot },
-  { label: "AI/SMS Tokens", icon: MessageCircle },
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Headphones },
   { label: "Settings", icon: Settings }

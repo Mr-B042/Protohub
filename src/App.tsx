@@ -88,8 +88,8 @@ import {
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "tokens" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "AI Agent" | "AI Sandbox" | "AI/SMS Tokens" | "Notifications" | "Settings";
+type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "AI Agent" | "AI Sandbox" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
@@ -1207,7 +1207,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
-  const [tokens, setTokens] = useState(0);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState("");
@@ -1255,7 +1254,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reconcileMissing, setReconcileMissing] = useState("0");
   const [reconcileNotes, setReconcileNotes] = useState("");
   const [showPasswordFields, setShowPasswordFields] = useState<Record<string, boolean>>({});
-  const [tokenHistory, setTokenHistory] = useState<{ date: string; pack: string; amount: number }[]>([]);
   const toggleShowPassword = (key: string) => setShowPasswordFields((v) => ({ ...v, [key]: !v[key] }));
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamLeadId, setNewTeamLeadId] = useState("");
@@ -2835,7 +2833,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Call Rep Console" ? "Call Rep console is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "AI Agent" ? "AI Agent preview is in development." : activePage === "AI Sandbox" ? "AI Sandbox preview is in development." : activePage === "AI/SMS Tokens" ? "AI/SMS token tools are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Call Rep Console" ? "Call Rep console is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "AI Agent" ? "AI Agent preview is in development." : activePage === "AI Sandbox" ? "AI Sandbox preview is in development." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -2940,7 +2938,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "embed-form": "Embed Form",
       "ai-agent": "AI Agent",
       "ai-sandbox": "AI Sandbox",
-      "ai-tokens": "AI/SMS Tokens",
       notifications: "Notifications",
       settings: "Settings"
     };
@@ -4026,7 +4023,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "Embed Form": "#/dashboard/admin/embed",
       "AI Agent": "#/dashboard/admin/ai-agent",
       "AI Sandbox": "#/dashboard/admin/ai-sandbox",
-      "AI/SMS Tokens": "#/dashboard/admin/ai-tokens",
       Notifications: "#/dashboard/admin/notifications",
       Settings: "#/dashboard/admin/settings"
     };
@@ -4059,7 +4055,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Call Rep Console" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
+    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Call Rep Console" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "Notifications" || label === "Settings") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
@@ -4079,18 +4075,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`${label} is a future module. Dashboard stays open for now.`);
   };
 
-  const addTokens = () => {
-    setTokens((value) => value + 100);
-    setTokenHistory((prev) => [{ date: new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), pack: "Top-up", amount: 100 }, ...prev]);
-    setModal(null);
-    showToast("100 AI/SMS tokens added.");
-  };
-
-  const buyTokenPack = (amount: number, packName: string) => {
-    setTokens((value) => value + amount);
-    setTokenHistory((prev) => [{ date: new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), pack: packName, amount }, ...prev]);
-    showToast(`${packName} token pack added. ${amount} tokens are ready to use.`);
-  };
 
   const resetProductForm = () => {
     setProductName("");
@@ -7606,14 +7590,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
           
           <div className="ml-auto flex items-center gap-4">
-            <button
-              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border hover:bg-opacity-80 transition-colors ${tokens === 0 ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
-              onClick={() => setModal("tokens")}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              {tokens === 0 ? "0 tokens — Buy more" : `${tokens} tokens`}
-            </button>
-            
             <button className="text-gray-600 hover:text-gray-900 relative" onClick={() => setModal("notifications")}>
               <Bell className="w-5 h-5" />
               {unreadNotificationCount > 0 && (
@@ -11658,91 +11634,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </p>
               </article>
             </section>
-          ) : activePage === "AI/SMS Tokens" ? (
-            <div className="space-y-6">
-              <header className="flex flex-col gap-1">
-                <h1 className="text-2xl font-bold text-[#1A6FBF]">AI/SMS Tokens</h1>
-                <p className="text-sm font-medium text-gray-500">One balance powers both AI agent calls and SMS notifications. Buy once, spend on whichever you need.</p>
-              </header>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" aria-label="Token usage rules">
-                <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4">
-                  <span className="w-10 h-10 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center shrink-0"><Headphones className="w-5 h-5" /></span>
-                  <div>
-                    <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">AI Agent Calls</h2>
-                    <strong className="text-xl font-bold text-gray-900 block my-1">1 token</strong>
-                    <p className="text-xs text-gray-400">= 1 minute of AI calling</p>
-                  </div>
-                </article>
-                <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4">
-                  <span className="w-10 h-10 rounded-full bg-green-50 text-green-500 flex items-center justify-center shrink-0"><Bell className="w-5 h-5" /></span>
-                  <div>
-                    <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">SMS Notifications</h2>
-                    <strong className="text-xl font-bold text-gray-900 block my-1">1 token</strong>
-                    <p className="text-xs text-gray-400">= 5 SMS messages</p>
-                  </div>
-                </article>
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Current Token Balance</h2>
-                  <div className="flex items-baseline gap-1">
-                    <strong className="text-3xl font-bold text-gray-900">{tokens}</strong>
-                    <span className="text-sm text-gray-500">tokens</span>
-                  </div>
-                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-600 mt-2"><AlertTriangle className="w-3.5 h-3.5" /> Low balance — buy more tokens to keep AI calls and SMS running</p>
-                </div>
-                <span className="w-12 h-12 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center shrink-0"><Zap className="w-6 h-6" /></span>
-              </div>
-
-              <div>
-                <h2 className="text-base font-bold text-gray-800 mb-4">Buy Token Pack</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" aria-label="Token packs">
-                  <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col items-center text-center gap-3">
-                    <h3 className="text-sm font-bold text-gray-700">Starter</h3>
-                    <div><strong className="text-3xl font-bold text-gray-900">50</strong><span className="text-sm text-gray-500 ml-1">tokens</span></div>
-                    <div className="text-xs text-gray-500 leading-relaxed">₦9,000<br />₦180/min<br />or 250 SMS</div>
-                    <button className="w-full px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" data-testid="buy-starter-tokens" onClick={() => buyTokenPack(50, "Starter")}>Buy Now</button>
-                  </article>
-                  <article className="bg-[#1A6FBF] rounded-xl shadow-md p-5 flex flex-col items-center text-center gap-3 relative">
-                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 inline-flex items-center px-3 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-amber-900 uppercase tracking-wider">Best Value</span>
-                    <h3 className="text-sm font-bold text-white">Standard</h3>
-                    <div><strong className="text-3xl font-bold text-white">150</strong><span className="text-sm text-blue-200 ml-1">tokens</span></div>
-                    <div className="text-xs text-blue-200 leading-relaxed">₦25,000<br />₦167/min<br />or 750 SMS</div>
-                    <button className="w-full px-4 py-2 rounded-lg bg-white text-[#1A6FBF] text-sm font-bold hover:bg-blue-50 transition-colors" data-testid="buy-standard-tokens" onClick={() => buyTokenPack(150, "Standard")}>Buy Now</button>
-                  </article>
-                  <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col items-center text-center gap-3">
-                    <h3 className="text-sm font-bold text-gray-700">Pro</h3>
-                    <div><strong className="text-3xl font-bold text-gray-900">500</strong><span className="text-sm text-gray-500 ml-1">tokens</span></div>
-                    <div className="text-xs text-gray-500 leading-relaxed">₦75,000<br />₦150/min<br />or 2500 SMS</div>
-                    <button className="w-full px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" data-testid="buy-pro-tokens" onClick={() => buyTokenPack(500, "Pro")}>Buy Now</button>
-                  </article>
-                </div>
-              </div>
-
-              <div>
-                <h2 className="text-base font-bold text-gray-800 mb-3">Token History</h2>
-                {tokenHistory.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-10 text-center text-sm text-gray-400">No token transactions yet. Buy your first pack to get started.</div>
-                ) : (
-                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead><tr className="bg-gray-50 border-b border-gray-200 text-left">{["Date", "Pack", "Tokens Added"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>)}</tr></thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {tokenHistory.map((entry, i) => (
-                          <tr key={i} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 text-gray-500">{entry.date}</td>
-                            <td className="px-4 py-3 font-semibold text-gray-900">{entry.pack}</td>
-                            <td className="px-4 py-3 font-bold text-[#1A6FBF]">+{entry.amount}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
           ) : activePage === "Notifications" ? (
             <div className="space-y-6">
               <header className="flex flex-col gap-1">
@@ -12366,7 +12257,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
                 {modal === "createTeam" && "Create New Team"}
-                {modal === "tokens" && "AI/SMS Tokens"}
                 {modal === "notifications" && "Notifications"}
                 {modal === "help" && "Dashboard Help"}
                 {modal === "signout" && "Sign Out"}
@@ -12437,15 +12327,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
             )}
 
-            {modal === "tokens" && (
-              <div className="px-6 py-5 flex flex-col gap-4">
-                <p className="text-sm text-gray-600">Current token balance: <strong className="font-semibold text-gray-900">{tokens}</strong></p>
-                <div className="flex items-center justify-end gap-3">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={addTokens}>Add 100 Tokens</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Close</button>
-                </div>
-              </div>
-            )}
 
             {modal === "notifications" && (
               <div className="px-6 py-5 flex flex-col gap-4">
