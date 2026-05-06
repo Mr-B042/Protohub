@@ -441,7 +441,7 @@ export async function sendWeeklyReport(orgId: string): Promise<{ ok: boolean; er
       top_products:   topProducts
     };
 
-    await sendToStaff(orgId, "internal_weekly_report", vars, ["Owner"]);
+    await sendToStaff(orgId, "internal_weekly_report", vars, ["Owner", "Admin"]);
     return { ok: true };
   } catch (err: any) {
     logger.error("weekly report failed", { orgId, error: err?.message });
