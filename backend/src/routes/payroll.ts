@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { sendToUser } from "../lib/mailer.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin"));
@@ -78,6 +79,19 @@ router.patch("/:id/approve", async (req, res) => {
     .eq("id", req.params.id).eq("org_id", req.user!.orgId)
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+
+  // Fire-and-forget: notify each rep their payroll was approved
+  if (data?.entries && Array.isArray(data.entries)) {
+    for (const entry of data.entries as { userId: string; name: string; total: number }[]) {
+      sendToUser(req.user!.orgId, entry.userId, "payroll_approved", {
+        period: data.period,
+        name:   entry.name,
+        amount: String(entry.total),
+        currency: ""
+      });
+    }
+  }
+
   res.json(data);
 });
 
