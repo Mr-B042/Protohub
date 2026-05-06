@@ -4,6 +4,7 @@
   "description": "ProtoHub CRM — Node.js + Supabase backend",
   "type": "module",
   "main": "src/index.ts",
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
