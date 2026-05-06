@@ -973,10 +973,18 @@ const writeStored = <T,>(key: string, value: T) => {
   }
 };
 
-// One-time migration: clear all localStorage mock data on first load after v2
+// One-time migration: clear stale mock data keys, keep auth tokens intact
 const MIGRATION_KEY = "protohub.clearedMockData.v2";
 if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)) {
-  window.localStorage.clear();
+  const mockDataKeys = [
+    "protohub.products", "protohub.stockMovements", "protohub.trackedOrders",
+    "protohub.users", "protohub.agents", "protohub.agentStock",
+    "protohub.payStructures", "protohub.payrollRuns", "protohub.expenses",
+    "protohub.abandonedCarts", "protohub.extraTeams", "protohub.repPenalties",
+    "protohub.waybillRecords", "protohub.customerFlags", "protohub.systemNotifications",
+    "protohub.stockCounts", "protohub.expensesSeeded", "protohub.seed150orders"
+  ];
+  mockDataKeys.forEach((key) => window.localStorage.removeItem(key));
   window.localStorage.setItem(MIGRATION_KEY, "true");
 }
 
