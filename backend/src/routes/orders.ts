@@ -3,9 +3,9 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
-  sendOrderStatusEmail,
-  sendOrderRescheduledEmail,
-  sendOrderTerminalEmail
+  sendOrderStatusEmail, sendNewOrderEmail,
+  sendInternalNewOrderEmail, sendOrderAssignedEmail,
+  sendInternalDeliveredEmail
 } from "../lib/mailer.js";
 
 const router = Router();
@@ -119,6 +119,30 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Fire-and-forget emails
+  // Customer confirmation (only if email in order form)
+  sendNewOrderEmail(req.user!.orgId, {
+    id: data.id, customer: data.customer, email: data.email,
+    phone: data.phone, product_name: data.product_name,
+    amount: data.amount, currency: data.currency, source: data.source
+  });
+
+  // Internal: notify owner + admins
+  sendInternalNewOrderEmail(req.user!.orgId, {
+    id: data.id, customer: data.customer, phone: data.phone,
+    product_name: data.product_name, amount: data.amount,
+    currency: data.currency, source: data.source, rep_name: req.user!.name
+  });
+
+  // Internal: notify assigned rep (only if someone else assigned the order)
+  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
+    sendOrderAssignedEmail(req.user!.orgId, data.assigned_rep_id, {
+      id: data.id, customer: data.customer, phone: data.phone,
+      product_name: data.product_name, amount: data.amount,
+      currency: data.currency, source: data.source
+    });
+  }
+
   res.status(201).json(data);
 });
 
@@ -182,20 +206,12 @@ router.patch("/:id/status", async (req, res) => {
     product_name: data.product_name, amount: data.amount, currency: data.currency
   }, existing?.status ?? null, status);
 
-  // Internal: per-status staff emails
-  if (status === "Postponed") {
-    sendOrderRescheduledEmail(req.user!.orgId, {
-      id: data.id, customer: data.customer, phone: data.phone,
-      product_name: data.product_name, scheduled_date: data.scheduled_date,
-      call_outcome: callOutcome, response,
-      assigned_rep_id: data.assigned_rep_id
-    });
-  } else if (status === "Cancelled" || status === "Failed") {
-    sendOrderTerminalEmail(req.user!.orgId, {
-      id: data.id, customer: data.customer, phone: data.phone,
-      product_name: data.product_name, amount: data.amount,
-      currency: data.currency, response
-    }, status as "Cancelled" | "Failed");
+  // Internal: notify owner + admins when delivered
+  if (status === "Delivered") {
+    sendInternalDeliveredEmail(req.user!.orgId, {
+      id: data.id, customer: data.customer,
+      product_name: data.product_name, amount: data.amount, currency: data.currency
+    }, req.user!.name);
   }
 
   res.json(data);
