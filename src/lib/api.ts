@@ -3,6 +3,7 @@
 // and auto-refreshes if the token has expired (401).
 
 import { auth } from "./auth";
+import { snakeToCamel } from "./normalize";
 
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 
@@ -44,7 +45,8 @@ async function request<T>(
   }
 
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const json = await res.json();
+  return snakeToCamel<T>(json);
 }
 
 async function tryRefresh(): Promise<boolean> {

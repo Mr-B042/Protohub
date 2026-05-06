@@ -3192,17 +3192,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (flat.length) setAgentStock(flat as any);
         }
         if (apiMovements.status === "fulfilled" && apiMovements.value?.data?.length) {
+          // API responses are already snake_case → camelCase normalized in lib/api.ts.
+          // This shim only fills in defaults so required StockMovement fields are never undefined.
           const normalized: StockMovement[] = (apiMovements.value.data as any[]).map((row) => ({
             id: row.id ?? makeMovementId(),
-            date: row.date ?? row.created_at ?? new Date().toISOString(),
-            productId: row.productId ?? row.product_id ?? "",
-            productName: row.productName ?? row.product_name ?? "",
+            date: row.date ?? row.createdAt ?? new Date().toISOString(),
+            productId: row.productId ?? "",
+            productName: row.productName ?? "",
             type: row.type ?? "Correction",
             qty: typeof row.qty === "number" ? row.qty : Number(row.qty) || 0,
-            balanceAfter: typeof row.balanceAfter === "number" ? row.balanceAfter : (typeof row.balance_after === "number" ? row.balance_after : 0),
-            agent: row.agent ?? row.agent_name ?? undefined,
-            order: row.order ?? row.order_id ?? undefined,
-            by: row.by ?? row.created_by ?? "System",
+            balanceAfter: typeof row.balanceAfter === "number" ? row.balanceAfter : 0,
+            agent: row.agent ?? row.agentName ?? undefined,
+            order: row.order ?? row.orderId ?? undefined,
+            by: row.by ?? row.createdBy ?? "System",
             note: row.note ?? undefined
           }));
           setStockMovements(normalized);
