@@ -60,6 +60,8 @@ import {
   AlertTriangle,
   CircleX,
   ClipboardCheck,
+  Megaphone,
+  Image as ImageIcon,
   X,
   Zap
 } from "lucide-react";
@@ -92,7 +94,7 @@ type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "AI Agent" | "AI Sandbox" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
-type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
+type OrderSource = "All Sources" | "TikTok" | "Facebook" | "Instagram" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type DeliveryAgent = string;
@@ -327,6 +329,8 @@ type TrackedOrder = {
   currency: ProductCurrencyCode;
   utmSource: string;
   utmCampaign: string;
+  utmContent?: string;
+  utmMedium?: string;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
   response?: string;
@@ -637,8 +641,12 @@ const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources">
     return "TikTok";
   }
 
-  if (normalized.includes("facebook") || normalized.includes("meta")) {
+  if (normalized.includes("facebook") || normalized.includes("meta") || normalized === "fb") {
     return "Facebook";
+  }
+
+  if (normalized === "ig" || normalized.includes("instagram")) {
+    return "Instagram";
   }
 
   if (normalized.includes("whatsapp")) {
@@ -924,7 +932,9 @@ const storageKeys = {
   waybillRecords: "protohub.waybillRecords",
   customerFlags: "protohub.customerFlags",
   systemNotifications: "protohub.systemNotifications",
-  stockCounts: "protohub.stockCounts"
+  stockCounts: "protohub.stockCounts",
+  campaignLabels: "protohub.campaignLabels",
+  creativeLabels: "protohub.creativeLabels"
 };
 
 const defaultUsers: ManagedUser[] = [];
@@ -1160,6 +1170,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formAddonPromptEnabled, setFormAddonPromptEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formAddonPromptEnabled, true));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
+  const [campaignLabels, setCampaignLabels] = useState<Record<string, string>>(() => readStored<Record<string, string>>(storageKeys.campaignLabels, {}));
+  const [creativeLabels, setCreativeLabels] = useState<Record<string, string>>(() => readStored<Record<string, string>>(storageKeys.creativeLabels, {}));
+  const [adTrackingView, setAdTrackingView] = useState<"dashboard" | "guide">("dashboard");
+  const [editingCampaignId, setEditingCampaignId] = useState<string>("");
+  const [editingCreativeId, setEditingCreativeId] = useState<string>("");
   const [orderFormAddonChoice, setOrderFormAddonChoice] = useState<"" | "yes" | "no">("");
   const [showEmailField, setShowEmailField] = useState(false);
   const [showWhatsappField, setShowWhatsappField] = useState(true);
@@ -1365,6 +1380,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicCurrency = (publicEmbedParams?.get("currency") as ProductCurrencyCode | null) ?? "NGN";
   const publicUtmSource = publicEmbedParams?.get("utm_source") ?? "direct";
   const publicUtmCampaign = publicEmbedParams?.get("utm_campaign") ?? "embed";
+  const publicUtmContent = publicEmbedParams?.get("utm_content") ?? "";
+  const publicUtmMedium = publicEmbedParams?.get("utm_medium") ?? "";
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const previewCurrency = previewPackages[0]?.currency ?? "NGN";
@@ -3111,6 +3128,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writeStored(storageKeys.formOrderSummaryTitle, formOrderSummaryTitle); }, [formOrderSummaryTitle]);
   useEffect(() => { writeStored(storageKeys.formAddonPromptEnabled, formAddonPromptEnabled); }, [formAddonPromptEnabled]);
   useEffect(() => { writeStored(storageKeys.formOrderSummaryEnabled, formOrderSummaryEnabled); }, [formOrderSummaryEnabled]);
+  useEffect(() => { writeStored(storageKeys.campaignLabels, campaignLabels); }, [campaignLabels]);
+  useEffect(() => { writeStored(storageKeys.creativeLabels, creativeLabels); }, [creativeLabels]);
   useEffect(() => { writeStored(storageKeys.waybillRecords, waybillRecords); }, [waybillRecords]);
   useEffect(() => { writeStored(storageKeys.customerFlags, customerFlags); }, [customerFlags]);
   useEffect(() => { writeStored(storageKeys.systemNotifications, systemNotifications); }, [systemNotifications]);
@@ -4677,6 +4696,53 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })[0]?.id;
   };
 
+  const loadFacebookAdsDemo = () => {
+    const product = products.find((p) => p.active) ?? products[0];
+    if (!product) {
+      showToast("Add a product first before loading the Facebook demo.");
+      return;
+    }
+    const pkg = product.packages.find((p) => p.active) ?? product.packages[0];
+    const campaignId = "120246312782310359";
+    const creativeId = "120246449515970359";
+    const dateLabel = displayDateFromKey(todayKey());
+    const repId = repForNewRecord();
+    const seeds: { customer: string; phone: string }[] = [
+      { customer: "Mrs Modupe Oni", phone: "08070707070" },
+      { customer: "Tola Hope", phone: "08081818181" }
+    ];
+    const newOrders: TrackedOrder[] = seeds.map((seed) => ({
+      id: makeOrderId(),
+      productId: product.id,
+      packageId: pkg?.id ?? "",
+      customer: seed.customer,
+      phone: seed.phone,
+      whatsapp: "",
+      email: "",
+      address: "",
+      city: "",
+      state: "",
+      productName: product.name,
+      packageName: pkg?.name ?? "Single Pack",
+      quantity: pkg?.quantity ?? 1,
+      amount: 18500,
+      currency: pkg?.currency ?? "NGN",
+      utmSource: "fb",
+      utmCampaign: campaignId,
+      utmContent: creativeId,
+      utmMedium: "paid",
+      source: "Facebook",
+      status: "New",
+      response: "Awaiting confirmation",
+      assignedRepId: repId,
+      notes: [{ id: makeNoteId(), text: "Order from Facebook ads demo seed.", by: "System", date: new Date().toISOString() }],
+      createdAt: todayKey(),
+      date: dateLabel
+    }));
+    setTrackedOrders((value) => [...newOrders, ...value]);
+    showToast("Facebook ads demo loaded — 2 orders attributed to fb / paid.");
+  };
+
   const deductProductStockForOrder = (order: TrackedOrder) => {
     if (!order.productId || order.stockDeducted) {
       return;
@@ -5506,6 +5572,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         currency: chosenPackage.currency,
         utmSource: publicUtmSource,
         utmCampaign: publicUtmCampaign,
+        utmContent: publicUtmContent || undefined,
+        utmMedium: publicUtmMedium || undefined,
         source,
         status: "New",
         response: "Awaiting confirmation",
@@ -10469,58 +10537,298 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               )}
             </div>
           ) : activePage === "Ad Tracking" ? (
-            <div className="space-y-6">
-              <header className="flex flex-col gap-1">
-                <h1 className="text-2xl font-bold text-[#1A6FBF]">Ad Tracking</h1>
-                <p className="text-sm font-medium text-gray-500">Orders placed via tracked links — grouped by campaign and creative</p>
-              </header>
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
-                <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
-                <div className="flex-1">
-                  <h2 className="text-sm font-bold text-blue-900 mb-1">New to ad tracking?</h2>
-                  <p className="text-sm text-blue-700">Learn how to tag your ad links so every order gets attributed to the right campaign and creative.</p>
-                </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => showToast("Ad tracking guide opened for this demo.")}>Read the guide</button>
-              </div>
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                  <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{trackedOrders.length} attributed</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Order", "Customer", "Product", "Package", "Campaign", "Source", "Amount", "Date"].map((h) => (
-                          <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+            (() => {
+              const trackedAttributedOrders = trackedOrders.filter((o) => o.utmSource && o.utmSource !== "direct" && o.utmSource !== "manual" && o.utmSource !== "website");
+              const orderRowNumber = (id: string) => trackedOrders.length - trackedOrders.findIndex((o) => o.id === id);
+              const sourceTone = (src: string): { bg: string; text: string } => {
+                const s = (src || "").toLowerCase();
+                if (s === "fb" || s === "facebook") return { bg: "bg-blue-100", text: "text-blue-700" };
+                if (s === "tiktok" || s === "tt") return { bg: "bg-pink-100", text: "text-pink-700" };
+                if (s === "instagram" || s === "ig") return { bg: "bg-fuchsia-100", text: "text-fuchsia-700" };
+                if (s === "google" || s === "g") return { bg: "bg-emerald-100", text: "text-emerald-700" };
+                if (s === "whatsapp" || s === "wa") return { bg: "bg-green-100", text: "text-green-700" };
+                if (s === "youtube" || s === "yt") return { bg: "bg-red-100", text: "text-red-700" };
+                return { bg: "bg-gray-100", text: "text-gray-700" };
+              };
+              const statusTone = (st: string): string => {
+                const s = (st || "New").toLowerCase();
+                if (s === "delivered") return "bg-green-50 text-green-700 border border-green-200";
+                if (s === "cancelled") return "bg-red-50 text-red-700 border border-red-200";
+                if (s === "in transit" || s === "out for delivery") return "bg-amber-50 text-amber-700 border border-amber-200";
+                return "bg-blue-50 text-blue-700 border border-blue-200";
+              };
+              const formatSourceLabel = (o: TrackedOrder) => {
+                const parts = [o.utmSource, o.utmCampaign, o.utmMedium].filter((p) => p && p.length > 0);
+                return parts.join("_");
+              };
+              type GroupStat = { id: string; orders: number; delivered: number; revenue: number; currency: ProductCurrencyCode };
+              const groupBy = (key: (o: TrackedOrder) => string): GroupStat[] => {
+                const map = new Map<string, GroupStat>();
+                trackedAttributedOrders.forEach((o) => {
+                  const k = key(o);
+                  if (!k) return;
+                  const existing = map.get(k);
+                  const delivered = (o.status ?? "New") === "Delivered";
+                  if (existing) {
+                    existing.orders += 1;
+                    if (delivered) {
+                      existing.delivered += 1;
+                      existing.revenue += o.amount;
+                    }
+                  } else {
+                    map.set(k, { id: k, orders: 1, delivered: delivered ? 1 : 0, revenue: delivered ? o.amount : 0, currency: o.currency });
+                  }
+                });
+                return Array.from(map.values());
+              };
+              const campaignGroups = groupBy((o) => o.utmCampaign);
+              const creativeGroups = groupBy((o) => o.utmContent ?? "");
+              const uniqueCampaigns = campaignGroups.length;
+              const uniqueCreatives = creativeGroups.length;
+
+              if (adTrackingView === "guide") {
+                return (
+                  <div className="space-y-6 max-w-3xl">
+                    <div className="flex items-center gap-2 text-sm font-medium text-gray-500">
+                      <button className="hover:text-[#1A6FBF] transition-colors" onClick={() => setAdTrackingView("dashboard")}>Ad Tracking</button>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                      <strong className="text-gray-900">How to Use the Ad Tracker</strong>
+                    </div>
+                    <header className="space-y-2">
+                      <h1 className="text-3xl font-extrabold text-gray-900">How to Use the Ad Tracker</h1>
+                      <p className="text-sm text-gray-500 leading-relaxed">Connect every paid ad you run to the orders it produces — so you can see exactly which campaigns and creatives are working.</p>
+                    </header>
+
+                    <section className="space-y-2">
+                      <h2 className="text-lg font-bold text-gray-900">1. Why use it</h2>
+                      <p className="text-sm text-gray-700 leading-relaxed">Without tracking, every order looks the same — someone showed up and bought. With it, you can answer: <em>which</em> Facebook ad set is producing the most orders, <em>what</em> conversion rate each video creative has, and <em>which</em> campaigns have the highest delivered-vs-cancelled rate. The difference between guessing and knowing.</p>
+                    </section>
+
+                    <section className="space-y-2">
+                      <h2 className="text-lg font-bold text-gray-900">2. Tag your ad link</h2>
+                      <p className="text-sm text-gray-700 leading-relaxed">Before launching an ad, append UTM parameters to your order form URL. When a customer clicks the ad and places an order, Protohub captures these and stores them on the order.</p>
+                      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700 whitespace-pre-wrap break-all">https://yourstore.com/order-form/your-slug<span className="text-[#1A6FBF]">?utm_source=fb&utm_medium=cpc&utm_campaign=summer_sale&utm_content=video_1</span></pre>
+                      <p className="text-xs text-gray-500">Replace <code className="bg-gray-100 px-1 rounded">your-slug</code> with your organisation slug. Everything in primary colour above is the tracking part — adjust those values for each ad you run.</p>
+                    </section>
+
+                    <section className="space-y-3">
+                      <h2 className="text-lg font-bold text-gray-900">3. What each parameter means</h2>
+                      <div className="border border-gray-200 rounded-xl divide-y divide-gray-200 overflow-hidden">
+                        {[
+                          { name: "utm_source", desc: "Where the ad ran. Examples: fb, tiktok, instagram, google, whatsapp." },
+                          { name: "utm_medium", desc: "The ad type. Examples: cpc (paid clicks), social, organic, email." },
+                          { name: "utm_campaign", desc: "Your internal name for the campaign. Examples: summer_sale, ramadan_2026, new_product_launch." },
+                          { name: "utm_content", desc: "The specific creative or ad. Examples: video_1, hook_a, carousel_red." },
+                          { name: "utm_term", desc: "Optional. Used for search keywords. Skip unless you're running Google Search ads." }
+                        ].map(({ name, desc }) => (
+                          <div key={name} className="px-4 py-3">
+                            <p className="text-sm font-bold text-gray-900">{name}</p>
+                            <p className="text-xs text-gray-600 mt-1">{desc}</p>
+                          </div>
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {trackedOrders.length === 0 ? (
-                        <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders yet. Submit a preview order from Embed Form to test attribution.</td></tr>
-                      ) : (
-                        trackedOrders.map((order) => (
-                          <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
-                            <td className="px-4 py-4">
-                              <div className="font-semibold text-gray-900">{order.customer}</div>
-                              <div className="text-xs text-gray-400">{order.phone}</div>
-                            </td>
-                            <td className="px-4 py-4 text-gray-700">{order.productName}</td>
-                            <td className="px-4 py-4 text-gray-600">{order.packageName}</td>
-                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
-                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
-                            <td className="px-4 py-4 font-bold text-[#1A6FBF]">{formatProductMoney(order.amount, order.currency)}</td>
-                            <td className="px-4 py-4 text-gray-500">{order.date}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                      </div>
+                      <p className="text-sm text-gray-700 leading-relaxed">Use lowercase and underscores. Keep names consistent — <code className="bg-gray-100 px-1 rounded">summer_sale</code> and <code className="bg-gray-100 px-1 rounded">Summer Sale</code> show up as two different campaigns on the dashboard.</p>
+                    </section>
+
+                    <section className="space-y-2">
+                      <h2 className="text-lg font-bold text-gray-900">4. Working with Facebook Ads</h2>
+                      <p className="text-sm text-gray-700 leading-relaxed">Facebook automatically fills <code className="bg-gray-100 px-1 rounded">utm_content</code> with internal IDs that look like this:</p>
+                      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700">120203847562730492</pre>
+                      <p className="text-sm text-gray-700 leading-relaxed">That's not human-readable. Use the <strong>rename</strong> feature on the dashboard — click the pencil next to a row and enter a friendly name like "Video 1 — Hook A". The mapping is saved and applied to that ID everywhere it appears.</p>
+                    </section>
+
+                    <section className="space-y-2">
+                      <h2 className="text-lg font-bold text-gray-900">5. Reading the dashboard</h2>
+                      <ul className="text-sm text-gray-700 leading-relaxed space-y-2 list-disc pl-5">
+                        <li><strong>Campaign totals</strong> at the top — each card shows total orders, delivered orders, and revenue per campaign.</li>
+                        <li><strong>Creative breakdown</strong> below — one row per ad/creative under that campaign, with order counts by status. Use this to spot which creative converts and which is just burning budget.</li>
+                        <li><strong>Source colour</strong> on each row matches the platform (Facebook = blue, TikTok = pink, etc.) so you can scan the table quickly.</li>
+                      </ul>
+                    </section>
+
+                    <section className="space-y-2">
+                      <h2 className="text-lg font-bold text-gray-900">6. Quick checklist</h2>
+                      <ul className="text-sm text-gray-700 leading-relaxed space-y-1.5 list-disc pl-5">
+                        <li>Tagged the link before launching the ad</li>
+                        <li>Used lowercase / underscored names consistently</li>
+                        <li>Renamed Facebook content IDs to friendly names</li>
+                        <li>Checked the dashboard 24–48 hours after launch to see initial conversion</li>
+                      </ul>
+                    </section>
+
+                    <div className="border-t border-gray-200 pt-5">
+                      <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setAdTrackingView("dashboard")}>
+                        <ChevronLeft className="w-4 h-4" /> Back to Ad Tracking
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              const stats = [
+                { label: "Tracked Orders", value: trackedAttributedOrders.length, icon: ShoppingBag },
+                { label: "Unique Campaigns", value: uniqueCampaigns, icon: Megaphone },
+                { label: "Unique Creatives", value: uniqueCreatives, icon: ImageIcon }
+              ];
+
+              return (
+                <div className="space-y-6">
+                  <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                    <div className="flex flex-col gap-1">
+                      <h1 className="text-2xl font-bold text-[#1A6FBF]">Ad Tracking</h1>
+                      <p className="text-sm font-medium text-gray-500">Orders placed via tracked links — grouped by campaign and creative</p>
+                    </div>
+                    <button className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors self-start sm:self-auto" onClick={loadFacebookAdsDemo}>
+                      <Sparkles className="w-3.5 h-3.5" /> Load Facebook ads demo
+                    </button>
+                  </header>
+
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
+                    <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
+                    <div className="flex-1">
+                      <h2 className="text-sm font-bold text-blue-900 mb-1">New to ad tracking?</h2>
+                      <p className="text-sm text-blue-700">Learn how to tag your ad links so every order gets attributed to the right campaign and creative.</p>
+                    </div>
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => setAdTrackingView("guide")}>Read the guide</button>
+                  </div>
+
+                  <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {stats.map(({ label, value, icon: Icon }) => (
+                      <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex items-center gap-4">
+                        <span className="w-12 h-12 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center shrink-0"><Icon className="w-5 h-5" /></span>
+                        <div className="flex flex-col">
+                          <strong className="text-3xl font-extrabold text-gray-900 leading-none">{value}</strong>
+                          <span className="text-sm text-gray-500 mt-1">{label}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </section>
+
+                  <section className="space-y-3">
+                    <header>
+                      <h2 className="text-base font-bold text-gray-900">Campaigns</h2>
+                      <p className="text-xs text-gray-500">Hover the pencil icon on any card to rename a campaign ID</p>
+                    </header>
+                    {campaignGroups.length === 0 ? (
+                      <p className="text-sm text-gray-400 italic bg-white rounded-xl border border-gray-200 px-5 py-8 text-center">No campaigns tracked yet.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {campaignGroups.map((g) => {
+                          const label = campaignLabels[g.id] ?? "";
+                          const editing = editingCampaignId === g.id;
+                          return (
+                            <article key={g.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm group">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  {editing ? (
+                                    <input autoFocus className="w-full text-sm font-bold text-gray-900 border border-blue-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={label} placeholder="Add label..." onChange={(e) => setCampaignLabels((v) => ({ ...v, [g.id]: e.target.value }))} onBlur={() => setEditingCampaignId("")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingCampaignId(""); }} />
+                                  ) : (
+                                    <p className={`text-sm truncate ${label ? "font-bold text-gray-900" : "italic text-gray-400"}`}>{label || "Add label..."}</p>
+                                  )}
+                                  <p className="text-xs text-gray-500 truncate mt-0.5">{g.id}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-opacity" title="Rename" aria-label="Rename campaign" onClick={() => setEditingCampaignId(g.id)}><Pencil className="w-3.5 h-3.5" /></button>
+                                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 uppercase tracking-wide">Campaign</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4 mt-3 text-xs text-gray-600">
+                                <span className="inline-flex items-center gap-1"><ShoppingBag className="w-3.5 h-3.5 text-gray-400" /> {g.orders} order{g.orders !== 1 ? "s" : ""}</span>
+                                <span className="inline-flex items-center gap-1"><PackageCheck className="w-3.5 h-3.5 text-gray-400" /> {g.delivered} delivered</span>
+                                <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-gray-400" /> {formatProductMoney(g.revenue, g.currency)}</span>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-3">
+                    <header>
+                      <h2 className="text-base font-bold text-gray-900">Ad Creatives</h2>
+                      <p className="text-xs text-gray-500">Hover the pencil icon to rename a creative ID</p>
+                    </header>
+                    {creativeGroups.length === 0 ? (
+                      <p className="text-sm text-gray-400 italic bg-white rounded-xl border border-gray-200 px-5 py-8 text-center">No creatives tracked yet. Add <code className="bg-gray-100 px-1 rounded">utm_content</code> to your ad URLs.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {creativeGroups.map((g) => {
+                          const label = creativeLabels[g.id] ?? "";
+                          const editing = editingCreativeId === g.id;
+                          return (
+                            <article key={g.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm group">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  {editing ? (
+                                    <input autoFocus className="w-full text-sm font-bold text-gray-900 border border-blue-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={label} placeholder="Add label..." onChange={(e) => setCreativeLabels((v) => ({ ...v, [g.id]: e.target.value }))} onBlur={() => setEditingCreativeId("")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingCreativeId(""); }} />
+                                  ) : (
+                                    <p className={`text-sm truncate ${label ? "font-bold text-gray-900" : "italic text-gray-400"}`}>{label || "Add label..."}</p>
+                                  )}
+                                  <p className="text-xs text-gray-500 truncate mt-0.5">{g.id}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-opacity" title="Rename" aria-label="Rename creative" onClick={() => setEditingCreativeId(g.id)}><Pencil className="w-3.5 h-3.5" /></button>
+                                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 uppercase tracking-wide">Creative</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4 mt-3 text-xs text-gray-600">
+                                <span className="inline-flex items-center gap-1"><ShoppingBag className="w-3.5 h-3.5 text-gray-400" /> {g.orders} order{g.orders !== 1 ? "s" : ""}</span>
+                                <span className="inline-flex items-center gap-1"><PackageCheck className="w-3.5 h-3.5 text-gray-400" /> {g.delivered} delivered</span>
+                                <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-gray-400" /> {formatProductMoney(g.revenue, g.currency)}</span>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-3">
+                    <header>
+                      <h2 className="text-base font-bold text-gray-900">Orders</h2>
+                      <p className="text-xs text-gray-500">All orders placed via tracked links</p>
+                    </header>
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                              {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((h) => (
+                                <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {trackedAttributedOrders.length === 0 ? (
+                              <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No tracked orders yet. Click "Load Facebook ads demo" above to see how this looks.</td></tr>
+                            ) : (
+                              trackedAttributedOrders.map((order) => {
+                                const tone = sourceTone(order.utmSource);
+                                const campaignDisplay = campaignLabels[order.utmCampaign] || order.utmCampaign;
+                                const creativeDisplay = order.utmContent ? (creativeLabels[order.utmContent] || order.utmContent) : "—";
+                                return (
+                                  <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-4 font-bold text-gray-900">#{orderRowNumber(order.id)}</td>
+                                    <td className="px-4 py-4 font-semibold text-gray-900">{order.customer}</td>
+                                    <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${statusTone(order.status ?? "New")}`}>{order.status ?? "New"}</span></td>
+                                    <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${tone.bg} ${tone.text}`}>{formatSourceLabel(order)}</span></td>
+                                    <td className="px-4 py-4 text-gray-700">{campaignDisplay}</td>
+                                    <td className="px-4 py-4 text-gray-700">{creativeDisplay}</td>
+                                    <td className="px-4 py-4 font-bold text-[#1A6FBF]">{formatProductMoney(order.amount, order.currency)}</td>
+                                    <td className="px-4 py-4 text-gray-500">{order.date}</td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </section>
                 </div>
-              </section>
-            </div>
+              );
+            })()
           ) : activePage === "User Management" ? (
             <div className="space-y-6">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
