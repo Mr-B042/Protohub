@@ -14,6 +14,12 @@ export const supabase = createClient(url, serviceKey, {
   auth: { persistSession: false }
 });
 
+// Dedicated client for signInWithPassword — keeps the shared service-role
+// client's auth state clean (signInWithPassword mutates the client's JWT).
+export const supabaseAuth = createClient(url, serviceKey, {
+  auth: { persistSession: false }
+});
+
 // Create a client scoped to a specific user (respects RLS)
 export const supabaseAs = (accessToken: string) =>
   createClient(url, process.env.SUPABASE_ANON_KEY!, {

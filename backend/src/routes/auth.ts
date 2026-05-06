@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import { supabase, supabaseAuth } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
@@ -76,7 +76,7 @@ router.post("/login", async (req, res) => {
   }
   const { email, password } = parsed.data;
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
   if (error || !data.session) {
     res.status(401).json({ error: "Invalid email or password." });
     return;
@@ -118,7 +118,7 @@ router.post("/refresh", async (req, res) => {
     res.status(400).json({ error: "refreshToken is required." });
     return;
   }
-  const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+  const { data, error } = await supabaseAuth.auth.refreshSession({ refresh_token: refreshToken });
   if (error || !data.session) {
     res.status(401).json({ error: "Invalid or expired refresh token." });
     return;
