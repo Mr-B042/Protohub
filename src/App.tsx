@@ -191,6 +191,10 @@ type ProductPricing = {
   unitCost: number;
   primary?: boolean;
 };
+type PackageCompanion = {
+  productId: string;
+  quantity: number;
+};
 type ProductPackage = {
   id: string;
   name: string;
@@ -200,6 +204,7 @@ type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  companions?: PackageCompanion[];
 };
 type PackBonusRule = {
   id: string;
@@ -1058,6 +1063,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packagePrice, setPackagePrice] = useState("0");
   const [packageCurrency, setPackageCurrency] = useState<ProductCurrencyCode>("NGN");
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
+  const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
@@ -4539,6 +4545,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice("0");
     setPackageCurrency("NGN");
     setPackageDisplayOrder("1");
+    setPackageCompanions([]);
     setSelectedPackageId("");
   };
 
@@ -4555,6 +4562,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice(String(item.price));
     setPackageCurrency(item.currency);
     setPackageDisplayOrder(String(item.displayOrder));
+    setPackageCompanions(item.companions ?? []);
     setModal("editPackage");
   };
 
@@ -4564,6 +4572,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const cleanCompanions = packageCompanions
+      .filter((c) => c.productId && c.productId !== selectedProduct.id)
+      .map((c) => ({ productId: c.productId, quantity: Math.max(1, Number(c.quantity) || 1) }));
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
@@ -4571,8 +4582,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quantity: Math.max(1, Number(packageQuantity) || 1),
       price: Math.max(0, Number(packagePrice) || 0),
       currency: packageCurrency,
-      displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
-      active: true
+      displayOrder: Math.max(0, Number(packageDisplayOrder) || 0),
+      active: true,
+      companions: cleanCompanions.length > 0 ? cleanCompanions : undefined
     };
 
     const _pkgProdId = selectedProduct.id;
@@ -12957,7 +12969,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "carts" ? "max-w-2xl" : modal === "addPackage" || modal === "editPackage" ? "max-w-xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
                 {modal === "createTeam" && "Create New Team"}
@@ -12979,7 +12991,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {modal === "deleteProduct" && "Delete Product"}
                 {modal === "addPricing" && "Add Currency Pricing"}
                 {modal === "editPricing" && "Edit Pricing"}
-                {modal === "addPackage" && "Create Package"}
+                {modal === "addPackage" && "Create New Package"}
                 {modal === "editPackage" && "Edit Package"}
 	                {modal === "deletePackage" && "Delete Package"}
 	                {modal === "createOrder" && "Create New Order"}
@@ -13770,21 +13782,115 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
             )}
 
-            {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (
-              <div className="modal-form">
-                <p>{selectedProduct.name}</p>
-                <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
-                <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <label><span>Main Product Quantity</span><input value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} inputMode="numeric" /></label>
-                  <label><span>Price</span><input value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} inputMode="decimal" /></label>
-                  <label><span>Currency</span><select value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
-                  <label><span>Display Order</span><input value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} inputMode="numeric" /></label>
+            {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (() => {
+              const isEdit = modal === "editPackage";
+              const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 transition-colors";
+              const currencySymbol = productCurrencies[packageCurrency]?.symbol ?? "";
+              const eligibleCompanions = products.filter((p) => p.id !== selectedProduct.id);
+              const priceNum = Math.max(0, Number(packagePrice) || 0);
+              const qtyNum = Math.max(1, Number(packageQuantity) || 1);
+              const perUnitPrice = qtyNum > 0 ? priceNum / qtyNum : 0;
+              const addCompanion = () => {
+                const firstAvailable = eligibleCompanions.find((p) => !packageCompanions.some((c) => c.productId === p.id));
+                if (!firstAvailable) {
+                  showToast("All eligible products already added as companions.");
+                  return;
+                }
+                setPackageCompanions((prev) => [...prev, { productId: firstAvailable.id, quantity: 1 }]);
+              };
+              return (
+                <div className="px-6 py-5 space-y-5">
+                  <p className="text-sm text-gray-500 -mt-1">{isEdit ? `Update this package's details and pricing for ${selectedProduct.name}.` : `Create a new package option for customers to select during checkout.`}</p>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Package Name <span className="text-red-500">*</span></label>
+                    <input className={inputClass} value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="e.g., Regular, Silver, Exclusive" />
+                    <p className="text-xs text-gray-500 mt-1">Short name for this package option</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Description</label>
+                    <textarea rows={2} className={`${inputClass} resize-none`} value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="e.g., 1 Knee Massager + 1 Miracle Balm (Free)" />
+                    <p className="text-xs text-gray-500 mt-1">Optional description shown to customers</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Main Product Quantity <span className="text-red-500">*</span></label>
+                      <input type="number" min={1} className={inputClass} value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} />
+                      <p className="text-xs text-gray-500 mt-1">Number of base product units in this package</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Price ({currencySymbol}) <span className="text-red-500">*</span></label>
+                      <input type="number" min={0} step="0.01" className={inputClass} value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} />
+                      <p className="text-xs text-gray-500 mt-1">Total price charged to customer for this package</p>
+                    </div>
+                  </div>
+
+                  {qtyNum > 1 && priceNum > 0 && (
+                    <p className="text-xs text-gray-500 -mt-2">That works out to {formatProductMoney(perUnitPrice, packageCurrency)} per unit.</p>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Currency <span className="text-red-500">*</span></label>
+                    <select className={inputClass} value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>
+                      {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Only currencies with configured pricing are shown</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Display Order</label>
+                    <input type="number" min={0} className={inputClass} value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} />
+                    <p className="text-xs text-gray-500 mt-1">Lower numbers appear first (0 = first)</p>
+                  </div>
+
+                  <section className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <header className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-gray-900">Companion Products</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Add extra products to deduct during delivery, for example free gifts.</p>
+                      </div>
+                      <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors shrink-0" onClick={addCompanion}>
+                        <Plus className="w-3.5 h-3.5" /> Add Companion
+                      </button>
+                    </header>
+                    {packageCompanions.length === 0 ? (
+                      <p className="text-xs text-gray-500 mt-3">No companion products added.</p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {packageCompanions.map((c, idx) => {
+                          const taken = new Set(packageCompanions.filter((_, i) => i !== idx).map((other) => other.productId));
+                          const available = eligibleCompanions.filter((p) => !taken.has(p.id) || p.id === c.productId);
+                          return (
+                            <div key={`${c.productId}-${idx}`} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-2">
+                              <select className="flex-1 min-w-0 text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={c.productId} onChange={(e) => setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, productId: e.target.value } : row))}>
+                                {available.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                              <label className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[11px] text-gray-500 font-medium">Qty</span>
+                                <input type="number" min={1} className="w-16 text-sm border border-gray-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={c.quantity} onChange={(e) => setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, quantity: Math.max(1, Number(e.target.value) || 1) } : row))} />
+                              </label>
+                              <button type="button" className="!min-h-0 p-1.5 text-gray-400 hover:text-red-600 rounded transition-colors shrink-0" aria-label="Remove companion" onClick={() => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx))}>
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {eligibleCompanions.length === 0 && (
+                      <p className="text-xs text-amber-600 mt-2">Add more products to your inventory before attaching companions.</p>
+                    )}
+                  </section>
+
+                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={!packageName.trim()} onClick={savePackage}>{isEdit ? "Save Package" : "Create Package"}</button>
+                  </div>
                 </div>
-                <section className="text-sm text-gray-400 italic py-2">Companion products can be added after more inventory items exist.</section>
-                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePackage}>{modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
-              </div>
-            )}
+              );
+            })()}
 
             {modal === "deletePackage" && selectedPackage && (() => {
               const ordersUsingPackage = trackedOrders.filter((o) => o.packageId === selectedPackage.id);
