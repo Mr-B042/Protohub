@@ -628,12 +628,14 @@ const makeSku = (name: string) => {
   return `${cleanParts.join("-") || "PRD"}-${Math.floor(100 + Math.random() * 900)}`;
 };
 
-const formatProductMoney = (amount: number, code: ProductCurrencyCode) =>
-  new Intl.NumberFormat(productCurrencies[code].locale, {
+const formatProductMoney = (amount: number, code: ProductCurrencyCode) => {
+  const def = productCurrencies[code] ?? productCurrencies.NGN;
+  return new Intl.NumberFormat(def.locale, {
     style: "currency",
-    currency: productCurrencies[code].currency,
+    currency: def.currency,
     maximumFractionDigits: 0
   }).format(amount || 0);
+};
 
 const primaryPricing = (product: Product) => product.pricings.find((pricing) => pricing.primary) ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;

@@ -44,7 +44,31 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <Sentry.ErrorBoundary fallback={<div style={{padding:40,textAlign:"center"}}><h2>Something went wrong.</h2><p>The error has been reported. Please refresh the page.</p><button onClick={() => window.location.reload()}>Refresh</button></div>}>
+    <Sentry.ErrorBoundary
+      fallback={({ error }) => {
+        const err = error as Error;
+        return (
+          <div style={{ padding: 40, maxWidth: 800, margin: "40px auto", fontFamily: "Inter, system-ui, sans-serif" }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Something went wrong.</h2>
+            <p style={{ marginTop: 8, color: "#555" }}>The error has been reported. Please refresh the page.</p>
+            <details style={{ marginTop: 16, padding: 12, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}>Show technical details</summary>
+              <pre style={{ marginTop: 10, fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#b91c1c" }}>
+{err?.name}: {err?.message}
+{"\n\n"}
+{err?.stack}
+              </pre>
+            </details>
+            <button
+              style={{ marginTop: 16, padding: "8px 16px", borderRadius: 6, background: "#1A6FBF", color: "white", border: "none", fontWeight: 600, cursor: "pointer" }}
+              onClick={() => window.location.reload()}
+            >
+              Refresh
+            </button>
+          </div>
+        );
+      }}
+    >
       <Root />
     </Sentry.ErrorBoundary>
   </React.StrictMode>
