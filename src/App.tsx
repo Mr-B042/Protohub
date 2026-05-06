@@ -65,7 +65,7 @@ import {
 import { auth } from "./lib/auth";
 import {
   productsApi, ordersApi, agentsApi, stockApi,
-  expensesApi, waybillsApi, notificationsApi, stockApi as _stockApi
+  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, stockApi as _stockApi
 } from "./lib/api";
 import {
   Line,
@@ -1777,10 +1777,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       remittanceStatus: status,
       notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...(o.notes ?? [])]
     } : o));
+    const _rrId = order.id;
     setModal(null);
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     showToast(`${order.id} remittance saved (${status}).`);
+    ordersApi.update(_rrId, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status }).catch(() => {});
   };
 
   const openRecordRemittance = (order: TrackedOrder) => {
@@ -1809,10 +1811,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCustomerFlags((prev) => ({ ...prev, [key]: { flagged: true, reason: flagReasonDraft.trim(), flaggedAt: new Date().toISOString() } }));
     setModal(null);
     showToast("Customer flagged.");
+    customersApi.flag({ phone: flagTargetPhone, reason: flagReasonDraft.trim() }).catch(() => {});
   };
   const unflagCustomer = (phone: string) => {
     const key = normalizePhone(phone);
     setCustomerFlags((prev) => { const next = { ...prev }; delete next[key]; return next; });
+    customersApi.unflag(phone).catch(() => {});
     showToast("Customer flag removed.");
   };
 
@@ -1825,6 +1829,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const markAllNotificationsRead = () => {
     setSystemNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    notificationsApi.markAllRead().catch(() => {});
     showToast("All notifications marked as read.");
   };
   const unreadNotificationCount = systemNotifications.filter((n) => !n.read).length;
@@ -4049,6 +4054,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetProductForm();
     setModal(null);
     showToast(`Product "${product.name}" created.`);
+    productsApi.create({ name: product.name, sku: product.sku, description: product.description, reorderPoint: product.reorderPoint, active: product.active })
+      .then((saved: any) => {
+        setProducts((prev) => prev.map((p) => p.id === id ? { ...p, id: saved.id } : p));
+        setSelectedProductId(saved.id);
+        if (stock > 0) stockApi.update({ productId: saved.id, change: stock, note: "Opening stock" }).catch(() => {});
+      })
+      .catch(() => showToast("Product saved locally — sync to database failed."));
   };
 
   const submitStockUpdate = () => {
@@ -4090,9 +4102,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         productId: product.id
       });
     }
+    const _suProdId = product.id;
     setStockChange("0");
     setModal(null);
     showToast(`${product.name} stock updated to ${nextBalance}.`);
+    stockApi.update({ productId: _suProdId, change: actualChange, note: actualChange >= 0 ? "Manual stock increase" : "Manual stock reduction" }).catch(() => {});
   };
 
   const openProductDetails = (product: Product) => {
@@ -4130,10 +4144,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setStockMovements((value) => value.filter((movement) => movement.productId !== selectedProduct.id));
     setAgentStock((value) => value.filter((stock) => stock.productId !== selectedProduct.id));
+    const _dpId = selectedProduct.id;
     setSelectedProductId("");
     setInventoryView("dashboard");
     setModal(null);
     showToast(`${selectedProduct.name} deleted.`);
+    productsApi.delete(_dpId).catch(() => {});
   };
 
   const duplicateProduct = (source: Product) => {
@@ -4229,6 +4245,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const saveEditProduct = () => {
     if (!selectedProduct) return;
     if (!productName.trim()) { showToast("Product name is required."); return; }
+    const _epId = selectedProduct.id;
     setProducts((prev) => prev.map((p) => p.id === selectedProduct.id ? {
       ...p,
       name: productName.trim(),
@@ -4239,6 +4256,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } : p));
     setModal(null);
     showToast(`${productName.trim()} saved.`);
+    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0 }).catch(() => {});
   };
 
   const openPricingView = (product: Product) => {
@@ -4295,6 +4313,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const _spProdId = selectedProduct.id;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -4310,6 +4329,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setModal(null);
     showToast(`${productCurrencies[nextPricing.currency].label} pricing saved.`);
+    if (modal === "addPricing") {
+      productsApi.createPricing(_spProdId, { currency: nextPricing.currency, selling_price: nextPricing.sellingPrice, unit_cost: nextPricing.unitCost, primary: false }).catch(() => {});
+    }
   };
 
   const deletePricing = (code: ProductCurrencyCode) => {
@@ -4374,6 +4396,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       active: true
     };
 
+    const _pkgProdId = selectedProduct.id;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -4390,6 +4413,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetPackageForm();
     setModal(null);
     showToast(`Package "${packageRecord.name}" saved.`);
+    if (modal === "addPackage") {
+      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, display_order: packageRecord.displayOrder, active: packageRecord.active }).catch(() => {});
+    } else if (modal === "editPackage" && selectedPackage) {
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, display_order: packageRecord.displayOrder }).catch(() => {});
+    }
   };
 
   const openDeletePackage = (item: ProductPackage) => {
@@ -4652,6 +4680,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     );
     showToast(`${orderId} moved to ${nextStatus}.`);
+    ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch(() => {});
   };
 
   const scheduleOrder = (orderId: string, range: ScheduleRange) => {
@@ -4770,6 +4799,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     setCreateOrderContext("admin");
     showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
+    ordersApi.create(order).catch(() => showToast(`${order.id} saved locally — sync failed.`));
   };
 
   const openOrderModal = (order: TrackedOrder, nextModal: ModalType) => {
@@ -4831,10 +4861,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : order
       )
     );
+    const _soaId = selectedOrder.id;
     if (modal !== "orderWorkflow") {
       setModal(null);
     }
     showToast(`${selectedOrder.id} delivery agent updated.`);
+    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null }).catch(() => {});
   };
 
   const openEditSelectedOrder = () => {
@@ -4873,6 +4905,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
+    const _soeId = selectedOrder.id;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -4905,6 +4938,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : order
       )
     );
+    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id, product_name: product.name, package_name: packageRecord?.name ?? "Manual package", quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null }).catch(() => {});
     setModal(null);
     showToast(`${selectedOrder.id} updated.`);
   };
@@ -5045,8 +5079,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : order
       )
     );
+    const _soceId = selectedOrder.id;
     setModal(null);
     showToast(`${selectedOrder.id} customer details saved.`);
+    ordersApi.update(_soceId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim() || createOrderPhone.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim() }).catch(() => {});
   };
 
   const saveRepScheduleDate = () => {
@@ -5139,9 +5175,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setStockMovements((prev) => [{ id: makeMovementId(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
       }
     }
+    const _doId = selectedOrder.id;
+    const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
-    showToast(`${selectedOrder.id} deleted${selectedOrder.stockDeducted ? " and stock restored" : ""}.`);
+    showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
+    ordersApi.delete(_doId).catch(() => {});
   };
 
   const submitPreviewOrder = () => {
@@ -5378,6 +5417,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSalesRepActive(true);
     setModal(null);
     showToast(`Sales rep "${rep.name}" created and added to round-robin.`);
+    if (salesRepPassword.trim()) {
+      authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role }).catch(() => showToast("Sales rep saved locally — invite sync failed."));
+    }
   };
 
   const createAgent = () => {
@@ -5399,6 +5441,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       active: agentActive,
       created: displayDateFromKey(todayKey())
     };
+    const _agLocalId = agent.id;
     setAgents((value) => [...value, agent]);
     setSelectedAgentId(agent.id);
     setAgentName("");
@@ -5407,6 +5450,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgentAddress("");
     setModal(null);
     showToast(`Agent "${agent.name}" created.`);
+    agentsApi.create({ name: agent.name, zone: agent.zone, phone: agent.phone, status: agent.active ? "Active" : "Inactive" })
+      .then((saved: any) => {
+        setAgents((prev) => prev.map((a) => a.id === _agLocalId ? { ...a, id: saved.id } : a));
+        setSelectedAgentId(saved.id);
+      })
+      .catch(() => showToast(`Agent saved locally — sync failed.`));
   };
 
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
@@ -5457,9 +5506,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       { id: makeMovementId(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Distributed to Agent", qty: -quantity, balanceAfter: product.warehouseStock - quantity, agent: selectedAgent.name, by: ownerName, note: "Assigned from agent directory" },
       ...value
     ]);
+    const _assAgId = selectedAgent.id;
+    const _assProdId = product.id;
     setAssignStockQty("1");
     setModal(null);
     showToast(`${quantity} ${product.name} assigned to ${selectedAgent.name}.`);
+    agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity }).catch(() => {});
   };
 
   const reconcileSelectedAgentStock = () => {
@@ -5569,6 +5621,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const _uaId = selectedAgent.id;
     setAgents((value) =>
       value.map((agent) =>
         agent.id === selectedAgent.id
@@ -5578,6 +5631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setModal(null);
     showToast(`${agentName.trim()} updated.`);
+    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive" }).catch(() => {});
   };
 
   const deleteSelectedAgent = () => {
@@ -5633,10 +5687,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
 
     // Remove agent and their stock records
+    const _daId = selectedAgent.id;
     setAgents((prev) => prev.filter((a) => a.id !== selectedAgent.id));
     setAgentStock((prev) => prev.filter((s) => s.agentId !== selectedAgent.id));
     setModal(null);
     showToast(`${selectedAgent.name} deleted. ${productUpdates.size > 0 ? "Stock returned to warehouse." : ""}`);
+    agentsApi.delete(_daId).catch(() => {});
   };
 
   const openCreateWaybill = () => {
@@ -5729,6 +5785,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaybillRecords((prev) => [record, ...prev]);
     setModal(null);
     showToast(`Waybill created — ${qty} × ${product.name} → ${receivingState}.`);
+    waybillsApi.create({ id: record.id, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, notes: record.note, dispatchedDate: record.dateSent }).catch(() => {});
   };
 
   const markWaybillReceived = (waybillId: string) => {
@@ -5767,6 +5824,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "Received", dateReceived: today } : w));
+    waybillsApi.updateStatus(waybillId, { status: "Received" }).catch(() => {});
     showToast(`Waybill marked received.`);
   };
 
@@ -6035,6 +6093,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setExpenseCurrency("NGN");
     setModal(null);
     showToast(`${expenseType} expense for ${new Intl.NumberFormat(currencies[expenseCurrency]?.locale ?? "en-NG", { style: "currency", currency: expenseCurrency, maximumFractionDigits: 0 }).format(amount)} created.`);
+    expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency }).catch(() => {});
   };
 
   const createUser = () => {
@@ -6074,6 +6133,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     setModal(null);
     showToast(`User "${userFullName.trim()}" created.`);
+    if (userPassword.trim()) {
+      authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch(() => showToast("User saved locally — invite sync failed."));
+    }
   };
 
   const updateUser = () => {
@@ -6101,6 +6163,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const _uuId = selectedUser.id;
     setUsers((value) =>
       value.map((user) =>
         user.id === selectedUser.id
@@ -6112,6 +6175,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     setModal(null);
     showToast(`User "${userFullName.trim()}" updated.`);
+    teamApi.update(_uuId, { name: userFullName.trim(), role: newUserRole, active: newUserActive }).catch(() => {});
   };
 
   const resetUserPassword = () => {
