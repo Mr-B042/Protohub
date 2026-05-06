@@ -38,6 +38,7 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
+  RotateCcw,
   Search,
   Sparkles,
   BadgeDollarSign,
@@ -1166,6 +1167,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showDeliveryQuestion, setShowDeliveryQuestion] = useState(false);
   const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [showCommitmentNotice, setShowCommitmentNotice] = useState(false);
+  const [addressRequired, setAddressRequired] = useState(true);
+  const [cityRequired, setCityRequired] = useState(true);
+  const [deliveryInputStyle, setDeliveryInputStyle] = useState<"quick" | "range">("quick");
+  const [deliveryQuickToday, setDeliveryQuickToday] = useState(true);
+  const [deliveryQuickTomorrow, setDeliveryQuickTomorrow] = useState(true);
+  const [deliveryQuickNextTomorrow, setDeliveryQuickNextTomorrow] = useState(false);
+  const [deliveryRangeEarliest, setDeliveryRangeEarliest] = useState(0);
+  const [deliveryRangeLatest, setDeliveryRangeLatest] = useState(7);
+  const CONFIRMATION_DEFAULT = "I confirm that I am financially prepared and available to receive my order within 1–3 business days.";
+  const COMMITMENT_DEFAULT = "A flat commitment fee applies for orders delivered outside major cities. This will be confirmed with you before dispatch.";
+  const [confirmationCheckboxText, setConfirmationCheckboxText] = useState(CONFIRMATION_DEFAULT);
+  const [allowDisagree, setAllowDisagree] = useState(true);
+  const [commitmentNoticeText, setCommitmentNoticeText] = useState(COMMITMENT_DEFAULT);
+  const [embedSettingsDirty, setEmbedSettingsDirty] = useState(false);
   const [generatedProductId, setGeneratedProductId] = useState("");
   const [generatedEmbedProductIds, setGeneratedEmbedProductIds] = useState<string[]>([]);
   const [embedCurrencyByProduct, setEmbedCurrencyByProduct] = useState<Record<string, ProductCurrencyCode>>({});
@@ -10790,8 +10805,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
-                      <h2 className="text-base font-bold text-gray-900">Order Form Builder</h2>
-                      <p className="text-sm text-gray-500 mt-0.5">Everything for {previewProduct?.name ?? "this product"}'s order form lives here. Changes save instantly and update the live preview on the right.</p>
+                      <h2 className="text-base font-bold text-gray-900">Order Form Settings</h2>
+                      <p className="text-sm text-gray-500 mt-0.5">Configure which fields appear on your public order form. Changes apply to every embed URL you have shared.</p>
                     </div>
                     {previewProduct && (
                       <label className="flex flex-col gap-0.5 text-xs">
@@ -11113,7 +11128,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-sm font-semibold text-gray-800">Show email field</p>
                         <p className="text-xs text-gray-500 mt-0.5">Adds an optional email input to the form.</p>
                       </div>
-                      <button type="button" role="switch" aria-checked={showEmailField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showEmailField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => setShowEmailField((v) => !v)}>
+                      <button type="button" role="switch" aria-checked={showEmailField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showEmailField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowEmailField((v) => !v); setEmbedSettingsDirty(true); }}>
                         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showEmailField ? "left-5" : "left-0.5"}`} />
                       </button>
                     </div>
@@ -11125,7 +11140,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <p className="text-sm font-semibold text-gray-800">Show WhatsApp field</p>
                           <p className="text-xs text-gray-500 mt-0.5">When off, the WhatsApp number input is hidden from the form.</p>
                         </div>
-                        <button type="button" role="switch" aria-checked={showWhatsappField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showWhatsappField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => updateShowWhatsappField(!showWhatsappField)}>
+                        <button type="button" role="switch" aria-checked={showWhatsappField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showWhatsappField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { updateShowWhatsappField(!showWhatsappField); setEmbedSettingsDirty(true); }}>
                           <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showWhatsappField ? "left-5" : "left-0.5"}`} />
                         </button>
                       </div>
@@ -11140,37 +11155,156 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
 
+                    {/* Required fields – grouped card */}
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                        <p className="text-sm font-semibold text-gray-800">Required fields</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Phone is always required. These control whether the other customer-detail fields are mandatory.</p>
+                      </div>
+                      <div className="flex items-start gap-4 px-4 py-3.5">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-700">Address required</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Off lets customers submit without an address.</p>
+                        </div>
+                        <button type="button" role="switch" aria-checked={addressRequired} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${addressRequired ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setAddressRequired((v) => !v); setEmbedSettingsDirty(true); }}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${addressRequired ? "left-5" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                      <div className="flex items-start gap-4 px-4 py-3.5 border-t border-gray-100">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-700">City required</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Off lets customers submit without a city.</p>
+                        </div>
+                        <button type="button" role="switch" aria-checked={cityRequired} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${cityRequired ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setCityRequired((v) => !v); setEmbedSettingsDirty(true); }}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${cityRequired ? "left-5" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Package name – standalone row */}
                     <div className="flex items-start gap-4 py-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800">Show package name</p>
                         <p className="text-xs text-gray-500 mt-0.5">Show the package name above the description in the package picker.</p>
                       </div>
-                      <button type="button" role="switch" aria-checked={showPackageName} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showPackageName ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => setShowPackageName((v) => !v)}>
+                      <button type="button" role="switch" aria-checked={showPackageName} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showPackageName ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowPackageName((v) => !v); setEmbedSettingsDirty(true); }}>
                         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showPackageName ? "left-5" : "left-0.5"}`} />
                       </button>
                     </div>
 
-                    {/* Each of the remaining settings in their own bordered box */}
-                    {([
-                      { label: `Ask "When would you like it delivered?"`, desc: "Captures the customer’s preferred delivery window on the order form.", checked: showDeliveryQuestion, toggle: () => setShowDeliveryQuestion((v) => !v) },
-                      { label: "Require a confirmation checkbox", desc: "Customer must tick this before they can submit the form.", checked: requireConfirmation, toggle: () => setRequireConfirmation((v) => !v) },
-                      { label: "Show commitment fee notice", desc: "Displays a notice above the submit button. Customer must respond before submitting, and you can optionally allow \"I disagree\" without blocking the order.", checked: showCommitmentNotice, toggle: () => { setShowCommitmentNotice((v) => !v); if (showCommitmentNotice) setOrderFormCommitmentAccepted(false); } },
-                    ] as { label: string; desc: string; checked: boolean; toggle: () => void }[]).map(({ label, desc, checked, toggle }) => (
-                      <div key={label} className="border border-gray-200 rounded-xl flex items-start gap-4 px-4 py-3.5">
+                    {/* Delivery date – grouped card with sub-controls */}
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="flex items-start gap-4 px-4 py-3.5">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800">{label}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                          <p className="text-sm font-semibold text-gray-800">Ask "When would you like it delivered?"</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Captures the customer’s preferred delivery window on the order form.</p>
                         </div>
-                        <button type="button" role="switch" aria-checked={checked} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${checked ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={toggle}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${checked ? "left-5" : "left-0.5"}`} />
+                        <button type="button" role="switch" aria-checked={showDeliveryQuestion} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showDeliveryQuestion ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowDeliveryQuestion((v) => !v); setEmbedSettingsDirty(true); }}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showDeliveryQuestion ? "left-5" : "left-0.5"}`} />
                         </button>
                       </div>
-                    ))}
+                      {showDeliveryQuestion && (
+                        <div className="border-t border-gray-100 px-4 py-3.5 space-y-3 bg-gray-50">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs font-semibold text-gray-600">Input style</span>
+                            <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 w-48" value={deliveryInputStyle} onChange={(e) => { setDeliveryInputStyle(e.target.value as "quick" | "range"); setEmbedSettingsDirty(true); }}>
+                              <option value="quick">Quick — pick from preset options</option>
+                              <option value="range">Range — date picker with bounds</option>
+                            </select>
+                          </label>
+                          {deliveryInputStyle === "quick" ? (
+                            <div className="space-y-1">
+                              <p className="text-xs font-semibold text-gray-600">Quick options to show</p>
+                              {([
+                                { key: "today", label: "Today", checked: deliveryQuickToday, set: setDeliveryQuickToday },
+                                { key: "tomorrow", label: "Tomorrow", checked: deliveryQuickTomorrow, set: setDeliveryQuickTomorrow },
+                                { key: "nextTomorrow", label: "Next tomorrow", hint: "day after tomorrow", checked: deliveryQuickNextTomorrow, set: setDeliveryQuickNextTomorrow },
+                              ] as { key: string; label: string; hint?: string; checked: boolean; set: (v: boolean) => void }[]).map(({ key, label, hint, checked, set }) => (
+                                <label key={key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                  <input type="checkbox" className="accent-[#1A6FBF]" checked={checked} onChange={(e) => { set(e.target.checked); setEmbedSettingsDirty(true); }} />
+                                  <span>{label}</span>
+                                  {hint && <span className="text-xs text-gray-400 italic">({hint})</span>}
+                                </label>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-4">
+                              <label className="flex flex-col gap-1">
+                                <span className="text-xs font-semibold text-gray-600">Earliest (days from today)</span>
+                                <input type="number" min={0} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white w-28" value={deliveryRangeEarliest} onChange={(e) => { const v = Math.max(0, parseInt(e.target.value, 10) || 0); setDeliveryRangeEarliest(v); if (v > deliveryRangeLatest) setDeliveryRangeLatest(v); setEmbedSettingsDirty(true); }} />
+                              </label>
+                              <label className="flex flex-col gap-1">
+                                <span className="text-xs font-semibold text-gray-600">Latest (days from today)</span>
+                                <input type="number" min={0} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white w-28" value={deliveryRangeLatest} onChange={(e) => { const v = Math.max(deliveryRangeEarliest, parseInt(e.target.value, 10) || 0); setDeliveryRangeLatest(v); setEmbedSettingsDirty(true); }} />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Confirmation checkbox – grouped card with textarea */}
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="flex items-start gap-4 px-4 py-3.5">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800">Require a confirmation checkbox</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Customer must tick this before they can submit the form.</p>
+                        </div>
+                        <button type="button" role="switch" aria-checked={requireConfirmation} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${requireConfirmation ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setRequireConfirmation((v) => !v); setEmbedSettingsDirty(true); }}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${requireConfirmation ? "left-5" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                      {requireConfirmation && (
+                        <div className="border-t border-gray-100 px-4 py-3.5 bg-gray-50">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className="text-xs font-semibold text-gray-600">Checkbox text</span>
+                            <button className="!min-h-0 flex items-center gap-1 text-[11px] text-blue-600 hover:underline" onClick={() => { setConfirmationCheckboxText(CONFIRMATION_DEFAULT); setEmbedSettingsDirty(true); }}>
+                              <RotateCcw className="w-3 h-3" /> Reset to default
+                            </button>
+                          </div>
+                          <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-200" rows={3} value={confirmationCheckboxText} onChange={(e) => { setConfirmationCheckboxText(e.target.value); setEmbedSettingsDirty(true); }} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Commitment fee notice – grouped card with sub-toggle and textarea */}
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="flex items-start gap-4 px-4 py-3.5">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800">Show commitment fee notice</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Displays a notice above the submit button. Customer must respond before submitting. You can optionally allow "I disagree" without blocking the order.</p>
+                        </div>
+                        <button type="button" role="switch" aria-checked={showCommitmentNotice} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showCommitmentNotice ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowCommitmentNotice((v) => !v); if (showCommitmentNotice) setOrderFormCommitmentAccepted(false); setEmbedSettingsDirty(true); }}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showCommitmentNotice ? "left-5" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                      {showCommitmentNotice && (
+                        <div className="border-t border-gray-100 bg-gray-50 divide-y divide-gray-100">
+                          <div className="flex items-start gap-4 px-4 py-3.5">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-700">Allow "I disagree"</p>
+                              <p className="text-xs text-gray-500 mt-0.5">Shows both choices on the form and still allows submission when either is selected. Off = customer must agree to proceed.</p>
+                            </div>
+                            <button type="button" role="switch" aria-checked={allowDisagree} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${allowDisagree ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setAllowDisagree((v) => !v); setEmbedSettingsDirty(true); }}>
+                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${allowDisagree ? "left-5" : "left-0.5"}`} />
+                            </button>
+                          </div>
+                          <div className="px-4 py-3.5">
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <span className="text-xs font-semibold text-gray-600">Notice text</span>
+                              <button className="!min-h-0 flex items-center gap-1 text-[11px] text-blue-600 hover:underline" onClick={() => { setCommitmentNoticeText(COMMITMENT_DEFAULT); setEmbedSettingsDirty(true); }}>
+                                <RotateCcw className="w-3 h-3" /> Reset to default
+                              </button>
+                            </div>
+                            <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-200" rows={3} value={commitmentNoticeText} onChange={(e) => { setCommitmentNoticeText(e.target.value); setEmbedSettingsDirty(true); }} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => showToast("Embed form settings saved.")}>Save changes</button>
+                    <button disabled={!embedSettingsDirty} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${embedSettingsDirty ? "bg-[#1A6FBF] text-white hover:bg-blue-700" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`} onClick={() => { showToast("Embed form settings saved."); setEmbedSettingsDirty(false); }}>Save changes</button>
                     {readyEmbedProducts.length === 0 ? (
                       <span className="text-sm text-gray-400">Preview unavailable — create a product with packages first.</span>
                     ) : (

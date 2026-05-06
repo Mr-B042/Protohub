@@ -49,7 +49,6 @@ alter table public.orders          enable row level security;
 alter table public.agents          enable row level security;
 alter table public.stock_movements enable row level security;
 alter table public.expenses        enable row level security;
-alter table public.waybills        enable row level security;
 alter table public.login_audit     enable row level security;
 alter table public.order_audit     enable row level security;
 
@@ -102,12 +101,6 @@ create policy "same org stock_movements"
 drop policy if exists "same org expenses" on public.expenses;
 create policy "same org expenses"
   on public.expenses for all
-  using (org_id = public.auth_org_id());
-
--- waybills
-drop policy if exists "same org waybills" on public.waybills;
-create policy "same org waybills"
-  on public.waybills for all
   using (org_id = public.auth_org_id());
 
 -- login_audit: no direct user access (service-role only)
