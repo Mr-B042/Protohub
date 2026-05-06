@@ -973,6 +973,13 @@ const writeStored = <T,>(key: string, value: T) => {
   }
 };
 
+// One-time migration: clear all localStorage mock data on first load after v2
+const MIGRATION_KEY = "protohub.clearedMockData.v2";
+if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)) {
+  window.localStorage.clear();
+  window.localStorage.setItem(MIGRATION_KEY, "true");
+}
+
 export function App({ onLogout }: { onLogout?: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
