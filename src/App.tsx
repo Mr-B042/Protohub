@@ -3054,7 +3054,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiExpenses,
           apiWaybills,
           apiNotifications,
-          apiStockCounts
+          apiStockCounts,
+          apiTeam
         ] = await Promise.allSettled([
           productsApi.list(),
           ordersApi.list({ limit: "500" }),
@@ -3063,7 +3064,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           expensesApi.list(),
           waybillsApi.list(),
           notificationsApi.list(),
-          stockApi.countSessions()
+          stockApi.countSessions(),
+          teamApi.list()
         ]);
 
         if (cancelled) return;
@@ -3096,6 +3098,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
         if (apiStockCounts.status === "fulfilled" && apiStockCounts.value?.length) {
           setStockCounts(apiStockCounts.value as any);
+        }
+        if (apiTeam.status === "fulfilled" && apiTeam.value?.length) {
+          setUsers(apiTeam.value.map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            active: u.active,
+            created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : ""
+          })));
         }
       } catch (_) {
         // API unreachable — continue with localStorage data
@@ -12907,10 +12919,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
             {modal === "addSalesRep" && (
               <div className="modal-form">
-                <label><span>Full Name</span><input value={salesRepName} onChange={(event) => setSalesRepName(event.target.value)} placeholder="John Doe" /></label>
-                <label><span>Email</span><input value={salesRepEmail} onChange={(event) => setSalesRepEmail(event.target.value)} placeholder="john@example.com" type="email" /></label>
+                <p>Fill in the details below. All fields marked with * are required.</p>
+                <label><span>Full Name *</span><input value={salesRepName} onChange={(event) => setSalesRepName(event.target.value)} placeholder="John Doe" required /></label>
+                <label><span>Email *</span><input value={salesRepEmail} onChange={(event) => setSalesRepEmail(event.target.value)} placeholder="john@example.com" type="email" required /></label>
                 <label>
-                  <span>Password</span>
+                  <span>Password *</span>
                   <div className="password-shell">
                     <input value={salesRepPassword} onChange={(event) => setSalesRepPassword(event.target.value)} placeholder="••••••••" type={showPasswordFields["repPwd"] ? "text" : "password"} />
                     <button type="button" className="!min-h-0 p-0" aria-label="Toggle password visibility" onClick={() => toggleShowPassword("repPwd")}><Eye className="w-4 h-4" /></button>
@@ -12938,9 +12951,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "addAgent" && (
 	              <div className="modal-form">
-                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="John Doe" /></label>
-                <label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} placeholder="0801234567" inputMode="tel" /></label>
-                <label><span>Primary Zone</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} placeholder="Lagos Island" /></label>
+                <p>Fill in the details below. All fields marked with * are required.</p>
+                <label><span>Full Name *</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="John Doe" required /></label>
+                <label><span>Phone Number *</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} placeholder="0801234567" inputMode="tel" required /></label>
+                <label><span>Primary Zone *</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} placeholder="Lagos Island" required /></label>
                 <label><span>Address (Optional)</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} placeholder="Full address..." /></label>
                 <div className="flex items-center justify-between py-1">
                   <div>
@@ -13288,10 +13302,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
             {modal === "addUser" && (
               <div className="modal-form">
-                <label><span>Full Name</span><input value={userFullName} onChange={(event) => setUserFullName(event.target.value)} placeholder="John Doe" /></label>
-                <label><span>Email</span><input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} placeholder="john@example.com" type="email" /></label>
+                <p>Fill in the user details below. All fields marked with * are required.</p>
+                <label><span>Full Name *</span><input value={userFullName} onChange={(event) => setUserFullName(event.target.value)} placeholder="John Doe" required /></label>
+                <label><span>Email *</span><input value={userEmail} onChange={(event) => setUserEmail(event.target.value)} placeholder="john@example.com" type="email" required /></label>
                 <label>
-                  <span>Password</span>
+                  <span>Password *</span>
                   <div className="password-shell">
                     <input value={userPassword} onChange={(event) => setUserPassword(event.target.value)} placeholder="••••••••" type={showPasswordFields["addUserPwd"] ? "text" : "password"} />
                     <button type="button" className="!min-h-0 p-0" aria-label="Toggle password visibility" onClick={() => toggleShowPassword("addUserPwd")}><Eye className="w-4 h-4" /></button>
