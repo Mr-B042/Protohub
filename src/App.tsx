@@ -63,6 +63,7 @@ import {
   Zap
 } from "lucide-react";
 import { auth } from "./lib/auth";
+import { realtimeClient } from "./lib/realtime";
 import {
   productsApi, ordersApi, agentsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, stockApi as _stockApi
@@ -1003,6 +1004,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showOrdersDateRange, setShowOrdersDateRange] = useState(false);
   const [ordersDateRange, setOrdersDateRange] = useState<DateRange>({ start: "", end: "" });
   const [orderSearch, setOrderSearch] = useState("");
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [orderStatus, setOrderStatus] = useState<OrderStatus>("All Orders");
   const [orderSource, setOrderSource] = useState<OrderSource>("All Sources");
   const [orderLocation, setOrderLocation] = useState<OrderLocation>("All Locations");
@@ -1196,6 +1198,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [toast, setToast] = useState("");
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [orderAuditLog, setOrderAuditLog] = useState<{ id: string; from_status: string | null; to_status: string; note: string | null; created_at: string; changed_by: string | null }[]>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedSalesRepId, setSelectedSalesRepId] = useState("");
@@ -3119,6 +3122,67 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch audit log when order details modal opens
+  useEffect(() => {
+    if (modal === "orderDetails" && selectedOrderId) {
+      ordersApi.audit(selectedOrderId).then(setOrderAuditLog).catch(() => setOrderAuditLog([]));
+    } else {
+      setOrderAuditLog([]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, selectedOrderId]);
+
+  // Supabase Realtime — listen for new orders and surface a notification
+  useEffect(() => {
+    const user = auth.getUser();
+    if (!realtimeClient || !user?.orgId) return;
+
+    const channel = realtimeClient
+      .channel("orders-realtime")
+      .on(
+        "postgres_changes" as any,
+        { event: "INSERT", schema: "public", table: "orders", filter: `org_id=eq.${user.orgId}` },
+        (payload: any) => {
+          const order = payload.new;
+          if (!order) return;
+          // Add to tracked orders if not already present
+          setTrackedOrders((prev) => {
+            if (prev.some((o) => o.id === order.id)) return prev;
+            const newOrder = {
+              id: order.id,
+              customer: order.customer,
+              phone: order.phone,
+              whatsapp: order.whatsapp,
+              email: order.email,
+              address: order.address,
+              city: order.city,
+              state: order.state,
+              productName: order.product_name,
+              packageName: order.package_name,
+              productId: order.product_id,
+              packageId: order.package_id,
+              quantity: order.quantity,
+              amount: order.amount,
+              currency: order.currency,
+              source: order.source,
+              location: order.location,
+              assignedRepId: order.assigned_rep_id,
+              status: order.status,
+              date: order.date,
+              createdAt: order.created_at,
+              notes: []
+            };
+            return [newOrder as any, ...prev];
+          });
+          showToast(`New order from ${order.customer} just came in!`);
+        }
+      )
+      .subscribe();
+
+    return () => { realtimeClient!.removeChannel(channel); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
   useEffect(() => {
     if (!publicEmbedParams) return;
@@ -3866,6 +3930,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     link.remove();
     URL.revokeObjectURL(url);
     showToast("Inventory exported as CSV.");
+  };
+
+  const printWaybill = (w: WaybillRecord) => {
+    const win = window.open("", "_blank", "width=800,height=600");
+    if (!win) return;
+    win.document.write(`<!DOCTYPE html><html><head><title>Waybill ${w.id}</title>
+<style>body{font-family:Arial,sans-serif;margin:40px;color:#111}h1{font-size:20px;margin-bottom:4px}h2{font-size:14px;font-weight:normal;color:#555;margin:0 0 24px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;font-size:13px}th{background:#f5f5f5;font-weight:600}.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}.status-transit{background:#dbeafe;color:#1d4ed8}.status-received{background:#dcfce7;color:#15803d}.status-returned{background:#fef3c7;color:#92400e}.status-cancelled{background:#f3f4f6;color:#6b7280}@media print{button{display:none}}</style></head>
+<body>
+<h1>ProtoHub CRM — Waybill</h1>
+<h2>${w.id} · Printed ${new Date().toLocaleDateString("en-GB")}</h2>
+<table>
+<tr><th>Product</th><td>${w.productName}</td><th>Quantity</th><td>${w.quantity} units</td></tr>
+<tr><th>From</th><td>${w.sendingState}</td><th>To</th><td>${w.receivingState}</td></tr>
+<tr><th>Logistics Partner</th><td>${w.logisticsPartner || "—"}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "—"}</td></tr>
+<tr><th>Date Sent</th><td>${w.dateSent}</td><th>Date Received</th><td>${w.dateReceived || "—"}</td></tr>
+<tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${w.status}</span></td><th>Notes</th><td>${w.note || "—"}</td></tr>
+</table>
+<br/><button onclick="window.print()" style="padding:8px 20px;background:#1A6FBF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Print</button>
+</body></html>`);
+    win.document.close();
   };
 
   const exportFinancialReport = () => {
@@ -4693,6 +4777,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     showToast(`${orderId} moved to ${nextStatus}.`);
     ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch(() => {});
+  };
+
+  const bulkUpdateOrderStatus = (nextStatus: Exclude<OrderStatus, "All Orders">) => {
+    if (selectedOrderIds.size === 0) return;
+    selectedOrderIds.forEach((orderId) => updateOrderStatus(orderId, nextStatus));
+    showToast(`${selectedOrderIds.size} order${selectedOrderIds.size > 1 ? "s" : ""} moved to ${nextStatus}.`);
+    setSelectedOrderIds(new Set());
   };
 
   const scheduleOrder = (orderId: string, range: ScheduleRange) => {
@@ -7549,6 +7640,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </header>
 
+              {/* Getting-started checklist — shown only for new accounts with no data */}
+              {products.length === 0 && trackedOrders.length === 0 && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-blue-800">Welcome to ProtoHub! Here's how to get started:</p>
+                    <p className="text-xs text-blue-600 mt-0.5">Complete these steps to start tracking your business.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[
+                      { step: "1", label: "Add your first product", desc: "Go to Inventory → Add Product", page: "Inventory" as ActivePage },
+                      { step: "2", label: "Invite your team", desc: "Go to User Management → Add User", page: "User Management" as ActivePage },
+                      { step: "3", label: "Create your first order", desc: "Go to Orders → Create Order", page: "Orders" as ActivePage }
+                    ].map((item) => (
+                      <button
+                        key={item.step}
+                        onClick={() => setActivePage(item.page)}
+                        className="!min-h-0 text-left flex gap-3 items-start p-3 rounded-xl bg-white border border-blue-100 hover:border-blue-300 transition-colors"
+                      >
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#1A6FBF] text-white text-xs font-bold shrink-0">{item.step}</span>
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-3 mb-6">
                 <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
                   {periods.map((item) => (
@@ -8046,11 +8166,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </select>
                 </div>
 
+                {/* Bulk action bar */}
+                {selectedOrderIds.size > 0 && (
+                  <div className="flex items-center gap-3 px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
+                    <span className="font-semibold text-blue-800">{selectedOrderIds.size} selected</span>
+                    <span className="text-blue-300">·</span>
+                    <span className="text-blue-700 font-medium">Mark as:</span>
+                    {(["Confirmed","In Process","Dispatched","Delivered","Postponed","Cancelled"] as const).map((s) => (
+                      <button key={s} onClick={() => bulkUpdateOrderStatus(s)} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-blue-200 bg-white text-blue-700 rounded-md hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{s}</button>
+                    ))}
+                    <button onClick={() => setSelectedOrderIds(new Set())} className="!min-h-0 ml-auto px-2.5 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">Clear</button>
+                  </div>
+                )}
+
                 {/* Table */}
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                        <th className="px-4 py-3 w-8">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300"
+                            checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
+                              } else {
+                                setSelectedOrderIds((prev) => {
+                                  const next = new Set(prev);
+                                  pagedOrderRows.forEach((o) => next.delete(o.id));
+                                  return next;
+                                });
+                              }
+                            }}
+                          />
+                        </th>
                         {["Order","Customer","Product","Rep / Agent","Source","Status","Location","Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
@@ -8058,14 +8209,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
                           const status = order.status ?? "New";
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
-                            <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                            <tr key={order.id} className={`hover:bg-gray-50 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50" : ""}`}>
+                              <td className="px-4 py-3.5 w-8">
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-gray-300"
+                                  checked={selectedOrderIds.has(order.id)}
+                                  onChange={(e) => {
+                                    setSelectedOrderIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </td>
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 <div className="font-bold text-[#1A6FBF] text-xs">{order.id}</div>
                                 <div className="text-[10px] text-gray-400 mt-0.5">{order.date}</div>
@@ -8971,6 +9136,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   </>
                                 )}
                                 <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-blue-100 text-blue-700 bg-blue-50 text-xs font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
+                                <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w)}>Print</button>
                               </div>
                             </td>
                           </tr>
@@ -12526,6 +12692,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            <span>{note.by} · {displayDateFromKey(note.date)}</span>
 	                          </div>
 	                          <p className="text-sm text-gray-700 m-0">{note.text}{note.followUpDate ? ` · Follow-up: ${displayDateFromKey(note.followUpDate)}` : ""}</p>
+	                        </div>
+	                      ))}
+	                    </div>
+	                  </section>
+	                )}
+	
+	                	
+	                {/* Status Audit Timeline */}
+	                {orderAuditLog.length > 0 && (
+	                  <section>
+	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Status History</h3>
+	                    <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
+	                      {orderAuditLog.map((entry) => (
+	                        <div key={entry.id} className="flex items-start gap-2 text-xs text-gray-600">
+	                          <span className="mt-0.5 w-2 h-2 rounded-full bg-[#1A6FBF] shrink-0" />
+	                          <div>
+	                            <span className="font-semibold text-gray-900">{entry.from_status ?? "New"} → {entry.to_status}</span>
+	                            {entry.note && <span className="text-gray-500"> · {entry.note}</span>}
+	                            <div className="text-gray-400 mt-0.5">{new Date(entry.created_at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</div>
+	                          </div>
 	                        </div>
 	                      ))}
 	                    </div>

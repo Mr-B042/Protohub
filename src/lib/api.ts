@@ -82,7 +82,10 @@ export const authApi = {
   me: () => get<{ user: { id: string; orgId: string; name: string; role: string; email: string } }>("/api/auth/me"),
 
   invite: (body: { name: string; email: string; password: string; role: string }) =>
-    post<{ message: string }>("/api/auth/invite", body)
+    post<{ message: string }>("/api/auth/invite", body),
+
+  resetPassword: (email: string) =>
+    post<{ message: string }>("/api/auth/reset-password", { email })
 };
 
 // ── Products ──────────────────────────────────────────────
@@ -105,7 +108,8 @@ export const ordersApi = {
   create: (body: unknown) => post<any>("/api/orders", body),
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/orders/${id}/status`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
-  delete: (id: string) => del<void>(`/api/orders/${id}`)
+  delete: (id: string) => del<void>(`/api/orders/${id}`),
+  audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`)
 };
 
 // ── Agents ────────────────────────────────────────────────

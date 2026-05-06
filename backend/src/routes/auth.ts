@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase, supabaseAuth } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -78,6 +79,9 @@ router.post("/login", async (req, res) => {
 
   const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
   if (error || !data.session) {
+    logger.warn("login failed", { email, reason: error?.message ?? "no session" });
+    // Record failed attempt (fire-and-forget, never blocks login flow)
+    void supabase.from("login_audit").insert({ email, success: false, ip: null });
     res.status(401).json({ error: "Invalid email or password." });
     return;
   }
@@ -97,6 +101,9 @@ router.post("/login", async (req, res) => {
     res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
     return;
   }
+
+  void supabase.from("login_audit").insert({ email, success: true, ip: null });
+  logger.info("login success", { userId: profile.id, email, role: profile.role });
 
   res.json({
     accessToken:  data.session.access_token,
@@ -208,6 +215,38 @@ router.post("/invite", requireAuth, async (req, res) => {
   }
 
   res.status(201).json({ message: `${name} added as ${role}.` });
+});
+
+// ── POST /api/auth/reset-password ────────────────────────
+// Sends a Supabase magic link / password-reset email.
+router.post("/reset-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email || typeof email !== "string") {
+    res.status(400).json({ error: "email is required." });
+    return;
+  }
+  // Always return 200 so we don't leak whether an email is registered.
+  await supabase.auth.admin.generateLink({
+    type: "recovery",
+    email: email.trim().toLowerCase()
+  });
+  res.json({ message: "If that email is registered, a password-reset link has been sent." });
+});
+
+// ── POST /api/auth/set-password ──────────────────────────
+// Used after the user clicks the reset link and has a valid access token.
+router.post("/set-password", requireAuth, async (req, res) => {
+  const { password } = req.body;
+  if (!password || typeof password !== "string" || password.length < 8) {
+    res.status(400).json({ error: "Password must be at least 8 characters." });
+    return;
+  }
+  const { error } = await supabase.auth.admin.updateUserById(req.user!.id, { password });
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({ message: "Password updated successfully." });
 });
 
 export default router;

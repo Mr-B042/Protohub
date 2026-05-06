@@ -132,6 +132,10 @@ router.patch("/:id/status", async (req, res) => {
   }
   const { status, callOutcome, response, agentId } = parsed.data;
 
+  // Fetch current status for audit trail
+  const { data: existing } = await supabase
+    .from("orders").select("status, org_id").eq("id", req.params.id).single();
+
   const updates: Record<string, unknown> = { status };
   if (callOutcome)  updates.call_outcome    = callOutcome;
   if (response)     updates.response        = response;
@@ -140,14 +144,9 @@ router.patch("/:id/status", async (req, res) => {
   if (status === "Delivered") {
     updates.delivered_date  = new Date().toISOString().split("T")[0];
     updates.stock_deducted  = true;
-  } else {
-    // Reversing from Delivered — clear delivered fields
-    const { data: existing } = await supabase
-      .from("orders").select("status").eq("id", req.params.id).single();
-    if (existing?.status === "Delivered") {
-      updates.delivered_date = null;
-      updates.stock_deducted = false;
-    }
+  } else if (existing?.status === "Delivered") {
+    updates.delivered_date = null;
+    updates.stock_deducted = false;
   }
 
   const { data, error } = await supabase
@@ -160,7 +159,31 @@ router.patch("/:id/status", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Fire-and-forget audit log
+  supabase.from("order_audit").insert({
+    order_id:    req.params.id,
+    org_id:      req.user!.orgId,
+    changed_by:  req.user!.id,
+    from_status: existing?.status ?? null,
+    to_status:   status,
+    note:        req.body.reason ?? null
+  });
+
   res.json(data);
+});
+
+// ── GET /api/orders/:id/audit ─────────────────────────────
+router.get("/:id/audit", async (req, res) => {
+  const { data, error } = await supabase
+    .from("order_audit")
+    .select("id, from_status, to_status, note, created_at, changed_by")
+    .eq("order_id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .order("created_at", { ascending: false });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json(data ?? []);
 });
 
 // ── PATCH /api/orders/:id ─────────────────────────────────
