@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { sendOrderStatusEmail, sendNewOrderEmail } from "../lib/mailer.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -113,6 +114,19 @@ router.post("/", async (req, res) => {
     }
     return;
   }
+
+  // Fire-and-forget new order email
+  sendNewOrderEmail(req.user!.orgId, {
+    id:           data.id,
+    customer:     data.customer,
+    email:        data.email,
+    phone:        data.phone,
+    product_name: data.product_name,
+    amount:       data.amount,
+    currency:     data.currency,
+    source:       data.source
+  });
+
   res.status(201).json(data);
 });
 
@@ -169,6 +183,16 @@ router.patch("/:id/status", async (req, res) => {
     to_status:   status,
     note:        req.body.reason ?? null
   });
+
+  // Fire-and-forget status change email (only if order has customer email)
+  sendOrderStatusEmail(req.user!.orgId, {
+    id:           data.id,
+    customer:     data.customer,
+    email:        data.email,
+    product_name: data.product_name,
+    amount:       data.amount,
+    currency:     data.currency
+  }, existing?.status ?? null, status);
 
   res.json(data);
 });

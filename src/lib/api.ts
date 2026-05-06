@@ -181,4 +181,11 @@ export const teamApi = {
   update: (id: string, body: unknown) => patch<any>(`/api/auth/team/${id}`, body)
 };
 
+// ── Email Settings ────────────────────────────────────────
+export const emailSettingsApi = {
+  get:  ()            => get<any>("/api/email-settings"),
+  save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),
+  test: (to: string)  => post<{ message: string }>("/api/email-settings/test", { to })
+};
+
 export { ApiError };

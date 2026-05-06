@@ -67,7 +67,8 @@ import { auth } from "./lib/auth";
 import { realtimeClient } from "./lib/realtime";
 import {
   productsApi, ordersApi, agentsApi, stockApi,
-  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, stockApi as _stockApi
+  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, stockApi as _stockApi,
+  emailSettingsApi
 } from "./lib/api";
 import {
   Line,
@@ -1207,6 +1208,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
+
+  // ── Email Settings state ──────────────────────────────────
+  const defaultEmailTemplates = {
+    order_new:           { subject: "New order {{order_id}} received", body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you." },
+    order_status_change: { subject: "Your order {{order_id}} has been updated", body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business." },
+    order_delivered:     { subject: "Your order {{order_id}} has been delivered!", body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!" },
+    payroll_approved:    { subject: "Your payroll for {{period}} has been approved", body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you." }
+  };
+  const [emailSettings, setEmailSettings] = useState({
+    enabled: false,
+    provider: "mailjet" as "mailjet" | "resend",
+    api_key_public: "",
+    api_key_private: "",
+    resend_api_key: "",
+    from_name: "",
+    from_email: "",
+    reply_to: "",
+    triggers: { order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false },
+    templates: defaultEmailTemplates
+  });
+  const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
+  const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
+  const [emailTestTo, setEmailTestTo] = useState("");
+  const [emailTestSending, setEmailTestSending] = useState(false);
+  const [emailExpandedTemplate, setEmailExpandedTemplate] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState("");
@@ -2852,6 +2878,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     document.body.classList.toggle("mobile-menu-lock", mobileMenuOpen);
     return () => document.body.classList.remove("mobile-menu-lock");
   }, [mobileMenuOpen]);
+
+  // Load email settings when navigating to Settings page
+  useEffect(() => {
+    if (activePage !== "Settings") return;
+    setEmailSettingsLoading(true);
+    emailSettingsApi.get().then((data) => {
+      setEmailSettings({
+        enabled:         data.enabled ?? false,
+        provider:        data.provider ?? "mailjet",
+        api_key_public:  data.api_key_public ?? "",
+        api_key_private: data.api_key_private ? "••••••••" : "",
+        resend_api_key:  data.resend_api_key  ? "••••••••" : "",
+        from_name:       data.from_name ?? "",
+        from_email:      data.from_email ?? "",
+        reply_to:        data.reply_to ?? "",
+        triggers:        { order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false, ...data.triggers },
+        templates:       { ...defaultEmailTemplates, ...data.templates }
+      });
+    }).catch(() => {}).finally(() => setEmailSettingsLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
 
   useEffect(() => {
     const updateRoute = () => setHashRoute(window.location.hash);
@@ -11768,6 +11815,279 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   ))}
                 </div>
               </section>
+
+              {/* ── Email Settings ─────────────────────────────── */}
+              {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                <section className="space-y-3">
+                  <h2 className="text-base font-bold text-gray-800">Email Notifications</h2>
+                  <p className="text-sm text-gray-500">Send transactional emails to customers via Mailjet. Only owners and admins can configure this.</p>
+
+                  {emailSettingsLoading ? (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex items-center justify-center">
+                      <span className="text-sm text-gray-400">Loading email settings…</span>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-100">
+
+                      {/* Enable toggle */}
+                      <div className="p-5 flex items-center justify-between gap-4">
+                        <div>
+                          <h3 className="text-sm font-bold text-gray-900">Enable email sending</h3>
+                          <p className="text-sm text-gray-500 mt-0.5">Emails will only be sent when this is on and API keys are set.</p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={emailSettings.enabled}
+                          className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.enabled ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
+                          onClick={() => setEmailSettings((s) => ({ ...s, enabled: !s.enabled }))}
+                        >
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.enabled ? "left-5" : "left-0.5"}`} />
+                        </button>
+                      </div>
+
+                      {/* Provider selector */}
+                      <div className="p-5 space-y-3">
+                        <h3 className="text-sm font-bold text-gray-900">Email Provider</h3>
+                        <div className="flex gap-3">
+                          {(["mailjet", "resend"] as const).map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => setEmailSettings((s) => ({ ...s, provider: p }))}
+                              className={`flex-1 py-2.5 rounded-lg border text-sm font-semibold transition-colors capitalize ${
+                                emailSettings.provider === p
+                                  ? "bg-[#1A6FBF] border-[#1A6FBF] text-white"
+                                  : "bg-white border-gray-200 text-gray-600 hover:border-[#1A6FBF] hover:text-[#1A6FBF]"
+                              }`}
+                            >
+                              {p === "mailjet" ? "Mailjet" : "Resend"}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          {emailSettings.provider === "mailjet"
+                            ? "Uses your Mailjet account. Free tier: 200 emails/day, 6k/month."
+                            : "Uses your Resend account. Free tier: 3,000 emails/month."}
+                        </p>
+                      </div>
+
+                      {/* API keys — conditional per provider */}
+                      {emailSettings.provider === "mailjet" ? (
+                        <div className="p-5 space-y-4">
+                          <h3 className="text-sm font-bold text-gray-900">Mailjet API Keys</h3>
+                          <p className="text-xs text-gray-400">Find these in your Mailjet account → API Key Management.</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-500 mb-1">API Key (Public)</label>
+                              <input
+                                type="text"
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
+                                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                                value={emailSettings.api_key_public}
+                                onChange={(e) => setEmailSettings((s) => ({ ...s, api_key_public: e.target.value }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-500 mb-1">Secret Key (Private)</label>
+                              <input
+                                type="password"
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
+                                placeholder="••••••••••••••••••••••••••••••••"
+                                value={emailSettings.api_key_private}
+                                onChange={(e) => setEmailSettings((s) => ({ ...s, api_key_private: e.target.value }))}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-5 space-y-4">
+                          <h3 className="text-sm font-bold text-gray-900">Resend API Key</h3>
+                          <p className="text-xs text-gray-400">Find this in your Resend dashboard → API Keys.</p>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">API Key</label>
+                            <input
+                              type="password"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
+                              placeholder="re_••••••••••••••••••••••••••••••••"
+                              value={emailSettings.resend_api_key}
+                              onChange={(e) => setEmailSettings((s) => ({ ...s, resend_api_key: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sender identity */}
+                      <div className="p-5 space-y-4">
+                        <h3 className="text-sm font-bold text-gray-900">Sender Identity</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">From Name</label>
+                            <input
+                              type="text"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              placeholder="Your Store"
+                              value={emailSettings.from_name}
+                              onChange={(e) => setEmailSettings((s) => ({ ...s, from_name: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">From Email</label>
+                            <input
+                              type="email"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              placeholder="orders@yourstore.com"
+                              value={emailSettings.from_email}
+                              onChange={(e) => setEmailSettings((s) => ({ ...s, from_email: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-500 mb-1">Reply-To (optional)</label>
+                            <input
+                              type="email"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              placeholder="support@yourstore.com"
+                              value={emailSettings.reply_to}
+                              onChange={(e) => setEmailSettings((s) => ({ ...s, reply_to: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Trigger toggles */}
+                      <div className="p-5 space-y-3">
+                        <h3 className="text-sm font-bold text-gray-900">Email Triggers</h3>
+                        <p className="text-xs text-gray-400">Choose which events automatically send emails to customers.</p>
+                        {([
+                          { key: "order_new",           label: "New order placed",       desc: "Sent when an order is created (requires customer email on order)" },
+                          { key: "order_status_change", label: "Order status changed",   desc: "Sent on any status change except Delivered" },
+                          { key: "order_delivered",     label: "Order delivered",        desc: "Sent specifically when status changes to Delivered" },
+                          { key: "payroll_approved",    label: "Payroll approved",       desc: "Sent to the team member when their payroll is approved" }
+                        ] as { key: keyof typeof emailSettings.triggers; label: string; desc: string }[]).map(({ key, label, desc }) => (
+                          <div key={key} className="flex items-center justify-between gap-4 py-2">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">{label}</p>
+                              <p className="text-xs text-gray-400">{desc}</p>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={emailSettings.triggers[key]}
+                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.triggers[key] ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
+                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}
+                            >
+                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.triggers[key] ? "left-5" : "left-0.5"}`} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Email templates */}
+                      <div className="p-5 space-y-3">
+                        <h3 className="text-sm font-bold text-gray-900">Email Templates</h3>
+                        <p className="text-xs text-gray-400">Customise subject lines and body text. Use <code className="bg-gray-100 px-1 rounded">{"{{variable}}"}</code> placeholders.</p>
+                        {([
+                          { key: "order_new",           label: "New Order",        vars: "order_id, customer, phone, product_name, amount, currency, source" },
+                          { key: "order_status_change", label: "Status Changed",   vars: "order_id, customer, product_name, amount, currency, from_status, status" },
+                          { key: "order_delivered",     label: "Order Delivered",  vars: "order_id, customer, product_name, amount, currency" },
+                          { key: "payroll_approved",    label: "Payroll Approved", vars: "name, period, amount, currency" }
+                        ] as { key: keyof typeof emailSettings.templates; label: string; vars: string }[]).map(({ key, label, vars }) => (
+                          <div key={key} className="border border-gray-100 rounded-lg overflow-hidden">
+                            <button
+                              type="button"
+                              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                              onClick={() => setEmailExpandedTemplate(emailExpandedTemplate === key ? null : key)}
+                            >
+                              <span className="text-sm font-semibold text-gray-700">{label}</span>
+                              <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${emailExpandedTemplate === key ? "rotate-90" : ""}`} />
+                            </button>
+                            {emailExpandedTemplate === key && (
+                              <div className="p-4 space-y-3 bg-white">
+                                <p className="text-xs text-gray-400">Available variables: <span className="font-mono text-blue-600">{vars.split(", ").map((v) => `{{${v}}}`).join("  ")}</span></p>
+                                <div>
+                                  <label className="block text-xs font-semibold text-gray-500 mb-1">Subject</label>
+                                  <input
+                                    type="text"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                    value={emailSettings.templates[key].subject}
+                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], subject: e.target.value } } }))}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-gray-500 mb-1">Body</label>
+                                  <textarea
+                                    rows={6}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono resize-y"
+                                    value={emailSettings.templates[key].body}
+                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], body: e.target.value } } }))}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Test email */}
+                      <div className="p-5 space-y-3">
+                        <h3 className="text-sm font-bold text-gray-900">Send a Test Email</h3>
+                        <p className="text-xs text-gray-400">Verifies your API keys and sender identity are working. Save first.</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="email"
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                            placeholder="recipient@example.com"
+                            value={emailTestTo}
+                            onChange={(e) => setEmailTestTo(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            disabled={emailTestSending || !emailTestTo}
+                            className="px-4 py-2 text-sm font-semibold bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                            onClick={async () => {
+                              if (!emailTestTo) return;
+                              setEmailTestSending(true);
+                              try {
+                                await emailSettingsApi.test(emailTestTo);
+                                showToast(`Test email sent to ${emailTestTo}.`);
+                              } catch (err: any) {
+                                showToast(`Failed: ${err.message}`);
+                              } finally {
+                                setEmailTestSending(false);
+                              }
+                            }}
+                          >
+                            {emailTestSending ? "Sending…" : "Send Test"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Save button */}
+                      <div className="p-5 flex justify-end">
+                        <button
+                          type="button"
+                          disabled={emailSettingsSaving}
+                          className="px-6 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          onClick={async () => {
+                            setEmailSettingsSaving(true);
+                            try {
+                              await emailSettingsApi.save(emailSettings);
+                              showToast("Email settings saved.");
+                            } catch (err: any) {
+                              showToast(`Failed to save: ${err.message}`);
+                            } finally {
+                              setEmailSettingsSaving(false);
+                            }
+                          }}
+                        >
+                          {emailSettingsSaving ? "Saving…" : "Save Email Settings"}
+                        </button>
+                      </div>
+
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
           ) : activePage === "Inventory" ? (
             inventoryView === "history" ? (

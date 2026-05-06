@@ -13,8 +13,9 @@ import stockRoutes    from "./routes/stock.js";
 import expenseRoutes  from "./routes/expenses.js";
 import payrollRoutes  from "./routes/payroll.js";
 import customerRoutes from "./routes/customers.js";
-import notifRoutes    from "./routes/notifications.js";
-import waybillRoutes  from "./routes/waybills.js";
+import notifRoutes         from "./routes/notifications.js";
+import waybillRoutes       from "./routes/waybills.js";
+import emailSettingsRoutes from "./routes/email-settings.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -61,8 +62,9 @@ app.use("/api/stock",         stockRoutes);
 app.use("/api/expenses",      expenseRoutes);
 app.use("/api/payroll",       payrollRoutes);
 app.use("/api/customers",     customerRoutes);
-app.use("/api/notifications", notifRoutes);
-app.use("/api/waybills",      waybillRoutes);
+app.use("/api/notifications",  notifRoutes);
+app.use("/api/waybills",       waybillRoutes);
+app.use("/api/email-settings", emailSettingsRoutes);
 
 // ── Request logger ────────────────────────────────────────
 app.use((req, _res, next) => {
