@@ -34,28 +34,29 @@ router.get("/", async (req, res) => {
       from_email: "",
       reply_to: "",
       triggers: {
-        order_new: false,
-        order_status_change: true,
-        order_delivered: false,
-        payroll_approved: false
+        // Customer emails
+        order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false,
+        // Staff / internal emails
+        internal_order_new: true, internal_order_assigned: true, internal_order_delivered: true,
+        internal_order_rescheduled: true, internal_order_cancelled: true, internal_order_failed: true,
+        internal_low_stock: true, internal_weekly_report: true,
+        internal_waybill_dispatched: false, internal_new_team_member: false
       },
       templates: {
-        order_new: {
-          subject: "New order {{order_id}} received",
-          body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you."
-        },
-        order_status_change: {
-          subject: "Your order {{order_id}} has been updated",
-          body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business."
-        },
-        order_delivered: {
-          subject: "Your order {{order_id}} has been delivered!",
-          body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!"
-        },
-        payroll_approved: {
-          subject: "Your payroll for {{period}} has been approved",
-          body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you."
-        }
+        order_new:           { subject: "New order {{order_id}} received", body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you." },
+        order_status_change: { subject: "Your order {{order_id}} has been updated", body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business." },
+        order_delivered:     { subject: "Your order {{order_id}} has been delivered!", body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!" },
+        payroll_approved:    { subject: "Your payroll for {{period}} has been approved", body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you." },
+        internal_order_new:           { subject: "New order {{order_id}} — {{customer}}", body: "A new order has come in.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\nAssigned to: {{rep_name}}\n\nLog in to review it." },
+        internal_order_assigned:      { subject: "You've been assigned order {{order_id}}", body: "Hi {{recipient_name}},\n\nAn order just came in and you've been assigned to it.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nLog in to follow up." },
+        internal_order_delivered:     { subject: "Delivered ✓ — Order {{order_id}} ({{currency}} {{amount}})", body: "Order {{order_id}} has been marked as delivered.\n\nCustomer: {{customer}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nDelivered by: {{rep_name}}\n\nGreat work!" },
+        internal_order_rescheduled:   { subject: "Order {{order_id}} rescheduled — {{customer}}", body: "Order {{order_id}} has been postponed/rescheduled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease follow up at the scheduled time." },
+        internal_order_cancelled:     { subject: "Order {{order_id}} cancelled — {{customer}}", body: "Order {{order_id}} has been cancelled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for details." },
+        internal_order_failed:        { subject: "Order {{order_id}} failed — {{customer}}", body: "Order {{order_id}} has been marked as failed.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review and take action." },
+        internal_low_stock:           { subject: "Low stock alert — {{product_name}}", body: "Stock alert: {{product_name}} is running low.\n\nCurrent Stock: {{current_stock}}\nReorder Point: {{reorder_point}}\n\nPlease restock as soon as possible." },
+        internal_weekly_report:       { subject: "Weekly Report — w/e {{week_end}}", body: "Weekly Performance Report\n{{org_name}}\nPeriod: {{week_start}} to {{week_end}}\n\n── ORDERS ──────────────────────────\nTotal Orders:    {{total_orders}}\nDelivered:       {{delivered}}\nCancelled:       {{cancelled}}\nFailed:          {{failed}}\nDelivery Rate:   {{delivery_rate}}%\n\n── REVENUE & FINANCIALS ────────────\nRevenue:         {{currency}} {{revenue}}\nAds Spent:       {{currency}} {{ads_spent}}\nOther Expenses:  {{currency}} {{other_expenses}}\nTotal Expenses:  {{currency}} {{total_expenses}}\nNet Profit:      {{currency}} {{net_profit}}\n\n── TOP PRODUCTS ────────────────────\n{{top_products}}\n\nHave a great week!" },
+        internal_waybill_dispatched:  { subject: "Waybill dispatched — {{waybill_id}}", body: "Waybill {{waybill_id}} has been dispatched.\n\nDestination: {{destination}}\nItems: {{items}}\nDispatched by: {{rep_name}}\n\nLog in to track it." },
+        internal_new_team_member:     { subject: "Welcome to {{org_name}}, {{recipient_name}}!", body: "Hi {{recipient_name}},\n\nYou've been added to {{org_name}} on ProtoHub as {{role}}.\n\nLog in to get started.\n\nWelcome aboard!" }
       },
       updated_at: null
     });
@@ -80,18 +81,9 @@ const SettingsSchema = z.object({
   from_name:       z.string(),
   from_email:      z.string().email().or(z.literal("")),
   reply_to:        z.string().email().or(z.literal("")).optional(),
-  triggers: z.object({
-    order_new:           z.boolean(),
-    order_status_change: z.boolean(),
-    order_delivered:     z.boolean(),
-    payroll_approved:    z.boolean()
-  }),
-  templates: z.object({
-    order_new:           TemplateSchema,
-    order_status_change: TemplateSchema,
-    order_delivered:     TemplateSchema,
-    payroll_approved:    TemplateSchema
-  })
+  // Accept any trigger keys (passthrough so new triggers don't break validation)
+  triggers:  z.record(z.boolean()),
+  templates: z.record(TemplateSchema)
 });
 
 router.put("/", async (req, res) => {

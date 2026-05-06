@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { sendLowStockEmail } from "../lib/mailer.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -97,6 +98,12 @@ router.post("/update",
         type:       "low_stock",
         message:    `Low stock: ${product.name} — warehouse down to ${newStock} unit${newStock === 1 ? "" : "s"} (reorder point: ${product.reorder_point})`,
         product_id: productId
+      });
+      // Fire-and-forget low stock email
+      sendLowStockEmail(req.user!.orgId, {
+        name:         product.name,
+        currentStock: newStock,
+        reorderPoint: product.reorder_point
       });
     }
 

@@ -23,5 +23,6 @@
     }
   },
   "include": ["src"],
+  "exclude": ["src/App 2.tsx"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

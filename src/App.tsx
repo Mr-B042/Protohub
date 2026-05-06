@@ -1210,11 +1210,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
 
   // ── Email Settings state ──────────────────────────────────
-  const defaultEmailTemplates = {
-    order_new:           { subject: "New order {{order_id}} received", body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you." },
-    order_status_change: { subject: "Your order {{order_id}} has been updated", body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business." },
-    order_delivered:     { subject: "Your order {{order_id}} has been delivered!", body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!" },
-    payroll_approved:    { subject: "Your payroll for {{period}} has been approved", body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you." }
+  const defaultEmailTemplates: Record<string, { subject: string; body: string }> = {
+    order_new:                    { subject: "New order {{order_id}} received", body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you." },
+    order_status_change:          { subject: "Your order {{order_id}} has been updated", body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business." },
+    order_delivered:              { subject: "Your order {{order_id}} has been delivered!", body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!" },
+    payroll_approved:             { subject: "Your payroll for {{period}} has been approved", body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you." },
+    internal_order_new:           { subject: "New order {{order_id}} — {{customer}}", body: "A new order has come in.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\nAssigned to: {{rep_name}}\n\nLog in to review it." },
+    internal_order_assigned:      { subject: "You've been assigned order {{order_id}}", body: "Hi {{recipient_name}},\n\nAn order just came in and you've been assigned to it.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nLog in to follow up." },
+    internal_order_delivered:     { subject: "Delivered ✓ — Order {{order_id}} ({{currency}} {{amount}})", body: "Order {{order_id}} has been marked as delivered.\n\nCustomer: {{customer}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nDelivered by: {{rep_name}}\n\nGreat work!" },
+    internal_order_rescheduled:   { subject: "Order {{order_id}} rescheduled — {{customer}}", body: "Order {{order_id}} has been postponed/rescheduled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease follow up at the scheduled time." },
+    internal_order_cancelled:     { subject: "Order {{order_id}} cancelled — {{customer}}", body: "Order {{order_id}} has been cancelled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for details." },
+    internal_order_failed:        { subject: "Order {{order_id}} failed — {{customer}}", body: "Order {{order_id}} has been marked as failed.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review and take action." },
+    internal_low_stock:           { subject: "Low stock alert — {{product_name}}", body: "Stock alert: {{product_name}} is running low.\n\nCurrent Stock: {{current_stock}}\nReorder Point: {{reorder_point}}\n\nPlease restock as soon as possible." },
+    internal_weekly_report:       { subject: "Weekly Report — w/e {{week_end}}", body: "Weekly Performance Report\n{{org_name}}\nPeriod: {{week_start}} to {{week_end}}\n\n── ORDERS ──────────────────────────\nTotal Orders:    {{total_orders}}\nDelivered:       {{delivered}}\nCancelled:       {{cancelled}}\nFailed:          {{failed}}\nDelivery Rate:   {{delivery_rate}}%\n\n── REVENUE & FINANCIALS ────────────\nRevenue:         {{currency}} {{revenue}}\nAds Spent:       {{currency}} {{ads_spent}}\nOther Expenses:  {{currency}} {{other_expenses}}\nTotal Expenses:  {{currency}} {{total_expenses}}\nNet Profit:      {{currency}} {{net_profit}}\n\n── TOP PRODUCTS ────────────────────\n{{top_products}}\n\nHave a great week!" },
+    internal_waybill_dispatched:  { subject: "Waybill dispatched — {{waybill_id}}", body: "Waybill {{waybill_id}} has been dispatched.\n\nDestination: {{destination}}\nItems: {{items}}\nDispatched by: {{rep_name}}\n\nLog in to track it." },
+    internal_new_team_member:     { subject: "Welcome to {{org_name}}, {{recipient_name}}!", body: "Hi {{recipient_name}},\n\nYou've been added to {{org_name}} on ProtoHub as {{role}}.\n\nLog in to get started.\n\nWelcome aboard!" }
+  };
+  const defaultTriggers: Record<string, boolean> = {
+    order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false,
+    internal_order_new: true, internal_order_assigned: true, internal_order_delivered: true,
+    internal_order_rescheduled: true, internal_order_cancelled: true, internal_order_failed: true,
+    internal_low_stock: true, internal_weekly_report: true,
+    internal_waybill_dispatched: false, internal_new_team_member: false
   };
   const [emailSettings, setEmailSettings] = useState({
     enabled: false,
@@ -1225,9 +1242,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     from_name: "",
     from_email: "",
     reply_to: "",
-    triggers: { order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false },
-    templates: defaultEmailTemplates
+    triggers: { ...defaultTriggers },
+    templates: { ...defaultEmailTemplates }
   });
+  const [emailWeeklyReportSending, setEmailWeeklyReportSending] = useState(false);
   const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
   const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
   const [emailTestTo, setEmailTestTo] = useState("");
@@ -2893,7 +2911,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         from_name:       data.from_name ?? "",
         from_email:      data.from_email ?? "",
         reply_to:        data.reply_to ?? "",
-        triggers:        { order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false, ...data.triggers },
+        triggers:        { ...defaultTriggers, ...data.triggers },
         templates:       { ...defaultEmailTemplates, ...data.templates }
       });
     }).catch(() => {}).finally(() => setEmailSettingsLoading(false));
@@ -11954,73 +11972,131 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                       </div>
 
-                      {/* Trigger toggles */}
+                      {/* ── Customer email triggers ──────────────── */}
                       <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Email Triggers</h3>
-                        <p className="text-xs text-gray-400">Choose which events automatically send emails to customers.</p>
+                        <h3 className="text-sm font-bold text-gray-900">Customer Emails</h3>
+                        <p className="text-xs text-gray-400">Sent directly to the customer. Requires the order to have a customer email address.</p>
                         {([
-                          { key: "order_new",           label: "New order placed",       desc: "Sent when an order is created (requires customer email on order)" },
-                          { key: "order_status_change", label: "Order status changed",   desc: "Sent on any status change except Delivered" },
-                          { key: "order_delivered",     label: "Order delivered",        desc: "Sent specifically when status changes to Delivered" },
+                          { key: "order_new",           label: "New order confirmation", desc: "Sent when an order is created" },
+                          { key: "order_status_change", label: "Status update",          desc: "Sent on any status change except Delivered" },
+                          { key: "order_delivered",     label: "Delivery confirmation",  desc: "Sent when status changes to Delivered" },
                           { key: "payroll_approved",    label: "Payroll approved",       desc: "Sent to the team member when their payroll is approved" }
-                        ] as { key: keyof typeof emailSettings.triggers; label: string; desc: string }[]).map(({ key, label, desc }) => (
+                        ]).map(({ key, label, desc }) => (
                           <div key={key} className="flex items-center justify-between gap-4 py-2">
                             <div>
                               <p className="text-sm font-medium text-gray-800">{label}</p>
                               <p className="text-xs text-gray-400">{desc}</p>
                             </div>
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={emailSettings.triggers[key]}
+                            <button type="button" role="switch" aria-checked={!!emailSettings.triggers[key]}
                               className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.triggers[key] ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
-                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}
-                            >
+                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}>
                               <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.triggers[key] ? "left-5" : "left-0.5"}`} />
                             </button>
                           </div>
                         ))}
                       </div>
 
-                      {/* Email templates */}
+                      {/* ── Staff / internal triggers ────────────── */}
+                      <div className="p-5 space-y-3">
+                        <h3 className="text-sm font-bold text-gray-900">Staff Notifications</h3>
+                        <p className="text-xs text-gray-400">Internal emails sent to your team. Owner receives all. Recipients shown per trigger.</p>
+                        {([
+                          { key: "internal_order_new",         label: "New order in",           desc: "→ Owner + Admins", badge: "owner+admin" },
+                          { key: "internal_order_assigned",    label: "Order assigned to rep",  desc: "→ Assigned rep only", badge: "rep" },
+                          { key: "internal_order_delivered",   label: "Order delivered",        desc: "→ Owner + Admins", badge: "owner+admin" },
+                          { key: "internal_order_rescheduled", label: "Order rescheduled",      desc: "→ Owner + Admins + Assigned rep", badge: "all" },
+                          { key: "internal_order_cancelled",   label: "Order cancelled",        desc: "→ Owner + Admins", badge: "owner+admin" },
+                          { key: "internal_order_failed",      label: "Order failed",           desc: "→ Owner + Admins", badge: "owner+admin" },
+                          { key: "internal_low_stock",         label: "Low stock alert",        desc: "→ Owner + Admins + Inventory Managers", badge: "owner+admin+inv" },
+                          { key: "internal_weekly_report",     label: "Weekly report",          desc: "→ Owner only (send manually or via cron)", badge: "owner" },
+                          { key: "internal_waybill_dispatched",label: "Waybill dispatched",     desc: "→ Owner + Admins", badge: "owner+admin" },
+                          { key: "internal_new_team_member",   label: "New team member welcome",desc: "→ New member only", badge: "member" }
+                        ]).map(({ key, label, desc }) => (
+                          <div key={key} className="flex items-center justify-between gap-4 py-2">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">{label}</p>
+                              <p className="text-xs text-gray-400">{desc}</p>
+                            </div>
+                            <button type="button" role="switch" aria-checked={!!emailSettings.triggers[key]}
+                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.triggers[key] ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
+                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}>
+                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.triggers[key] ? "left-5" : "left-0.5"}`} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* ── Weekly report manual trigger ─────────── */}
+                      <div className="p-5 space-y-3 bg-blue-50 border-t border-blue-100">
+                        <h3 className="text-sm font-bold text-gray-900">Weekly Report</h3>
+                        <p className="text-xs text-gray-500">Sends the weekly summary (orders, delivery rate, revenue, expenses, net profit) to all owners. Enable the trigger above, then send manually or automate via a Monday 8am cron on <code className="bg-white px-1 rounded border border-gray-200">POST /api/email/weekly-report</code>.</p>
+                        <button
+                          type="button"
+                          disabled={emailWeeklyReportSending}
+                          className="px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          onClick={async () => {
+                            setEmailWeeklyReportSending(true);
+                            try {
+                              await (await import("./lib/api")).emailSettingsApi.save(emailSettings); // ensure latest saved
+                              const res = await fetch(`${(import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000"}/api/email/weekly-report`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", Authorization: `Bearer ${(await import("./lib/auth")).auth.getAccessToken() ?? ""}` }
+                              });
+                              const data = await res.json();
+                              if (!res.ok) throw new Error(data.error);
+                              showToast("Weekly report sent to owner(s).");
+                            } catch (err: any) {
+                              showToast(`Failed: ${err.message}`);
+                            } finally {
+                              setEmailWeeklyReportSending(false);
+                            }
+                          }}
+                        >
+                          {emailWeeklyReportSending ? "Sending…" : "Send Weekly Report Now"}
+                        </button>
+                      </div>
+
+                      {/* ── Email templates ──────────────────────── */}
                       <div className="p-5 space-y-3">
                         <h3 className="text-sm font-bold text-gray-900">Email Templates</h3>
-                        <p className="text-xs text-gray-400">Customise subject lines and body text. Use <code className="bg-gray-100 px-1 rounded">{"{{variable}}"}</code> placeholders.</p>
+                        <p className="text-xs text-gray-400">Customise subject and body. Use <code className="bg-gray-100 px-1 rounded">{"{{variable}}"}</code> placeholders.</p>
                         {([
-                          { key: "order_new",           label: "New Order",        vars: "order_id, customer, phone, product_name, amount, currency, source" },
-                          { key: "order_status_change", label: "Status Changed",   vars: "order_id, customer, product_name, amount, currency, from_status, status" },
-                          { key: "order_delivered",     label: "Order Delivered",  vars: "order_id, customer, product_name, amount, currency" },
-                          { key: "payroll_approved",    label: "Payroll Approved", vars: "name, period, amount, currency" }
-                        ] as { key: keyof typeof emailSettings.templates; label: string; vars: string }[]).map(({ key, label, vars }) => (
+                          { key: "order_new",                   label: "Customer: New Order",         vars: "order_id, customer, phone, product_name, amount, currency, source" },
+                          { key: "order_status_change",         label: "Customer: Status Changed",     vars: "order_id, customer, product_name, amount, currency, from_status, status" },
+                          { key: "order_delivered",             label: "Customer: Delivered",          vars: "order_id, customer, product_name, amount, currency" },
+                          { key: "payroll_approved",            label: "Staff: Payroll Approved",      vars: "name, period, amount, currency" },
+                          { key: "internal_order_new",          label: "Staff: New Order In",          vars: "order_id, customer, phone, product_name, amount, currency, source, rep_name" },
+                          { key: "internal_order_assigned",     label: "Staff: Order Assigned to Rep", vars: "order_id, customer, phone, product_name, amount, currency, source, recipient_name" },
+                          { key: "internal_order_delivered",    label: "Staff: Order Delivered",       vars: "order_id, customer, product_name, amount, currency, rep_name" },
+                          { key: "internal_order_rescheduled",  label: "Staff: Order Rescheduled",     vars: "order_id, customer, phone, product_name, scheduled_date, call_outcome, response, recipient_name" },
+                          { key: "internal_order_cancelled",    label: "Staff: Order Cancelled",       vars: "order_id, customer, phone, product_name, amount, currency, response" },
+                          { key: "internal_order_failed",       label: "Staff: Order Failed",          vars: "order_id, customer, phone, product_name, amount, currency, response" },
+                          { key: "internal_low_stock",          label: "Staff: Low Stock Alert",       vars: "product_name, current_stock, reorder_point, recipient_name" },
+                          { key: "internal_weekly_report",      label: "Staff: Weekly Report",         vars: "org_name, week_start, week_end, total_orders, delivered, cancelled, failed, delivery_rate, currency, revenue, ads_spent, other_expenses, total_expenses, net_profit, top_products" },
+                          { key: "internal_waybill_dispatched", label: "Staff: Waybill Dispatched",    vars: "waybill_id, destination, items, rep_name" },
+                          { key: "internal_new_team_member",    label: "Staff: Welcome New Member",    vars: "recipient_name, role, org_name" }
+                        ]).map(({ key, label, vars }) => (
                           <div key={key} className="border border-gray-100 rounded-lg overflow-hidden">
-                            <button
-                              type="button"
+                            <button type="button"
                               className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
-                              onClick={() => setEmailExpandedTemplate(emailExpandedTemplate === key ? null : key)}
-                            >
+                              onClick={() => setEmailExpandedTemplate(emailExpandedTemplate === key ? null : key)}>
                               <span className="text-sm font-semibold text-gray-700">{label}</span>
                               <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${emailExpandedTemplate === key ? "rotate-90" : ""}`} />
                             </button>
                             {emailExpandedTemplate === key && (
                               <div className="p-4 space-y-3 bg-white">
-                                <p className="text-xs text-gray-400">Available variables: <span className="font-mono text-blue-600">{vars.split(", ").map((v) => `{{${v}}}`).join("  ")}</span></p>
+                                <p className="text-xs text-gray-400">Variables: <span className="font-mono text-blue-600 text-[11px]">{vars.split(", ").map((v) => `{{${v}}}`).join("  ")}</span></p>
                                 <div>
                                   <label className="block text-xs font-semibold text-gray-500 mb-1">Subject</label>
-                                  <input
-                                    type="text"
-                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                                    value={emailSettings.templates[key].subject}
-                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], subject: e.target.value } } }))}
-                                  />
+                                  <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                    value={emailSettings.templates[key]?.subject ?? ""}
+                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], subject: e.target.value } } }))} />
                                 </div>
                                 <div>
                                   <label className="block text-xs font-semibold text-gray-500 mb-1">Body</label>
-                                  <textarea
-                                    rows={6}
-                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono resize-y"
-                                    value={emailSettings.templates[key].body}
-                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], body: e.target.value } } }))}
-                                  />
+                                  <textarea rows={6} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono resize-y"
+                                    value={emailSettings.templates[key]?.body ?? ""}
+                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], body: e.target.value } } }))} />
                                 </div>
                               </div>
                             )}

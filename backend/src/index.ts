@@ -16,6 +16,7 @@ import customerRoutes from "./routes/customers.js";
 import notifRoutes         from "./routes/notifications.js";
 import waybillRoutes       from "./routes/waybills.js";
 import emailSettingsRoutes from "./routes/email-settings.js";
+import emailReportsRoutes  from "./routes/email-reports.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -65,6 +66,7 @@ app.use("/api/customers",     customerRoutes);
 app.use("/api/notifications",  notifRoutes);
 app.use("/api/waybills",       waybillRoutes);
 app.use("/api/email-settings", emailSettingsRoutes);
+app.use("/api/email",          emailReportsRoutes);
 
 // ── Request logger ────────────────────────────────────────
 app.use((req, _res, next) => {

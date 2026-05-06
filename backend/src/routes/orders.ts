@@ -2,7 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { sendOrderStatusEmail, sendNewOrderEmail } from "../lib/mailer.js";
+import {
+  sendOrderStatusEmail, sendNewOrderEmail,
+  sendInternalNewOrderEmail, sendOrderAssignedEmail,
+  sendInternalDeliveredEmail, sendOrderRescheduledEmail,
+  sendOrderTerminalEmail
+} from "../lib/mailer.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -115,17 +120,29 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  // Fire-and-forget new order email
+  // Fire-and-forget emails
+  // Customer confirmation
   sendNewOrderEmail(req.user!.orgId, {
-    id:           data.id,
-    customer:     data.customer,
-    email:        data.email,
-    phone:        data.phone,
-    product_name: data.product_name,
-    amount:       data.amount,
-    currency:     data.currency,
-    source:       data.source
+    id: data.id, customer: data.customer, email: data.email,
+    phone: data.phone, product_name: data.product_name,
+    amount: data.amount, currency: data.currency, source: data.source
   });
+
+  // Internal: notify owner + admins
+  sendInternalNewOrderEmail(req.user!.orgId, {
+    id: data.id, customer: data.customer, phone: data.phone,
+    product_name: data.product_name, amount: data.amount,
+    currency: data.currency, source: data.source, rep_name: req.user!.name
+  });
+
+  // Internal: notify assigned rep (only if someone else assigned the order)
+  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
+    sendOrderAssignedEmail(req.user!.orgId, data.assigned_rep_id, {
+      id: data.id, customer: data.customer, phone: data.phone,
+      product_name: data.product_name, amount: data.amount,
+      currency: data.currency, source: data.source
+    });
+  }
 
   res.status(201).json(data);
 });
@@ -184,15 +201,32 @@ router.patch("/:id/status", async (req, res) => {
     note:        req.body.reason ?? null
   });
 
-  // Fire-and-forget status change email (only if order has customer email)
+  // Customer: status change email
   sendOrderStatusEmail(req.user!.orgId, {
-    id:           data.id,
-    customer:     data.customer,
-    email:        data.email,
-    product_name: data.product_name,
-    amount:       data.amount,
-    currency:     data.currency
+    id: data.id, customer: data.customer, email: data.email,
+    product_name: data.product_name, amount: data.amount, currency: data.currency
   }, existing?.status ?? null, status);
+
+  // Internal: per-status staff emails
+  if (status === "Delivered") {
+    sendInternalDeliveredEmail(req.user!.orgId, {
+      id: data.id, customer: data.customer,
+      product_name: data.product_name, amount: data.amount, currency: data.currency
+    }, req.user!.name);
+  } else if (status === "Postponed") {
+    sendOrderRescheduledEmail(req.user!.orgId, {
+      id: data.id, customer: data.customer, phone: data.phone,
+      product_name: data.product_name, scheduled_date: data.scheduled_date,
+      call_outcome: callOutcome, response,
+      assigned_rep_id: data.assigned_rep_id
+    });
+  } else if (status === "Cancelled" || status === "Failed") {
+    sendOrderTerminalEmail(req.user!.orgId, {
+      id: data.id, customer: data.customer, phone: data.phone,
+      product_name: data.product_name, amount: data.amount,
+      currency: data.currency, response
+    }, status as "Cancelled" | "Failed");
+  }
 
   res.json(data);
 });
