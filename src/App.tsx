@@ -4755,6 +4755,83 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Facebook ads demo loaded — 2 orders attributed to fb / paid.");
   };
 
+  const deductCompanionStockForOrder = (order: TrackedOrder) => {
+    const product = products.find((item) => item.id === order.productId);
+    const pkg = product?.packages.find((item) => item.id === order.packageId);
+    const companions = pkg?.companions ?? [];
+    if (companions.length === 0) {
+      return;
+    }
+    const movements: StockMovement[] = [];
+    setProducts((value) =>
+      value.map((item) => {
+        const companion = companions.find((c) => c.productId === item.id);
+        if (!companion) {
+          return item;
+        }
+        const nextWarehouse = Math.max(0, item.warehouseStock - companion.quantity);
+        movements.push({
+          id: makeMovementId(),
+          date: new Date().toISOString(),
+          productId: item.id,
+          productName: item.name,
+          type: "Order Fulfilled",
+          qty: -companion.quantity,
+          balanceAfter: nextWarehouse,
+          order: order.id,
+          by: ownerName,
+          note: `Companion of "${pkg?.name ?? "package"}" delivered with ${order.id}`
+        });
+        if (nextWarehouse <= item.reorderPoint && item.warehouseStock > item.reorderPoint) {
+          pushSystemNotification({
+            type: "low_stock",
+            message: `Low stock: ${item.name} — warehouse down to ${nextWarehouse} unit${nextWarehouse === 1 ? "" : "s"} (reorder point: ${item.reorderPoint})`,
+            productId: item.id
+          });
+        }
+        return { ...item, warehouseStock: nextWarehouse, unitsSold: item.unitsSold + companion.quantity };
+      })
+    );
+    if (movements.length > 0) {
+      setStockMovements((value) => [...movements, ...value]);
+    }
+  };
+
+  const restoreCompanionStockForOrder = (order: TrackedOrder) => {
+    const product = products.find((item) => item.id === order.productId);
+    const pkg = product?.packages.find((item) => item.id === order.packageId);
+    const companions = pkg?.companions ?? [];
+    if (companions.length === 0) {
+      return;
+    }
+    const movements: StockMovement[] = [];
+    setProducts((value) =>
+      value.map((item) => {
+        const companion = companions.find((c) => c.productId === item.id);
+        if (!companion) {
+          return item;
+        }
+        const nextWarehouse = item.warehouseStock + companion.quantity;
+        movements.push({
+          id: makeMovementId(),
+          date: new Date().toISOString(),
+          productId: item.id,
+          productName: item.name,
+          type: "Return",
+          qty: companion.quantity,
+          balanceAfter: nextWarehouse,
+          order: order.id,
+          by: ownerName,
+          note: `Companion stock restored: ${order.id} status reversed from Delivered`
+        });
+        return { ...item, warehouseStock: nextWarehouse, unitsSold: Math.max(0, item.unitsSold - companion.quantity) };
+      })
+    );
+    if (movements.length > 0) {
+      setStockMovements((value) => [...movements, ...value]);
+    }
+  };
+
   const deductProductStockForOrder = (order: TrackedOrder) => {
     if (!order.productId || order.stockDeducted) {
       return;
@@ -4814,6 +4891,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       }
     }
+    deductCompanionStockForOrder(order);
   };
 
   const orderTimelineNote = (text: string, followUpDate?: string, by = ownerName): OrderNote => ({
@@ -4870,6 +4948,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       },
       ...prev
     ]);
+    restoreCompanionStockForOrder(order);
   };
 
   const updateOrderStatus = (orderId: string, nextStatus: Exclude<OrderStatus, "All Orders">, reason?: string) => {
