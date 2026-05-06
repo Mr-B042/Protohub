@@ -3,7 +3,10 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import cron from "node-cron";
 import { logger } from "./lib/logger.js";
+import { supabase } from "./lib/supabase.js";
+import { sendWeeklyReport } from "./lib/mailer.js";
 
 import authRoutes     from "./routes/auth.js";
 import productRoutes  from "./routes/products.js";
@@ -82,4 +85,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 app.listen(PORT, () => {
   logger.info("server started", { port: PORT });
+});
+
+// ── Weekly report cron — every Sunday at 7:00 AM ──────────
+cron.schedule("0 7 * * 0", async () => {
+  logger.info("cron: sending weekly reports");
+  const { data: orgs } = await supabase.from("organizations").select("id");
+  for (const org of orgs ?? []) {
+    await sendWeeklyReport(org.id);
+  }
+  logger.info("cron: weekly reports done", { count: orgs?.length ?? 0 });
 });
