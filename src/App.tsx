@@ -9323,7 +9323,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="px-4 py-3 w-8 bg-gray-50">
+                        <th className="px-4 py-3 w-8 bg-gray-50 sticky left-0 z-20">
                           <input
                             type="checkbox"
                             className="rounded border-gray-300"
@@ -9357,7 +9357,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
                             <tr key={order.id} className={`hover:bg-gray-50 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50" : ""}`}>
-                              <td className="px-4 py-3.5 w-8">
+                              <td className={`px-4 py-3.5 w-8 sticky left-0 z-10 ${selectedOrderIds.has(order.id) ? "bg-blue-50" : "bg-white"}`}>
                                 <input
                                   type="checkbox"
                                   className="rounded border-gray-300"
@@ -9577,7 +9577,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-200">
-                        <th className="px-4 py-3 w-8 bg-gray-50">
+                        <th className="px-4 py-3 w-8 bg-gray-50 sticky left-0 z-20">
                           <input
                             type="checkbox"
                             className="rounded border-gray-300"
@@ -9611,7 +9611,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ) : (
                         pagedAbandonedCarts.map((cart) => (
                           <tr key={cart.id} className={`hover:bg-gray-50 transition-colors ${selectedCartIds.has(cart.id) ? "bg-blue-50" : ""}`}>
-                            <td className="px-4 py-3 w-8">
+                            <td className={`px-4 py-3 w-8 sticky left-0 z-10 ${selectedCartIds.has(cart.id) ? "bg-blue-50" : "bg-white"}`}>
                               <input
                                 type="checkbox"
                                 className="rounded border-gray-300"
