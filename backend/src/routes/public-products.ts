@@ -31,7 +31,6 @@ type DbProduct = {
   free_gift_product_ids: string[] | null;
   free_gift_state_restrictions: Record<string, string[]> | null;
   form_custom_text: string | null;
-  package_description: string | null;
   pricings: DbPricing[];
   packages: DbPackage[];
 };
@@ -67,7 +66,6 @@ const sanitiseProduct = (p: DbProduct) => ({
   freeGiftProductIds:          p.free_gift_product_ids ?? [],
   freeGiftStateRestrictions:   p.free_gift_state_restrictions ?? {},
   formCustomText:              p.form_custom_text ?? "",
-  packageDescription:          p.package_description ?? "",
   pricings:                    (p.pricings ?? []).map(sanitisePricing),
   packages:                    (p.packages ?? []).filter((pkg) => pkg.active).map(sanitisePackage)
 });
@@ -88,7 +86,7 @@ router.get("/:id", readRateLimit, async (req, res) => {
       can_be_cross_sell, can_be_free_gift,
       cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
       free_gift_product_ids, free_gift_state_restrictions,
-      form_custom_text, package_description,
+      form_custom_text,
       pricings: product_pricings(currency, selling_price, is_primary),
       packages: product_packages(id, name, description, quantity, price, currency, display_order, active)
     `)
@@ -117,7 +115,7 @@ router.get("/:id", readRateLimit, async (req, res) => {
         can_be_cross_sell, can_be_free_gift,
         cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
         free_gift_product_ids, free_gift_state_restrictions,
-        form_custom_text, package_description,
+        form_custom_text,
         pricings: product_pricings(currency, selling_price, is_primary),
         packages: product_packages(id, name, description, quantity, price, currency, display_order, active)
       `)
