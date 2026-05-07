@@ -3609,7 +3609,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiWaybills,
           apiNotifications,
           apiStockCounts,
-          apiTeam
+          apiTeam,
+          apiCarts
         ] = await Promise.allSettled([
           productsApi.list(),
           ordersApi.list({ limit: "2000" }),
@@ -3619,13 +3620,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           waybillsApi.list(),
           notificationsApi.list(),
           stockApi.countSessions(),
-          teamApi.list()
+          teamApi.list(),
+          cartsApi.list()
         ]);
 
         if (cancelled) return;
 
         // Check if ALL requests rejected (total API failure)
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam];
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts];
         const allFailed = allResults.every((r) => r.status === "rejected");
         if (allFailed) {
           setDataError("Unable to reach the server. Showing cached data.");
@@ -3677,6 +3679,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             active: u.active,
             created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : ""
           })));
+        }
+        if (apiCarts.status === "fulfilled" && Array.isArray(apiCarts.value)) {
+          // The API normalize layer converts snake_case → camelCase; the cart
+          // shape arrives matching AbandonedCartRecord. Replace local state
+          // (don't merge) so server is source of truth.
+          setAbandonedCarts(apiCarts.value as any);
         }
       } catch (_) {
         if (!cancelled) setDataError("Unable to reach the server. Showing cached data.");
