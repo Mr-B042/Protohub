@@ -25,7 +25,7 @@ import {
 import { 
   EmbedTab, 
   Product, 
-  Pricing,
+  ProductPricing,
   ActivePage
 } from '../types';
 
@@ -43,7 +43,7 @@ interface EmbedFormProps {
   nigeriaStates: readonly string[];
   updateProductStates: (productId: string, states: string[]) => void;
   openAddProductModal: () => void;
-  primaryPricing: (product: Product) => Pricing | undefined;
+  primaryPricing: (product: Product) => ProductPricing | undefined;
   formatProductMoney: (amount: number, currency: string) => string;
   generatedEmbedCode: string;
   copyEmbedCode: () => void;
