@@ -38,9 +38,15 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+  // Upsert by id so callers (e.g. order delivery-fee sync, waybill creation)
+  // can call this repeatedly with the same id when state changes — category
+  // and amount get updated instead of failing on duplicate key.
   const { data, error } = await supabase
     .from("expenses")
-    .insert({ id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy, product_id: d.productId ?? null })
+    .upsert(
+      { id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy, product_id: d.productId ?? null },
+      { onConflict: "id" }
+    )
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(201).json(data);

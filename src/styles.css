@@ -13,8 +13,10 @@
     --popover: 0 0% 100%;
     --popover-foreground: 224 71% 4%;
     
-    --primary: 221 83% 53%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 207 75% 50%;          /* #1F8FE0 — Protohub brand blue */
+    --primary-foreground: 0 0% 100%;
+    --brand-navy: 220 26% 17%;       /* #1F2937 — Protohub dark diamond */
+    --brand-navy-foreground: 0 0% 100%;
     
     --secondary: 210 40% 96%;
     --secondary-foreground: 222 47% 11%;
@@ -30,7 +32,7 @@
     
     --border: 214 32% 91%;
     --input: 214 32% 91%;
-    --ring: 221 83% 53%;
+    --ring: 207 75% 50%;             /* matches brand blue */
     
     --radius: 1rem;
     
@@ -63,8 +65,10 @@
     --popover: 222 24% 9%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 217 91% 65%;
-    --primary-foreground: 222 47% 11%;
+    --primary: 207 80% 60%;          /* brand blue, lifted for dark bg legibility */
+    --primary-foreground: 220 26% 12%;
+    --brand-navy: 220 22% 12%;       /* darker still in dark mode */
+    --brand-navy-foreground: 0 0% 98%;
 
     --secondary: 222 18% 14%;
     --secondary-foreground: 0 0% 98%;
@@ -80,7 +84,7 @@
 
     --border: 222 16% 18%;
     --input: 222 16% 18%;
-    --ring: 217 91% 60%;
+    --ring: 207 80% 60%;             /* matches brand blue, dark variant */
 
     --glass-bg: rgba(15, 18, 23, 0.7);
     --glass-border: rgba(255, 255, 255, 0.08);
@@ -109,7 +113,14 @@
 }
 
 @layer utilities {
-  /* Sticky first column for mobile table scroll */
+  /* Sticky first column for mobile table scroll.
+     `border-collapse: collapse` (set globally below) silently disables
+     position: sticky on <td>/<th> in Chrome and Safari, so we force
+     separate borders here. */
+  .sticky-col-first {
+    border-collapse: separate !important;
+    border-spacing: 0;
+  }
   .sticky-col-first th:first-child,
   .sticky-col-first td:first-child {
     position: sticky;
@@ -3808,8 +3819,8 @@ th {
 .modal-form textarea:focus,
 .modal-form select:focus {
   outline: none;
-  border-color: #1A6FBF;
-  box-shadow: 0 0 0 3px rgba(26, 111, 191, 0.12);
+  border-color: #1F8FE0;
+  box-shadow: 0 0 0 3px rgba(31, 143, 224, 0.18);
 }
 
 .modal-form textarea {
@@ -7638,4 +7649,192 @@ html.dark,
 .dark ::-webkit-scrollbar { background: hsl(var(--background)); }
 .dark ::-webkit-scrollbar-thumb { background: hsl(222 14% 25%); border-radius: 8px; }
 .dark ::-webkit-scrollbar-thumb:hover { background: hsl(222 14% 32%); }
+
+/* ── Public embed form: clean variant (Ordello-style) ───────────────── */
+/* Reset cascading .public-order-card defaults when .public-form-clean is present */
+article.public-order-card.public-form-clean {
+  display: block;
+  gap: 0;
+  padding: 24px;
+  box-shadow: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+  background: #fff;
+}
+article.public-order-card.public-form-clean .public-form-clean-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+article.public-order-card.public-form-clean .public-form-clean-grid label {
+  display: block;
+  margin: 0;
+}
+/* All inputs/selects in the clean form (including ones outside the .public-form-clean-grid container,
+   like the delivery dropdown) share the same compact look. */
+article.public-order-card.public-form-clean input[type="text"],
+article.public-order-card.public-form-clean input[type="tel"],
+article.public-order-card.public-form-clean input[type="email"],
+article.public-order-card.public-form-clean input[type="date"],
+article.public-order-card.public-form-clean input:not([type]),
+article.public-order-card.public-form-clean select,
+article.public-order-card.public-form-clean textarea {
+  width: 100% !important;
+  padding: 12px 16px !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 10px !important;
+  font-size: 15px !important;
+  background-color: #fff !important;
+  color: #111827 !important;
+  line-height: 1.4 !important;
+  box-sizing: border-box !important;
+  min-height: 0 !important;
+  height: auto !important;
+  font-family: inherit !important;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+/* Custom chevron for selects (since appearance:none removed the native arrow) */
+article.public-order-card.public-form-clean select {
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 16px center !important;
+  background-size: 14px !important;
+  padding-right: 40px !important;
+  cursor: pointer;
+}
+article.public-order-card.public-form-clean select:invalid { color: #9ca3af !important; }
+article.public-order-card.public-form-clean select option { color: #111827; }
+article.public-order-card.public-form-clean select option[value=""] { color: #9ca3af; }
+article.public-order-card.public-form-clean input:focus,
+article.public-order-card.public-form-clean select:focus,
+article.public-order-card.public-form-clean textarea:focus {
+  outline: none;
+  border-color: #1F8FE0;
+  box-shadow: 0 0 0 3px rgba(31,143,224,0.15);
+}
+article.public-order-card.public-form-clean input::placeholder,
+article.public-order-card.public-form-clean textarea::placeholder {
+  color: #9ca3af;
+}
+/* Field labels (e.g. "When would you like it delivered? *") — small + medium weight, with breathing room. */
+article.public-order-card.public-form-clean label > span:first-child {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 8px 0;
+  letter-spacing: 0;
+}
+/* Delivery-question label sits directly under the package picker — give it air */
+article.public-order-card.public-form-clean .package-picker-clean + label,
+article.public-order-card.public-form-clean .package-picker-clean ~ label {
+  display: block;
+  margin-top: 18px;
+}
+/* Confirmation checkbox row */
+article.public-order-card.public-form-clean label.preview-check {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #374151;
+  margin-top: 12px;
+}
+article.public-order-card.public-form-clean label.preview-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 1px solid #6b7280;
+  border-radius: 4px;
+  flex-shrink: 0;
+  accent-color: #1F8FE0;
+  min-height: 0;
+}
+/* Custom <select> styling — show a chevron on the right and grey out the empty-state option text */
+article.public-order-card.public-form-clean .public-form-clean-grid select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 14px;
+  padding-right: 40px;
+  cursor: pointer;
+}
+article.public-order-card.public-form-clean .public-form-clean-grid select:invalid {
+  color: #9ca3af;
+}
+article.public-order-card.public-form-clean .public-form-clean-grid select option {
+  color: #111827;
+}
+article.public-order-card.public-form-clean .public-form-clean-grid select option[value=""] {
+  color: #9ca3af;
+}
+article.public-order-card.public-form-clean .package-picker-clean { padding: 0; }
+article.public-order-card.public-form-clean .package-picker-clean label {
+  background: transparent;
+  border-radius: 0;
+  margin: 0;
+}
+article.public-order-card.public-form-clean .primary-button {
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+/* Clean form is always a single centered column — no side rail on any viewport.
+   Summary rail (if enabled) stacks underneath the form, also centered. */
+.public-form-layout:has(.public-form-clean),
+.public-form-layout:has(.public-form-clean) > * { grid-template-columns: none !important; }
+.public-form-layout:has(.public-form-clean) {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.public-form-layout:has(.public-form-clean) .public-form-clean { width: 100%; max-width: 640px; margin: 0 auto; }
+.public-form-layout:has(.public-form-clean) .public-order-summary-rail {
+  width: 100%;
+  max-width: 640px;
+  position: static !important;
+}
+@media (max-width: 768px) { article.public-order-card.public-form-clean { padding: 16px; } }
+
+/* Radio buttons inside the clean form's package picker: keep them tiny.
+   The blanket .public-order-card input rule above forces 44px min-height + 100% width,
+   which would otherwise stretch the radio into a giant circle. */
+article.public-order-card.public-form-clean .package-picker-clean input[type="radio"] {
+  min-height: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #6b7280;
+  border-radius: 50%;
+  margin: 4px 0 0;
+  flex-shrink: 0;
+  accent-color: #1F8FE0;
+}
+/* Ensure the label rows lay out as a horizontal flex even though .package-picker is a grid */
+article.public-order-card.public-form-clean .package-picker-clean { display: block !important; }
+article.public-order-card.public-form-clean .package-picker-clean > label {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 12px;
+}
+article.public-order-card.public-form-clean .package-picker-clean > label > div { flex: 1; min-width: 0; }
+article.public-order-card.public-form-clean .package-picker-clean > label > strong { white-space: nowrap; flex-shrink: 0; }
 

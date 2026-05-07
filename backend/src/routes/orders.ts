@@ -74,6 +74,12 @@ const OrderSchema = z.object({
   assignedRepId:  z.string().uuid().optional(),
   utmSource:      z.string().optional(),
   utmCampaign:    z.string().optional(),
+  utmMedium:      z.string().optional(),
+  utmContent:     z.string().optional(),
+  utmTerm:        z.string().optional(),
+  referrer:       z.string().optional(),
+  confirmationChecked: z.boolean().optional(),
+  preferredDelivery:   z.string().optional(),
   date:           z.string().optional(),
   response:       z.string().optional()
 });
@@ -110,6 +116,12 @@ router.post("/", async (req, res) => {
       assigned_rep_id: d.assignedRepId ?? req.user!.id,
       utm_source:      d.utmSource,
       utm_campaign:    d.utmCampaign,
+      utm_medium:      d.utmMedium,
+      utm_content:     d.utmContent,
+      utm_term:        d.utmTerm,
+      referrer:        d.referrer,
+      confirmation_checked: d.confirmationChecked ?? null,
+      preferred_delivery:   d.preferredDelivery ?? null,
       date:            d.date,
       response:        d.response,
       status:          "New"

@@ -17,12 +17,18 @@ const readRateLimit = rateLimit({
 // Strip internal fields (cost, inventory, bonus config, org_id, …) before
 // shipping a product to an unauthenticated visitor.
 type DbPricing = { currency: string; selling_price: number; is_primary: boolean };
+type DbCompanion = {
+  productId: string; quantity: number; pricingMode: string;
+  fixedPrice?: number; stateRestrictions?: string[]; autoInclude?: boolean;
+};
 type DbPackage = {
   id: string; name: string; description: string | null; quantity: number;
   price: number; currency: string; display_order: number; active: boolean;
+  companion_products: DbCompanion[] | null;
 };
 type DbProduct = {
-  id: string; name: string; description: string | null;
+  id: string; org_id: string;
+  name: string; description: string | null;
   active: boolean; available_states: string[] | null;
   can_be_cross_sell: boolean | null; can_be_free_gift: boolean | null;
   cross_sell_product_ids: string[] | null;
@@ -49,11 +55,20 @@ const sanitisePackage = (p: DbPackage) => ({
   price:        p.price,
   currency:     p.currency,
   displayOrder: p.display_order,
-  active:       p.active
+  active:       p.active,
+  companionProducts: (p.companion_products ?? []).map((c) => ({
+    productId:         c.productId,
+    quantity:          c.quantity,
+    pricingMode:       c.pricingMode,
+    fixedPrice:        c.fixedPrice ?? null,
+    stateRestrictions: c.stateRestrictions ?? [],
+    autoInclude:       c.autoInclude ?? false
+  }))
 });
 
 const sanitiseProduct = (p: DbProduct) => ({
   id:                          p.id,
+  orgId:                       p.org_id,
   name:                        p.name,
   description:                 p.description ?? "",
   active:                      p.active,
@@ -82,13 +97,13 @@ router.get("/:id", readRateLimit, async (req, res) => {
   const { data: rawProduct, error } = await supabase
     .from("products")
     .select(`
-      id, name, description, active, available_states,
+      id, org_id, name, description, active, available_states,
       can_be_cross_sell, can_be_free_gift,
       cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
       free_gift_product_ids, free_gift_state_restrictions,
       form_custom_text,
       pricings: product_pricings(currency, selling_price, is_primary),
-      packages: product_packages(id, name, description, quantity, price, currency, display_order, active)
+      packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products)
     `)
     .eq("id", id)
     .maybeSingle();
@@ -111,13 +126,13 @@ router.get("/:id", readRateLimit, async (req, res) => {
     const { data: rawRelated } = await supabase
       .from("products")
       .select(`
-        id, name, description, active, available_states,
+        id, org_id, name, description, active, available_states,
         can_be_cross_sell, can_be_free_gift,
         cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
         free_gift_product_ids, free_gift_state_restrictions,
         form_custom_text,
         pricings: product_pricings(currency, selling_price, is_primary),
-        packages: product_packages(id, name, description, quantity, price, currency, display_order, active)
+        packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products)
       `)
       .in("id", Array.from(referenced))
       .eq("active", true);

@@ -8,11 +8,16 @@ router.use(requireAuth);
 
 // ── GET /api/carts ───────────────────────────────────────
 router.get("/", async (req, res) => {
-  const { data, error } = await supabase
+  let query = supabase
     .from("abandoned_carts")
     .select("*")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false });
+  // Sales Reps only see carts assigned to them
+  if (req.user!.role === "Sales Rep") {
+    query = query.eq("assigned_rep_id", req.user!.id);
+  }
+  const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });

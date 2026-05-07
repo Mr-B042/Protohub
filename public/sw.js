@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications
-const CACHE_NAME = "protohub-v1";
+const CACHE_NAME = "protohub-v2";
 
 // ── Install ──────────────────────────────────────────────
 self.addEventListener("install", (event) => {

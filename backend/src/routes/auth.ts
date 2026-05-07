@@ -137,8 +137,38 @@ router.post("/refresh", async (req, res) => {
 });
 
 // ── GET /api/auth/me ──────────────────────────────────────
+// Includes the org's cache_version so the frontend can auto-purge stale
+// localStorage when an Owner/Admin has bumped the version.
 router.get("/me", requireAuth, async (req, res) => {
-  res.json({ user: req.user });
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("cache_version")
+    .eq("id", req.user!.orgId)
+    .single();
+  res.json({ user: req.user, cacheVersion: org?.cache_version ?? 0 });
+});
+
+// ── POST /api/auth/bump-cache-version ─────────────────────
+// Owner/Admin only. Increments the org's cache_version so every team
+// member's browser purges localStorage on next load. Use after a tenant
+// reset, mass data import, or major migration.
+router.post("/bump-cache-version", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin"].includes(req.user!.role)) {
+    res.status(403).json({ error: "Only Owner or Admin can bump the cache version." });
+    return;
+  }
+  const { data: current } = await supabase
+    .from("organizations")
+    .select("cache_version")
+    .eq("id", req.user!.orgId)
+    .single();
+  const next = (current?.cache_version ?? 0) + 1;
+  const { error } = await supabase
+    .from("organizations")
+    .update({ cache_version: next })
+    .eq("id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ cacheVersion: next });
 });
 
 // ── GET /api/auth/team ────────────────────────────────────
@@ -158,10 +188,20 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     res.status(403).json({ error: "Only Owner or Admin can edit users." });
     return;
   }
-  const allowed = ["name", "role", "active", "email", "permissions"];
+  // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
+  // Allow-list the DB column names and accept either casing on input.
+  const allowed: Record<string, string> = {
+    name: "name",
+    role: "role",
+    active: "active",
+    email: "email",
+    permissions: "permissions",
+    extraPages: "extra_pages",
+    extra_pages: "extra_pages"
+  };
   const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  for (const [inKey, dbKey] of Object.entries(allowed)) {
+    if (req.body[inKey] !== undefined) updates[dbKey] = req.body[inKey];
   }
   const { data, error } = await supabase
     .from("users")

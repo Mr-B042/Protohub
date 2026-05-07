@@ -180,6 +180,19 @@ router.get("/:id/packages", async (req, res) => {
 });
 
 // ── POST /api/products/:id/packages ──────────────────────
+const CompanionSchema = z.object({
+  productId:         z.string().uuid(),
+  quantity:          z.number().int().min(1).default(1),
+  pricingMode:       z.enum(["free", "fixed", "use_product_price"]).default("free"),
+  fixedPrice:        z.number().min(0).optional(),
+  stateRestrictions: z.array(z.string()).default([]),
+  autoInclude:       z.boolean().default(false),
+  // Cross-sell display extras (optional — for big card-mode bumps before submit)
+  pitch:             z.string().max(160).optional(),
+  badgeText:         z.string().max(60).optional(),
+  priority:          z.number().int().optional(),
+  displayMode:       z.enum(["compact", "card"]).optional()
+});
 const PackageSchema = z.object({
   name:         z.string().min(1),
   description:  z.string().optional(),
@@ -187,7 +200,8 @@ const PackageSchema = z.object({
   price:        z.number().min(0),
   currency:     z.enum(["NGN", "USD", "GBP"]).default("NGN"),
   displayOrder: z.number().int().default(0),
-  active:       z.boolean().default(true)
+  active:       z.boolean().default(true),
+  companionProducts: z.array(CompanionSchema).default([])
 });
 
 router.post("/:id/packages",
@@ -198,10 +212,10 @@ router.post("/:id/packages",
       res.status(400).json({ error: parsed.error.flatten().fieldErrors });
       return;
     }
-    const { name, description, quantity, price, currency, displayOrder, active } = parsed.data;
+    const { name, description, quantity, price, currency, displayOrder, active, companionProducts } = parsed.data;
     const { data, error } = await supabase
       .from("product_packages")
-      .insert({ product_id: req.params.id, name, description, quantity, price, currency, display_order: displayOrder, active })
+      .insert({ product_id: req.params.id, name, description, quantity, price, currency, display_order: displayOrder, active, companion_products: companionProducts })
       .select()
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
@@ -217,7 +231,8 @@ const PackageUpdateSchema = z.object({
   price:        z.number().min(0).optional(),
   currency:     z.enum(["NGN", "USD", "GBP"]).optional(),
   displayOrder: z.number().int().optional(),
-  active:       z.boolean().optional()
+  active:       z.boolean().optional(),
+  companionProducts: z.array(CompanionSchema).optional()
 });
 
 router.patch("/:id/packages/:pkgId",
@@ -236,6 +251,7 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.currency !== undefined) updates.currency = parsed.data.currency;
     if (parsed.data.displayOrder !== undefined) updates.display_order = parsed.data.displayOrder;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
+    if (parsed.data.companionProducts !== undefined) updates.companion_products = parsed.data.companionProducts;
 
     const { data, error } = await supabase
       .from("product_packages")

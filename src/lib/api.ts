@@ -81,7 +81,8 @@ export const authApi = {
       "/api/auth/login", { email, password }
     ),
 
-  me: () => get<{ user: { id: string; orgId: string; name: string; role: string; email: string } }>("/api/auth/me"),
+  me: () => get<{ user: { id: string; orgId: string; name: string; role: string; email: string }; cacheVersion?: number }>("/api/auth/me"),
+  bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
 
   invite: (body: { name: string; email: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),
@@ -197,6 +198,17 @@ export const teamApi = {
 };
 
 // ── Email Settings ────────────────────────────────────────
+export const embedSettingsApi = {
+  get:    ()                  => get<any>("/api/embed-settings"),
+  patch:  (body: unknown)     => patch<any>("/api/embed-settings", body),
+  // Public: read settings unauthenticated (used by the customer-facing embed form)
+  public: async (orgId: string) => {
+    const res = await fetch(`${BASE}/api/public/embed-settings/${orgId}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
+    return snakeToCamel<any>(await res.json());
+  }
+};
+
 export const emailSettingsApi = {
   get:  ()            => get<any>("/api/email-settings"),
   save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),

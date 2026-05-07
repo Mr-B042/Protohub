@@ -60,7 +60,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               </pre>
             </details>
             <button
-              style={{ marginTop: 16, padding: "8px 16px", borderRadius: 6, background: "#1A6FBF", color: "white", border: "none", fontWeight: 600, cursor: "pointer" }}
+              style={{ marginTop: 16, padding: "8px 16px", borderRadius: 6, background: "#1F8FE0", color: "white", border: "none", fontWeight: 600, cursor: "pointer" }}
               onClick={() => window.location.reload()}
             >
               Refresh
