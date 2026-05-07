@@ -1,8 +1,11 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendLowStockEmail } from "../lib/mailer.js";
+
+const movementId = () => `MOV-${randomUUID()}`;
 
 const router = Router();
 router.use(requireAuth);
@@ -61,24 +64,26 @@ router.post("/update",
       return;
     }
 
-    const newStock = Math.max(0, product.warehouse_stock + change);
-
-    await supabase
-      .from("products")
-      .update({ warehouse_stock: newStock })
-      .eq("id", productId);
+    // Atomic single-statement update via DB function (migration_004).
+    const { data: newStockVal, error: rpcError } = await supabase.rpc("adjust_warehouse_stock", {
+      p_product_id: productId,
+      p_org_id:     req.user!.orgId,
+      p_delta:      change
+    });
+    if (rpcError) { res.status(500).json({ error: rpcError.message }); return; }
+    const newStock: number = typeof newStockVal === "number" ? newStockVal : Number(newStockVal);
 
     // Log the movement
     const movType = change > 0 ? "Stock Added" : "Correction";
     const { data: movement, error: movError } = await supabase
       .from("stock_movements")
       .insert({
-        id:           `MOV-${Date.now()}`,
+        id:           movementId(),
         org_id:       req.user!.orgId,
         product_id:   productId,
         product_name: product.name,
         type:         movType,
-        qty:          Math.abs(change),
+        qty:          change,
         balance_after: newStock,
         by_name:      req.user!.name,
         by_user_id:   req.user!.id,
@@ -107,6 +112,74 @@ router.post("/update",
     }
 
     res.json({ newStock, movement });
+  }
+);
+
+// ── POST /api/stock/movements ─────────────────────────────
+// Create a stock movement record (for order delivery, waybill, etc.)
+const MovementSchema = z.object({
+  productId:    z.string().uuid(),
+  productName:  z.string().min(1),
+  type:         z.string().min(1),
+  qty:          z.number().int(),
+  balanceAfter: z.number().int().min(0),
+  agentId:      z.string().uuid().optional(),
+  agentName:    z.string().optional(),
+  orderId:      z.string().optional(),
+  note:         z.string().optional()
+});
+
+router.post("/movements",
+  requireRole("Owner", "Admin", "Inventory Manager", "Sales Rep"),
+  async (req, res) => {
+    const parsed = MovementSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const d = parsed.data;
+
+    // Trust boundary: balance_after must be derived from authoritative state,
+    // not whatever the client posted. Look up current stock for this scope.
+    let balanceAfter = 0;
+    if (d.agentId) {
+      const { data: ag } = await supabase
+        .from("agent_stock")
+        .select("quantity")
+        .eq("agent_id", d.agentId)
+        .eq("product_id", d.productId)
+        .maybeSingle();
+      balanceAfter = ag?.quantity ?? 0;
+    } else {
+      const { data: prod } = await supabase
+        .from("products")
+        .select("warehouse_stock")
+        .eq("id", d.productId)
+        .eq("org_id", req.user!.orgId)
+        .maybeSingle();
+      balanceAfter = prod?.warehouse_stock ?? 0;
+    }
+
+    const { data, error } = await supabase
+      .from("stock_movements")
+      .insert({
+        id:            movementId(),
+        org_id:        req.user!.orgId,
+        product_id:    d.productId,
+        product_name:  d.productName,
+        type:          d.type,
+        qty:           d.qty,
+        balance_after: balanceAfter,
+        agent_id:      d.agentId ?? null,
+        order_id:      d.orderId ?? null,
+        by_name:       req.user!.name,
+        by_user_id:    req.user!.id,
+        note:          d.note ?? null
+      })
+      .select()
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json(data);
   }
 );
 
@@ -214,6 +287,15 @@ router.patch("/count-entries/:entryId",
     if (verifiedAt)               updates.verified_at = verifiedAt;
     if (notes !== undefined)      updates.notes       = notes;
 
+    // Verify the entry belongs to this org via its parent session.
+    const { data: ownership } = await supabase
+      .from("stock_count_entries")
+      .select("id, session: stock_count_sessions!inner(org_id)")
+      .eq("id", req.params.entryId)
+      .eq("session.org_id", req.user!.orgId)
+      .maybeSingle();
+    if (!ownership) { res.status(404).json({ error: "Entry not found." }); return; }
+
     const { data, error } = await supabase
       .from("stock_count_entries")
       .update(updates)
@@ -243,8 +325,9 @@ router.post("/count-entries/:entryId/adjust",
 
     const { data: entry, error: fetchError } = await supabase
       .from("stock_count_entries")
-      .select("*")
+      .select("*, session: stock_count_sessions!inner(org_id)")
       .eq("id", req.params.entryId)
+      .eq("session.org_id", req.user!.orgId)
       .single();
     if (fetchError || !entry || entry.agent_count == null) {
       res.status(404).json({ error: "Entry not found or agent count not submitted." });
@@ -265,12 +348,12 @@ router.post("/count-entries/:entryId/adjust",
 
     // Log movement
     await supabase.from("stock_movements").insert({
-      id:           `MOV-${Date.now()}`,
+      id:           movementId(),
       org_id:       req.user!.orgId,
       product_id:   entry.product_id,
       product_name: entry.product_name,
       type:         "Correction",
-      qty:          Math.abs(delta),
+      qty:          delta,
       balance_after: entry.agent_count,
       agent_id:     entry.agent_id,
       by_name:      req.user!.name,

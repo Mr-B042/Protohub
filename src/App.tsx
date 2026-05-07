@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
+import { type Dispatch, type SetStateAction, Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Archive,
@@ -31,6 +31,7 @@ import {
   MessageCircle,
   Moon,
   Boxes,
+  Package,
   PackageCheck,
   PackagePlus,
   Flame,
@@ -38,7 +39,6 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
-  RotateCcw,
   Search,
   Sparkles,
   BadgeDollarSign,
@@ -60,17 +60,23 @@ import {
   AlertTriangle,
   CircleX,
   ClipboardCheck,
-  Megaphone,
-  Image as ImageIcon,
+  Phone,
+  PhoneOff,
+  SkipForward,
   X,
-  Zap
+  Zap,
+  ChevronDown
 } from "lucide-react";
 import { auth } from "./lib/auth";
-import { realtimeClient } from "./lib/realtime";
+import {
+  subscribeToPush,
+  unsubscribeFromPush,
+  isCurrentlySubscribed,
+  getPermissionState
+} from "./lib/push-client";
 import {
   productsApi, ordersApi, agentsApi, stockApi,
-  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, stockApi as _stockApi,
-  emailSettingsApi
+  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi
 } from "./lib/api";
 import {
   Line,
@@ -92,13 +98,13 @@ type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "AI Agent" | "AI Sandbox" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
-type OrderSource = "All Sources" | "TikTok" | "Facebook" | "Instagram" | "WhatsApp" | "Website";
+type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type DeliveryAgent = string;
-type ScheduleRange = "Today" | "Tomorrow" | "Next tomorrow";
+type ScheduleRange = "Today" | "Tomorrow" | "Next tomorrow" | "Custom";
 type RepStatus = "All statuses" | "Active" | "Inactive";
 type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
@@ -107,7 +113,7 @@ type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Webs
 type FinanceTab = "Financial Overview" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
 type ExpenseType = "Ad Spend" | "Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Sales Rep" | "Inventory Manager";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 type EmbedTab = "Create Order Form" | "Generate";
@@ -115,7 +121,7 @@ type NotificationFilter = "All" | "Unread";
 type InventoryView = "dashboard" | "history" | "pricing" | "packages" | "stockcount";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In";
-type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled";
+type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
 type StockCountStatus = "Pending" | "Agent Submitted" | "Admin Confirmed" | "Verified" | "Discrepancy";
 type WriteOffReason = "Damaged" | "Theft" | "Unreported Sale" | "Return to Warehouse" | "Other";
 type StockCountEntry = {
@@ -164,11 +170,11 @@ type WaybillRecord = {
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = "Confirmed" | "No Answer" | "Wrong Number" | "Refused" | "Scheduled Callback" | "Not Reached";
-type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info"; message: string; read: boolean; createdAt: string; productId?: string };
+type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Sales Rep" | "Inventory Manager";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -184,16 +190,13 @@ type ManagedUser = {
   created: string;
   permissions?: UserPermission[];
 };
-type PayStructureType = "Commission" | "Fixed Salary" | "Fixed + Commission";
+type PayStructureType = "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";
+type BonusTier = { threshold: number; amount: number };
 type ProductPricing = {
   currency: ProductCurrencyCode;
   sellingPrice: number;
   unitCost: number;
   primary?: boolean;
-};
-type PackageCompanion = {
-  productId: string;
-  quantity: number;
 };
 type ProductPackage = {
   id: string;
@@ -204,7 +207,6 @@ type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
-  companions?: PackageCompanion[];
 };
 type PackBonusRule = {
   id: string;
@@ -305,7 +307,8 @@ type RepPenaltyRecord = {
 };
 type StockMovement = {
   id: string;
-  date: string;
+  date?: string;
+  createdAt?: string;
   productId: string;
   productName: string;
   type: StockMovementType;
@@ -315,6 +318,9 @@ type StockMovement = {
   order?: string;
   by: string;
   note?: string;
+  waybillId?: string;
+  fromLocation?: string;
+  toLocation?: string;
 };
 type TrackedOrder = {
   id: string;
@@ -334,8 +340,8 @@ type TrackedOrder = {
   currency: ProductCurrencyCode;
   utmSource: string;
   utmCampaign: string;
-  utmContent?: string;
   utmMedium?: string;
+  utmContent?: string;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
   response?: string;
@@ -397,6 +403,7 @@ type DeliveryAgentRecord = {
   address: string;
   active: boolean;
   created: string;
+  stockCapacity?: number;
 };
 type AgentStockRecord = {
   agentId: string;
@@ -414,12 +421,14 @@ type ExpenseRecord = {
   productId?: string;
   productName: string;
   description: string;
+  waybillId?: string;
 };
 type PayStructure = {
   userId: string;
   type: PayStructureType;
   fixedSalary: number;
   commissionRate: number;
+  bonusTiers: BonusTier[];
   updatedAt: string;
 };
 type PayrollRun = {
@@ -430,6 +439,7 @@ type PayrollRun = {
   total: number;
   createdAt: string;
   rows: { userId: string; name: string; delivered: number; fixedSalary: number; commission: number; autoBonus?: number; deductions?: number; total: number }[];
+  topPerformer?: { names: string[]; amountEach: number; delivered: number };
 };
 
 const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
@@ -498,7 +508,7 @@ const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Proc
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
-const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Next tomorrow"];
+const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Next tomorrow", "Custom"];
 const repStatuses: RepStatus[] = ["All statuses", "Active", "Inactive"];
 const agentZones: AgentZone[] = ["All Zones", "Lagos Island", "Mainland", "Abuja"];
 const agentStatuses: AgentStatus[] = ["All Status", "Active", "Order in Progress", "Inactive"];
@@ -507,8 +517,8 @@ const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", 
 const financeTabs: FinanceTab[] = ["Financial Overview", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Clearing & Shipping", "Waybill", "Airtime & Data", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Sales Rep", "Inventory Manager"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Sales Rep", "Inventory Manager"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Generate"];
@@ -535,13 +545,16 @@ const permissionDefs: { key: UserPermission; label: string; group: string }[] = 
 const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Owner":             permissionDefs.map((p) => p.key),
   "Admin":             ["create_orders", "edit_orders", "delete_orders", "change_order_status", "reassign_orders", "manage_inventory", "manage_products", "manage_agents", "view_finance", "view_reports"],
+  "Manager":           ["create_orders", "edit_orders", "change_order_status", "reassign_orders", "manage_inventory", "manage_products", "view_finance", "view_reports"],
   "Sales Rep":         ["create_orders", "change_order_status", "reassign_orders"],
   "Inventory Manager": ["manage_inventory", "manage_products", "view_reports"],
+  "Viewer":            ["view_finance", "view_reports"],
 };
 const payStructureTypes: { value: PayStructureType; helper: string }[] = [
-  { value: "Commission", helper: "Paid per delivered order" },
-  { value: "Fixed Salary", helper: "Fixed monthly amount" },
-  { value: "Fixed + Commission", helper: "Monthly salary plus per-order bonus" }
+  { value: "Per Delivered Order", helper: "Rate × delivered orders" },
+  { value: "Fixed Salary", helper: "Flat monthly amount" },
+  { value: "Hybrid", helper: "Fixed salary + per-order rate" },
+  { value: "Performance Bonus", helper: "Fixed salary + bonus tiers" }
 ];
 const userGrowthData = [
   { month: "Dec", users: 0 },
@@ -628,14 +641,12 @@ const makeSku = (name: string) => {
   return `${cleanParts.join("-") || "PRD"}-${Math.floor(100 + Math.random() * 900)}`;
 };
 
-const formatProductMoney = (amount: number, code: ProductCurrencyCode) => {
-  const def = productCurrencies[code] ?? productCurrencies.NGN;
-  return new Intl.NumberFormat(def.locale, {
+const formatProductMoney = (amount: number, code: ProductCurrencyCode) =>
+  new Intl.NumberFormat(productCurrencies[code].locale, {
     style: "currency",
-    currency: def.currency,
+    currency: productCurrencies[code].currency,
     maximumFractionDigits: 0
   }).format(amount || 0);
-};
 
 const primaryPricing = (product: Product) => product.pricings.find((pricing) => pricing.primary) ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
@@ -648,12 +659,8 @@ const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources">
     return "TikTok";
   }
 
-  if (normalized.includes("facebook") || normalized.includes("meta") || normalized === "fb") {
+  if (normalized.includes("facebook") || normalized.includes("meta")) {
     return "Facebook";
-  }
-
-  if (normalized === "ig" || normalized.includes("instagram")) {
-    return "Instagram";
   }
 
   if (normalized.includes("whatsapp")) {
@@ -739,7 +746,8 @@ const normalizeDateKey = (value?: string) => {
 const displayDateFromKey = (value?: string) =>
   new Date(`${normalizeDateKey(value)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
-const scheduleDateForRange = (range: ScheduleRange) => {
+const scheduleDateForRange = (range: ScheduleRange, customDate?: string) => {
+  if (range === "Custom" && customDate) return customDate;
   const date = new Date();
   date.setDate(date.getDate() + (range === "Today" ? 0 : range === "Tomorrow" ? 1 : 2));
   return formatDateKey(date);
@@ -873,16 +881,47 @@ const isInExplicitRange = (dateKey: string | undefined, range: DateRange) => {
 
 const percentChange = (current: number, previous: number) => {
   if (previous === 0) {
-    return current === 0 ? 0 : 100;
+    // No prior baseline: 0→0 is flat, anything→nonzero is "New" (no finite %).
+    return current === 0 ? 0 : Number.POSITIVE_INFINITY;
   }
   return Math.round(((current - previous) / previous) * 1000) / 10;
 };
 
-const formatTrend = (change: number) => `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
+const formatTrend = (change: number) => {
+  if (!Number.isFinite(change)) return "New";
+  return `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
+};
 
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
+
+const timeSinceCreated = (order: TrackedOrder): string => {
+  const created = new Date(order.createdAt ?? order.date);
+  if (Number.isNaN(created.getTime())) return "—";
+  const diffMs = Date.now() - created.getTime();
+  const mins = Math.max(0, Math.floor(diffMs / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = mins / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+};
+
+const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string } => {
+  const terminal = status === "Delivered" || status === "Cancelled";
+  const created = new Date(order.createdAt ?? order.date);
+  if (Number.isNaN(created.getTime())) return { label: "—", cls: "text-gray-400" };
+  if (terminal) return { label: "—", cls: "text-gray-300" };
+  const diffMs = Date.now() - created.getTime();
+  const mins = Math.max(0, Math.floor(diffMs / 60_000));
+  const hours = mins / 60;
+  const label = mins < 60 ? `${mins}m` : hours < 24 ? `${hours.toFixed(1)}h` : `${Math.floor(hours / 24)}d`;
+  if (mins < 60) return { label, cls: "text-emerald-600 bg-emerald-50" };
+  if (hours <= 4) return { label, cls: "text-gray-500 bg-gray-100" };
+  if (hours < 24) return { label, cls: "text-amber-700 bg-amber-50" };
+  return { label, cls: "text-red-600 bg-red-50" };
+};
 
 const parseExpenseDateKey = (value: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -940,8 +979,8 @@ const storageKeys = {
   customerFlags: "protohub.customerFlags",
   systemNotifications: "protohub.systemNotifications",
   stockCounts: "protohub.stockCounts",
-  campaignLabels: "protohub.campaignLabels",
-  creativeLabels: "protohub.creativeLabels"
+  topPerformerBonusEnabled: "protohub.topPerformerBonusEnabled",
+  topPerformerBonusAmount: "protohub.topPerformerBonusAmount"
 };
 
 const defaultUsers: ManagedUser[] = [];
@@ -1027,10 +1066,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderStatus, setOrderStatus] = useState<OrderStatus>("All Orders");
   const [orderSource, setOrderSource] = useState<OrderSource>("All Sources");
   const [orderLocation, setOrderLocation] = useState<OrderLocation>("All Locations");
+  const [orderProductIds, setOrderProductIds] = useState<Set<string>>(new Set());
+  const [showOrderProductFilter, setShowOrderProductFilter] = useState(false);
   const [ordersPage, setOrdersPage] = useState(1);
   const [cartSearch, setCartSearch] = useState("");
   const [cartStatus, setCartStatus] = useState<CartStatus>("All statuses");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>("Today");
+  const [scheduleCustomDate, setScheduleCustomDate] = useState("");
+  const [scheduleWeekStart, setScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const schedulePickerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!showSchedulePicker) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (schedulePickerRef.current && !schedulePickerRef.current.contains(e.target as Node)) {
+        setShowSchedulePicker(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [showSchedulePicker]);
+  const goToScheduleDate = (dayKey: string) => {
+    if (!dayKey) return;
+    const d = new Date(`${dayKey}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return;
+    const sunday = new Date(d);
+    sunday.setDate(d.getDate() - d.getDay());
+    setScheduleWeekStart(formatDateKey(sunday));
+    setScheduleCustomDate(dayKey);
+    setScheduleRange("Custom");
+    setShowSchedulePicker(false);
+  };
   const [deliveriesPeriod, setDeliveriesPeriod] = useState<Period>("This Month");
   const [showDeliveriesDateRange, setShowDeliveriesDateRange] = useState(false);
   const [deliveriesDateRange, setDeliveriesDateRange] = useState<DateRange>({ start: "", end: "" });
@@ -1065,7 +1131,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packagePrice, setPackagePrice] = useState("0");
   const [packageCurrency, setPackageCurrency] = useState<ProductCurrencyCode>("NGN");
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
-  const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
@@ -1086,6 +1151,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentZoneInput, setAgentZoneInput] = useState("");
   const [agentAddress, setAgentAddress] = useState("");
   const [agentActive, setAgentActive] = useState(true);
+  const [agentStockCapacity, setAgentStockCapacity] = useState<number | "">(1000);
   const [agents, setAgents] = useState<DeliveryAgentRecord[]>(() => readStored<DeliveryAgentRecord[]>(storageKeys.agents, defaultAgents));
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>(() => readStored<AgentStockRecord[]>(storageKeys.agentStock, defaultAgentStock));
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>(() => readStored<WaybillRecord[]>(storageKeys.waybillRecords, []));
@@ -1123,11 +1189,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [payrollMonth, setPayrollMonth] = useState(() => new Date().toLocaleString("en-US", { month: "long", year: "numeric" }));
   const [payrollLabel, setPayrollLabel] = useState(() => `${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })} Payroll`);
   const [payrollNotes, setPayrollNotes] = useState("");
-  const [payStructureType, setPayStructureType] = useState<PayStructureType>("Commission");
+  const [payStructureType, setPayStructureType] = useState<PayStructureType>("Per Delivered Order");
+  const [bonusTiers, setBonusTiers] = useState<BonusTier[]>([{ threshold: 50, amount: 5000 }, { threshold: 100, amount: 15000 }]);
   const [payRateUpdatedAt, setPayRateUpdatedAt] = useState("");
   const [payRateUserId, setPayRateUserId] = useState("owner");
   const [payStructures, setPayStructures] = useState<PayStructure[]>(() => readStored<PayStructure[]>(storageKeys.payStructures, []));
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>(() => readStored<PayrollRun[]>(storageKeys.payrollRuns, []));
+  const [topPerformerBonusEnabled, setTopPerformerBonusEnabled] = useState(() => readStored<boolean>(storageKeys.topPerformerBonusEnabled, false));
+  const [topPerformerBonusAmount, setTopPerformerBonusAmount] = useState(() => readStored<string>(storageKeys.topPerformerBonusAmount, "0"));
   const [fixedSalary, setFixedSalary] = useState("0");
   const [commissionRate, setCommissionRate] = useState("0");
   const [customerPeriod, setCustomerPeriod] = useState<Period>("This Month");
@@ -1148,9 +1217,82 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [expenseDescription, setExpenseDescription] = useState("");
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() => readStoredExpenses());
   const [financePeriod, setFinancePeriod] = useState<Period>("This Month");
+  // Week navigator state — one weekStart + span per filterable page
+  const getSundayKey = () => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); };
+  type NavSpan = "1W" | "2W" | "3W" | "1M";
+  const spanEnd = (start: string, span: NavSpan) => { const d = new Date(`${start}T00:00:00`); d.setDate(d.getDate() + (span === "1W" ? 6 : span === "2W" ? 13 : span === "3W" ? 20 : 29)); return formatDateKey(d); };
+  const [financeNavStart, setFinanceNavStart] = useState(getSundayKey);
+  const [financeNavSpan, setFinanceNavSpan] = useState<NavSpan>("1W");
+  const [ordersNavStart, setOrdersNavStart] = useState(getSundayKey);
+  const [ordersNavSpan, setOrdersNavSpan] = useState<NavSpan>("1W");
+  const [deliveriesNavStart, setDeliveriesNavStart] = useState(getSundayKey);
+  const [deliveriesNavSpan, setDeliveriesNavSpan] = useState<NavSpan>("1W");
+  const [salesNavStart, setSalesNavStart] = useState(getSundayKey);
+  const [salesNavSpan, setSalesNavSpan] = useState<NavSpan>("1W");
+  const [customerNavStart, setCustomerNavStart] = useState(getSundayKey);
+  const [customerNavSpan, setCustomerNavSpan] = useState<NavSpan>("1W");
+  const [expenseNavStart, setExpenseNavStart] = useState(getSundayKey);
+  const [expenseNavSpan, setExpenseNavSpan] = useState<NavSpan>("1W");
+  // Dashboard week nav + product filter
+  const [dashboardNavStart, setDashboardNavStart] = useState(getSundayKey);
+  const [dashboardNavSpan, setDashboardNavSpan] = useState<NavSpan>("1W");
+  const [dashboardProductIds, setDashboardProductIds] = useState<Set<string>>(new Set());
+  // Revenue Performance chart filters
+  const [revPerfMode, setRevPerfMode] = useState<"Cumulative" | "Daily">("Cumulative");
+  const [revPerfGranularity, setRevPerfGranularity] = useState<"Day" | "Week" | "Month">("Day");
+  const [revPerfStatuses, setRevPerfStatuses] = useState<Set<string>>(new Set(["Delivered"]));
+  const [revPerfShowPrevious, setRevPerfShowPrevious] = useState(true);
+  const [revPerfStatusOpen, setRevPerfStatusOpen] = useState(false);
+  const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
+  const cartSyncTimerRef = useRef<number | null>(null);
+  useEffect(() => () => { if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current); }, []);
+  useEffect(() => {
+    if (!revPerfStatusOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (revPerfStatusRef.current && !revPerfStatusRef.current.contains(e.target as Node)) {
+        setRevPerfStatusOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [revPerfStatusOpen]);
+  const [showDashboardProductFilter, setShowDashboardProductFilter] = useState(false);
+  // Abandoned Carts period + week nav + product filter
+  const [cartsPeriod, setCartsPeriod] = useState<Period>("This Month");
+  const [showCartsDateRange, setShowCartsDateRange] = useState(false);
+  const [cartsDateRange, setCartsDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [cartsNavStart, setCartsNavStart] = useState(getSundayKey);
+  const [cartsNavSpan, setCartsNavSpan] = useState<NavSpan>("1W");
+  const [cartProductIds, setCartProductIds] = useState<Set<string>>(new Set());
+  const [cartsPage, setCartsPage] = useState(1);
+  const [selectedCartIds, setSelectedCartIds] = useState<Set<string>>(new Set());
+  const [showCartProductFilter, setShowCartProductFilter] = useState(false);
+  // Scheduled Deliveries product filter
+  const [scheduleProductIds, setScheduleProductIds] = useState<Set<string>>(new Set());
+  const [showScheduleProductFilter, setShowScheduleProductFilter] = useState(false);
+  // Deliveries product filter
+  const [deliveriesProductIds, setDeliveriesProductIds] = useState<Set<string>>(new Set());
+  const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
+  // Customer Directory product filter
+  const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(new Set());
+  const [showCustomerProductFilter, setShowCustomerProductFilter] = useState(false);
+  // Campaign Orders period + week nav + product filter
+  const [campaignPeriod, setCampaignPeriod] = useState<Period>("This Month");
+  const [showCampaignDateRange, setShowCampaignDateRange] = useState(false);
+  const [campaignDateRange, setCampaignDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [campaignNavStart, setCampaignNavStart] = useState(getSundayKey);
+  const [campaignNavSpan, setCampaignNavSpan] = useState<NavSpan>("1W");
+  const [campaignProductIds, setCampaignProductIds] = useState<Set<string>>(new Set());
+  const [showCampaignProductFilter, setShowCampaignProductFilter] = useState(false);
   const [showFinanceDateRange, setShowFinanceDateRange] = useState(false);
   const [financeDateRange, setFinanceDateRange] = useState<DateRange>({ start: "", end: "" });
   const [financeTab, setFinanceTab] = useState<FinanceTab>("Financial Overview");
+  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">("Campaign Orders");
+  const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
+    const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
+  });
+  const [adSpendDraft, setAdSpendDraft] = useState<Record<string, string>>({});
+  const [adSpendSaving, setAdSpendSaving] = useState(false);
   const [financeRepSearch, setFinanceRepSearch] = useState("");
   const [financeProductSearch, setFinanceProductSearch] = useState("");
   const [userSearch, setUserSearch] = useState("");
@@ -1178,11 +1320,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formAddonPromptEnabled, setFormAddonPromptEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formAddonPromptEnabled, true));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
-  const [campaignLabels, setCampaignLabels] = useState<Record<string, string>>(() => readStored<Record<string, string>>(storageKeys.campaignLabels, {}));
-  const [creativeLabels, setCreativeLabels] = useState<Record<string, string>>(() => readStored<Record<string, string>>(storageKeys.creativeLabels, {}));
-  const [adTrackingView, setAdTrackingView] = useState<"dashboard" | "guide">("dashboard");
-  const [editingCampaignId, setEditingCampaignId] = useState<string>("");
-  const [editingCreativeId, setEditingCreativeId] = useState<string>("");
   const [orderFormAddonChoice, setOrderFormAddonChoice] = useState<"" | "yes" | "no">("");
   const [showEmailField, setShowEmailField] = useState(false);
   const [showWhatsappField, setShowWhatsappField] = useState(true);
@@ -1191,20 +1328,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showDeliveryQuestion, setShowDeliveryQuestion] = useState(false);
   const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [showCommitmentNotice, setShowCommitmentNotice] = useState(false);
-  const [addressRequired, setAddressRequired] = useState(true);
-  const [cityRequired, setCityRequired] = useState(true);
-  const [deliveryInputStyle, setDeliveryInputStyle] = useState<"quick" | "range">("quick");
-  const [deliveryQuickToday, setDeliveryQuickToday] = useState(true);
-  const [deliveryQuickTomorrow, setDeliveryQuickTomorrow] = useState(true);
-  const [deliveryQuickNextTomorrow, setDeliveryQuickNextTomorrow] = useState(false);
-  const [deliveryRangeEarliest, setDeliveryRangeEarliest] = useState(0);
-  const [deliveryRangeLatest, setDeliveryRangeLatest] = useState(7);
-  const CONFIRMATION_DEFAULT = "I confirm that I am financially prepared and available to receive my order within 1–3 business days.";
-  const COMMITMENT_DEFAULT = "A flat commitment fee applies for orders delivered outside major cities. This will be confirmed with you before dispatch.";
-  const [confirmationCheckboxText, setConfirmationCheckboxText] = useState(CONFIRMATION_DEFAULT);
-  const [allowDisagree, setAllowDisagree] = useState(true);
-  const [commitmentNoticeText, setCommitmentNoticeText] = useState(COMMITMENT_DEFAULT);
-  const [embedSettingsDirty, setEmbedSettingsDirty] = useState(false);
   const [generatedProductId, setGeneratedProductId] = useState("");
   const [generatedEmbedProductIds, setGeneratedEmbedProductIds] = useState<string[]>([]);
   const [embedCurrencyByProduct, setEmbedCurrencyByProduct] = useState<Record<string, ProductCurrencyCode>>({});
@@ -1231,50 +1354,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
-
-  // ── Email Settings state ──────────────────────────────────
-  const defaultEmailTemplates: Record<string, { subject: string; body: string }> = {
-    order_new:                    { subject: "New order {{order_id}} received", body: "Hello,\n\nA new order {{order_id}} has been placed by {{customer}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nThank you." },
-    order_status_change:          { subject: "Your order {{order_id}} has been updated", body: "Hello {{customer}},\n\nYour order {{order_id}} status has changed from {{from_status}} to {{status}}.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for your business." },
-    order_delivered:              { subject: "Your order {{order_id}} has been delivered!", body: "Hello {{customer}},\n\nGreat news! Your order {{order_id}} has been delivered successfully.\n\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us!" },
-    payroll_approved:             { subject: "Your payroll for {{period}} has been approved", body: "Hello {{name}},\n\nYour payroll for the period {{period}} has been approved.\n\nNet Amount: {{currency}} {{amount}}\n\nThank you." },
-    internal_order_new:           { subject: "New order {{order_id}} — {{customer}}", body: "A new order has come in.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\nAssigned to: {{rep_name}}\n\nLog in to review it." },
-    internal_order_assigned:      { subject: "You've been assigned order {{order_id}}", body: "Hi {{recipient_name}},\n\nAn order just came in and you've been assigned to it.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nLog in to follow up." },
-    internal_order_delivered:     { subject: "Delivered ✓ — Order {{order_id}} ({{currency}} {{amount}})", body: "Order {{order_id}} has been marked as delivered.\n\nCustomer: {{customer}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nDelivered by: {{rep_name}}\n\nGreat work!" },
-    internal_order_rescheduled:   { subject: "Order {{order_id}} rescheduled — {{customer}}", body: "Order {{order_id}} has been postponed/rescheduled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease follow up at the scheduled time." },
-    internal_order_cancelled:     { subject: "Order {{order_id}} cancelled — {{customer}}", body: "Order {{order_id}} has been cancelled.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for details." },
-    internal_order_failed:        { subject: "Order {{order_id}} failed — {{customer}}", body: "Order {{order_id}} has been marked as failed.\n\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review and take action." },
-    internal_low_stock:           { subject: "Low stock alert — {{product_name}}", body: "Stock alert: {{product_name}} is running low.\n\nCurrent Stock: {{current_stock}}\nReorder Point: {{reorder_point}}\n\nPlease restock as soon as possible." },
-    internal_weekly_report:       { subject: "Weekly Report — w/e {{week_end}}", body: "Weekly Performance Report\n{{org_name}}\nPeriod: {{week_start}} to {{week_end}}\n\n── ORDERS ──────────────────────────\nTotal Orders:    {{total_orders}}\nDelivered:       {{delivered}}\nCancelled:       {{cancelled}}\nFailed:          {{failed}}\nDelivery Rate:   {{delivery_rate}}%\n\n── REVENUE & FINANCIALS ────────────\nRevenue:         {{currency}} {{revenue}}\nAds Spent:       {{currency}} {{ads_spent}}\nOther Expenses:  {{currency}} {{other_expenses}}\nTotal Expenses:  {{currency}} {{total_expenses}}\nNet Profit:      {{currency}} {{net_profit}}\n\n── TOP PRODUCTS ────────────────────\n{{top_products}}\n\nHave a great week!" },
-    internal_waybill_dispatched:  { subject: "Waybill dispatched — {{waybill_id}}", body: "Waybill {{waybill_id}} has been dispatched.\n\nDestination: {{destination}}\nItems: {{items}}\nDispatched by: {{rep_name}}\n\nLog in to track it." },
-    internal_new_team_member:     { subject: "Welcome to {{org_name}}, {{recipient_name}}!", body: "Hi {{recipient_name}},\n\nYou've been added to {{org_name}} on ProtoHub as {{role}}.\n\nLog in to get started.\n\nWelcome aboard!" }
-  };
-  const defaultTriggers: Record<string, boolean> = {
-    order_new: false, order_status_change: true, order_delivered: false, payroll_approved: false,
-    internal_order_new: true, internal_order_assigned: true, internal_order_delivered: true,
-    internal_order_rescheduled: true, internal_order_cancelled: true, internal_order_failed: true,
-    internal_low_stock: true, internal_weekly_report: true,
-    internal_waybill_dispatched: false, internal_new_team_member: false
-  };
-  const [emailSettings, setEmailSettings] = useState({
-    enabled: false,
-    provider: "mailjet" as "mailjet" | "resend",
-    api_key_public: "",
-    api_key_private: "",
-    resend_api_key: "",
-    from_name: "",
-    from_email: "",
-    reply_to: "",
-    triggers: { ...defaultTriggers },
-    templates: { ...defaultEmailTemplates }
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [pushLoading, setPushLoading] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = window.localStorage.getItem("protohub.theme");
+    if (stored === "light" || stored === "dark") return stored;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-  const [emailWeeklyReportSending, setEmailWeeklyReportSending] = useState(false);
-  const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
-  const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
-  const [emailTestTo, setEmailTestTo] = useState("");
-  const [emailTestSending, setEmailTestSending] = useState(false);
-  const [emailExpandedTemplate, setEmailExpandedTemplate] = useState<string | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    root.dataset.theme = theme;
+    try { window.localStorage.setItem("protohub.theme", theme); } catch (_) { /* private mode */ }
+  }, [theme]);
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState("");
   const [notificationsRead, setNotificationsRead] = useState(false);
@@ -1301,6 +1396,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [handoverReason, setHandoverReason] = useState("");
   const [orderNoteDraft, setOrderNoteDraft] = useState("");
   const [orderFollowUpDate, setOrderFollowUpDate] = useState("");
+  const [callQueueIndex, setCallQueueIndex] = useState(0);
+  const [callQueueNote, setCallQueueNote] = useState("");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
   const [repConsoleRepId, setRepConsoleRepId] = useState("all");
   const [repOrderStatusTab, setRepOrderStatusTab] = useState<RepOrderStatusTab>("All Orders");
@@ -1308,6 +1405,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repProductSort, setRepProductSort] = useState("Name A-Z");
   const [repCartSearch, setRepCartSearch] = useState("");
   const [repScheduleRange, setRepScheduleRange] = useState<ScheduleRange>("Today");
+  const [repScheduleCustomDate, setRepScheduleCustomDate] = useState("");
+  const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
   const [statusChangeDraft, setStatusChangeDraft] = useState<Exclude<OrderStatus, "All Orders">>("Confirmed");
   const [statusChangeReason, setStatusChangeReason] = useState("");
@@ -1347,6 +1446,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusAmount, setManualBonusAmount] = useState("");
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>(() => readStored<RepPenaltyRecord[]>(storageKeys.repPenalties, []));
+  const [dataLoading, setDataLoading] = useState(() => auth.isLoggedIn());
+  const [dataError, setDataError] = useState<string | null>(null);
   const [penaltyTargetRepId, setPenaltyTargetRepId] = useState<string>("");
   const [penaltyType, setPenaltyType] = useState<RepPenaltyType>("Wrong Data Entry");
   const [penaltyAmount, setPenaltyAmount] = useState("500");
@@ -1368,8 +1469,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const activeUserCount = users.filter((user) => user.active).length;
   const adminUserCount = users.filter((user) => user.role === "Admin" || user.role === "Owner").length;
+  const managerUserCount = users.filter((user) => user.role === "Manager").length;
   const salesUserCount = users.filter((user) => user.role === "Sales Rep").length;
   const inventoryUserCount = users.filter((user) => user.role === "Inventory Manager").length;
+  const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
@@ -1388,8 +1491,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicCurrency = (publicEmbedParams?.get("currency") as ProductCurrencyCode | null) ?? "NGN";
   const publicUtmSource = publicEmbedParams?.get("utm_source") ?? "direct";
   const publicUtmCampaign = publicEmbedParams?.get("utm_campaign") ?? "embed";
-  const publicUtmContent = publicEmbedParams?.get("utm_content") ?? "";
   const publicUtmMedium = publicEmbedParams?.get("utm_medium") ?? "";
+  const publicUtmContent = publicEmbedParams?.get("utm_content") ?? "";
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const previewCurrency = previewPackages[0]?.currency ?? "NGN";
@@ -1406,7 +1509,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const filteredStockMovements = stockMovements.filter((movement) => {
     const matchesProduct = historyProductFilter === "All Products" || movement.productId === historyProductFilter;
     const matchesType = historyTypeFilter === "All Types" || movement.type === historyTypeFilter;
-    const movementDate = (movement.date ?? "").slice(0, 10);
+    const movementDate = (movement.date ?? movement.createdAt ?? "").slice(0, 10);
     const matchesStart = !historyStartDate || movementDate >= historyStartDate;
     const matchesEnd = !historyEndDate || movementDate <= historyEndDate;
     return matchesProduct && matchesType && matchesStart && matchesEnd;
@@ -1525,19 +1628,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedPayUser = users.find((user) => user.id === payRateUserId) ?? users[0];
   const selectedPayStructure = payStructures.find((item) => item.userId === selectedPayUser?.id);
   const payStructureLabelFor = (structure?: PayStructure) => {
-    if (!structure) {
-      return "Not set";
+    if (!structure) return "Not set";
+    switch (structure.type) {
+      case "Per Delivered Order":
+        return `Per order @ ${formatMoney(structure.commissionRate)}`;
+      case "Fixed Salary":
+        return `Fixed: ${formatMoney(structure.fixedSalary)}/mo`;
+      case "Hybrid":
+        return `Hybrid: ${formatMoney(structure.fixedSalary)} + ${formatMoney(structure.commissionRate)}/order`;
+      case "Performance Bonus":
+        return `Performance: ${formatMoney(structure.fixedSalary)} + ${structure.bonusTiers?.length ?? 0} tier${(structure.bonusTiers?.length ?? 0) !== 1 ? "s" : ""}`;
+      default:
+        return "Not set";
     }
-
-    if (structure.type === "Commission") {
-      return `${formatMoney(structure.commissionRate)} per delivered order`;
-    }
-
-    if (structure.type === "Fixed Salary") {
-      return `${formatMoney(structure.fixedSalary)} fixed monthly`;
-    }
-
-    return `${formatMoney(structure.fixedSalary)} fixed + ${formatMoney(structure.commissionRate)} per delivered order`;
   };
   const quantityForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
@@ -1549,11 +1652,90 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!product) {
       return 0;
     }
-    return quantityForOrder(order) * (primaryPricing(product)?.unitCost ?? 0);
+    // Pick the pricing whose currency matches the order so cost and revenue
+    // are in the same unit. Fall back to primary if no match.
+    const matchPricing = order.currency
+      ? product.pricings.find((p) => p.currency === order.currency)
+      : undefined;
+    const pricing = matchPricing ?? primaryPricing(product);
+    return quantityForOrder(order) * (pricing?.unitCost ?? 0);
+  };
+
+  // ── Ad Spend weekly grid helpers ─────────────────────────
+  const adSpendWeekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(`${adSpendWeekStart}T00:00:00`);
+    d.setDate(d.getDate() + i);
+    return formatDateKey(d);
+  });
+  const campaignBaseOrders = trackedOrders
+    .filter(o => isInPeriod(orderCreatedKey(o), campaignPeriod, campaignDateRange))
+    .filter(o => campaignProductIds.size === 0 || (o.productId ? campaignProductIds.has(o.productId) : false));
+  const filteredCampaignOrders = campaignBaseOrders.filter(o => o.utmSource && o.utmSource !== "direct");
+
+  const revenueForProductDay = (productId: string, day: string) =>
+    trackedOrders
+      .filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !["Cancelled", "Failed"].includes(o.status ?? "New"))
+      .reduce((sum, o) => sum + o.amount, 0);
+
+  const ordersForProductDay = (productId: string, day: string) =>
+    trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !["Cancelled", "Failed"].includes(o.status ?? "New")).length;
+
+  const existingAdSpend = (productId: string, day: string) =>
+    expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === productId && normalizeDateKey(e.date) === day)
+      .reduce((sum, e) => sum + e.amount, 0);
+
+  // Sync draft when tab opens, week changes, or expenses load from API
+  useEffect(() => {
+    if (adTrackingTab !== "Daily Ad Spend") return;
+    const draft: Record<string, string> = {};
+    products.filter((p) => p.active).forEach((p) => {
+      adSpendWeekDays.forEach((day) => {
+        const val = existingAdSpend(p.id, day);
+        if (val > 0) draft[`${p.id}-${day}`] = String(val);
+      });
+    });
+    setAdSpendDraft(draft);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adTrackingTab, adSpendWeekStart, expenses]);
+
+  const saveAdSpend = async () => {
+    setAdSpendSaving(true);
+    const activeProds = products.filter((p) => p.active);
+    try {
+      for (const product of activeProds) {
+        for (const day of adSpendWeekDays) {
+          const key = `${product.id}-${day}`;
+          const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
+          const toDelete = expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === product.id && normalizeDateKey(e.date) === day);
+          for (const e of toDelete) {
+            await expensesApi.delete(e.id);
+            setExpenses((prev) => prev.filter((x) => x.id !== e.id));
+          }
+          if (draftVal > 0) {
+            const newExp: ExpenseRecord = {
+              id: `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              type: "Ad Spend", amount: draftVal, currency: "NGN", date: day,
+              productId: product.id, productName: product.name,
+              description: `Ad spend – ${product.name} – ${day}`
+            };
+            await expensesApi.create({
+              id: newExp.id, date: newExp.date, category: "Ad Spend",
+              description: newExp.description, amount: newExp.amount, currency: newExp.currency,
+              productId: product.id
+            });
+            setExpenses((prev) => [...prev, newExp]);
+          }
+        }
+      }
+      showToast("Ad spend saved.");
+    } catch { showToast("Save failed — check connection."); }
+    setAdSpendSaving(false);
   };
 
   const periodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
-  const dashboardOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), period, dateRange));
+  const dashboardOrders = trackedOrders
+    .filter(o => dashboardProductIds.size === 0 || (o.productId ? dashboardProductIds.has(o.productId) : false))
+    .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
   const deliveredOrderRows = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
@@ -1561,7 +1743,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardDeliveredOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const dashboardRevenue = dashboardDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const dashboardCogs = dashboardDeliveredOrders.reduce((sum, order) => sum + costForOrder(order), 0);
-  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange));
+  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && (dashboardProductIds.size === 0 || (expense.productId ? dashboardProductIds.has(expense.productId) : false)));
   const dashboardExpenseTotal = dashboardExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const dashboardGrossProfit = dashboardRevenue - dashboardCogs;
   const dashboardNetProfit = dashboardGrossProfit - dashboardExpenseTotal;
@@ -1570,12 +1752,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardCogsRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardCogs / dashboardRevenue) * 100);
   const dashboardExpenseRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardExpenseTotal / dashboardRevenue) * 100);
   const dashboardNetMargin = dashboardRevenue === 0 ? 0 : Math.round((dashboardNetProfit / dashboardRevenue) * 100);
+  const dashboardCarts = abandonedCarts
+    .filter(c => dashboardProductIds.size === 0 || (c.productId ? dashboardProductIds.has(c.productId) : false))
+    .filter(c => isInPeriod(c.createdAt, period, dateRange));
+  const dashboardConvertedCartCount = dashboardCarts.filter((cart) => cart.status === "Converted").length;
   const dashboardPreviousRange = explicitPeriodRange(period, dateRange, true);
-  const dashboardPreviousOrders = trackedOrders.filter((order) => isInExplicitRange(orderCreatedKey(order), dashboardPreviousRange));
+  const dashboardPreviousOrders = trackedOrders
+    .filter(o => dashboardProductIds.size === 0 || (o.productId ? dashboardProductIds.has(o.productId) : false))
+    .filter((order) => isInExplicitRange(orderCreatedKey(order), dashboardPreviousRange));
   const dashboardPreviousDelivered = dashboardPreviousOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const dashboardPreviousRevenue = dashboardPreviousDelivered.reduce((sum, order) => sum + order.amount, 0);
   const dashboardPreviousCogs = dashboardPreviousDelivered.reduce((sum, order) => sum + costForOrder(order), 0);
-  const dashboardPreviousExpenses = expenses.filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange)).reduce((sum, expense) => sum + expense.amount, 0);
+  const dashboardPreviousExpenses = expenses
+    .filter(e => dashboardProductIds.size === 0 || (e.productId ? dashboardProductIds.has(e.productId) : false))
+    .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange)).reduce((sum, expense) => sum + expense.amount, 0);
   const dashboardPreviousGrossProfit = dashboardPreviousRevenue - dashboardPreviousCogs;
   const dashboardPreviousNetProfit = dashboardPreviousRevenue - dashboardPreviousCogs - dashboardPreviousExpenses;
   const deliveredHourForOrder = (order: TrackedOrder) => {
@@ -1584,41 +1774,171 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (parsed && !Number.isNaN(parsed.getTime())) {
       return Math.min(23, Math.max(1, parsed.getHours()));
     }
-    return Math.min(23, Math.max(1, new Date().getHours()));
+    // Date-only or unparseable: bucket deterministically into hour 1 instead of
+    // wall-clock now, which would shift the chart every hour the user watches it.
+    return 1;
   };
   const revenueByHour = (orders: TrackedOrder[]) =>
     orders.reduce<number[]>((acc, order) => {
       acc[deliveredHourForOrder(order)] += order.amount;
       return acc;
     }, Array.from({ length: 24 }, () => 0));
-  const dashboardCurrentRevenueByHour = revenueByHour(dashboardDeliveredOrders);
-  const dashboardPreviousRevenueByHour = revenueByHour(dashboardPreviousDelivered);
+  // Revenue Performance chart — date-axis with status / granularity / mode filters.
+  const dashboardCurrentRange = explicitPeriodRange(period, dateRange, false);
+  const enumerateDays = (start: string | undefined, count: number): string[] => {
+    if (!start) return [];
+    const out: string[] = [];
+    const d = new Date(`${start}T00:00:00`);
+    for (let i = 0; i < count; i++) {
+      out.push(formatDateKey(d));
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  };
+  const daysInRange = (range: { start?: string; end?: string }): number => {
+    if (!range.start || !range.end) return 1;
+    const s = new Date(`${range.start}T00:00:00`).getTime();
+    const e = new Date(`${range.end}T00:00:00`).getTime();
+    return Math.max(1, Math.round((e - s) / 86_400_000) + 1);
+  };
+  const dashboardRangeDays = daysInRange(dashboardCurrentRange);
+  // Single-day periods can't meaningfully bucket by week/month, so force Day.
+  const effectiveGranularity: "Day" | "Week" | "Month" =
+    dashboardRangeDays <= 1 ? "Day" : revPerfGranularity;
+  const dashboardChartUsesDays = dashboardRangeDays > 1;
+
+  const matchesRevPerfStatus = (o: TrackedOrder) => revPerfStatuses.has(o.status ?? "New");
+  const revPerfCurrent = dashboardOrders.filter(matchesRevPerfStatus);
+  const revPerfPrevious = dashboardPreviousOrders.filter(matchesRevPerfStatus);
+
+  // For non-delivered statuses there's no deliveredDate — fall back to creation key.
+  const revenueDateKey = (o: TrackedOrder) => orderDeliveredKey(o) || orderCreatedKey(o);
+
+  // Bucket key: same calendar day, ISO week (Sun-anchored), or month.
+  const bucketKeyFor = (dateKey: string): string => {
+    if (effectiveGranularity === "Day") return dateKey;
+    const d = new Date(`${dateKey}T00:00:00`);
+    if (effectiveGranularity === "Week") {
+      const sunday = new Date(d);
+      sunday.setDate(d.getDate() - d.getDay());
+      return formatDateKey(sunday);
+    }
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+  const bucketLabel = (key: string): string => {
+    if (effectiveGranularity === "Month") {
+      const [y, m] = key.split("-").map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+    }
+    const d = new Date(`${key}T00:00:00`);
+    if (effectiveGranularity === "Week") {
+      return `Wk ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    }
+    if (dashboardRangeDays <= 7) {
+      return d.toLocaleDateString("en-US", { weekday: "short" });
+    }
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  // Build ordered bucket lists for current and previous, aligned by index.
+  const buildBucketKeys = (rangeDays: string[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const d of rangeDays) {
+      const k = bucketKeyFor(d);
+      if (!seen.has(k)) { seen.add(k); out.push(k); }
+    }
+    return out;
+  };
+  const sumByBucket = (orders: TrackedOrder[], buckets: string[]) => {
+    const byKey = new Map<string, number>();
+    for (const o of orders) {
+      const dk = revenueDateKey(o);
+      if (!dk) continue;
+      const bk = bucketKeyFor(dk);
+      byKey.set(bk, (byKey.get(bk) ?? 0) + o.amount);
+    }
+    return buckets.map(b => byKey.get(b) ?? 0);
+  };
+
   let currentRevenueRunningTotal = 0;
   let previousRevenueRunningTotal = 0;
-  const dashboardRevenueChartData = revenueData.map((point, index) => {
-    const hour = index + 1;
-    currentRevenueRunningTotal += dashboardCurrentRevenueByHour[hour] ?? 0;
-    previousRevenueRunningTotal += dashboardPreviousRevenueByHour[hour] ?? 0;
-    return { ...point, current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal };
-  });
-  const dashboardRevenueChartMax = Math.max(10, dashboardRevenue, dashboardPreviousRevenue);
+  let dashboardRevenueChartData: Array<{ label: string; current: number; previous: number }>;
+
+  if (dashboardChartUsesDays) {
+    const currentDays  = enumerateDays(dashboardCurrentRange.start, dashboardRangeDays);
+    const previousDays = enumerateDays(dashboardPreviousRange.start, dashboardRangeDays);
+    const currentBuckets  = buildBucketKeys(currentDays);
+    const previousBuckets = buildBucketKeys(previousDays);
+    const currentByBucket  = sumByBucket(revPerfCurrent, currentBuckets);
+    const previousByBucket = sumByBucket(revPerfPrevious, previousBuckets);
+    const length = Math.max(currentBuckets.length, previousBuckets.length);
+    dashboardRevenueChartData = Array.from({ length }, (_, i) => {
+      const cur  = currentByBucket[i]  ?? 0;
+      const prev = previousByBucket[i] ?? 0;
+      currentRevenueRunningTotal  += cur;
+      previousRevenueRunningTotal += prev;
+      const labelKey = currentBuckets[i] ?? previousBuckets[i] ?? "";
+      return revPerfMode === "Cumulative"
+        ? { label: bucketLabel(labelKey), current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
+        : { label: bucketLabel(labelKey), current: cur, previous: prev };
+    });
+  } else {
+    const dashboardCurrentRevenueByHour  = revenueByHour(revPerfCurrent.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
+    const dashboardPreviousRevenueByHour = revenueByHour(revPerfPrevious.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
+    dashboardRevenueChartData = revenueData.map((point, index) => {
+      const hour = index + 1;
+      const cur  = dashboardCurrentRevenueByHour[hour]  ?? 0;
+      const prev = dashboardPreviousRevenueByHour[hour] ?? 0;
+      currentRevenueRunningTotal  += cur;
+      previousRevenueRunningTotal += prev;
+      return revPerfMode === "Cumulative"
+        ? { label: point.hour, current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
+        : { label: point.hour, current: cur, previous: prev };
+    });
+  }
+  const dashboardRevenueChartMax = Math.max(
+    10,
+    ...dashboardRevenueChartData.map(d => Math.max(d.current, revPerfShowPrevious ? d.previous : 0))
+  );
   const ordersDeliveryRateExact = periodOrders.length === 0 ? 0 : (periodDeliveredOrders.length / periodOrders.length) * 100;
   const ordersDeliveryRate = Math.round(ordersDeliveryRateExact);
   const ordersFailedRate = periodOrders.length === 0 ? 0 : Math.round((periodOrders.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New")).length / periodOrders.length) * 100);
   const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
-  const dashboardRevenuePerDeliveredOrder = dashboardDeliveredOrders.length === 0 ? 0 : dashboardRevenue / dashboardDeliveredOrders.length;
+  // Average order value for the simulator. Prefer revenue per delivered
+  // order; if no deliveries yet, fall back to AOV across all orders that
+  // have an amount, so the projection still produces a sensible number.
+  const dashboardOrdersWithAmount = dashboardOrders.filter((o) => o.amount > 0);
+  const dashboardAOV = dashboardDeliveredOrders.length > 0
+    ? dashboardRevenue / dashboardDeliveredOrders.length
+    : dashboardOrdersWithAmount.length > 0
+      ? dashboardOrdersWithAmount.reduce((s, o) => s + o.amount, 0) / dashboardOrdersWithAmount.length
+      : 0;
+  const dashboardAOVFallback = dashboardDeliveredOrders.length === 0 && dashboardOrdersWithAmount.length > 0;
   const dashboardConversionLiftMax = Math.max(0, 100 - dashboardDeliveryRateExact);
   const dashboardTargetConversion = Math.min(100, dashboardDeliveryRateExact + conversion);
   const dashboardProjectedDelivered = dashboardOrders.length * (dashboardTargetConversion / 100);
-  const dashboardProjectedRevenue = dashboardProjectedDelivered * dashboardRevenuePerDeliveredOrder;
+  const dashboardProjectedRevenue = dashboardProjectedDelivered * dashboardAOV;
   const dashboardOpportunity = Math.max(0, dashboardProjectedRevenue - dashboardRevenue);
-  const ordersRevenuePerDeliveredOrder = periodDeliveredOrders.length === 0 ? 0 : ordersRevenue / periodDeliveredOrders.length;
-  const ordersConversionLiftMax = Math.max(0, 100 - ordersDeliveryRateExact);
-  const ordersTargetConversion = Math.min(100, ordersDeliveryRateExact + ordersConversion);
-  const ordersProjectedRevenueValue = periodOrders.length * (ordersTargetConversion / 100) * ordersRevenuePerDeliveredOrder;
+  // Top Selling Products on the dashboard: scoped to dashboardOrders (so it
+  // honors the dashboard's product/period filters), keyed by productId so
+  // renames/duplicates don't merge, and counts delivered orders only since
+  // the panel header says "By delivered revenue this period".
+  const dashboardOrdersByProduct = (() => {
+    type Row = { productId: string; name: string; count: number; revenue: number };
+    const acc = new Map<string, Row>();
+    for (const order of dashboardOrders) {
+      if ((order.status ?? "New") !== "Delivered") continue;
+      const key = order.productId ?? `name:${order.productName}`;
+      const cur = acc.get(key) ?? { productId: key, name: order.productName, count: 0, revenue: 0 };
+      cur.count += 1;
+      cur.revenue += order.amount;
+      acc.set(key, cur);
+    }
+    return Array.from(acc.values()).sort((a, b) => b.revenue - a.revenue);
+  })();
   const projectedRevenue = formatMoney(dashboardProjectedRevenue);
-  const projectedOrdersRevenue = formatMoney(ordersProjectedRevenueValue);
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -1630,15 +1950,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesStatus = orderStatus === "All Orders" || status === orderStatus;
     const matchesSource = orderSource === "All Sources" || source === orderSource;
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
+    const matchesProduct = orderProductIds.size === 0 || (order.productId ? orderProductIds.has(order.productId) : false);
 
-    return matchesSearch && matchesStatus && matchesSource && matchesLocation;
+    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct;
   });
   const ORDERS_PAGE_SIZE = 25;
   const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
+  // Product-filtered stats — drive summary cards so they reflect the active product filter
+  const pfOrders = orderProductIds.size === 0 ? periodOrders : periodOrders.filter(o => o.productId ? orderProductIds.has(o.productId) : false);
+  const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
+  const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
+  const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
+  const pfDeliveryRate = Math.round(pfDeliveryRateExact);
+  const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
+  const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
+  const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
+  const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
   const ordersByProduct = Object.entries(
-    periodOrders.reduce<Record<string, { count: number; revenue: number }>>((acc, order) => {
+    pfOrders.reduce<Record<string, { count: number; revenue: number }>>((acc, order) => {
       const current = acc[order.productName] ?? { count: 0, revenue: 0 };
       const isDelivered = (order.status ?? "New") === "Delivered";
       acc[order.productName] = { count: current.count + 1, revenue: current.revenue + (isDelivered ? order.amount : 0) };
@@ -1649,33 +1980,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const search = cartSearch.trim().toLowerCase();
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName}`.toLowerCase().includes(search);
     const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
-    return matchesSearch && matchesStatus;
+    const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange);
+    const matchesProduct = cartProductIds.size === 0 || (cart.productId ? cartProductIds.has(cart.productId) : false);
+    return matchesSearch && matchesStatus && matchesPeriod && matchesProduct;
   });
+  const CARTS_PAGE_SIZE = 25;
+  const cartsTotalPages = Math.max(1, Math.ceil(filteredAbandonedCarts.length / CARTS_PAGE_SIZE));
+  const cartsPageClamped = Math.min(cartsPage, cartsTotalPages);
+  const pagedAbandonedCarts = filteredAbandonedCarts.slice((cartsPageClamped - 1) * CARTS_PAGE_SIZE, cartsPageClamped * CARTS_PAGE_SIZE);
   const demoCarts = abandonedCarts.length;
-  const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, period, dateRange));
-  const assignedCartCount = abandonedCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
-  const contactedCartCount = abandonedCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
-  const convertedCartCount = periodCarts.filter((cart) => cart.status === "Converted").length;
-  const lostCartCount = abandonedCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
-  const cartConversionRate = periodCarts.length === 0 ? 0 : Math.round((convertedCartCount / periodCarts.length) * 100);
+  const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange));
+  // Carts filtered by both period and active product selection — drives stat cards
+  const pfCarts = cartProductIds.size === 0 ? periodCarts : periodCarts.filter(c => c.productId ? cartProductIds.has(c.productId) : false);
+  const assignedCartCount = pfCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
+  const contactedCartCount = pfCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
+  const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
+  const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
+  const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
+
+  const authUser = auth.getUser();
+  const callQueue = trackedOrders
+    .filter((order) => {
+      const status = order.status ?? "New";
+      if (status !== "New") return false;
+      if (authUser && authUser.role === "Sales Rep") return order.assignedRepId === authUser.id;
+      return true;
+    })
+    .sort((a, b) => new Date(a.createdAt ?? a.date).getTime() - new Date(b.createdAt ?? b.date).getTime());
+  const callQueueOrder = callQueue[callQueueIndex] as TrackedOrder | undefined;
+
   const scheduledDeliveryRows = trackedOrders.filter((order) => {
     const status = order.status ?? "New";
-    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(scheduleRange);
+    const matchesSchedule = ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(scheduleRange, scheduleCustomDate);
+    const matchesProduct = scheduleProductIds.size === 0 || (order.productId ? scheduleProductIds.has(order.productId) : false);
+    return matchesSchedule && matchesProduct;
   });
   const agentNameForOrder = (order: TrackedOrder) => agents.find((agent) => agent.id === order.agentId)?.name ?? "Unassigned";
-  const filteredDeliveryRows = deliveredInPeriodRows.filter((order) => {
+  const pfDeliveryBase = deliveriesProductIds.size === 0 ? deliveredInPeriodRows : deliveredInPeriodRows.filter(o => o.productId ? deliveriesProductIds.has(o.productId) : false);
+  const filteredDeliveryRows = pfDeliveryBase.filter((order) => {
     const search = deliverySearch.trim().toLowerCase();
     const agentName = agentNameForOrder(order);
     const matchesSearch = !search || `${order.id} ${order.customer} ${order.phone} ${order.productName}`.toLowerCase().includes(search);
     const matchesAgent = deliveryAgent === "All Agents" || agentName === deliveryAgent || (!order.agentId && deliveryAgent === "Unassigned");
     return matchesSearch && matchesAgent;
   });
-  const deliveredRevenueInPeriod = deliveredInPeriodRows.reduce((sum, order) => sum + order.amount, 0);
+  const deliveredRevenueInPeriod = pfDeliveryBase.reduce((sum, order) => sum + order.amount, 0);
   const averageFulfillmentDays =
-    deliveredInPeriodRows.length === 0
+    pfDeliveryBase.length === 0
       ? 0
-      : Math.round((deliveredInPeriodRows.reduce((sum, order) => sum + fulfillmentDaysForOrder(order), 0) / deliveredInPeriodRows.length) * 10) / 10;
-  const avgDeliveredPerDay = deliveredInPeriodRows.length === 0 ? 0 : Math.round((deliveredInPeriodRows.length / daysInPeriodSoFar(deliveriesPeriod, deliveriesDateRange)) * 10) / 10;
+      : Math.round((pfDeliveryBase.reduce((sum, order) => sum + fulfillmentDaysForOrder(order), 0) / pfDeliveryBase.length) * 10) / 10;
+  const avgDeliveredPerDay = pfDeliveryBase.length === 0 ? 0 : Math.round((pfDeliveryBase.length / daysInPeriodSoFar(deliveriesPeriod, deliveriesDateRange)) * 10) / 10;
   const salesRepRows = salesRepUsers.map((user) => {
     const assigned = trackedOrders.filter((order) => order.assignedRepId === user.id && isInPeriod(orderCreatedKey(order), salesPeriod, salesDateRange));
     const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
@@ -1701,14 +2055,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
   const agentRows = agents.map((agent) => {
     const assigned = trackedOrders.filter((order) => order.agentId === agent.id);
-    const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered").length;
+    const deliveredList = assigned.filter((order) => (order.status ?? "New") === "Delivered");
+    const delivered = deliveredList.length;
     const pending = assigned.filter((order) => !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New")).length;
+    const failed = assigned.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New")).length;
+    const revenue = deliveredList.reduce((sum, o) => sum + o.amount, 0);
     const status: Exclude<AgentStatus, "All Status"> = agent.active ? (pending > 0 ? "Order in Progress" : "Active") : "Inactive";
     return {
       agent,
       status,
+      totalOrders: assigned.length,
       deliveries: delivered,
       pending,
+      failed,
+      revenue,
       successRate: assigned.length === 0 ? 0 : Math.round((delivered / assigned.length) * 100),
       stockValue: agentStockValueFor(agent.id),
       defectiveValue: agentIssueValueFor(agent.id, "defective"),
@@ -1719,6 +2079,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const totalAgentDefectiveValue = agentRows.reduce((sum, row) => sum + row.defectiveValue, 0);
   const totalAgentMissingValue = agentRows.reduce((sum, row) => sum + row.missingValue, 0);
   const pendingAgentDeliveries = agentRows.reduce((sum, row) => sum + row.pending, 0);
+  const totalAgentRevenue = agentRows.reduce((sum, row) => sum + row.revenue, 0);
+  const avgAgentSuccessRate = agentRows.length === 0 ? 0 : Math.round(agentRows.reduce((sum, row) => sum + row.successRate, 0) / agentRows.length);
   const filteredAgentRows = agentRows.filter((row) => {
     const search = agentSearch.trim().toLowerCase();
     const matchesSearch = !search || `${row.agent.name} ${row.agent.phone}`.toLowerCase().includes(search);
@@ -2040,6 +2402,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const closeStockCountSession = (sessionId: string) => {
     setStockCounts((prev) => prev.map((s) => s.id === sessionId ? { ...s, status: "Closed", closedAt: new Date().toISOString() } : s));
+    stockApi.closeSession(sessionId).catch(() => showToast("Session closed locally — sync failed."));
     showToast("Stock count session closed.");
   };
 
@@ -2429,6 +2792,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setExpenses((prev) => [...newExpenses, ...prev]);
     }
     setRepExtraExpenses([]);
+    ordersApi.update(order.id, { logistics_cost: fee, amount_remitted: remit, remittance_status: status }).catch(() => showToast("Delivery details saved locally — sync failed."));
     showToast(`${order.id} delivery details saved${validExtras.length > 0 ? ` · ${validExtras.length} expense${validExtras.length === 1 ? "" : "s"} added` : ""}.`);
   };
   const productProfitabilityRows = products.map((product) => {
@@ -2532,7 +2896,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const topAgentsByDeliveries = [...financeAgentRows].sort((a, b) => b.deliveries - a.deliveries).slice(0, 3);
   const topAgentsByIssues = [...financeAgentRows].sort((a, b) => (b.defectiveValue + b.missingValue) - (a.defectiveValue + a.missingValue)).slice(0, 3);
   const customerRecords = Object.values(
-    trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), customerPeriod, customerDateRange)).reduce<Record<string, { id: string; name: string; email: string; phone: string; orders: number; successful: number; cancelled: number; totalSpend: number; source: string }>>((acc, order) => {
+    trackedOrders
+      .filter(o => customerProductIds.size === 0 || (o.productId ? customerProductIds.has(o.productId) : false))
+      .filter((order) => isInPeriod(orderCreatedKey(order), customerPeriod, customerDateRange)).reduce<Record<string, { id: string; name: string; email: string; phone: string; orders: number; successful: number; cancelled: number; totalSpend: number; source: string }>>((acc, order) => {
       const key = order.email ? order.email.toLowerCase() : `${order.phone.replace(/\D/g, "")}-${order.customer.trim().toLowerCase()}`;
       const status = order.status ?? "New";
       const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -2681,14 +3047,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         : user.role === "Inventory Manager"
           ? 0
           : payrollMonthDelivered.length;
-      const fixed = structure.type === "Commission" ? 0 : structure.fixedSalary;
-      const commission = structure.type === "Fixed Salary" ? 0 : structure.commissionRate * delivered;
-      const autoBonus = user.role === "Sales Rep" ? computeRepAutoBonus(user.id).total : 0;
+      const fixed = structure.type === "Per Delivered Order" ? 0 : structure.fixedSalary;
+      const commission = (structure.type === "Per Delivered Order" || structure.type === "Hybrid")
+        ? structure.commissionRate * delivered : 0;
+      // Performance tier bonus: highest tier where delivered >= threshold
+      const tierBonus = structure.type === "Performance Bonus" && structure.bonusTiers?.length
+        ? (structure.bonusTiers.filter((t) => delivered >= t.threshold).sort((a, b) => b.threshold - a.threshold)[0]?.amount ?? 0)
+        : 0;
+      const autoBonus = (user.role === "Sales Rep" ? computeRepAutoBonus(user.id).total : 0) + tierBonus;
       const deductions = user.role === "Sales Rep" ? repPenaltiesInPeriod(user.id).reduce((sum, p) => sum + p.amount, 0) : 0;
       const total = Math.max(0, fixed + commission + autoBonus - deductions);
       return { userId: user.id, name: user.name, delivered, fixedSalary: fixed, commission, autoBonus, deductions, total };
     })
     .filter(Boolean) as PayrollRun["rows"];
+
+  // Top performer bonus: find the sales rep(s) with highest delivered count and add bonus
+  const topPerformerBonusNum = topPerformerBonusEnabled ? Math.max(0, Number(topPerformerBonusAmount) || 0) : 0;
+  const topPerformerInfo = (() => {
+    if (topPerformerBonusNum <= 0) return null;
+    const repRows = payrollPreviewRows.filter((r) => users.find((u) => u.id === r.userId)?.role === "Sales Rep");
+    if (repRows.length === 0) return null;
+    const maxDelivered = Math.max(...repRows.map((r) => r.delivered));
+    if (maxDelivered === 0) return null;
+    const winners = repRows.filter((r) => r.delivered === maxDelivered);
+    const amountEach = Math.round(topPerformerBonusNum / winners.length);
+    // Mutate the preview rows to include the bonus
+    for (const winner of winners) {
+      winner.autoBonus = (winner.autoBonus ?? 0) + amountEach;
+      winner.total = winner.total + amountEach;
+    }
+    return { names: winners.map((w) => w.name), amountEach, delivered: maxDelivered };
+  })();
+
   const payrollGrandTotal = payrollPreviewRows.reduce((sum, row) => sum + row.total, 0);
   const roundRobinActiveRows = activeSalesRepUsers
     .map((user) => ({
@@ -2728,9 +3118,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!structure) {
       return 0;
     }
-    const fixed = structure.type === "Commission" ? 0 : structure.fixedSalary;
-    const commission = structure.type === "Fixed Salary" ? 0 : structure.commissionRate * delivered;
-    return fixed + commission;
+    const fixed = structure.type === "Per Delivered Order" ? 0 : structure.fixedSalary;
+    const commission = (structure.type === "Per Delivered Order" || structure.type === "Hybrid")
+      ? structure.commissionRate * delivered : 0;
+    const tierBonus = structure.type === "Performance Bonus" && structure.bonusTiers?.length
+      ? (structure.bonusTiers.filter((t) => delivered >= t.threshold).sort((a, b) => b.threshold - a.threshold)[0]?.amount ?? 0)
+      : 0;
+    return fixed + commission + tierBonus;
   };
   const responseTimeForOrder = (order: TrackedOrder) => {
     if ((order.status ?? "New") === "New") {
@@ -2778,7 +3172,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const repScheduledOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
-    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(repScheduleRange);
+    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
   });
   const repProducts = [...products]
     .filter((product) => {
@@ -2872,7 +3266,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     if (card.label === "Fulfillment Rate") {
-      return { ...card, value: `${dashboardDeliveryRate}%`, trend: formatTrend(percentChange(dashboardDeliveryRate, dashboardPreviousOrders.length === 0 ? 0 : Math.round((dashboardPreviousDelivered.length / dashboardPreviousOrders.length) * 100))), helper: `${dashboardCancelledRate}% cancelled` };
+      const previousRateExact = dashboardPreviousOrders.length === 0
+        ? 0
+        : (dashboardPreviousDelivered.length / dashboardPreviousOrders.length) * 100;
+      return {
+        ...card,
+        value: `${dashboardDeliveryRate}%`,
+        trend: formatTrend(percentChange(dashboardDeliveryRateExact, previousRateExact)),
+        helper: `${dashboardDeliveredOrders.length} delivered · ${dashboardCancelledCount} cancelled (${dashboardCancelledRate}%)`
+      };
     }
 
     return card;
@@ -2880,19 +3282,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const dashboardCartStats = cartStats.map((stat) => {
     if (stat.label === "Total") {
-      return { ...stat, value: String(abandonedCarts.length) };
+      return { ...stat, value: String(dashboardCarts.length) };
     }
 
     if (stat.label === "Active") {
-      return { ...stat, value: String(abandonedCarts.filter((cart) => ["Open abandoned", "In progress", "Abandoned", "Assigned"].includes(cart.status)).length) };
+      return { ...stat, value: String(dashboardCarts.filter((cart) => ["Open abandoned", "In progress", "Abandoned", "Assigned"].includes(cart.status)).length) };
     }
 
     if (stat.label === "Contacted") {
-      return { ...stat, value: String(contactedCartCount) };
+      return { ...stat, value: String(dashboardCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length) };
     }
 
     if (stat.label === "Needs attention") {
-      return { ...stat, value: String(abandonedCarts.filter((cart) => ["Open abandoned", "Abandoned", "No response"].includes(cart.status)).length) };
+      return { ...stat, value: String(dashboardCarts.filter((cart) => ["Open abandoned", "Abandoned", "No response"].includes(cart.status)).length) };
     }
 
     return stat;
@@ -2902,7 +3304,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Call Rep Console" ? "Call Rep console is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "AI Agent" ? "AI Agent preview is in development." : activePage === "AI Sandbox" ? "AI Sandbox preview is in development." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -2922,31 +3324,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => document.body.classList.remove("mobile-menu-lock");
   }, [mobileMenuOpen]);
 
-  // Load email settings when navigating to Settings page
-  useEffect(() => {
-    if (activePage !== "Settings") return;
-    setEmailSettingsLoading(true);
-    emailSettingsApi.get().then((data) => {
-      setEmailSettings({
-        enabled:         data.enabled ?? false,
-        provider:        data.provider ?? "mailjet",
-        api_key_public:  data.api_key_public ?? "",
-        api_key_private: data.api_key_private ? "••••••••" : "",
-        resend_api_key:  data.resend_api_key  ? "••••••••" : "",
-        from_name:       data.from_name ?? "",
-        from_email:      data.from_email ?? "",
-        reply_to:        data.reply_to ?? "",
-        triggers:        { ...defaultTriggers, ...data.triggers },
-        templates:       { ...defaultEmailTemplates, ...data.templates }
-      });
-    }).catch(() => {}).finally(() => setEmailSettingsLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage]);
-
   useEffect(() => {
     const updateRoute = () => setHashRoute(window.location.hash);
     window.addEventListener("hashchange", updateRoute);
     return () => window.removeEventListener("hashchange", updateRoute);
+  }, []);
+
+  // Check push notification status on mount
+  useEffect(() => {
+    setPushPermission(getPermissionState());
+    isCurrentlySubscribed().then(setPushSubscribed);
+    // Listen for SW navigation messages (notification click)
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === "NAVIGATE" && event.data.url) {
+        window.location.hash = event.data.url;
+      }
+    };
+    navigator.serviceWorker?.addEventListener("message", handleSwMessage);
+    return () => navigator.serviceWorker?.removeEventListener("message", handleSwMessage);
   }, []);
 
   useEffect(() => {
@@ -2954,7 +3349,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    setActivePage("Call Rep Console");
+    setActivePage("Sales Rep Workspace");
     const [, rawPath = ""] = hashRoute.split("#");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
     const section = parts[2];
@@ -3026,18 +3421,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "round-robin": "Round-Robin",
       embed: "Embed Form",
       "embed-form": "Embed Form",
-      "ai-agent": "AI Agent",
-      "ai-sandbox": "AI Sandbox",
       notifications: "Notifications",
+      "call-rep-console": "Call Rep Console",
       settings: "Settings"
     };
 
     if (section === "orders" && parts[3]) {
-      setActivePage("Call Rep Console");
-      setRepConsoleRepId("all");
-      setRepConsoleTab("Orders");
-      setRepOrderDetailId(parts[3]);
+      // Deep link to a specific admin order — land on the admin Orders page
+      // and open the same details modal the Eye-button uses.
+      setActivePage("Orders");
       setSelectedOrderId(parts[3]);
+      setModal("orderDetails");
       return;
     }
 
@@ -3067,6 +3461,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setInventoryView("dashboard");
       }
       if (nextPage === "Call Rep Console") {
+        setCallQueueIndex(0);
+        setCallQueueNote("");
+      }
+      if (nextPage === "Sales Rep Workspace") {
         setRepConsoleTab("Dashboard");
         setRepOrderDetailId("");
       }
@@ -3106,6 +3504,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [payrollRuns]);
 
   useEffect(() => {
+    writeStored(storageKeys.topPerformerBonusEnabled, topPerformerBonusEnabled);
+  }, [topPerformerBonusEnabled]);
+
+  useEffect(() => {
+    writeStored(storageKeys.topPerformerBonusAmount, topPerformerBonusAmount);
+  }, [topPerformerBonusAmount]);
+
+  useEffect(() => {
     writeStored(storageKeys.expenses, expenses);
   }, [expenses]);
 
@@ -3136,22 +3542,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writeStored(storageKeys.formOrderSummaryTitle, formOrderSummaryTitle); }, [formOrderSummaryTitle]);
   useEffect(() => { writeStored(storageKeys.formAddonPromptEnabled, formAddonPromptEnabled); }, [formAddonPromptEnabled]);
   useEffect(() => { writeStored(storageKeys.formOrderSummaryEnabled, formOrderSummaryEnabled); }, [formOrderSummaryEnabled]);
-  useEffect(() => { writeStored(storageKeys.campaignLabels, campaignLabels); }, [campaignLabels]);
-  useEffect(() => { writeStored(storageKeys.creativeLabels, creativeLabels); }, [creativeLabels]);
   useEffect(() => { writeStored(storageKeys.waybillRecords, waybillRecords); }, [waybillRecords]);
   useEffect(() => { writeStored(storageKeys.customerFlags, customerFlags); }, [customerFlags]);
   useEffect(() => { writeStored(storageKeys.systemNotifications, systemNotifications); }, [systemNotifications]);
   useEffect(() => { writeStored(storageKeys.stockCounts, stockCounts); }, [stockCounts]);
-  useEffect(() => { setOrdersPage(1); }, [orderSearch, orderStatus, orderSource, orderLocation]);
+  useEffect(() => {
+    setOrdersPage(1);
+    setSelectedOrderIds(new Set());
+  }, [orderSearch, orderStatus, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange]);
+  useEffect(() => {
+    setCartsPage(1);
+    setSelectedCartIds(new Set());
+  }, [cartSearch, cartStatus, cartProductIds, cartsPeriod, cartsDateRange]);
+
+  // ── Response-time tick (re-renders age badges every 60 s + on tab focus) ──
+  const [responseTick, setResponseTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setResponseTick((t) => t + 1);
+    const id = setInterval(bump, 60_000);
+    const onVis = () => { if (document.visibilityState === "visible") bump(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+
+  // ── Public embed loader ──────────────────────────────────
+  // When an unauthenticated visitor opens the embed form, the auth'd loader
+  // below short-circuits and `products` stays empty. Fetch the requested
+  // product (and its cross-sells/free-gifts) via the public endpoint so the
+  // form has data to render.
+  useEffect(() => {
+    if (auth.isLoggedIn()) return;
+    if (!publicEmbedParams || !publicProductId) return;
+    let cancelled = false;
+    setDataLoading(true);
+    productsApi.public(publicProductId).then((res) => {
+      if (cancelled || !res) return;
+      const merged = [res.product, ...(res.related ?? [])];
+      setProducts(merged as any);
+    }).catch(() => {
+      // If the public fetch fails the form will render empty — that's fine,
+      // it matches the previous behavior.
+    }).finally(() => {
+      if (!cancelled) setDataLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [publicEmbedParams, publicProductId]);
 
   // ── API data loader ───────────────────────────────────────
   // On mount, if the user is authenticated, fetch live data from the API
   // and merge it into state (API data wins over localStorage cache).
+  const retryLoadData = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!auth.isLoggedIn()) return;
+    if (!auth.isLoggedIn()) { setDataLoading(false); return; }
     let cancelled = false;
 
     const load = async () => {
+      setDataLoading(true);
+      setDataError(null);
       try {
         const [
           apiProducts,
@@ -3165,7 +3612,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiTeam
         ] = await Promise.allSettled([
           productsApi.list(),
-          ordersApi.list({ limit: "500" }),
+          ordersApi.list({ limit: "2000" }),
           agentsApi.list(),
           stockApi.movements({ limit: "500" }),
           expensesApi.list(),
@@ -3177,40 +3624,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         if (cancelled) return;
 
+        // Check if ALL requests rejected (total API failure)
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam];
+        const allFailed = allResults.every((r) => r.status === "rejected");
+        if (allFailed) {
+          setDataError("Unable to reach the server. Showing cached data.");
+        }
+
         if (apiProducts.status === "fulfilled" && apiProducts.value?.length) {
           setProducts(apiProducts.value as any);
         }
         if (apiOrders.status === "fulfilled" && apiOrders.value?.data?.length) {
           setTrackedOrders(apiOrders.value.data as any);
+          // Seed the poll timestamp so the 30s poller only fetches orders newer than this batch
+          const first = apiOrders.value.data[0];
+          if (first) latestOrderTimestamp.current = first.createdAt ?? first.created_at ?? "";
         }
         if (apiAgents.status === "fulfilled" && apiAgents.value?.length) {
           setAgents(apiAgents.value as any);
           // Flatten agent stock from nested agent.stock array
           const flat = (apiAgents.value as any[]).flatMap((a: any) =>
-            (a.stock ?? []).map((s: any) => ({ agentId: a.id, productId: s.product_id, quantity: s.quantity }))
+            (a.stock ?? []).map((s: any) => ({ agentId: a.id, productId: s.productId ?? s.product_id, quantity: s.quantity }))
           );
           if (flat.length) setAgentStock(flat as any);
         }
         if (apiMovements.status === "fulfilled" && apiMovements.value?.data?.length) {
-          // API responses are already snake_case → camelCase normalized in lib/api.ts.
-          // This shim only fills in defaults so required StockMovement fields are never undefined.
-          const normalized: StockMovement[] = (apiMovements.value.data as any[]).map((row) => ({
-            id: row.id ?? makeMovementId(),
-            date: row.date ?? row.createdAt ?? new Date().toISOString(),
-            productId: row.productId ?? "",
-            productName: row.productName ?? "",
-            type: row.type ?? "Correction",
-            qty: typeof row.qty === "number" ? row.qty : Number(row.qty) || 0,
-            balanceAfter: typeof row.balanceAfter === "number" ? row.balanceAfter : 0,
-            agent: row.agent ?? row.agentName ?? undefined,
-            order: row.order ?? row.orderId ?? undefined,
-            by: row.by ?? row.createdBy ?? "System",
-            note: row.note ?? undefined
-          }));
-          setStockMovements(normalized);
+          setStockMovements(apiMovements.value.data as any);
         }
         if (apiExpenses.status === "fulfilled" && apiExpenses.value?.length) {
-          setExpenses(apiExpenses.value as any);
+          // Backend stores "category" but frontend ExpenseRecord uses "type" — normalise at boundary
+          setExpenses((apiExpenses.value as any[]).map((e: any) => ({
+            ...e,
+            type: e.type ?? e.category ?? "Other",
+            productName: e.productName ?? e.productName ?? ""
+          })) as any);
         }
         if (apiWaybills.status === "fulfilled" && apiWaybills.value?.length) {
           setWaybillRecords(apiWaybills.value as any);
@@ -3232,12 +3679,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       } catch (_) {
-        // API unreachable — continue with localStorage data
+        if (!cancelled) setDataError("Unable to reach the server. Showing cached data.");
+      } finally {
+        if (!cancelled) setDataLoading(false);
       }
     };
 
+    retryLoadData.current = load;
     load();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Order polling — merge new orders every 30s ────────────
+  // Tracks the latest createdAt we've seen so polling only fetches newer rows.
+  const latestOrderTimestamp = useRef<string>("");
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+    const poll = async () => {
+      try {
+        const params: Record<string, string> = { limit: "100" };
+        if (latestOrderTimestamp.current) params.since = latestOrderTimestamp.current;
+        const result = await ordersApi.list(params);
+        if (!result?.data?.length) return;
+        // Update the high-water mark
+        const newest = result.data[0]?.createdAt ?? result.data[0]?.created_at;
+        if (newest) latestOrderTimestamp.current = newest;
+        // Merge: add orders that don't exist in state yet
+        setTrackedOrders((prev) => {
+          const existingIds = new Set(prev.map((o) => o.id));
+          const incoming = (result.data as TrackedOrder[]).filter((o) => !existingIds.has(o.id));
+          return incoming.length > 0 ? [...incoming, ...prev] : prev;
+        });
+      } catch { /* silent — polling failure shouldn't disrupt the UI */ }
+    };
+    const id = setInterval(poll, 30_000);
+    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3250,57 +3727,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal, selectedOrderId]);
-
-  // Supabase Realtime — listen for new orders and surface a notification
-  useEffect(() => {
-    const user = auth.getUser();
-    if (!realtimeClient || !user?.orgId) return;
-
-    const channel = realtimeClient
-      .channel("orders-realtime")
-      .on(
-        "postgres_changes" as any,
-        { event: "INSERT", schema: "public", table: "orders", filter: `org_id=eq.${user.orgId}` },
-        (payload: any) => {
-          const order = payload.new;
-          if (!order) return;
-          // Add to tracked orders if not already present
-          setTrackedOrders((prev) => {
-            if (prev.some((o) => o.id === order.id)) return prev;
-            const newOrder = {
-              id: order.id,
-              customer: order.customer,
-              phone: order.phone,
-              whatsapp: order.whatsapp,
-              email: order.email,
-              address: order.address,
-              city: order.city,
-              state: order.state,
-              productName: order.product_name,
-              packageName: order.package_name,
-              productId: order.product_id,
-              packageId: order.package_id,
-              quantity: order.quantity,
-              amount: order.amount,
-              currency: order.currency,
-              source: order.source,
-              location: order.location,
-              assignedRepId: order.assigned_rep_id,
-              status: order.status,
-              date: order.date,
-              createdAt: order.created_at,
-              notes: []
-            };
-            return [newOrder as any, ...prev];
-          });
-          showToast(`New order from ${order.customer} just came in!`);
-        }
-      )
-      .subscribe();
-
-    return () => { realtimeClient!.removeChannel(channel); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
   useEffect(() => {
@@ -3382,6 +3808,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!abandonedDraftCartId) {
       setAbandonedDraftCartId(cartPatch.id);
     }
+
+    // Debounced server sync — only fires 1.5s after the customer stops typing.
+    // Uses the public capture endpoint so it works in unauthenticated iframes
+    // on customer-facing sites. Skipped in the embed preview so admin
+    // previewing doesn't pollute the cart table.
+    if (publicProduct) {
+      window.clearTimeout(cartSyncTimerRef.current ?? undefined);
+      cartSyncTimerRef.current = window.setTimeout(() => {
+        cartsApi.capture({
+          id:           cartPatch.id,
+          customer:     cartPatch.customer,
+          phone:        cartPatch.phone,
+          whatsapp:     cartPatch.whatsapp,
+          city:         cartPatch.city,
+          state:        cartPatch.state,
+          productId:    cartPatch.productId,
+          packageId:    cartPatch.packageId,
+          productName:  cartPatch.productName,
+          packageName:  cartPatch.packageName,
+          amount:       cartPatch.amount,
+          currency:     cartPatch.currency,
+          source:       cartPatch.source
+        }).catch(() => { /* swallow — local state already has it */ });
+      }, 1500);
+    }
   }, [
     orderFormName,
     orderFormPhone,
@@ -3408,6 +3859,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handlePeriodChange = (nextPeriod: Period) => {
     setPeriod(nextPeriod);
     setShowDateRange(false);
+    if (nextPeriod !== "Custom") setDateRange({ start: "", end: "" });
     showToast(`Dashboard period set to ${nextPeriod}.`);
   };
 
@@ -3541,6 +3993,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Sales Reps date range cleared. Period reset to This Month.");
   };
 
+  const handleCartsPeriodChange = (nextPeriod: Period) => {
+    setCartsPeriod(nextPeriod);
+    setShowCartsDateRange(false);
+    showToast(`Carts period set to ${nextPeriod}.`);
+  };
+  const applyCartsDateRange = () => {
+    if (!cartsDateRange.start || !cartsDateRange.end) { showToast("Choose both a start and end date for Carts."); return; }
+    if (cartsDateRange.start > cartsDateRange.end) { showToast("Carts start date must be before end date."); return; }
+    setCartsPeriod("Custom");
+    setShowCartsDateRange(false);
+    showToast(`Carts date range set to ${cartsDateRange.start} – ${cartsDateRange.end}.`);
+  };
+
+  const handleCampaignPeriodChange = (nextPeriod: Period) => {
+    setCampaignPeriod(nextPeriod);
+    setShowCampaignDateRange(false);
+    showToast(`Campaign period set to ${nextPeriod}.`);
+  };
+  const applyCampaignDateRange = () => {
+    if (!campaignDateRange.start || !campaignDateRange.end) { showToast("Choose both a start and end date for Campaign Orders."); return; }
+    if (campaignDateRange.start > campaignDateRange.end) { showToast("Campaign start date must be before end date."); return; }
+    setCampaignPeriod("Custom");
+    setShowCampaignDateRange(false);
+    showToast(`Campaign date range set to ${campaignDateRange.start} – ${campaignDateRange.end}.`);
+  };
+
   const handleCustomerPeriodChange = (nextPeriod: Period) => {
     setCustomerPeriod(nextPeriod);
     setShowCustomerDateRange(false);
@@ -3641,6 +4119,76 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setFinancePeriod("This Month");
     setShowFinanceDateRange(false);
     showToast("Financial Reports date range cleared. Period reset to This Month.");
+  };
+
+  // Reusable week/multi-week navigator — sets period to "Custom" with the computed date range
+  const renderWeekNav = (
+    navStart: string, setNavStart: (s: string) => void,
+    navSpan: NavSpan, setNavSpan: (s: NavSpan) => void,
+    setPeriod: (p: Period) => void,
+    setDateRange: (r: DateRange) => void
+  ) => {
+    const end = spanEnd(navStart, navSpan);
+    const apply = (start: string, span: NavSpan) => {
+      // If the user lands exactly on the current Sunday with a 1W span, that's
+      // semantically "This Week" — leave the period pill on it instead of
+      // flipping to Custom.
+      if (span === "1W" && start === getSundayKey()) {
+        setPeriod("This Week");
+        setDateRange({ start: "", end: "" });
+        return;
+      }
+      setPeriod("Custom");
+      setDateRange({ start, end: spanEnd(start, span) });
+    };
+    const prev = () => { const d = new Date(`${navStart}T00:00:00`); d.setDate(d.getDate() - (navSpan === "1W" ? 7 : navSpan === "2W" ? 14 : navSpan === "3W" ? 21 : 30)); const s = formatDateKey(d); setNavStart(s); apply(s, navSpan); };
+    const next = () => { const d = new Date(`${navStart}T00:00:00`); d.setDate(d.getDate() + (navSpan === "1W" ? 7 : navSpan === "2W" ? 14 : navSpan === "3W" ? 21 : 30)); const s = formatDateKey(d); setNavStart(s); apply(s, navSpan); };
+    const thisWeek = () => { const s = getSundayKey(); setNavStart(s); apply(s, navSpan); };
+    const changeSpan = (span: NavSpan) => { setNavSpan(span); apply(navStart, span); };
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Span selector */}
+        <div className="flex items-center bg-gray-100 p-0.5 rounded-lg">
+          {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
+            <button key={s} onClick={() => changeSpan(s)}
+              className={`!min-h-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+        {/* Navigation */}
+        <div className="flex items-center gap-1">
+          <button onClick={prev} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
+          <button onClick={thisWeek} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
+          <button onClick={next} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
+        </div>
+        {/* Range label */}
+        <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
+      </div>
+    );
+  };
+
+  const renderProductFilter = (ids: Set<string>, setIds: (s: Set<string>) => void, show: boolean, setShow: (v: boolean) => void) => {
+    const toggle = (pid: string) => { const next = new Set(ids); next.has(pid) ? next.delete(pid) : next.add(pid); setIds(next); };
+    return (
+      <div className="relative">
+        <button onClick={() => setShow(!show)} className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1A6FBF] text-[#1A6FBF] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
+          <Package className="w-4 h-4" />
+          {ids.size === 0 ? "All Products" : ids.size === 1 ? products.find(p => ids.has(p.id))?.name ?? "1 product" : `${ids.size} products`}
+        </button>
+        {show && (
+          <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[200px] max-h-64 overflow-y-auto">
+            <button onClick={() => setIds(new Set())} className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${ids.size === 0 ? "bg-blue-50 text-[#1A6FBF] font-semibold" : "text-gray-700 hover:bg-gray-50"}`}>All Products</button>
+            {products.filter(p => p.active).map(p => (
+              <label key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={ids.has(p.id)} className="rounded accent-[#1A6FBF]" onChange={() => toggle(p.id)} />
+                <span className="text-sm text-gray-700">{p.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const renderDateRangeCalendar = (
@@ -3762,7 +4310,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <span className="text-sm text-gray-400">Select a start then end date</span>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button
               type="button"
               onClick={onCancel}
@@ -3796,7 +4344,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Total Orders", String(dashboardOrders.length)],
       ["Fulfillment Rate", `${dashboardDeliveryRate}%`],
       ["Cancellation Rate", `${dashboardCancelledRate}%`],
-      ["Abandoned Carts", String(demoCarts)]
+      ["Abandoned Carts", String(dashboardCarts.length)]
     ];
 
     const csv = rows
@@ -3815,6 +4363,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const exportOrdersCsv = () => {
+    // Header totals must match the body — use the same filtered set that the
+    // table is rendering, not the broader period-scoped numbers.
+    const exportDelivered = filteredOrderRows.filter((o) => (o.status ?? "New") === "Delivered");
+    const exportRevenue = exportDelivered.reduce((s, o) => s + o.amount, 0);
+    const exportDeliveryRate = filteredOrderRows.length === 0
+      ? 0
+      : Math.round((exportDelivered.length / filteredOrderRows.length) * 100);
     const rows = [
       ["Orders Report"],
       ["Period", selectedOrdersPeriodLabel],
@@ -3824,8 +4379,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Source", orderSource],
       ["Location", orderLocation],
       ["Total Handled", String(filteredOrderRows.length)],
-      ["Delivery Rate", `${ordersDeliveryRate}%`],
-      ["Revenue Generated", formatMoney(ordersRevenue)],
+      ["Delivery Rate", `${exportDeliveryRate}%`],
+      ["Revenue Generated", formatMoney(exportRevenue)],
       [],
       ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Source", "Location", "Amount", "Date"],
       ...filteredOrderRows.map((order) => [
@@ -3907,8 +4462,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Active on Duty", String(agents.filter((agent) => agent.active).length)],
       ["Stock with Agents", formatMoney(totalAgentStockValue)],
       [],
-      ["Name", "Phone", "Zone", "Status", "Success Rate", "Stock Value"],
-      ...filteredAgentRows.map((row) => [row.agent.name, row.agent.phone, row.agent.zone, row.status, `${row.successRate}%`, formatMoney(row.stockValue)])
+      ["Name", "Phone", "Zone", "Status", "Total Orders", "Delivered", "Failed", "Delivery Rate", "Revenue", "Stock Value"],
+      ...filteredAgentRows.map((row) => [row.agent.name, row.agent.phone, row.agent.zone, row.status, String(row.totalOrders), String(row.deliveries), String(row.failed), `${row.successRate}%`, formatMoney(row.revenue), formatMoney(row.stockValue)])
     ];
 
     const csv = rows
@@ -4128,9 +4683,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "User Management": "#/dashboard/admin/users",
       "Round-Robin": "#/dashboard/admin/round-robin",
       "Embed Form": "#/dashboard/admin/embed",
-      "AI Agent": "#/dashboard/admin/ai-agent",
-      "AI Sandbox": "#/dashboard/admin/ai-sandbox",
       Notifications: "#/dashboard/admin/notifications",
+      "Call Rep Console": "#/dashboard/admin/call-rep-console",
       Settings: "#/dashboard/admin/settings"
     };
     const syncAdminHash = (nextLabel: string) => {
@@ -4162,11 +4716,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Call Rep Console" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "Notifications" || label === "Settings") {
+    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
       if (label === "Call Rep Console") {
+        setCallQueueIndex(0);
+        setCallQueueNote("");
+      }
+      if (label === "Sales Rep Workspace") {
         setRepConsoleTab("Dashboard");
         setRepOrderDetailId("");
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/dashboard/sales-rep`);
@@ -4181,7 +4739,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     showToast(`${label} is a future module. Dashboard stays open for now.`);
   };
-
 
   const resetProductForm = () => {
     setProductName("");
@@ -4562,7 +5119,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice("0");
     setPackageCurrency("NGN");
     setPackageDisplayOrder("1");
-    setPackageCompanions([]);
     setSelectedPackageId("");
   };
 
@@ -4579,7 +5135,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice(String(item.price));
     setPackageCurrency(item.currency);
     setPackageDisplayOrder(String(item.displayOrder));
-    setPackageCompanions(item.companions ?? []);
     setModal("editPackage");
   };
 
@@ -4589,9 +5144,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    const cleanCompanions = packageCompanions
-      .filter((c) => c.productId && c.productId !== selectedProduct.id)
-      .map((c) => ({ productId: c.productId, quantity: Math.max(1, Number(c.quantity) || 1) }));
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
@@ -4599,9 +5151,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quantity: Math.max(1, Number(packageQuantity) || 1),
       price: Math.max(0, Number(packagePrice) || 0),
       currency: packageCurrency,
-      displayOrder: Math.max(0, Number(packageDisplayOrder) || 0),
-      active: true,
-      companions: cleanCompanions.length > 0 ? cleanCompanions : undefined
+      displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
+      active: true
     };
 
     const _pkgProdId = selectedProduct.id;
@@ -4725,130 +5276,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })[0]?.id;
   };
 
-  const loadFacebookAdsDemo = () => {
-    const product = products.find((p) => p.active) ?? products[0];
-    if (!product) {
-      showToast("Add a product first before loading the Facebook demo.");
-      return;
-    }
-    const pkg = product.packages.find((p) => p.active) ?? product.packages[0];
-    const campaignId = "120246312782310359";
-    const creativeId = "120246449515970359";
-    const dateLabel = displayDateFromKey(todayKey());
-    const repId = repForNewRecord();
-    const seeds: { customer: string; phone: string }[] = [
-      { customer: "Mrs Modupe Oni", phone: "08070707070" },
-      { customer: "Tola Hope", phone: "08081818181" }
-    ];
-    const newOrders: TrackedOrder[] = seeds.map((seed) => ({
-      id: makeOrderId(),
-      productId: product.id,
-      packageId: pkg?.id ?? "",
-      customer: seed.customer,
-      phone: seed.phone,
-      whatsapp: "",
-      email: "",
-      address: "",
-      city: "",
-      state: "",
-      productName: product.name,
-      packageName: pkg?.name ?? "Single Pack",
-      quantity: pkg?.quantity ?? 1,
-      amount: 18500,
-      currency: pkg?.currency ?? "NGN",
-      utmSource: "fb",
-      utmCampaign: campaignId,
-      utmContent: creativeId,
-      utmMedium: "paid",
-      source: "Facebook",
-      status: "New",
-      response: "Awaiting confirmation",
-      assignedRepId: repId,
-      notes: [{ id: makeNoteId(), text: "Order from Facebook ads demo seed.", by: "System", date: new Date().toISOString() }],
-      createdAt: todayKey(),
-      date: dateLabel
-    }));
-    setTrackedOrders((value) => [...newOrders, ...value]);
-    showToast("Facebook ads demo loaded — 2 orders attributed to fb / paid.");
-  };
-
-  const deductCompanionStockForOrder = (order: TrackedOrder) => {
-    const product = products.find((item) => item.id === order.productId);
-    const pkg = product?.packages.find((item) => item.id === order.packageId);
-    const companions = pkg?.companions ?? [];
-    if (companions.length === 0) {
-      return;
-    }
-    const movements: StockMovement[] = [];
-    setProducts((value) =>
-      value.map((item) => {
-        const companion = companions.find((c) => c.productId === item.id);
-        if (!companion) {
-          return item;
-        }
-        const nextWarehouse = Math.max(0, item.warehouseStock - companion.quantity);
-        movements.push({
-          id: makeMovementId(),
-          date: new Date().toISOString(),
-          productId: item.id,
-          productName: item.name,
-          type: "Order Fulfilled",
-          qty: -companion.quantity,
-          balanceAfter: nextWarehouse,
-          order: order.id,
-          by: ownerName,
-          note: `Companion of "${pkg?.name ?? "package"}" delivered with ${order.id}`
-        });
-        if (nextWarehouse <= item.reorderPoint && item.warehouseStock > item.reorderPoint) {
-          pushSystemNotification({
-            type: "low_stock",
-            message: `Low stock: ${item.name} — warehouse down to ${nextWarehouse} unit${nextWarehouse === 1 ? "" : "s"} (reorder point: ${item.reorderPoint})`,
-            productId: item.id
-          });
-        }
-        return { ...item, warehouseStock: nextWarehouse, unitsSold: item.unitsSold + companion.quantity };
-      })
-    );
-    if (movements.length > 0) {
-      setStockMovements((value) => [...movements, ...value]);
-    }
-  };
-
-  const restoreCompanionStockForOrder = (order: TrackedOrder) => {
-    const product = products.find((item) => item.id === order.productId);
-    const pkg = product?.packages.find((item) => item.id === order.packageId);
-    const companions = pkg?.companions ?? [];
-    if (companions.length === 0) {
-      return;
-    }
-    const movements: StockMovement[] = [];
-    setProducts((value) =>
-      value.map((item) => {
-        const companion = companions.find((c) => c.productId === item.id);
-        if (!companion) {
-          return item;
-        }
-        const nextWarehouse = item.warehouseStock + companion.quantity;
-        movements.push({
-          id: makeMovementId(),
-          date: new Date().toISOString(),
-          productId: item.id,
-          productName: item.name,
-          type: "Return",
-          qty: companion.quantity,
-          balanceAfter: nextWarehouse,
-          order: order.id,
-          by: ownerName,
-          note: `Companion stock restored: ${order.id} status reversed from Delivered`
-        });
-        return { ...item, warehouseStock: nextWarehouse, unitsSold: Math.max(0, item.unitsSold - companion.quantity) };
-      })
-    );
-    if (movements.length > 0) {
-      setStockMovements((value) => [...movements, ...value]);
-    }
-  };
-
   const deductProductStockForOrder = (order: TrackedOrder) => {
     if (!order.productId || order.stockDeducted) {
       return;
@@ -4908,7 +5335,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       }
     }
-    deductCompanionStockForOrder(order);
   };
 
   const orderTimelineNote = (text: string, followUpDate?: string, by = ownerName): OrderNote => ({
@@ -4965,7 +5391,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       },
       ...prev
     ]);
-    restoreCompanionStockForOrder(order);
   };
 
   const updateOrderStatus = (orderId: string, nextStatus: Exclude<OrderStatus, "All Orders">, reason?: string) => {
@@ -4976,6 +5401,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     if (nextStatus === "Delivered") {
       deductProductStockForOrder(order);
+      // Auto-create waybill record (agent → customer) for audit trail
+      if (order.agentId) {
+        const agent = agents.find((a) => a.id === order.agentId);
+        const customerLocation = [order.city, order.state].filter(Boolean).join(", ") || "Customer";
+        const wbId = `WB-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        setWaybillRecords((prev) => [{
+          id: wbId,
+          productId: order.productId ?? "",
+          productName: order.productName,
+          quantity: order.quantity ?? 1,
+          waybillFee: 0,
+          logisticsPartner: agent?.name ?? "Agent",
+          sendingState: agent?.zone ?? "",
+          receivingState: customerLocation,
+          fromAgentId: order.agentId,
+          dateSent: todayKey(),
+          dateReceived: todayKey(),
+          status: "Received" as WaybillStatus,
+          note: `Auto-created on delivery (${order.customer})`,
+          createdBy: "System",
+          createdAt: new Date().toISOString()
+        }, ...prev]);
+      }
     } else if (order.status === "Delivered" && order.stockDeducted) {
       restoreProductStockForOrder(order);
     }
@@ -5017,6 +5465,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch(() => {});
   };
 
+  const callQueueUpdateStatus = (nextStatus: Exclude<OrderStatus, "All Orders">) => {
+    if (!callQueueOrder) return;
+    const noteText = callQueueNote.trim();
+    const reason = noteText || undefined;
+    updateOrderStatus(callQueueOrder.id, nextStatus, reason);
+    setCallQueueNote("");
+    // After status change the order drops out of callQueue (no longer "New").
+    // If we were on the last item, step back so index stays in bounds on next render.
+    setCallQueueIndex((prev) => prev >= callQueue.length - 1 ? Math.max(0, callQueue.length - 2) : prev);
+  };
+
   const bulkUpdateOrderStatus = (nextStatus: Exclude<OrderStatus, "All Orders">) => {
     if (selectedOrderIds.size === 0) return;
     selectedOrderIds.forEach((orderId) => updateOrderStatus(orderId, nextStatus));
@@ -5056,6 +5515,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const _mdcId = abandonedDraftCartId;
     setAbandonedCarts((value) =>
       value.map((cart) =>
         cart.id === abandonedDraftCartId
@@ -5065,6 +5525,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setAbandonedDraftCartId("");
     showToast(`Recovered cart converted to ${orderId}.`);
+    cartsApi.update(_mdcId, { status: "Converted" }).catch(() => {});
   };
 
   const resetCreateOrderForm = () => {
@@ -5168,17 +5629,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openAdminOrderDetailPage = (order: TrackedOrder) => {
-    const nextHash = `#/dashboard/admin/orders/${order.id}`;
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
-    setHashRoute(nextHash);
-    setActivePage("Call Rep Console");
-    setRepConsoleRepId("all");
-    setRepConsoleTab("Orders");
-    setRepOrderDetailId(order.id);
+    setActivePage("Orders");
     setSelectedOrderId(order.id);
-    setModal(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    showToast(`${order.id} detail workflow opened with owner access.`);
+    setModal("orderDetails");
   };
 
   const saveOrderAgent = () => {
@@ -5514,6 +5967,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (product) {
         setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock + qty, unitsSold: Math.max(0, p.unitsSold - qty) } : p));
         setStockMovements((prev) => [{ id: makeMovementId(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
+        stockApi.update({ productId: product.id, change: qty, note: `Stock restored: order ${selectedOrder.id} deleted` }).catch(() => {});
       }
     }
     const _doId = selectedOrder.id;
@@ -5602,6 +6056,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       },
       ...value
     ]);
+    ordersApi.create({
+      id: orderId, customer: orderFormName.trim(), phone: orderFormPhone.trim(),
+      whatsapp: orderFormWhatsapp.trim(), email: orderFormEmail.trim() || undefined,
+      address: orderFormAddress.trim(), city: orderFormCity.trim(), state: orderFormState.trim(),
+      productId: previewProduct.id, packageId: chosenPackage.id,
+      productName: previewProduct.name, packageName: chosenPackage.name,
+      quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
+      currency: chosenPackage.currency, source: "Website", utmSource: "website", utmCampaign: "embed_preview"
+    }).catch(() => showToast("Preview order saved locally — sync failed."));
     markDraftCartConverted(orderId);
     setOrderFormName("");
     setOrderFormPhone("");
@@ -5680,8 +6143,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         currency: chosenPackage.currency,
         utmSource: publicUtmSource,
         utmCampaign: publicUtmCampaign,
-        utmContent: publicUtmContent || undefined,
         utmMedium: publicUtmMedium || undefined,
+        utmContent: publicUtmContent || undefined,
         source,
         status: "New",
         response: "Awaiting confirmation",
@@ -5700,6 +6163,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...value
     ]);
     setPublicOrderSubmitting(true);
+    ordersApi.create({
+      id: orderId, customer: orderFormName.trim(), phone: orderFormPhone.trim(),
+      whatsapp: orderFormWhatsapp.trim() || undefined, email: orderFormEmail.trim() || undefined,
+      address: orderFormAddress.trim() || undefined, city: orderFormCity.trim() || undefined,
+      state: orderFormState.trim() || undefined,
+      productId: publicProduct.id, packageId: chosenPackage.id,
+      productName: publicProduct.name, packageName: chosenPackage.name,
+      quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
+      currency: chosenPackage.currency, source,
+      utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
+      assignedRepId: repForNewRecord() || undefined,
+      date: new Date().toISOString()
+    }).catch(() => {});
     markDraftCartConverted(orderId);
     setOrderFormName("");
     setOrderFormPhone("");
@@ -5813,8 +6289,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
     setAgentZoneInput(agent.zone);
-    setAgentAddress(agent.address);
+    setAgentAddress(agent.address ?? "");
     setAgentActive(agent.active);
+    setAgentStockCapacity(agent.stockCapacity ?? 1000);
     setModal(nextModal);
   };
 
@@ -5828,6 +6305,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const product = products.find((item) => item.id === assignStockProductId);
     if (!product || product.warehouseStock < quantity) {
       showToast("Not enough warehouse stock for this assignment.");
+      return;
+    }
+
+    // Capacity check
+    const capacity = selectedAgent.stockCapacity ?? 1000;
+    const currentTotal = agentStock
+      .filter((s) => s.agentId === selectedAgent.id)
+      .reduce((sum, s) => sum + s.quantity, 0);
+    if (currentTotal + quantity > capacity) {
+      const available = Math.max(0, capacity - currentTotal);
+      showToast(`Cannot assign — ${selectedAgent.name} capacity is ${currentTotal}/${capacity}. ${available > 0 ? `Only ${available} units available.` : "Free up stock first or increase capacity."}`);
       return;
     }
 
@@ -5965,16 +6453,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const _uaId = selectedAgent.id;
+    const capacityVal = typeof agentStockCapacity === "number" && agentStockCapacity > 0 ? agentStockCapacity : 1000;
     setAgents((value) =>
       value.map((agent) =>
         agent.id === selectedAgent.id
-          ? { ...agent, name: agentName.trim(), phone: agentPhone.trim(), zone: agentZoneInput.trim(), address: agentAddress.trim(), active: agentActive }
+          ? { ...agent, name: agentName.trim(), phone: agentPhone.trim(), zone: agentZoneInput.trim(), address: (agentAddress ?? "").trim(), active: agentActive, stockCapacity: capacityVal }
           : agent
       )
     );
     setModal(null);
     showToast(`${agentName.trim()} updated.`);
-    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive" }).catch(() => {});
+    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive", stock_capacity: capacityVal }).catch(() => {});
   };
 
   const deleteSelectedAgent = () => {
@@ -6022,6 +6511,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         })
       );
       setStockMovements((prev) => [...newMovements, ...prev]);
+      for (const [productId, qty] of productUpdates) {
+        stockApi.update({ productId, change: qty, note: `Stock returned: agent "${selectedAgent.name}" deleted` }).catch(() => {});
+      }
     }
 
     // Unassign this agent from historical (non-active) orders so they don't show a ghost agent name
@@ -6258,6 +6750,65 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`${cartId} marked ${status}.`);
   };
 
+  const bulkUpdateCartStatus = (status: Exclude<CartStatus, "All statuses" | "Converted">) => {
+    if (selectedCartIds.size === 0) return;
+    setAbandonedCarts((value) =>
+      value.map((cart) =>
+        selectedCartIds.has(cart.id) && cart.status !== "Converted"
+          ? { ...cart, status, lastActivity: new Date().toISOString() }
+          : cart
+      )
+    );
+    showToast(`${selectedCartIds.size} cart${selectedCartIds.size > 1 ? "s" : ""} marked ${status}.`);
+    setSelectedCartIds(new Set());
+  };
+
+  const exportCartsCsv = () => {
+    const exportConverted = filteredAbandonedCarts.filter((c) => c.status === "Converted").length;
+    const exportLost = filteredAbandonedCarts.filter((c) => ["No response", "Not interested"].includes(c.status)).length;
+    const exportRate = filteredAbandonedCarts.length === 0
+      ? 0
+      : Math.round((exportConverted / filteredAbandonedCarts.length) * 100);
+    const rows = [
+      ["Abandoned Carts Report"],
+      ["Period", cartsPeriod === "Custom" && cartsDateRange.start && cartsDateRange.end ? `${cartsDateRange.start} to ${cartsDateRange.end}` : cartsPeriod],
+      ["Currency", selectedCurrency.label],
+      ["Search", cartSearch || "All"],
+      ["Status", cartStatus],
+      ["Total Captured", String(filteredAbandonedCarts.length)],
+      ["Converted", String(exportConverted)],
+      ["Lost", String(exportLost)],
+      ["Conversion Rate", `${exportRate}%`],
+      [],
+      ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Status", "Source", "Rep", "Created", "Last Activity"],
+      ...filteredAbandonedCarts.map((cart) => [
+        cart.id,
+        cart.customer,
+        cart.phone,
+        cart.productName,
+        cart.packageName,
+        formatProductMoney(cart.amount, cart.currency),
+        cart.status,
+        cart.source,
+        users.find((u) => u.id === cart.assignedRepId)?.name ?? "Unassigned",
+        cart.createdAt,
+        cart.lastActivity
+      ])
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `abandoned-carts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast("Abandoned carts exported as CSV.");
+  };
+
   const convertSelectedCart = () => {
     if (!selectedCart) {
       return;
@@ -6338,9 +6889,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const openPayRateModal = (userId: string) => {
     const structure = payStructures.find((item) => item.userId === userId);
     setPayRateUserId(userId);
-    setPayStructureType(structure?.type ?? "Commission");
+    setPayStructureType(structure?.type ?? "Per Delivered Order");
     setFixedSalary(String(structure?.fixedSalary ?? 0));
     setCommissionRate(String(structure?.commissionRate ?? 0));
+    setBonusTiers(structure?.bonusTiers?.length ? structure.bonusTiers : [{ threshold: 50, amount: 5000 }, { threshold: 100, amount: 15000 }]);
     setModal("setRate");
   };
 
@@ -6350,8 +6902,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    const needsFixed = payStructureType !== "Commission";
-    const needsCommission = payStructureType !== "Fixed Salary";
+    const needsFixed = payStructureType !== "Per Delivered Order";
+    const needsCommission = payStructureType === "Per Delivered Order" || payStructureType === "Hybrid";
 
     if (needsFixed && Number(fixedSalary) <= 0) {
       showToast("Enter a fixed salary amount.");
@@ -6363,12 +6915,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    if (payStructureType === "Performance Bonus") {
+      const validTiers = bonusTiers.filter((t) => t.threshold > 0 && t.amount > 0);
+      if (validTiers.length === 0) {
+        showToast("Add at least one bonus tier with threshold and amount.");
+        return;
+      }
+    }
+
     const updatedAt = displayDateFromKey(todayKey());
     const nextStructure: PayStructure = {
       userId: selectedPayUser.id,
       type: payStructureType,
-      fixedSalary: payStructureType === "Commission" ? 0 : Number(fixedSalary) || 0,
-      commissionRate: payStructureType === "Fixed Salary" ? 0 : Number(commissionRate) || 0,
+      fixedSalary: payStructureType === "Per Delivered Order" ? 0 : Number(fixedSalary) || 0,
+      commissionRate: needsCommission ? Number(commissionRate) || 0 : 0,
+      bonusTiers: payStructureType === "Performance Bonus" ? bonusTiers.filter((t) => t.threshold > 0 && t.amount > 0).sort((a, b) => a.threshold - b.threshold) : [],
       updatedAt
     };
     setPayStructures((value) => {
@@ -6403,7 +6964,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       notes: payrollNotes,
       total: payrollGrandTotal,
       createdAt: new Date().toISOString(),
-      rows: payrollPreviewRows
+      rows: payrollPreviewRows,
+      topPerformer: topPerformerInfo ?? undefined
     };
     setPayrollRuns((value) => [run, ...value]);
     setPayrollTab("History");
@@ -6532,10 +7094,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const _rpId = selectedUser.id;
+    const _rpPw = userPassword.trim();
     setUserPassword("");
     setShowPasswordFields({});
     setModal(null);
     showToast(`Password reset for ${selectedUser.name}.`);
+    authApi.setPassword(_rpId, _rpPw).catch(() => showToast("Password reset saved locally — sync failed."));
   };
 
   const deleteSelectedUser = () => {
@@ -6559,9 +7124,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setTrackedOrders((prev) =>
       prev.map((o) => (o.assignedRepId === selectedUser.id ? { ...o, assignedRepId: undefined } : o))
     );
+    const _duId = selectedUser.id;
     setUsers((value) => value.filter((user) => user.id !== selectedUser.id));
     setModal(null);
     showToast(`"${selectedUser.name}" deleted.`);
+    teamApi.delete(_duId).catch(() => showToast("User removed locally — sync failed."));
   };
 
   const repTabRoute = (tab: RepConsoleTab) =>
@@ -7086,6 +7653,150 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     </div>
   );
 
+  const renderCallRepConsole = () => {
+    const order = callQueueOrder;
+    const total = callQueue.length;
+    const position = total === 0 ? 0 : callQueueIndex + 1;
+
+    return (
+      <div className="space-y-6 max-w-2xl mx-auto">
+        {/* Header */}
+        <header className="space-y-1">
+          <h1 className="text-2xl font-bold text-[#1A6FBF]">Call Rep Console</h1>
+          <p className="text-sm font-medium text-gray-500">Work through new orders — call, confirm, next.</p>
+        </header>
+
+        {/* Queue bar */}
+        <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
+          <span className="text-sm font-bold text-gray-700">
+            {total === 0 ? "No orders in queue" : `${position} of ${total} remaining`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-40"
+              disabled={!order || total <= 1}
+              onClick={() => setCallQueueIndex((prev) => (prev + 1) % total)}
+            >
+              <SkipForward className="w-4 h-4" /> Skip
+            </button>
+            <button
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              onClick={() => { setCallQueueIndex(0); showToast("Queue refreshed."); }}
+            >
+              <RefreshCw className="w-4 h-4" /> Refresh
+            </button>
+          </div>
+        </div>
+
+        {/* Order card or empty state */}
+        {!order ? (
+          <div className="flex flex-col items-center justify-center py-16 bg-white rounded-xl border border-gray-200 shadow-sm">
+            <CheckCircle2 className="w-12 h-12 text-green-400 mb-3" />
+            <h2 className="text-lg font-bold text-gray-800 mb-1">Queue clear</h2>
+            <p className="text-sm text-gray-500">No orders to call right now.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {/* Order ID + time */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
+              <span className="text-sm font-bold text-gray-900">{order.id}</span>
+              <span className="flex items-center gap-1.5 text-xs font-bold text-orange-600 bg-orange-50 px-2.5 py-1 rounded-full">
+                <Clock className="w-3.5 h-3.5" /> {timeSinceCreated(order)} ago
+              </span>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {/* Customer contact */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-bold text-gray-900">{order.customer}</h3>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={`tel:${order.phone}`}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                  >
+                    <Phone className="w-4 h-4" /> {order.phone}
+                  </a>
+                  <a
+                    href={`https://wa.me/${(order.whatsapp || order.phone).replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hi ${order.customer}, this is ${ownerName} from ProTools Hardware. I'm calling about your order ${order.id}. Is this a good time?`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:bg-green-700 transition-colors shadow-sm"
+                  >
+                    <MessageCircle className="w-4 h-4" /> WhatsApp
+                  </a>
+                </div>
+              </div>
+
+              {/* Order details */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Product</span>
+                  <span className="text-sm font-bold text-gray-900">{order.productName}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Package</span>
+                  <span className="text-sm font-bold text-gray-900">{order.packageName}{order.quantity ? ` (Qty: ${order.quantity})` : ""}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Amount</span>
+                  <span className="text-sm font-bold text-gray-900">{formatProductMoney(order.amount, order.currency)}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Source</span>
+                  <span className="text-sm font-bold text-gray-900">{order.source ?? orderSourceFromUtm(order.utmSource)}</span>
+                </div>
+                <div className="col-span-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Location</span>
+                  <span className="text-sm font-bold text-gray-900">{[order.city, order.state].filter(Boolean).join(", ") || "Not specified"}</span>
+                </div>
+              </div>
+
+              {/* Note field */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Note (optional)</label>
+                <textarea
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none resize-none"
+                  rows={2}
+                  placeholder="Add a note about this call..."
+                  value={callQueueNote}
+                  onChange={(e) => setCallQueueNote(e.target.value)}
+                />
+              </div>
+
+              {/* Status action buttons */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-green-50 text-green-700 rounded-lg text-sm font-bold hover:bg-green-100 transition-colors border border-green-200"
+                  onClick={() => callQueueUpdateStatus("Confirmed")}
+                >
+                  <CheckCircle2 className="w-4 h-4" /> Confirmed
+                </button>
+                <button
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-yellow-50 text-yellow-700 rounded-lg text-sm font-bold hover:bg-yellow-100 transition-colors border border-yellow-200"
+                  onClick={() => callQueueUpdateStatus("Postponed")}
+                >
+                  <Clock className="w-4 h-4" /> Postponed
+                </button>
+                <button
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-50 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100 transition-colors border border-orange-200"
+                  onClick={() => callQueueUpdateStatus("Failed")}
+                >
+                  <PhoneOff className="w-4 h-4" /> Not Picking
+                </button>
+                <button
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 rounded-lg text-sm font-bold hover:bg-red-100 transition-colors border border-red-200"
+                  onClick={() => callQueueUpdateStatus("Cancelled")}
+                >
+                  <CircleX className="w-4 h-4" /> Cancelled
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderRepConsole = () => {
     if (repOrderDetail) {
       return renderRepOrderDetail(repOrderDetail);
@@ -7100,7 +7811,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <ArrowRight className="w-4 h-4" />
               <strong className="text-gray-900">Sales Rep Workspace</strong>
             </nav>
-            <h1 className="text-2xl font-bold text-[#1A6FBF]">Call Rep Console</h1>
+            <h1 className="text-2xl font-bold text-[#1A6FBF]">Sales Rep Workspace</h1>
             <p className="text-sm font-medium text-gray-500 max-w-2xl">
               Owner/admin has full access to the exact sales-rep workflow: calls, status reasons, schedules, carts, customers, and invoices.
             </p>
@@ -7125,7 +7836,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
         </header>
 
-        <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar" aria-label="Sales rep workspace sections">
+        <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
           {repConsoleTabs.map((tab) => (
             <button
               key={tab}
@@ -7293,18 +8004,53 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </section>
         ) : repConsoleTab === "Scheduled Deliveries" ? (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 py-4 border-b border-gray-200">
-              <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
-              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-                {scheduleRanges.map((range) => (
-                  <button 
-                    key={range} 
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${repScheduleRange === range ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700"}`} 
-                    onClick={() => setRepScheduleRange(range)}
-                  >
-                    {range}
+            <div className="px-4 py-4 border-b border-gray-200 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
+                <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+                    {(["Today", "Tomorrow", "Next tomorrow"] as ScheduleRange[]).map((range) => (
+                      <button key={range}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${repScheduleRange === range ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                        onClick={() => setRepScheduleRange(range)}>
+                        {range}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                    onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                    <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
-                ))}
+                  <button className="!min-h-0 px-2 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+                    onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                    This Week
+                  </button>
+                  <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                    onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              {/* Day strip */}
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: 7 }, (_, i) => {
+                  const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
+                  const dayKey = formatDateKey(d);
+                  const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
+                  const count = repOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey).length;
+                  const isToday = dayKey === todayKey();
+                  const isSelected = repScheduleRange === "Custom" && repScheduleCustomDate === dayKey;
+                  return (
+                    <button key={dayKey}
+                      onClick={() => { setRepScheduleCustomDate(dayKey); setRepScheduleRange("Custom"); }}
+                      className={`!min-h-0 flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-semibold transition-colors
+                        ${isSelected ? "bg-[#1A6FBF] border-[#1A6FBF] text-white" : isToday ? "border-[#1A6FBF] text-[#1A6FBF] bg-blue-50" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                      <span className="text-[10px] font-medium opacity-70">{dayLabel}</span>
+                      <span>{d.getDate()}</span>
+                      {count > 0 && <span className={`text-[10px] font-bold px-1.5 rounded-full ${isSelected ? "bg-white/20 text-white" : "bg-[#1A6FBF] text-white"}`}>{count}</span>}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="p-0">
@@ -7717,8 +8463,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   }
 
+  // ── Shared loading / error UI helpers ──────────────────────
+  const TableSkeleton = ({ cols = 6, rows = 5 }: { cols?: number; rows?: number }) => (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden animate-pulse">
+      <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex gap-4">
+        {Array.from({ length: cols }).map((_, i) => <div key={i} className="h-3 bg-gray-200 rounded w-20" />)}
+      </div>
+      {Array.from({ length: rows }).map((_, r) => (
+        <div key={r} className="px-4 py-4 flex gap-4 border-b border-gray-100 last:border-0">
+          {Array.from({ length: cols }).map((_, c) => <div key={c} className={`h-4 bg-gray-100 rounded ${c === 0 ? "w-32" : "w-20"}`} />)}
+        </div>
+      ))}
+    </div>
+  );
+
+  const DataErrorBanner = () => dataError ? (
+    <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
+      <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+      <span className="font-medium text-red-800 flex-1">{dataError}</span>
+      <button className="!min-h-0 px-4 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" onClick={() => retryLoadData.current()}>Retry</button>
+    </div>
+  ) : null;
+
   return (
-    <div className={`app-shell !flex h-screen bg-[#EBEBEB] overflow-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
+    <div className={`app-shell !flex h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
       {/* Mobile Backdrop */}
       {mobileMenuOpen && (
         <div 
@@ -7865,13 +8633,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
                   <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
                     <Download className="w-4 h-4" /> Export Report
                   </button>
                 </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={4} rows={4} />}
+              <div className={dataLoading ? "hidden" : ""}>
               {/* Getting-started checklist — shown only for new accounts with no data */}
               {products.length === 0 && trackedOrders.length === 0 && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
@@ -7902,7 +8673,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               )}
 
               <div className="flex flex-wrap items-center gap-3 mb-6">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
                   {periods.map((item) => (
                     <button
                       className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
@@ -7933,14 +8704,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option value="USD">$ US Dollar</option>
                   <option value="GBP">£ British Pound</option>
                 </select>
+                {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
               </div>
+              {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange)}
 
               <div className="flex items-center gap-3 text-sm text-gray-500 font-medium mb-4">
                 <strong className="text-gray-900">Currency: {selectedCurrency.label}</strong>
                 <span>Period: {selectedPeriodLabel}</span>
               </div>
 
-              <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4" aria-label="Business summary">
+              <section className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4" aria-label="Business summary">
                 {dashboardCards.map((card) => {
                   const toneMap: Record<string, { bar: string; icon: string }> = {
                     blue:    { bar: "bg-blue-500",    icon: "bg-blue-50 text-blue-600" },
@@ -7952,7 +8725,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     negative:{ bar: "bg-red-500",     icon: "bg-red-50 text-red-600" },
                   };
                   const t = toneMap[card.tone] ?? toneMap.blue;
-                  const trendIsPositive = card.trend?.startsWith("+");
+                  const trendIsPositive = card.trend?.startsWith("+") || card.trend === "New";
                   const trendClass = trendIsPositive
                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                     : "bg-red-50 text-red-700 border border-red-200";
@@ -7988,7 +8761,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <p className="text-xs text-gray-400 m-0">Track captured carts and how fast the team is converting them.</p>
                   </div>
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{convertedCartCount} converted
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{dashboardConvertedCartCount} converted
                   </span>
                 </div>
                 <div className="p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -8070,7 +8843,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span className="text-sm text-gray-500">Upside opportunity</span>
                     <strong className="text-sm font-bold text-emerald-600">{formatMoney(dashboardOpportunity)}</strong>
                   </div>
-                  <p className="text-xs text-gray-400 m-0">{dashboardProjectedDelivered.toFixed(1)} additional orders delivered at target rate.</p>
+                  <p className="text-xs text-gray-400 m-0">{Math.max(0, dashboardProjectedDelivered - dashboardDeliveredOrders.length).toFixed(1)} additional orders delivered at target rate.</p>
+                  {dashboardAOVFallback && (
+                    <p className="text-[11px] text-amber-600 m-0">No deliveries yet — projection uses average order value across captured orders.</p>
+                  )}
                 </div>
               </section>
 
@@ -8123,23 +8899,111 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                 <article className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <h2 className="text-base font-bold text-gray-900 m-0">Revenue Performance</h2>
-                      <p className="text-xs text-gray-400 m-0">Current vs. previous period</p>
+                      <p className="text-xs text-gray-400 m-0">
+                        {revPerfMode === "Cumulative" ? "Cumulative" : "Per-bucket"} · {effectiveGranularity} ·{" "}
+                        {revPerfStatuses.size === 1 ? Array.from(revPerfStatuses)[0] : `${revPerfStatuses.size} statuses`}
+                      </p>
                     </div>
                     <div className="flex items-center gap-4 text-xs font-semibold text-gray-500">
                       <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#1A6FBF]" /> Current</span>
-                      <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-400" /> Previous</span>
+                      {revPerfShowPrevious && (
+                        <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-400" /> Previous</span>
+                      )}
                     </div>
                   </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {/* Mode */}
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {(["Cumulative", "Daily"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setRevPerfMode(m)}
+                          className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfMode === m ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        >{m}</button>
+                      ))}
+                    </div>
+                    {/* Granularity */}
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {(["Day", "Week", "Month"] as const).map((g) => {
+                        const disabled = !dashboardChartUsesDays;
+                        return (
+                          <button
+                            key={g}
+                            disabled={disabled}
+                            onClick={() => setRevPerfGranularity(g)}
+                            className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${effectiveGranularity === g ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                            title={disabled ? "Available for multi-day periods" : undefined}
+                          >{g}</button>
+                        );
+                      })}
+                    </div>
+                    {/* Status multi-select */}
+                    <div className="relative" ref={revPerfStatusRef}>
+                      <button
+                        onClick={() => setRevPerfStatusOpen((v) => !v)}
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold hover:border-[#1A6FBF] transition-colors"
+                      >
+                        Statuses ({revPerfStatuses.size}) <ChevronDown className="w-3 h-3" />
+                      </button>
+                      {revPerfStatusOpen && (
+                        <div className="absolute right-0 top-full mt-1 z-20 w-56 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-2">
+                          {orderStatuses.filter((s) => s !== "All Orders").map((s) => {
+                            const checked = revPerfStatuses.has(s);
+                            return (
+                              <label key={s} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    const next = new Set(revPerfStatuses);
+                                    if (checked) next.delete(s); else next.add(s);
+                                    if (next.size === 0) return; // keep at least one
+                                    setRevPerfStatuses(next);
+                                  }}
+                                  className="accent-[#1A6FBF]"
+                                />
+                                <span className="text-xs text-gray-700">{s}</span>
+                              </label>
+                            );
+                          })}
+                          <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-gray-100 px-2">
+                            <button onClick={() => setRevPerfStatuses(new Set(["Delivered"]))} className="!min-h-0 text-xs font-semibold text-[#1A6FBF] hover:underline">Reset</button>
+                            <button onClick={() => setRevPerfStatusOpen(false)} className="!min-h-0 text-xs font-semibold text-gray-600 hover:underline">Done</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {/* Previous line toggle */}
+                    <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={revPerfShowPrevious}
+                        onChange={(e) => setRevPerfShowPrevious(e.target.checked)}
+                        className="accent-[#1A6FBF]"
+                      />
+                      Show previous
+                    </label>
+                  </div>
+
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={dashboardRevenueChartData} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
-                      <XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
                       <YAxis hide domain={[0, dashboardRevenueChartMax]} />
-                      <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                      <Tooltip
+                        contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
+                        formatter={(value: number | string, name: string) => [
+                          formatMoney(typeof value === "number" ? value : Number(value)),
+                          name === "current" ? "Current" : name === "previous" ? "Previous" : name
+                        ]}
+                      />
                       <Line type="monotone" dataKey="current" stroke="#1A6FBF" strokeWidth={2.5} dot={false} />
-                      <Line type="monotone" dataKey="previous" stroke="#a78bfa" strokeWidth={2} strokeDasharray="4 3" dot={false} />
+                      {revPerfShowPrevious && (
+                        <Line type="monotone" dataKey="previous" stroke="#a78bfa" strokeWidth={2} strokeDasharray="4 3" dot={false} />
+                      )}
                     </LineChart>
                   </ResponsiveContainer>
                 </article>
@@ -8149,22 +9013,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <h2 className="text-base font-bold text-gray-900 m-0">Top Selling Products</h2>
                     <p className="text-xs text-gray-400 m-0">By delivered revenue this period</p>
                   </div>
-                  {ordersByProduct.length === 0 ? (
+                  {dashboardOrdersByProduct.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3 py-8 text-gray-300">
                       <EmptyProductsIcon />
                       <p className="text-sm font-medium m-0 text-gray-400">No product sales in this period</p>
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {ordersByProduct.slice(0, 5).map(([name, item], idx) => {
+                      {dashboardOrdersByProduct.slice(0, 5).map((item, idx) => {
                         const rankColors = ["bg-[#1A6FBF] text-white", "bg-emerald-500 text-white", "bg-orange-400 text-white", "bg-violet-400 text-white", "bg-teal-400 text-white"];
                         return (
-                          <div className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0" key={name}>
+                          <div className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0" key={item.productId}>
                             <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0 ${rankColors[idx] ?? "bg-gray-200 text-gray-600"}`}>{idx + 1}</span>
-                            <span className="text-sm font-medium text-gray-700 truncate flex-1">{name}</span>
+                            <span className="text-sm font-medium text-gray-700 truncate flex-1">{item.name}</span>
                             <div className="flex flex-col items-end shrink-0">
                               <em className="font-bold text-gray-900 not-italic text-sm">{formatMoney(item.revenue)}</em>
-                              <span className="text-xs text-gray-400">{item.count} orders</span>
+                              <span className="text-xs text-gray-400">{item.count} delivered</span>
                             </div>
                           </div>
                         );
@@ -8226,6 +9090,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 )}
               </section>
 
+              </div>
             </>
           ) : activePage === "Orders" ? (
             <div className="space-y-6">
@@ -8235,45 +9100,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1A6FBF]">Orders Management</h1>
                   <p className="text-sm font-medium text-gray-500">Track and manage all customer orders in real-time</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportOrdersCsv}>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportOrdersCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateOrderModal}>
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors flex-1 sm:flex-none" onClick={openCreateOrderModal}>
                     <Plus className="w-4 h-4" /> Create Order
                   </button>
                 </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={8} rows={6} />}
+              <div className={dataLoading ? "hidden" : ""}>
               {/* Period + date + currency controls */}
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button
-                      key={item}
-                      className={`!min-h-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${ordersPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => handleOrdersPeriodChange(item)}
-                    >
-                      {item}
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button key={item} className={`!min-h-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${ordersPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleOrdersPeriodChange(item)}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowOrdersDateRange((v) => !v)}>
+                      <CalendarDays className="w-4 h-4" /> {ordersPeriod === "Custom" ? "Edit date range" : "Date range"}
                     </button>
-                  ))}
+                    {showOrdersDateRange && renderDateRangeCalendar("orders-date-range-panel", ordersDateRange, setOrdersDateRange, applyOrdersDateRange, () => setShowOrdersDateRange(false))}
+                  </div>
+                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Currency" value={currency} onChange={(event) => { const c = event.target.value as CurrencyCode; setCurrency(c); showToast(`Currency changed to ${currencies[c].label}.`); }}>
+                    <option value="NGN">₦ Naira</option>
+                    <option value="USD">$ Dollar</option>
+                    <option value="GBP">£ Pound</option>
+                  </select>
                 </div>
-                <div className="relative">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowOrdersDateRange((v) => !v)}>
-                    <CalendarDays className="w-4 h-4" /> {ordersPeriod === "Custom" ? "Edit date range" : "Date range"}
-                  </button>
-                  {showOrdersDateRange && renderDateRangeCalendar("orders-date-range-panel", ordersDateRange, setOrdersDateRange, applyOrdersDateRange, () => setShowOrdersDateRange(false))}
-                </div>
-                <select
-                  className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]"
-                  aria-label="Currency"
-                  value={currency}
-                  onChange={(event) => { const c = event.target.value as CurrencyCode; setCurrency(c); showToast(`Currency changed to ${currencies[c].label}.`); }}
-                >
-                  <option value="NGN">₦ Naira</option>
-                  <option value="USD">$ Dollar</option>
-                  <option value="GBP">£ Pound</option>
-                </select>
+                {renderWeekNav(ordersNavStart, setOrdersNavStart, ordersNavSpan, setOrdersNavSpan, setOrdersPeriod, setOrdersDateRange)}
               </div>
 
               {/* Active filter context pill */}
@@ -8290,10 +9150,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {/* Metric cards */}
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Orders summary">
                 {[
-                  { label: "Total Orders", value: periodOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-                  { label: "Delivery Rate", value: `${ordersDeliveryRate}%`, sub: "of orders delivered", icon: Truck, color: "bg-green-50 text-green-500" },
-                  { label: "Revenue", value: formatMoney(ordersRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
-                  { label: "Pending", value: periodOrders.filter((o) => o.status === "In Process" || o.status === "Confirmed").length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" },
+                  { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
+                  { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
+                  { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
+                  { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" },
                 ].map(({ label, value, sub, icon: Icon, color }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
                     <span className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${color}`}><Icon className="w-5 h-5" /></span>
@@ -8345,22 +9205,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
                       <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
-                      <strong className="text-xl font-bold text-gray-900">{ordersDeliveryRateExact.toFixed(1)}%</strong>
+                      <strong className="text-xl font-bold text-gray-900">{pfDeliveryRateExact.toFixed(1)}%</strong>
                     </div>
                     <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
                       <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current revenue</span>
-                      <strong className="text-xl font-bold text-gray-900">{formatMoney(ordersRevenue)}</strong>
+                      <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
                     </div>
                   </div>
                   <label className="flex flex-col gap-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium text-gray-600">Conversion lift</span>
-                      <span className="font-bold text-[#1A6FBF]">+{ordersConversion}pp → {ordersTargetConversion.toFixed(1)}%</span>
+                      <span className="font-bold text-[#1A6FBF]">+{ordersConversion}pp → {pfTargetConversion.toFixed(1)}%</span>
                     </div>
-                    <input type="range" className="w-full accent-[#1A6FBF]" min="0" max={ordersConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
+                    <input type="range" className="w-full accent-[#1A6FBF]" min="0" max={pfConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
                     <div className="flex items-center gap-1.5">
                       {[10, 20, 30, 100].map((rate) => (
-                        <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1A6FBF] hover:text-[#1A6FBF] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, ordersConversionLiftMax))}>
+                        <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1A6FBF] hover:text-[#1A6FBF] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, pfConversionLiftMax))}>
                           {rate === 100 ? "Max" : `+${rate}pp`}
                         </button>
                       ))}
@@ -8368,7 +9228,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </label>
                   <div className="flex items-center justify-between pt-3 border-t border-gray-100">
                     <span className="text-xs font-medium text-gray-500">Projected revenue</span>
-                    <strong className="text-lg font-bold text-[#1A6FBF]">{projectedOrdersRevenue}</strong>
+                    <strong className="text-lg font-bold text-[#1A6FBF]">{formatMoney(pfProjectedRevenue)}</strong>
                   </div>
                 </section>
               </div>
@@ -8387,22 +9247,61 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       placeholder="Order #, name, phone…"
                     />
                   </label>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order status" value={orderStatus} onChange={(e) => { setOrderStatus(e.target.value as OrderStatus); showToast(`Status: ${e.target.value}`); }}>
+                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
                     {orderStatuses.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order source" value={orderSource} onChange={(e) => { setOrderSource(e.target.value as OrderSource); showToast(`Source: ${e.target.value}`); }}>
+                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order location" value={orderLocation} onChange={(e) => { setOrderLocation(e.target.value as OrderLocation); showToast(`Location: ${e.target.value}`); }}>
+                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
                     {orderLocations.map((l) => <option key={l}>{l}</option>)}
                   </select>
+                  {/* Product multi-select filter */}
+                  <div className="relative">
+                    <button
+                      className={`!min-h-0 inline-flex items-center gap-2 h-9 px-3 border rounded-lg bg-white text-sm font-medium transition-colors ${orderProductIds.size > 0 ? "border-[#1A6FBF] text-[#1A6FBF] bg-blue-50" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`}
+                      onClick={() => setShowOrderProductFilter((v) => !v)}
+                    >
+                      <Package className="w-4 h-4" />
+                      {orderProductIds.size === 0 ? "All Products" : orderProductIds.size === 1 ? products.find((p) => orderProductIds.has(p.id))?.name ?? "1 product" : `${orderProductIds.size} products`}
+                    </button>
+                    {showOrderProductFilter && (
+                      <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[200px] max-h-64 overflow-y-auto">
+                        <button
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors mb-1 ${orderProductIds.size === 0 ? "bg-blue-50 text-[#1A6FBF]" : "text-gray-700 hover:bg-gray-50"}`}
+                          onClick={() => setOrderProductIds(new Set())}
+                        >
+                          All Products
+                        </button>
+                        <div className="border-t border-gray-100 pt-1 space-y-0.5">
+                          {products.filter((p) => p.active).map((p) => {
+                            const checked = orderProductIds.has(p.id);
+                            return (
+                              <label key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer">
+                                <input type="checkbox" checked={checked} className="rounded accent-[#1A6FBF]"
+                                  onChange={() => {
+                                    setOrderProductIds((prev) => {
+                                      const next = new Set(prev);
+                                      checked ? next.delete(p.id) : next.add(p.id);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                <span className="text-sm text-gray-700">{p.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Bulk action bar */}
                 {selectedOrderIds.size > 0 && (
-                  <div className="flex items-center gap-3 px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
                     <span className="font-semibold text-blue-800">{selectedOrderIds.size} selected</span>
-                    <span className="text-blue-300">·</span>
+                    <span className="hidden sm:inline text-blue-300">·</span>
                     <span className="text-blue-700 font-medium">Mark as:</span>
                     {(["Confirmed","In Process","Dispatched","Delivered","Postponed","Cancelled"] as const).map((s) => (
                       <button key={s} onClick={() => bulkUpdateOrderStatus(s)} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-blue-200 bg-white text-blue-700 rounded-md hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{s}</button>
@@ -8413,10 +9312,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                 {/* Table */}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="px-4 py-3 w-8">
+                        <th className="px-4 py-3 w-8 bg-gray-50">
                           <input
                             type="checkbox"
                             className="rounded border-gray-300"
@@ -8446,6 +9345,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
                           const status = order.status ?? "New";
+                          const isTerminal = status === "Delivered" || status === "Cancelled";
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
                             <tr key={order.id} className={`hover:bg-gray-50 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50" : ""}`}>
@@ -8466,6 +9366,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 <div className="font-bold text-[#1A6FBF] text-xs">{order.id}</div>
                                 <div className="text-[10px] text-gray-400 mt-0.5">{order.date}</div>
+                                {(() => { void responseTick; const rt = responseTimeColor(order, status); return <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold ${rt.cls}`}>{rt.label}</span>; })()}
                               </td>
                               <td className="px-4 py-3.5">
                                 <div className="font-semibold text-gray-900 text-sm">{order.customer}</div>
@@ -8493,7 +9394,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <button className="!min-h-0 p-1.5 text-gray-400 hover:text-[#25D366] rounded-md hover:bg-green-50 transition-colors" title="Open WhatsApp" onClick={() => { const phone = (order.whatsapp || order.phone).replace(/\D/g, ""); window.open(`https://wa.me/${phone}`, "_blank", "noopener,noreferrer"); }}><svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg></button>
                                   <button className="!min-h-0 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors whitespace-nowrap" onClick={() => openAdminOrderDetailPage(order)}><Eye className="w-3 h-3" /> Details</button>
                                   <button className="!min-h-0 p-1.5 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50 transition-colors" title="Schedule delivery" onClick={() => openOrderModal(order, "scheduleOrder")}><CalendarClock className="w-3.5 h-3.5" /></button>
-                                  <button className="!min-h-0 p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition-colors" title="Edit" onClick={() => openOrderModal(order, "editOrderItems")}><Pencil className="w-3.5 h-3.5" /></button>
+                                  {!isTerminal && <button className="!min-h-0 p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition-colors" title="Edit" onClick={() => openOrderModal(order, "editOrderItems")}><Pencil className="w-3.5 h-3.5" /></button>}
                                   <button className="!min-h-0 p-1.5 text-red-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors" title="Delete" onClick={() => openOrderModal(order, "deleteOrder")}><Trash2 className="w-3.5 h-3.5" /></button>
                                 </div>
                               </td>
@@ -8548,6 +9449,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   )}
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Abandoned Carts" ? (
             <>
@@ -8556,15 +9458,54 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1A6FBF]">Abandoned Carts</h1>
                   <p className="text-sm font-medium text-gray-500">Track captured carts, monitor rep follow-up, and reassign leads when needed.</p>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportCartsCsv}>
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={7} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
+              <div className="flex flex-col gap-2 mb-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button key={item} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCartsPeriodChange(item)}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCartsDateRange(v => !v)}>
+                      <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                    </button>
+                    {showCartsDateRange && renderDateRangeCalendar("carts-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
+                  </div>
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
+                  {renderProductFilter(cartProductIds, setCartProductIds, showCartProductFilter, setShowCartProductFilter)}
+                </div>
+                {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
+              </div>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Abandoned carts summary">
-                {[
-                  { label: "Open Carts", value: abandonedCarts.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length, icon: ShoppingCart },
-                  { label: "Assigned", value: assignedCartCount, icon: UserRound },
-                  { label: "Contacted", value: contactedCartCount, icon: BadgeCheck },
-                  { label: "Conversion Rate", value: `${cartConversionRate}%`, sub: `${convertedCartCount} converted · ${lostCartCount} lost`, icon: TrendingUp },
-                ].map(({ label, value, sub, icon: Icon }) => (
+                {(() => {
+                  const scoped = filteredAbandonedCarts;
+                  const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length;
+                  const assigned = scoped.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
+                  const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
+                  const converted = scoped.filter((cart) => cart.status === "Converted").length;
+                  const lost = scoped.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
+                  const rate = scoped.length === 0 ? 0 : Math.round((converted / scoped.length) * 100);
+                  return [
+                    { label: "Active", value: active, sub: "Open · Abandoned · In progress", icon: ShoppingCart },
+                    { label: "Assigned", value: assigned, sub: "with a rep, not yet converted", icon: UserRound },
+                    { label: "Contacted", value: contacted, sub: "any rep outcome recorded", icon: BadgeCheck },
+                    { label: "Conversion Rate", value: `${rate}%`, sub: `${converted} converted · ${lost} lost`, icon: TrendingUp }
+                  ];
+                })().map(({ label, value, sub, icon: Icon }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between shadow-sm">
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</span>
@@ -8592,31 +9533,61 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         placeholder="Search customer, phone, cart..."
                       />
                     </label>
-                    <button
-                      className="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-                      onClick={() => showToast(cartSearch ? `${filteredAbandonedCarts.length} cart${filteredAbandonedCarts.length === 1 ? "" : "s"} found for "${cartSearch}".` : `Showing all ${filteredAbandonedCarts.length} carts.`)}
-                    >
-                      Search
-                    </button>
+                    {cartSearch && (
+                      <button
+                        className="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                        onClick={() => setCartSearch("")}
+                      >
+                        Clear
+                      </button>
+                    )}
                     <select
                       className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]"
                       aria-label="Abandoned cart status"
                       value={cartStatus}
-                      onChange={(event) => {
-                        setCartStatus(event.target.value as CartStatus);
-                        showToast(`Abandoned cart status set to ${event.target.value}.`);
-                      }}
+                      onChange={(event) => setCartStatus(event.target.value as CartStatus)}
                     >
                       {cartStatuses.map((status) => <option key={status}>{status}</option>)}
                     </select>
                   </div>
                 </div>
 
+                {/* Bulk action bar */}
+                {selectedCartIds.size > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
+                    <span className="font-semibold text-blue-800">{selectedCartIds.size} selected</span>
+                    <span className="hidden sm:inline text-blue-300">·</span>
+                    <span className="text-blue-700 font-medium">Mark as:</span>
+                    {(["Contacted", "No response", "Not interested", "Assigned"] as const).map((s) => (
+                      <button key={s} onClick={() => bulkUpdateCartStatus(s)} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-blue-200 bg-white text-blue-700 rounded-md hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{s}</button>
+                    ))}
+                    <button onClick={() => setSelectedCartIds(new Set())} className="!min-h-0 ml-auto px-2.5 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">Clear</button>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-200">
-                        <th className="px-4 py-3 text-left">Cart</th>
+                        <th className="px-4 py-3 w-8 bg-gray-50">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300"
+                            checked={pagedAbandonedCarts.length > 0 && pagedAbandonedCarts.every((c) => selectedCartIds.has(c.id))}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedCartIds((prev) => new Set([...prev, ...pagedAbandonedCarts.map((c) => c.id)]));
+                              } else {
+                                setSelectedCartIds((prev) => {
+                                  const next = new Set(prev);
+                                  pagedAbandonedCarts.forEach((c) => next.delete(c.id));
+                                  return next;
+                                });
+                              }
+                            }}
+                          />
+                        </th>
+                        <th className="px-4 py-3 text-left bg-gray-50">Cart</th>
                         <th className="px-4 py-3 text-left">Customer</th>
                         <th className="px-4 py-3 text-left">Product</th>
                         <th className="px-4 py-3 text-left">Rep</th>
@@ -8628,10 +9599,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredAbandonedCarts.length === 0 ? (
-                        <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">No carts found</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">No carts found</td></tr>
                       ) : (
-                        filteredAbandonedCarts.map((cart) => (
-                          <tr key={cart.id} className="hover:bg-gray-50 transition-colors">
+                        pagedAbandonedCarts.map((cart) => (
+                          <tr key={cart.id} className={`hover:bg-gray-50 transition-colors ${selectedCartIds.has(cart.id) ? "bg-blue-50" : ""}`}>
+                            <td className="px-4 py-3 w-8">
+                              <input
+                                type="checkbox"
+                                className="rounded border-gray-300"
+                                checked={selectedCartIds.has(cart.id)}
+                                onChange={(e) => {
+                                  setSelectedCartIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(cart.id); else next.delete(cart.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </td>
                             <td className="px-4 py-3 font-semibold text-[#1A6FBF]">{cart.id}</td>
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.customer}</div>
@@ -8644,7 +9629,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
                             <td className="px-4 py-3"><span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span></td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{displayDateFromKey(cart.createdAt)}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{displayDateFromKey(cart.lastActivity || cart.createdAt)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1 flex-wrap">
                                 <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Details" aria-label="Details" onClick={() => openCartModal(cart, "cartDetails")}><Eye className="w-4 h-4" /></button>
@@ -8661,7 +9646,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination */}
+                <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                  <span>
+                    {filteredAbandonedCarts.length === 0
+                      ? "0 carts"
+                      : `${(cartsPageClamped - 1) * CARTS_PAGE_SIZE + 1}–${Math.min(cartsPageClamped * CARTS_PAGE_SIZE, filteredAbandonedCarts.length)} of ${filteredAbandonedCarts.length} cart${filteredAbandonedCarts.length === 1 ? "" : "s"}`}
+                  </span>
+                  {cartsTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={cartsPageClamped <= 1}
+                        onClick={() => setCartsPage((p) => Math.max(1, p - 1))}
+                      >‹ Prev</button>
+                      {Array.from({ length: cartsTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === cartsTotalPages || Math.abs(p - cartsPageClamped) <= 1)
+                        .reduce<(number | "…")[]>((acc, p, idx, arr) => {
+                          if (idx > 0 && typeof arr[idx - 1] === "number" && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…");
+                          acc.push(p);
+                          return acc;
+                        }, [])
+                        .map((p, idx) =>
+                          p === "…"
+                            ? <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 select-none">…</span>
+                            : <button
+                                key={p}
+                                className={`!min-h-0 w-7 h-7 rounded-md border text-xs font-semibold transition-colors ${cartsPageClamped === p ? "border-[#1A6FBF] bg-[#1A6FBF] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-100"}`}
+                                onClick={() => setCartsPage(p as number)}
+                              >{p}</button>
+                        )}
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={cartsPageClamped >= cartsTotalPages}
+                        onClick={() => setCartsPage((p) => Math.min(cartsTotalPages, p + 1))}
+                      >Next ›</button>
+                    </div>
+                  )}
+                </div>
               </section>
+              </div>
             </>
           ) : activePage === "Scheduled Deliveries" ? (
             <div className="space-y-6">
@@ -8670,24 +9695,92 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm font-medium text-gray-500">Orders sales reps have committed to deliver on a specific date. Defaults to today.</p>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={5} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="flex flex-wrap items-center gap-2 p-4 border-b border-gray-200 bg-gray-50/50">
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-[#1A6FBF] shadow-sm">
-                    <CalendarDays className="w-4 h-4" /> {scheduleRange}
-                  </div>
-                  <div className="flex items-center gap-1 bg-gray-200/50 p-1 rounded-lg ml-auto">
-                    {scheduleRanges.map((range) => (
-                      <button
-                        key={range}
-                        className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${scheduleRange === range ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
-                        onClick={() => {
-                          setScheduleRange(range);
-                          showToast(`Scheduled deliveries range set to ${range}.`);
-                        }}
-                      >
-                        {range}
+                {/* Week navigator */}
+                <div className="p-4 border-b border-gray-200 bg-gray-50/50 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Quick shortcuts */}
+                    <div className="flex items-center gap-1 bg-gray-200/50 p-1 rounded-lg">
+                      {(["Today", "Tomorrow", "Next tomorrow"] as ScheduleRange[]).map((range) => (
+                        <button key={range}
+                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${scheduleRange === range ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
+                          onClick={() => setScheduleRange(range)}>
+                          {range}
+                        </button>
+                      ))}
+                    </div>
+                    {renderProductFilter(scheduleProductIds, setScheduleProductIds, showScheduleProductFilter, setShowScheduleProductFilter)}
+                  {/* Week prev/next */}
+                    <div className="flex items-center gap-1 ml-auto">
+                      <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                        onClick={() => { const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setScheduleWeekStart(formatDateKey(d)); }}>
+                        <ChevronLeft className="w-4 h-4" />
                       </button>
-                    ))}
+                      <button className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors whitespace-nowrap"
+                        onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setScheduleWeekStart(formatDateKey(d)); }}>
+                        This Week
+                      </button>
+                      <div className="relative" ref={schedulePickerRef}>
+                        <button
+                          aria-label="Pick a date"
+                          title="Pick a date"
+                          className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap"
+                          onClick={() => setShowSchedulePicker((v) => !v)}
+                        >
+                          <CalendarDays className="w-3.5 h-3.5" />
+                          {scheduleRange === "Custom" && scheduleCustomDate ? displayDateFromKey(scheduleCustomDate) : "Pick date"}
+                        </button>
+                        {showSchedulePicker && (
+                          <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-64">
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Jump to date</label>
+                            <input
+                              type="date"
+                              value={scheduleRange === "Custom" ? scheduleCustomDate : todayKey()}
+                              onChange={(e) => goToScheduleDate(e.target.value)}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]/30 focus:border-[#1A6FBF]"
+                            />
+                            <div className="flex items-center justify-between mt-3">
+                              <button
+                                className="!min-h-0 text-xs font-semibold text-[#1A6FBF] hover:underline"
+                                onClick={() => goToScheduleDate(todayKey())}
+                              >Today</button>
+                              <button
+                                className="!min-h-0 text-xs font-semibold text-gray-500 hover:underline"
+                                onClick={() => setShowSchedulePicker(false)}
+                              >Close</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                        onClick={() => { const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setScheduleWeekStart(formatDateKey(d)); }}>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Day strip */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {Array.from({ length: 7 }, (_, i) => {
+                      const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
+                      const dayKey = formatDateKey(d);
+                      const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
+                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey).length;
+                      const isToday = dayKey === todayKey();
+                      const isSelected = scheduleRange === "Custom" && scheduleCustomDate === dayKey;
+                      return (
+                        <button key={dayKey}
+                          onClick={() => { setScheduleCustomDate(dayKey); setScheduleRange("Custom"); }}
+                          className={`!min-h-0 flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-semibold transition-colors
+                            ${isSelected ? "bg-[#1A6FBF] border-[#1A6FBF] text-white" : isToday ? "border-[#1A6FBF] text-[#1A6FBF] bg-blue-50" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                          <span className="text-[10px] font-medium opacity-70">{dayLabel}</span>
+                          <span>{d.getDate()}</span>
+                          {count > 0 && <span className={`text-[10px] font-bold px-1.5 rounded-full ${isSelected ? "bg-white/20 text-white" : "bg-[#1A6FBF] text-white"}`}>{count}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 
@@ -8735,6 +9828,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </table>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Deliveries" ? (
             <div className="space-y-6">
@@ -8745,38 +9839,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </header>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button
-                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${deliveriesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => handleDeliveriesPeriodChange(item)}
-                      key={item}
-                    >
-                      {item}
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={6} rows={5} />}
+              <div className={dataLoading ? "hidden" : "space-y-6"}>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${deliveriesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleDeliveriesPeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowDeliveriesDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {deliveriesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showDeliveriesDateRange && renderDateRangeCalendar("deliveries-date-range-panel", deliveriesDateRange, setDeliveriesDateRange, applyDeliveriesDateRange, () => setShowDeliveriesDateRange(false))}
+                  </div>
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowDeliveriesDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {deliveriesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showDeliveriesDateRange && renderDateRangeCalendar("deliveries-date-range-panel", deliveriesDateRange, setDeliveriesDateRange, applyDeliveriesDateRange, () => setShowDeliveriesDateRange(false))}
-                </div>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => {
-                  const nextCurrency = event.target.value as CurrencyCode;
-                  setCurrency(nextCurrency);
-                  showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                }}>
-                  <option value="NGN">₦ Nigerian Naira</option>
-                  <option value="USD">$ US Dollar</option>
-                  <option value="GBP">£ British Pound</option>
-                </select>
+                {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Deliveries summary">
                 {[
-                  { title: "Total Delivered", value: String(deliveredInPeriodRows.length), helper: "orders fulfilled", icon: PackageCheck, tone: "green" },
+                  { title: "Total Delivered", value: String(pfDeliveryBase.length), helper: "orders fulfilled", icon: PackageCheck, tone: "green" },
                   { title: "Total Revenue", value: formatMoney(deliveredRevenueInPeriod), helper: "from delivered orders", icon: CircleDollarSign, tone: "blue" },
                   { title: "Avg Fulfillment", value: `${averageFulfillmentDays.toFixed(1)} days`, helper: "order to delivery", icon: Clock, tone: "orange" },
                   { title: "Avg Per Day", value: `${avgDeliveredPerDay.toFixed(1)} orders`, helper: "daily delivery rate", icon: TrendingUp, tone: "cyan" }
@@ -8811,6 +9901,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   }}>
                     {deliveryAgentOptions.map((agent) => <option key={agent}>{agent}</option>)}
                   </select>
+                  {renderProductFilter(deliveriesProductIds, setDeliveriesProductIds, showDeliveriesProductFilter, setShowDeliveriesProductFilter)}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -8860,6 +9951,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Sales Reps" ? (
             <div className="space-y-6">
@@ -8873,24 +9965,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </button>
               </header>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button
-                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => handleSalesPeriodChange(item)}
-                      key={item}
-                    >
-                      {item}
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={5} rows={5} />}
+              <div className={dataLoading ? "hidden" : "space-y-6"}>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleSalesPeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowSalesDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {salesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showSalesDateRange && renderDateRangeCalendar("sales-date-range-panel", salesDateRange, setSalesDateRange, applySalesDateRange, () => setShowSalesDateRange(false))}
+                  </div>
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowSalesDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {salesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showSalesDateRange && renderDateRangeCalendar("sales-date-range-panel", salesDateRange, setSalesDateRange, applySalesDateRange, () => setShowSalesDateRange(false))}
-                </div>
+                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Sales representatives summary">
@@ -8918,17 +10010,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                 <h2 className="text-sm font-bold text-gray-700 mb-3">Performance Leaderboard (Top 5)</h2>
-                <div className="flex flex-col gap-2">
-                  {[...salesRepRows].sort((a, b) => b.revenue - a.revenue).slice(0, 5).map((row, idx) => (
-                    <div key={row.user.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                      <div className="flex items-center gap-3">
-                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${idx === 0 ? "bg-yellow-100 text-yellow-700" : idx === 1 ? "bg-gray-100 text-gray-600" : idx === 2 ? "bg-orange-100 text-orange-700" : "bg-gray-50 text-gray-400"}`}>{idx + 1}</span>
-                        <span className="text-sm font-semibold text-gray-900">{row.user.name}</span>
+                {salesRepRows.length === 0 ? (
+                  <div className="flex flex-col items-center py-10 gap-3">
+                    <Users className="w-10 h-10 text-gray-300" />
+                    <h3 className="text-base font-bold text-gray-700">No leaderboard yet</h3>
+                    <p className="text-sm text-gray-400 text-center max-w-xs">Add your first sales rep to see how the team is performing.</p>
+                    <button className="mt-1 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-1.5" onClick={() => setModal("addSalesRep")}><Plus className="w-4 h-4" />Add Sales Rep</button>
+                  </div>
+                ) : salesRepRows.every((r) => r.revenue === 0) ? (
+                  <div className="flex flex-col items-center py-10 gap-3">
+                    <PackageCheck className="w-10 h-10 text-gray-300" />
+                    <h3 className="text-base font-bold text-gray-700">Standings update after first delivery</h3>
+                    <p className="text-sm text-gray-400 text-center max-w-xs">Performance ranks by delivered revenue. Once orders start landing, the leaderboard will populate.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {[...salesRepRows].sort((a, b) => b.revenue - a.revenue).slice(0, 5).map((row, idx) => (
+                      <div key={row.user.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                        <div className="flex items-center gap-3">
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${idx === 0 ? "bg-yellow-100 text-yellow-700" : idx === 1 ? "bg-gray-100 text-gray-600" : idx === 2 ? "bg-orange-100 text-orange-700" : "bg-gray-50 text-gray-400"}`}>{idx + 1}</span>
+                          <span className="text-sm font-semibold text-gray-900">{row.user.name}</span>
+                        </div>
+                        <span className="text-sm font-bold text-[#1A6FBF]">{formatMoney(row.revenue)}</span>
                       </div>
-                      <span className="text-sm font-bold text-[#1A6FBF]">{formatMoney(row.revenue)}</span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
@@ -9000,6 +10107,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Sales Teams" ? (
             <div className="space-y-6">
@@ -9013,6 +10121,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </button>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={4} rows={4} />}
+              <div className={dataLoading ? "hidden" : ""}>
+              {salesTeams.length === 0 && !dataLoading ? (
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 gap-3">
+                  <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><Users className="w-6 h-6" /></span>
+                  <h2 className="text-base font-bold text-gray-700">No teams yet</h2>
+                  <p className="text-sm text-gray-400">Create your first sales team to group reps and scope products.</p>
+                  <button className="mt-2 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={() => { setNewTeamName(""); setNewTeamLeadId(""); setModal("createTeam"); }}>
+                    <Plus className="w-4 h-4" /> Create Team
+                  </button>
+                </section>
+              ) : (
+              <>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Sales teams summary">
                 {[
                   { label: "Total Teams", value: salesTeams.length, helper: "active selling groups", icon: Users, tone: "blue" },
@@ -9129,8 +10251,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </table>
                 </div>
               </section>
+              </>
+              )}
+              </div>
             </div>
           ) : activePage === "Call Rep Console" ? (
+            renderCallRepConsole()
+          ) : activePage === "Sales Rep Workspace" ? (
             renderRepConsole()
           ) : activePage === "Agents" ? (
             <div className="space-y-6">
@@ -9139,16 +10266,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1A6FBF]">Agent Logistics &amp; Performance</h1>
                   <p className="text-sm font-medium text-gray-500">Manage and monitor external delivery agents and their performance metrics across regions</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportAgentsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addAgent")}>
+                  <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors flex-1 sm:flex-none" onClick={() => setModal("addAgent")}>
                     <Plus className="w-4 h-4" /> Add Agent
                   </button>
                 </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={5} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
               <div className="flex items-center gap-3">
                 <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => {
                   const nextCurrency = event.target.value as CurrencyCode;
@@ -9162,10 +10292,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <span className="text-xs font-medium text-gray-500">All amounts shown in {selectedCurrency.label}</span>
               </div>
 
-              <section className="grid grid-cols-2 lg:grid-cols-3 gap-4" aria-label="Agents summary">
+              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Agents summary">
                 {[
                   { title: "Total Agents", value: String(agents.length), icon: UserRound, tone: "blue", warning: false },
                   { title: "Active on Duty", value: String(agents.filter((agent) => agent.active).length), icon: CheckCircle2, tone: "green", warning: false },
+                  { title: "Avg Delivery Rate", value: `${avgAgentSuccessRate}%`, icon: TrendingUp, tone: "green", warning: false },
+                  { title: "Total Revenue", value: formatMoney(totalAgentRevenue), icon: CircleDollarSign, tone: "blue", warning: false },
                   { title: "Stock with Agents", value: formatMoney(totalAgentStockValue), icon: EmptyProductsIcon, tone: "orange", warning: false },
                   { title: "Pending Deliveries", value: String(pendingAgentDeliveries), icon: Truck, tone: "purple", warning: false },
                   { title: "Defective Stock Value", value: formatMoney(totalAgentDefectiveValue), icon: CircleX, tone: "red", warning: true },
@@ -9208,20 +10340,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Agents table">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Agent Details", "Primary Zone", "Status", "Success Rate", "Stock Value", "Actions"].map((h) => (
+                        {["Agent Details", "Zone", "Status", "Orders", "Delivery Rate", "Revenue", "Stock Value", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredAgentRows.length === 0 ? (
-                        <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
+                        <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
                       ) : (
                         filteredAgentRows.map((row) => (
-                          <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors">
+                          <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAgentModal(row.agent, "agentDetails")}>
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
                                 <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(row.agent.name)}</span>
@@ -9231,17 +10363,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-gray-700">{row.agent.zone}</td>
+                            <td className="px-4 py-4 text-gray-700 text-xs font-medium">{row.agent.zone}</td>
                             <td className="px-4 py-4"><span className={`status-pill status-${slugify(row.status)}`}>{row.status}</span></td>
                             <td className="px-4 py-4">
-                              <div className="font-semibold text-gray-900">{row.successRate}%</div>
-                              <div className="text-xs text-gray-500">{row.deliveries} delivered · {row.pending} pending</div>
+                              <div className="font-semibold text-gray-900">{row.totalOrders}</div>
+                              <div className="text-xs text-gray-500">{row.deliveries} delivered · {row.failed} failed</div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className={`font-bold ${row.successRate >= 70 ? "text-green-700" : row.successRate >= 50 ? "text-amber-700" : row.totalOrders === 0 ? "text-gray-400" : "text-red-700"}`}>{row.successRate}%</div>
+                              <div className="w-16 h-1.5 bg-gray-200 rounded-full mt-1 overflow-hidden">
+                                <div className={`h-full rounded-full ${row.successRate >= 70 ? "bg-green-500" : row.successRate >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${row.successRate}%` }} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="font-semibold text-gray-900">{formatMoney(row.revenue)}</div>
+                              <div className="text-xs text-gray-500">{row.pending} pending</div>
                             </td>
                             <td className="px-4 py-4">
                               <div className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</div>
-                              <div className="text-xs text-gray-400">Defective {formatMoney(row.defectiveValue)} · Missing {formatMoney(row.missingValue)}</div>
+                              <div className="text-xs text-gray-400">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</div>
                             </td>
-                            <td className="px-4 py-4">
+                            <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1">
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Profile" aria-label="Profile" onClick={() => openAgentModal(row.agent, "agentDetails")}><Eye className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Assign stock" aria-label="Assign stock" onClick={() => openAgentModal(row.agent, "assignAgentStock")}><PackagePlus className="w-4 h-4" /></button>
@@ -9260,18 +10402,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   Showing {filteredAgentRows.length} of {agents.length} agents
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Waybill" ? (
-            <div className="flex flex-col gap-6 p-6">
+            <div className="flex flex-col gap-4 sm:gap-6">
               {/* Header */}
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">Waybill / Stock Transfers</h1>
                   <p className="text-sm text-gray-500 mt-0.5">Track stock shipped between warehouse and state agents, or agent-to-agent.</p>
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
+                <button className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors w-full sm:w-auto" onClick={openCreateWaybill}>+ New Waybill</button>
               </div>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={6} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
               {/* Summary cards */}
               {(() => {
                 const inTransit = waybillRecords.filter((w) => w.status === "In Transit");
@@ -9304,6 +10450,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option value="Received">Received</option>
                   <option value="Returned">Returned</option>
                   <option value="Cancelled">Cancelled</option>
+                  <option value="Defective">Defective</option>
+                  <option value="Missing">Missing</option>
                 </select>
                 <select className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF]" value={waybillProductFilter} onChange={(e) => setWaybillProductFilter(e.target.value)}>
                   <option value="">All Products</option>
@@ -9330,10 +10478,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   "Received": "bg-green-100 text-green-700",
                   "Returned": "bg-amber-100 text-amber-700",
                   "Cancelled": "bg-gray-100 text-gray-500",
+                  "Defective": "bg-orange-100 text-orange-700",
+                  "Missing": "bg-red-100 text-red-700",
                 };
                 return (
-                  <div className="rounded-xl border border-gray-200 overflow-hidden">
-                    <table className="w-full text-sm">
+                  <div className="rounded-xl border border-gray-200 overflow-x-auto">
+                    <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
                           {["ID", "Product", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
@@ -9378,6 +10528,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 );
               })()}
+              </div>
             </div>
           ) : activePage === "Payroll" ? (
             <div className="space-y-6">
@@ -9386,7 +10537,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm font-medium text-gray-500">Manage pay rates and generate monthly payroll for your team</p>
               </header>
 
-              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit" role="tablist" aria-label="Payroll sections">
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={5} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
+              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Payroll sections">
                 {payrollTabs.map((tab) => (
                   <button
                     role="tab"
@@ -9439,6 +10593,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </table>
                     </div>
                   </div>
+
+                  {/* Top Performer Bonus Settings */}
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900">Monthly Top Performer Bonus</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Award a bonus to the sales rep with the most delivered orders each month.</p>
+                      </div>
+                      <button type="button" role="switch" aria-checked={topPerformerBonusEnabled}
+                        className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${topPerformerBonusEnabled ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
+                        onClick={() => setTopPerformerBonusEnabled(!topPerformerBonusEnabled)}>
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${topPerformerBonusEnabled ? "left-5" : "left-0.5"}`} />
+                      </button>
+                    </div>
+                    {topPerformerBonusEnabled && (
+                      <div className="space-y-3 pt-1">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Bonus Amount (₦)</span>
+                          <input className="w-48 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" inputMode="numeric" value={topPerformerBonusAmount} onChange={(e) => setTopPerformerBonusAmount(e.target.value)} placeholder="e.g. 10000" />
+                        </label>
+                        <p className="text-[11px] text-gray-500 italic">Tie-breaker: when two or more reps tie on delivered orders, the bonus splits equally between them.</p>
+                      </div>
+                    )}
+                  </div>
                 </section>
               ) : payrollTab === "Run Payroll" ? (
                 <section className="space-y-5" aria-label="Run payroll">
@@ -9458,6 +10636,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   </div>
                   <p className="text-sm text-gray-500">Select a month and click Preview to calculate payroll.</p>
+                  {topPerformerInfo && (
+                    <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+                      <span className="text-amber-600 font-black">🏆</span>
+                      <span className="font-bold text-amber-900">
+                        Top performer{topPerformerInfo.names.length > 1 ? "s" : ""}: {topPerformerInfo.names.join(" & ")} — {topPerformerInfo.delivered} delivered order{topPerformerInfo.delivered !== 1 ? "s" : ""}
+                      </span>
+                      <span className="text-amber-700 text-xs font-semibold ml-auto">
+                        +{formatMoney(topPerformerInfo.amountEach)}{topPerformerInfo.names.length > 1 ? " each (split)" : " bonus"}
+                      </span>
+                    </div>
+                  )}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -9584,6 +10773,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </section>
               )}
+              </div>
             </div>
           ) : activePage === "Customers" ? (
             <div className="space-y-6">
@@ -9597,29 +10787,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </button>
               </header>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${customerPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCustomerPeriodChange(item)} key={item}>
-                      {item}
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={6} rows={5} />}
+              <div className={dataLoading ? "hidden" : "space-y-6"}>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${customerPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCustomerPeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCustomerDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {customerPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showCustomerDateRange && renderDateRangeCalendar("customer-date-range-panel", customerDateRange, setCustomerDateRange, applyCustomerDateRange, () => setShowCustomerDateRange(false))}
+                  </div>
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCustomerDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {customerPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showCustomerDateRange && renderDateRangeCalendar("customer-date-range-panel", customerDateRange, setCustomerDateRange, applyCustomerDateRange, () => setShowCustomerDateRange(false))}
-                </div>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => {
-                  const nextCurrency = event.target.value as CurrencyCode;
-                  setCurrency(nextCurrency);
-                  showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                }}>
-                  <option value="NGN">₦ Nigerian Naira</option>
-                  <option value="USD">$ US Dollar</option>
-                  <option value="GBP">£ British Pound</option>
-                </select>
+                {renderWeekNav(customerNavStart, setCustomerNavStart, customerNavSpan, setCustomerNavSpan, setCustomerPeriod, setCustomerDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Customer summary">
@@ -9657,6 +10847,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 }}>
                   {customerSources.map((source) => <option key={source}>{source}</option>)}
                 </select>
+                {renderProductFilter(customerProductIds, setCustomerProductIds, showCustomerProductFilter, setShowCustomerProductFilter)}
                 <button className="w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => showToast("Customers refreshed.")}><RefreshCw className="w-4 h-4" /></button>
               </div>
 
@@ -9719,6 +10910,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Expenses" ? (
             <div className="space-y-6">
@@ -9737,29 +10929,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </header>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${expensePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleExpensePeriodChange(item)} key={item}>
-                      {item}
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={6} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${expensePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleExpensePeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowExpenseDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {expensePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showExpenseDateRange && renderDateRangeCalendar("expense-date-range-panel", expenseDateRange, setExpenseDateRange, applyExpenseDateRange, () => setShowExpenseDateRange(false))}
+                  </div>
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowExpenseDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {expensePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showExpenseDateRange && renderDateRangeCalendar("expense-date-range-panel", expenseDateRange, setExpenseDateRange, applyExpenseDateRange, () => setShowExpenseDateRange(false))}
-                </div>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => {
-                  const nextCurrency = event.target.value as CurrencyCode;
-                  setCurrency(nextCurrency);
-                  showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                }}>
-                  <option value="NGN">₦ Nigerian Naira</option>
-                  <option value="USD">$ US Dollar</option>
-                  <option value="GBP">£ British Pound</option>
-                </select>
+                {renderWeekNav(expenseNavStart, setExpenseNavStart, expenseNavSpan, setExpenseNavSpan, setExpensePeriod, setExpenseDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Expense summary">
@@ -9906,7 +11098,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
                             <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
                             <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}</td>
-                            <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}</td>
+                            <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}</td>
                             <td className="px-4 py-4">
                               <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => showToast(`${expense.id} · ${expense.type} · ${formatMoney(expense.amount)} · ${expense.productName} · ${expense.description}`)}>Details</button>
                             </td>
@@ -9919,11 +11111,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</span>
                   <div className="flex items-center gap-1">
-                    
-                    
+
+
                   </div>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Finance & Accounting" ? (
             <div className="space-y-6">
@@ -9937,46 +11130,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </button>
               </header>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(event) => {
-                  const nextCurrency = event.target.value as CurrencyCode;
-                  setCurrency(nextCurrency);
-                  showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                }}>
-                  <option value="NGN">₦ Nigerian Naira</option>
-                  <option value="USD">$ US Dollar</option>
-                  <option value="GBP">£ British Pound</option>
-                </select>
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>
-                      {item}
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={6} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors w-full sm:w-auto" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
+                  <div className="flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar w-full sm:w-auto">
+                    {periods.map((item) => (
+                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors w-full sm:w-auto" onClick={() => setShowFinanceDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
+                  </div>
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
-                </div>
+                {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
               </div>
 
-              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar" role="tablist" aria-label="Financial report sections">
-                {financeTabs.map((tab) => (
-                  <button
-                    role="tab"
-                    aria-selected={financeTab === tab}
-                    className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap ${financeTab === tab ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
-                    onClick={() => {
-                      setFinanceTab(tab);
-                    }}
-                    key={tab}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </nav>
+              <div className="w-full overflow-x-auto no-scrollbar -mx-1 px-1">
+                <nav className="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg min-w-max" role="tablist" aria-label="Financial report sections">
+                  {financeTabs.map((tab) => (
+                    <button
+                      role="tab"
+                      aria-selected={financeTab === tab}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all duration-200 whitespace-nowrap ${financeTab === tab ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
+                      onClick={() => {
+                        setFinanceTab(tab);
+                      }}
+                      key={tab}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </nav>
+              </div>
 
               {/* Product filter chips — toggle one or more products to scope every tab's metrics. Empty = all products merged. */}
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Product filter">
@@ -10301,7 +11496,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
                             {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Received", "Outstanding", "Aging", "% Paid"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
@@ -10363,7 +11558,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
                             {["Order", "Customer", "Partner", "Amount", "Logistics", "To Remit", "Received", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
@@ -10488,7 +11683,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
                             {["Product Name", "Total Orders", "Delivered", "Delivery Rate", "Performance", "Units Sold", "Revenue", "COGS", "Expenses", "Net Profit", "Margin %", "ROI", "ROAS"].map((h) => (
@@ -10611,7 +11806,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
                             {["State", "Total Orders", "Delivered", "Cancelled / Failed", "Pending", "Delivery Rate", "Performance", "Revenue", "Gross Profit"].map((h) => (
@@ -10643,300 +11838,293 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               )}
+              </div>
             </div>
           ) : activePage === "Ad Tracking" ? (
-            (() => {
-              const trackedAttributedOrders = trackedOrders.filter((o) => o.utmSource && o.utmSource !== "direct" && o.utmSource !== "manual" && o.utmSource !== "website");
-              const orderRowNumber = (id: string) => trackedOrders.length - trackedOrders.findIndex((o) => o.id === id);
-              const sourceTone = (src: string): { bg: string; text: string } => {
-                const s = (src || "").toLowerCase();
-                if (s === "fb" || s === "facebook") return { bg: "bg-blue-100", text: "text-blue-700" };
-                if (s === "tiktok" || s === "tt") return { bg: "bg-pink-100", text: "text-pink-700" };
-                if (s === "instagram" || s === "ig") return { bg: "bg-fuchsia-100", text: "text-fuchsia-700" };
-                if (s === "google" || s === "g") return { bg: "bg-emerald-100", text: "text-emerald-700" };
-                if (s === "whatsapp" || s === "wa") return { bg: "bg-green-100", text: "text-green-700" };
-                if (s === "youtube" || s === "yt") return { bg: "bg-red-100", text: "text-red-700" };
-                return { bg: "bg-gray-100", text: "text-gray-700" };
-              };
-              const statusTone = (st: string): string => {
-                const s = (st || "New").toLowerCase();
-                if (s === "delivered") return "bg-green-50 text-green-700 border border-green-200";
-                if (s === "cancelled") return "bg-red-50 text-red-700 border border-red-200";
-                if (s === "in transit" || s === "out for delivery") return "bg-amber-50 text-amber-700 border border-amber-200";
-                return "bg-blue-50 text-blue-700 border border-blue-200";
-              };
-              const formatSourceLabel = (o: TrackedOrder) => {
-                const parts = [o.utmSource, o.utmCampaign, o.utmMedium].filter((p) => p && p.length > 0);
-                return parts.join("_");
-              };
-              type GroupStat = { id: string; orders: number; delivered: number; revenue: number; currency: ProductCurrencyCode };
-              const groupBy = (key: (o: TrackedOrder) => string): GroupStat[] => {
-                const map = new Map<string, GroupStat>();
-                trackedAttributedOrders.forEach((o) => {
-                  const k = key(o);
-                  if (!k) return;
-                  const existing = map.get(k);
-                  const delivered = (o.status ?? "New") === "Delivered";
-                  if (existing) {
-                    existing.orders += 1;
-                    if (delivered) {
-                      existing.delivered += 1;
-                      existing.revenue += o.amount;
-                    }
-                  } else {
-                    map.set(k, { id: k, orders: 1, delivered: delivered ? 1 : 0, revenue: delivered ? o.amount : 0, currency: o.currency });
-                  }
-                });
-                return Array.from(map.values());
-              };
-              const campaignGroups = groupBy((o) => o.utmCampaign);
-              const creativeGroups = groupBy((o) => o.utmContent ?? "");
-              const uniqueCampaigns = campaignGroups.length;
-              const uniqueCreatives = creativeGroups.length;
+            <div className="space-y-6">
+              <header className="flex flex-col gap-1">
+                <h1 className="text-2xl font-bold text-[#1A6FBF]">Ad Tracking</h1>
+                <p className="text-sm font-medium text-gray-500">Orders placed via tracked links — grouped by campaign and creative</p>
+              </header>
 
-              if (adTrackingView === "guide") {
-                return (
-                  <div className="space-y-6 max-w-3xl">
-                    <div className="flex items-center gap-2 text-sm font-medium text-gray-500">
-                      <button className="hover:text-[#1A6FBF] transition-colors" onClick={() => setAdTrackingView("dashboard")}>Ad Tracking</button>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                      <strong className="text-gray-900">How to Use the Ad Tracker</strong>
-                    </div>
-                    <header className="space-y-2">
-                      <h1 className="text-3xl font-extrabold text-gray-900">How to Use the Ad Tracker</h1>
-                      <p className="text-sm text-gray-500 leading-relaxed">Connect every paid ad you run to the orders it produces — so you can see exactly which campaigns and creatives are working.</p>
-                    </header>
+              {/* Tabs */}
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+                  <button key={tab} onClick={() => setAdTrackingTab(tab)}
+                    className={`!min-h-0 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+                    {tab}
+                  </button>
+                ))}
+              </div>
 
-                    <section className="space-y-2">
-                      <h2 className="text-lg font-bold text-gray-900">1. Why use it</h2>
-                      <p className="text-sm text-gray-700 leading-relaxed">Without tracking, every order looks the same — someone showed up and bought. With it, you can answer: <em>which</em> Facebook ad set is producing the most orders, <em>what</em> conversion rate each video creative has, and <em>which</em> campaigns have the highest delivered-vs-cancelled rate. The difference between guessing and knowing.</p>
-                    </section>
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={8} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
 
-                    <section className="space-y-2">
-                      <h2 className="text-lg font-bold text-gray-900">2. Tag your ad link</h2>
-                      <p className="text-sm text-gray-700 leading-relaxed">Before launching an ad, append UTM parameters to your order form URL. When a customer clicks the ad and places an order, Protohub captures these and stores them on the order.</p>
-                      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700 whitespace-pre-wrap break-all">https://yourstore.com/order-form/your-slug<span className="text-[#1A6FBF]">?utm_source=fb&utm_medium=cpc&utm_campaign=summer_sale&utm_content=video_1</span></pre>
-                      <p className="text-xs text-gray-500">Replace <code className="bg-gray-100 px-1 rounded">your-slug</code> with your organisation slug. Everything in primary colour above is the tracking part — adjust those values for each ad you run.</p>
-                    </section>
-
-                    <section className="space-y-3">
-                      <h2 className="text-lg font-bold text-gray-900">3. What each parameter means</h2>
-                      <div className="border border-gray-200 rounded-xl divide-y divide-gray-200 overflow-hidden">
-                        {[
-                          { name: "utm_source", desc: "Where the ad ran. Examples: fb, tiktok, instagram, google, whatsapp." },
-                          { name: "utm_medium", desc: "The ad type. Examples: cpc (paid clicks), social, organic, email." },
-                          { name: "utm_campaign", desc: "Your internal name for the campaign. Examples: summer_sale, ramadan_2026, new_product_launch." },
-                          { name: "utm_content", desc: "The specific creative or ad. Examples: video_1, hook_a, carousel_red." },
-                          { name: "utm_term", desc: "Optional. Used for search keywords. Skip unless you're running Google Search ads." }
-                        ].map(({ name, desc }) => (
-                          <div key={name} className="px-4 py-3">
-                            <p className="text-sm font-bold text-gray-900">{name}</p>
-                            <p className="text-xs text-gray-600 mt-1">{desc}</p>
-                          </div>
-                        ))}
+              {adTrackingTab === "Campaign Orders" && (<>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    {periods.map((item) => (
+                      <button key={item} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange(v => !v)}>
+                      <CalendarDays className="w-4 h-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                    </button>
+                    {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
+                  </div>
+                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1A6FBF] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
+                  {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                </div>
+                {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
+              </div>
+              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
+                {[
+                  { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                  { title: "Active Campaigns", value: String(new Set(campaignBaseOrders.filter((o) => o.utmCampaign && o.utmCampaign !== "manual").map((o) => o.utmCampaign)).size), helper: "unique campaigns", icon: Zap, tone: "purple" },
+                  { title: "Top Source", value: (() => { const sources = filteredCampaignOrders.map((o) => o.utmSource); if (!sources.length) return "—"; const counts: Record<string, number> = {}; sources.forEach((s) => { counts[s] = (counts[s] || 0) + 1; }); return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; })(), helper: "most orders", icon: Globe, tone: "green" },
+                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.reduce((sum, o) => sum + o.amount, 0)), helper: "from tracked orders", icon: CircleDollarSign, tone: "orange" }
+                ].map((metric) => {
+                  const Icon = metric.icon;
+                  return (
+                    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm" key={metric.title}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "purple" ? "bg-purple-50 text-purple-500" : metric.tone === "green" ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500"}`}>
+                          <Icon className="w-5 h-5" />
+                        </span>
                       </div>
-                      <p className="text-sm text-gray-700 leading-relaxed">Use lowercase and underscores. Keep names consistent — <code className="bg-gray-100 px-1 rounded">summer_sale</code> and <code className="bg-gray-100 px-1 rounded">Summer Sale</code> show up as two different campaigns on the dashboard.</p>
-                    </section>
+                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                      <strong className="text-2xl font-bold text-gray-900 block my-1">{metric.value}</strong>
+                      <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
+                    </article>
+                  );
+                })}
+              </section>
 
-                    <section className="space-y-2">
-                      <h2 className="text-lg font-bold text-gray-900">4. Working with Facebook Ads</h2>
-                      <p className="text-sm text-gray-700 leading-relaxed">Facebook automatically fills <code className="bg-gray-100 px-1 rounded">utm_content</code> with internal IDs that look like this:</p>
-                      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700">120203847562730492</pre>
-                      <p className="text-sm text-gray-700 leading-relaxed">That's not human-readable. Use the <strong>rename</strong> feature on the dashboard — click the pencil next to a row and enter a friendly name like "Video 1 — Hook A". The mapping is saved and applied to that ID everywhere it appears.</p>
-                    </section>
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
+                <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
+                <div className="flex-1">
+                  <h2 className="text-sm font-bold text-blue-900 mb-1">New to ad tracking?</h2>
+                  <p className="text-sm text-blue-700">Learn how to tag your ad links so every order gets attributed to the right campaign and creative.</p>
+                </div>
+                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => { setActivePage("Embed Form"); showToast("Showing embed form with UTM guide."); }}>Read the guide</button>
+              </div>
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredCampaignOrders.length} attributed</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                        {["Order", "Customer", "Product", "Campaign", "Source", "Medium", "Content", "Amount", "Date"].map((h) => (
+                          <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredCampaignOrders.length === 0 ? (
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</td></tr>
+                      ) : (
+                        filteredCampaignOrders.map((order) => (
+                          <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
+                            <td className="px-4 py-4">
+                              <div className="font-semibold text-gray-900">{order.customer}</div>
+                              <div className="text-xs text-gray-400">{order.phone}</div>
+                            </td>
+                            <td className="px-4 py-4 text-gray-700">{order.productName}</td>
+                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
+                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
+                            <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
+                            <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
+                            <td className="px-4 py-4 font-bold text-[#1A6FBF]">{formatProductMoney(order.amount, order.currency)}</td>
+                            <td className="px-4 py-4 text-gray-500">{order.date}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+              </>)}
 
-                    <section className="space-y-2">
-                      <h2 className="text-lg font-bold text-gray-900">5. Reading the dashboard</h2>
-                      <ul className="text-sm text-gray-700 leading-relaxed space-y-2 list-disc pl-5">
-                        <li><strong>Campaign totals</strong> at the top — each card shows total orders, delivered orders, and revenue per campaign.</li>
-                        <li><strong>Creative breakdown</strong> below — one row per ad/creative under that campaign, with order counts by status. Use this to spot which creative converts and which is just burning budget.</li>
-                        <li><strong>Source colour</strong> on each row matches the platform (Facebook = blue, TikTok = pink, etc.) so you can scan the table quickly.</li>
-                      </ul>
-                    </section>
+              {adTrackingTab === "Daily Ad Spend" && (() => {
+                const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                const activeProds = products.filter((p) => p.active);
+                const weekLabel = `${displayDateFromKey(adSpendWeekDays[0])} – ${displayDateFromKey(adSpendWeekDays[6])}`;
+                const todayKey2 = todayKey();
 
-                    <section className="space-y-2">
-                      <h2 className="text-lg font-bold text-gray-900">6. Quick checklist</h2>
-                      <ul className="text-sm text-gray-700 leading-relaxed space-y-1.5 list-disc pl-5">
-                        <li>Tagged the link before launching the ad</li>
-                        <li>Used lowercase / underscored names consistently</li>
-                        <li>Renamed Facebook content IDs to friendly names</li>
-                        <li>Checked the dashboard 24–48 hours after launch to see initial conversion</li>
-                      </ul>
-                    </section>
+                // Week totals
+                const weekTotalSpend = adSpendWeekDays.reduce((s, day) =>
+                  s + activeProds.reduce((ps, p) => ps + (parseFloat(adSpendDraft[`${p.id}-${day}`] ?? "") || 0), 0), 0);
+                const weekTotalRevenue = adSpendWeekDays.reduce((s, day) =>
+                  s + activeProds.reduce((ps, p) => ps + revenueForProductDay(p.id, day), 0), 0);
 
-                    <div className="border-t border-gray-200 pt-5">
-                      <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setAdTrackingView("dashboard")}>
-                        <ChevronLeft className="w-4 h-4" /> Back to Ad Tracking
+                return (
+                  <div className="space-y-4">
+                    {/* Week navigator + save */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                          onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setAdSpendWeekStart(formatDateKey(d)); }}>
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-sm font-semibold text-gray-800 min-w-[220px] text-center">{weekLabel}</span>
+                        <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                          onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setAdSpendWeekStart(formatDateKey(d)); }}>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                        <button className="!min-h-0 px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+                          onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setAdSpendWeekStart(formatDateKey(d)); }}>
+                          This Week
+                        </button>
+                      </div>
+                      <button onClick={saveAdSpend} disabled={adSpendSaving}
+                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors disabled:opacity-60">
+                        {adSpendSaving ? "Saving…" : "Save Changes"}
                       </button>
                     </div>
+
+                    {/* Week summary KPIs */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: "Week Spend", value: formatMoney(weekTotalSpend), color: "text-red-600" },
+                        { label: "Week Revenue", value: formatMoney(weekTotalRevenue), color: "text-green-600" },
+                        { label: "Week ROAS", value: weekTotalSpend === 0 ? "—" : `${(weekTotalRevenue / weekTotalSpend).toFixed(2)}x`, color: weekTotalSpend === 0 ? "text-gray-400" : weekTotalRevenue >= weekTotalSpend ? "text-green-600" : "text-red-600" }
+                      ].map((k) => (
+                        <div key={k.label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{k.label}</p>
+                          <strong className={`text-xl font-bold block mt-1 ${k.color}`}>{k.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    {activeProds.length === 0 ? (
+                      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 italic">No active products. Add a product first.</div>
+                    ) : (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm min-w-[700px]">
+                            <thead>
+                              <tr className="bg-gray-50 border-b border-gray-200">
+                                <th className="px-4 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider w-40">Product</th>
+                                <th className="px-3 py-3 text-[10px] font-semibold text-gray-500 uppercase tracking-wider text-center w-28">Metric</th>
+                                {adSpendWeekDays.map((day, i) => (
+                                  <th key={day} className={`px-3 py-3 text-center text-[10px] font-semibold uppercase tracking-wider ${day === todayKey2 ? "text-[#1A6FBF] bg-blue-50" : "text-gray-500"}`}>
+                                    <div>{dayLabels[i]}</div>
+                                    <div className="font-normal text-gray-400 normal-case">{day.slice(5)}</div>
+                                  </th>
+                                ))}
+                                <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activeProds.map((product, pi) => {
+                                const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                                const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                                const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
+
+                                return (
+                                  <Fragment key={product.id}>
+                                    {/* Spend row */}
+                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                      <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={3}>
+                                        <div className="text-sm">{product.name}</div>
+                                        {rowRoas !== null && (
+                                          <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
+                                            {rowRoas.toFixed(2)}x ROAS
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-red-500 text-center whitespace-nowrap">Ad Spend</td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const key = `${product.id}-${day}`;
+                                        return (
+                                          <td key={day} className={`px-2 py-2 ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                            <input
+                                              type="number" min="0" placeholder="0"
+                                              value={adSpendDraft[key] ?? ""}
+                                              onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                              className="w-full text-center text-xs border border-gray-200 rounded-md px-1 py-1.5 focus:outline-none focus:border-[#1A6FBF] focus:ring-1 focus:ring-[#1A6FBF] bg-white"
+                                            />
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs font-semibold text-red-600">{rowSpend > 0 ? formatMoney(rowSpend) : "—"}</td>
+                                    </tr>
+                                    {/* Revenue row */}
+                                    <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-green-600 text-center whitespace-nowrap">Revenue</td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const rev = revenueForProductDay(product.id, day);
+                                        const spend = parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0;
+                                        const profitable = spend > 0 && rev >= spend;
+                                        const losing = spend > 0 && rev < spend;
+                                        return (
+                                          <td key={day} className={`px-2 py-2 text-center text-xs font-medium ${day === todayKey2 ? "bg-blue-50/40" : ""} ${profitable ? "text-green-600" : losing ? "text-red-500" : "text-gray-500"}`}>
+                                            {rev > 0 ? formatMoney(rev) : "—"}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs font-semibold text-green-600">{rowRevenue > 0 ? formatMoney(rowRevenue) : "—"}</td>
+                                    </tr>
+                                    {/* ROAS row */}
+                                    <tr className={`${pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"} border-b border-gray-100`}>
+                                      <td className="px-3 py-2 text-[11px] font-semibold text-gray-400 text-center whitespace-nowrap">ROAS</td>
+                                      {adSpendWeekDays.map((day) => {
+                                        const spend = parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0;
+                                        const rev = revenueForProductDay(product.id, day);
+                                        const roas = spend > 0 ? rev / spend : null;
+                                        const orders = ordersForProductDay(product.id, day);
+                                        return (
+                                          <td key={day} className={`px-2 pb-3 pt-1 text-center ${day === todayKey2 ? "bg-blue-50/40" : ""}`}>
+                                            {roas !== null ? (
+                                              <div className="flex flex-col items-center gap-0.5">
+                                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${roas >= 2 ? "bg-green-100 text-green-700" : roas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
+                                                  {roas.toFixed(2)}x
+                                                </span>
+                                                {orders > 0 && <span className="text-[10px] text-gray-400">{orders} orders</span>}
+                                              </div>
+                                            ) : (
+                                              <span className="text-[10px] text-gray-300">—</span>
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+                                      <td className="px-3 py-2 text-center text-xs text-gray-400">
+                                        {rowSpend > 0 && rowRoas !== null ? (
+                                          <span className={`font-bold ${rowRoas >= 2 ? "text-green-600" : rowRoas >= 1 ? "text-yellow-600" : "text-red-600"}`}>{rowRoas.toFixed(2)}x</span>
+                                        ) : "—"}
+                                      </td>
+                                    </tr>
+                                  </Fragment>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center gap-3 flex-wrap">
+                          <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-green-200 inline-block" /> ROAS ≥ 2x — profitable</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-yellow-200 inline-block" /> ROAS 1–2x — breaking even</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-red-200 inline-block" /> ROAS &lt; 1x — losing money</span>
+                          <span className="ml-auto text-xs text-gray-400">Revenue counts non-cancelled/failed orders by creation date</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
-              }
+              })()}
 
-              const stats = [
-                { label: "Tracked Orders", value: trackedAttributedOrders.length, icon: ShoppingBag },
-                { label: "Unique Campaigns", value: uniqueCampaigns, icon: Megaphone },
-                { label: "Unique Creatives", value: uniqueCreatives, icon: ImageIcon }
-              ];
-
-              return (
-                <div className="space-y-6">
-                  <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-                    <div className="flex flex-col gap-1">
-                      <h1 className="text-2xl font-bold text-[#1A6FBF]">Ad Tracking</h1>
-                      <p className="text-sm font-medium text-gray-500">Orders placed via tracked links — grouped by campaign and creative</p>
-                    </div>
-                    <button className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors self-start sm:self-auto" onClick={loadFacebookAdsDemo}>
-                      <Sparkles className="w-3.5 h-3.5" /> Load Facebook ads demo
-                    </button>
-                  </header>
-
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
-                    <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
-                    <div className="flex-1">
-                      <h2 className="text-sm font-bold text-blue-900 mb-1">New to ad tracking?</h2>
-                      <p className="text-sm text-blue-700">Learn how to tag your ad links so every order gets attributed to the right campaign and creative.</p>
-                    </div>
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => setAdTrackingView("guide")}>Read the guide</button>
-                  </div>
-
-                  <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {stats.map(({ label, value, icon: Icon }) => (
-                      <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex items-center gap-4">
-                        <span className="w-12 h-12 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center shrink-0"><Icon className="w-5 h-5" /></span>
-                        <div className="flex flex-col">
-                          <strong className="text-3xl font-extrabold text-gray-900 leading-none">{value}</strong>
-                          <span className="text-sm text-gray-500 mt-1">{label}</span>
-                        </div>
-                      </article>
-                    ))}
-                  </section>
-
-                  <section className="space-y-3">
-                    <header>
-                      <h2 className="text-base font-bold text-gray-900">Campaigns</h2>
-                      <p className="text-xs text-gray-500">Hover the pencil icon on any card to rename a campaign ID</p>
-                    </header>
-                    {campaignGroups.length === 0 ? (
-                      <p className="text-sm text-gray-400 italic bg-white rounded-xl border border-gray-200 px-5 py-8 text-center">No campaigns tracked yet.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {campaignGroups.map((g) => {
-                          const label = campaignLabels[g.id] ?? "";
-                          const editing = editingCampaignId === g.id;
-                          return (
-                            <article key={g.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm group">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
-                                  {editing ? (
-                                    <input autoFocus className="w-full text-sm font-bold text-gray-900 border border-blue-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={label} placeholder="Add label..." onChange={(e) => setCampaignLabels((v) => ({ ...v, [g.id]: e.target.value }))} onBlur={() => setEditingCampaignId("")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingCampaignId(""); }} />
-                                  ) : (
-                                    <p className={`text-sm truncate ${label ? "font-bold text-gray-900" : "italic text-gray-400"}`}>{label || "Add label..."}</p>
-                                  )}
-                                  <p className="text-xs text-gray-500 truncate mt-0.5">{g.id}</p>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-opacity" title="Rename" aria-label="Rename campaign" onClick={() => setEditingCampaignId(g.id)}><Pencil className="w-3.5 h-3.5" /></button>
-                                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 uppercase tracking-wide">Campaign</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-4 mt-3 text-xs text-gray-600">
-                                <span className="inline-flex items-center gap-1"><ShoppingBag className="w-3.5 h-3.5 text-gray-400" /> {g.orders} order{g.orders !== 1 ? "s" : ""}</span>
-                                <span className="inline-flex items-center gap-1"><PackageCheck className="w-3.5 h-3.5 text-gray-400" /> {g.delivered} delivered</span>
-                                <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-gray-400" /> {formatProductMoney(g.revenue, g.currency)}</span>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="space-y-3">
-                    <header>
-                      <h2 className="text-base font-bold text-gray-900">Ad Creatives</h2>
-                      <p className="text-xs text-gray-500">Hover the pencil icon to rename a creative ID</p>
-                    </header>
-                    {creativeGroups.length === 0 ? (
-                      <p className="text-sm text-gray-400 italic bg-white rounded-xl border border-gray-200 px-5 py-8 text-center">No creatives tracked yet. Add <code className="bg-gray-100 px-1 rounded">utm_content</code> to your ad URLs.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {creativeGroups.map((g) => {
-                          const label = creativeLabels[g.id] ?? "";
-                          const editing = editingCreativeId === g.id;
-                          return (
-                            <article key={g.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm group">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
-                                  {editing ? (
-                                    <input autoFocus className="w-full text-sm font-bold text-gray-900 border border-blue-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={label} placeholder="Add label..." onChange={(e) => setCreativeLabels((v) => ({ ...v, [g.id]: e.target.value }))} onBlur={() => setEditingCreativeId("")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingCreativeId(""); }} />
-                                  ) : (
-                                    <p className={`text-sm truncate ${label ? "font-bold text-gray-900" : "italic text-gray-400"}`}>{label || "Add label..."}</p>
-                                  )}
-                                  <p className="text-xs text-gray-500 truncate mt-0.5">{g.id}</p>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-opacity" title="Rename" aria-label="Rename creative" onClick={() => setEditingCreativeId(g.id)}><Pencil className="w-3.5 h-3.5" /></button>
-                                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 uppercase tracking-wide">Creative</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-4 mt-3 text-xs text-gray-600">
-                                <span className="inline-flex items-center gap-1"><ShoppingBag className="w-3.5 h-3.5 text-gray-400" /> {g.orders} order{g.orders !== 1 ? "s" : ""}</span>
-                                <span className="inline-flex items-center gap-1"><PackageCheck className="w-3.5 h-3.5 text-gray-400" /> {g.delivered} delivered</span>
-                                <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-gray-400" /> {formatProductMoney(g.revenue, g.currency)}</span>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="space-y-3">
-                    <header>
-                      <h2 className="text-base font-bold text-gray-900">Orders</h2>
-                      <p className="text-xs text-gray-500">All orders placed via tracked links</p>
-                    </header>
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                              {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((h) => (
-                                <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {trackedAttributedOrders.length === 0 ? (
-                              <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No tracked orders yet. Click "Load Facebook ads demo" above to see how this looks.</td></tr>
-                            ) : (
-                              trackedAttributedOrders.map((order) => {
-                                const tone = sourceTone(order.utmSource);
-                                const campaignDisplay = campaignLabels[order.utmCampaign] || order.utmCampaign;
-                                const creativeDisplay = order.utmContent ? (creativeLabels[order.utmContent] || order.utmContent) : "—";
-                                return (
-                                  <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-4 py-4 font-bold text-gray-900">#{orderRowNumber(order.id)}</td>
-                                    <td className="px-4 py-4 font-semibold text-gray-900">{order.customer}</td>
-                                    <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${statusTone(order.status ?? "New")}`}>{order.status ?? "New"}</span></td>
-                                    <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${tone.bg} ${tone.text}`}>{formatSourceLabel(order)}</span></td>
-                                    <td className="px-4 py-4 text-gray-700">{campaignDisplay}</td>
-                                    <td className="px-4 py-4 text-gray-700">{creativeDisplay}</td>
-                                    <td className="px-4 py-4 font-bold text-[#1A6FBF]">{formatProductMoney(order.amount, order.currency)}</td>
-                                    <td className="px-4 py-4 text-gray-500">{order.date}</td>
-                                  </tr>
-                                );
-                              })
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              );
-            })()
+              </div>
+            </div>
           ) : activePage === "User Management" ? (
             <div className="space-y-6">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -10954,6 +12142,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={5} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
               <section className="grid grid-cols-1 lg:grid-cols-3 gap-4" aria-label="User summary">
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
@@ -11011,7 +12202,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="flex flex-col gap-1.5 text-xs text-gray-600">
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> Sales Reps ({percentText(salesUserCount, users.length)})</span>
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block" /> Admins ({percentText(adminUserCount, users.length)})</span>
+                      <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> Managers ({percentText(managerUserCount, users.length)})</span>
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Inv. Mgr ({percentText(inventoryUserCount, users.length)})</span>
+                      <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-gray-400 inline-block" /> Viewers ({percentText(viewerUserCount, users.length)})</span>
                     </div>
                   </div>
                 </div>
@@ -11029,10 +12222,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Users table">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="px-4 py-3"><input type="checkbox" aria-label="Select all users" /></th>
+                        <th className="px-4 py-3 bg-gray-50"><input type="checkbox" aria-label="Select all users" /></th>
                         {["Name & Email", "Role", "Permissions", "Status", "Created", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
@@ -11146,10 +12339,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex items-center gap-1">
                     
                     <button className="px-3 py-1.5 rounded border border-[#1A6FBF] bg-blue-50 text-[#1A6FBF] font-bold">1</button>
-                    
+
                   </div>
                 </div>
               </section>
+              </div>
             </div>
           ) : activePage === "Round-Robin" ? (
             <div className="space-y-6">
@@ -11157,24 +12351,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1A6FBF]">Round-Robin Management</h1>
                   <p className="text-sm font-medium text-gray-500">Configure the lead distribution sequence for your sales team.</p>
+                  {(() => { const nextRep = users.find((u) => u.role === "Sales Rep" && u.active); return nextRep ? <p className="text-sm font-bold text-gray-700 mt-1">Next in line: <span className="text-[#1A6FBF]">{nextRep.name}</span></p> : null; })()}
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors" onClick={() => {
-                  const reps = users.filter((u) => u.role === "Sales Rep");
-                  if (reps.length === 0) { showToast("No sales reps in the sequence."); return; }
-                  const first = reps[0];
-                  setUsers((prev) => {
-                    const nonReps = prev.filter((u) => u.role !== "Sales Rep");
-                    const rotated = [...reps.slice(1), first];
-                    return [...nonReps, ...rotated];
-                  });
-                  showToast(`Round-robin advanced — ${reps[1]?.name ?? reps[0].name} is now #1 in the sequence.`);
-                }}>
-                  <Repeat2 className="w-4 h-4" /> Advance Sequence
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
+                    const reps = users.filter((u) => u.role === "Sales Rep" && u.active);
+                    if (reps.length === 0) return;
+                    const first = reps[0];
+                    setUsers((prev) => {
+                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
+                      const rotated = [...reps.slice(1), first];
+                      return [...nonReps, ...rotated];
+                    });
+                    showToast(`Round-robin advanced — ${reps[1]?.name ?? reps[0].name} is now #1 in the sequence.`);
+                  }}>
+                    <Repeat2 className="w-4 h-4" /> Advance Sequence
+                  </button>
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
+                    const reps = users.filter((u) => u.role === "Sales Rep" && u.active);
+                    if (reps.length === 0) return;
+                    const skipped = reps[0];
+                    setUsers((prev) => {
+                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
+                      const rotated = [...reps.slice(1), skipped];
+                      return [...nonReps, ...rotated];
+                    });
+                    const nextUp = reps[1]?.name ?? skipped.name;
+                    showToast(`Skipped ${skipped.name}. Next: ${nextUp}.`);
+                  }}>
+                    <SkipForward className="w-4 h-4" /> Skip Rep
+                  </button>
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
+                    if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
+                    setUsers((prev) => {
+                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
+                      const reps = prev.filter((u) => u.role === "Sales Rep" && u.active).sort((a, b) => a.name.localeCompare(b.name));
+                      return [...nonReps, ...reps];
+                    });
+                    const sorted = activeSalesRepUsers.slice().sort((a, b) => a.name.localeCompare(b.name));
+                    showToast(`Sequence reset. ${sorted[0]?.name ?? "No reps"} is now #1.`);
+                  }}>
+                    <RefreshCw className="w-4 h-4" /> Reset Sequence
+                  </button>
+                </div>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={4} rows={5} />}
+              <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-wrap items-center gap-3">
-                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg" role="tablist" aria-label="Round-robin views">
+                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Round-robin views">
                   {roundRobinTabs.map((tab) => (
                     <button
                       key={tab}
@@ -11226,6 +12452,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <p className="text-sm text-blue-700 mt-1">Excluded reps are skipped entirely until re-enabled.</p>
                 </div>
               </div>
+              </div>
             </div>
           ) : activePage === "Embed Form" ? (
             <div className="space-y-6">
@@ -11239,7 +12466,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm font-medium text-gray-500">Customize and embed your order form on any website</p>
               </header>
 
-              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar" role="tablist" aria-label="Embed form sections">
+              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Embed form sections">
                 {embedTabs.map((tab) => (
                   <button
                     key={tab}
@@ -11262,8 +12489,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
-                      <h2 className="text-base font-bold text-gray-900">Order Form Settings</h2>
-                      <p className="text-sm text-gray-500 mt-0.5">Configure which fields appear on your public order form. Changes apply to every embed URL you have shared.</p>
+                      <h2 className="text-base font-bold text-gray-900">Order Form Builder</h2>
+                      <p className="text-sm text-gray-500 mt-0.5">Everything for {previewProduct?.name ?? "this product"}'s order form lives here. Changes save instantly and update the live preview on the right.</p>
                     </div>
                     {previewProduct && (
                       <label className="flex flex-col gap-0.5 text-xs">
@@ -11585,7 +12812,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-sm font-semibold text-gray-800">Show email field</p>
                         <p className="text-xs text-gray-500 mt-0.5">Adds an optional email input to the form.</p>
                       </div>
-                      <button type="button" role="switch" aria-checked={showEmailField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showEmailField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowEmailField((v) => !v); setEmbedSettingsDirty(true); }}>
+                      <button type="button" role="switch" aria-checked={showEmailField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showEmailField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => setShowEmailField((v) => !v)}>
                         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showEmailField ? "left-5" : "left-0.5"}`} />
                       </button>
                     </div>
@@ -11597,7 +12824,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <p className="text-sm font-semibold text-gray-800">Show WhatsApp field</p>
                           <p className="text-xs text-gray-500 mt-0.5">When off, the WhatsApp number input is hidden from the form.</p>
                         </div>
-                        <button type="button" role="switch" aria-checked={showWhatsappField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showWhatsappField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { updateShowWhatsappField(!showWhatsappField); setEmbedSettingsDirty(true); }}>
+                        <button type="button" role="switch" aria-checked={showWhatsappField} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showWhatsappField ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => updateShowWhatsappField(!showWhatsappField)}>
                           <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showWhatsappField ? "left-5" : "left-0.5"}`} />
                         </button>
                       </div>
@@ -11612,156 +12839,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
 
-                    {/* Required fields – grouped card */}
-                    <div className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-                        <p className="text-sm font-semibold text-gray-800">Required fields</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Phone is always required. These control whether the other customer-detail fields are mandatory.</p>
-                      </div>
-                      <div className="flex items-start gap-4 px-4 py-3.5">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-700">Address required</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Off lets customers submit without an address.</p>
-                        </div>
-                        <button type="button" role="switch" aria-checked={addressRequired} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${addressRequired ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setAddressRequired((v) => !v); setEmbedSettingsDirty(true); }}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${addressRequired ? "left-5" : "left-0.5"}`} />
-                        </button>
-                      </div>
-                      <div className="flex items-start gap-4 px-4 py-3.5 border-t border-gray-100">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-700">City required</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Off lets customers submit without a city.</p>
-                        </div>
-                        <button type="button" role="switch" aria-checked={cityRequired} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${cityRequired ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setCityRequired((v) => !v); setEmbedSettingsDirty(true); }}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${cityRequired ? "left-5" : "left-0.5"}`} />
-                        </button>
-                      </div>
-                    </div>
-
                     {/* Package name – standalone row */}
                     <div className="flex items-start gap-4 py-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800">Show package name</p>
                         <p className="text-xs text-gray-500 mt-0.5">Show the package name above the description in the package picker.</p>
                       </div>
-                      <button type="button" role="switch" aria-checked={showPackageName} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showPackageName ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowPackageName((v) => !v); setEmbedSettingsDirty(true); }}>
+                      <button type="button" role="switch" aria-checked={showPackageName} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showPackageName ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => setShowPackageName((v) => !v)}>
                         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showPackageName ? "left-5" : "left-0.5"}`} />
                       </button>
                     </div>
 
-                    {/* Delivery date – grouped card with sub-controls */}
-                    <div className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="flex items-start gap-4 px-4 py-3.5">
+                    {/* Each of the remaining settings in their own bordered box */}
+                    {([
+                      { label: `Ask "When would you like it delivered?"`, desc: "Captures the customer’s preferred delivery window on the order form.", checked: showDeliveryQuestion, toggle: () => setShowDeliveryQuestion((v) => !v) },
+                      { label: "Require a confirmation checkbox", desc: "Customer must tick this before they can submit the form.", checked: requireConfirmation, toggle: () => setRequireConfirmation((v) => !v) },
+                      { label: "Show commitment fee notice", desc: "Displays a notice above the submit button. Customer must respond before submitting, and you can optionally allow \"I disagree\" without blocking the order.", checked: showCommitmentNotice, toggle: () => { setShowCommitmentNotice((v) => !v); if (showCommitmentNotice) setOrderFormCommitmentAccepted(false); } },
+                    ] as { label: string; desc: string; checked: boolean; toggle: () => void }[]).map(({ label, desc, checked, toggle }) => (
+                      <div key={label} className="border border-gray-200 rounded-xl flex items-start gap-4 px-4 py-3.5">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800">Ask "When would you like it delivered?"</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Captures the customer’s preferred delivery window on the order form.</p>
+                          <p className="text-sm font-semibold text-gray-800">{label}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
                         </div>
-                        <button type="button" role="switch" aria-checked={showDeliveryQuestion} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showDeliveryQuestion ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowDeliveryQuestion((v) => !v); setEmbedSettingsDirty(true); }}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showDeliveryQuestion ? "left-5" : "left-0.5"}`} />
+                        <button type="button" role="switch" aria-checked={checked} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${checked ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={toggle}>
+                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${checked ? "left-5" : "left-0.5"}`} />
                         </button>
                       </div>
-                      {showDeliveryQuestion && (
-                        <div className="border-t border-gray-100 px-4 py-3.5 space-y-3 bg-gray-50">
-                          <label className="flex flex-col gap-1">
-                            <span className="text-xs font-semibold text-gray-600">Input style</span>
-                            <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 w-48" value={deliveryInputStyle} onChange={(e) => { setDeliveryInputStyle(e.target.value as "quick" | "range"); setEmbedSettingsDirty(true); }}>
-                              <option value="quick">Quick — pick from preset options</option>
-                              <option value="range">Range — date picker with bounds</option>
-                            </select>
-                          </label>
-                          {deliveryInputStyle === "quick" ? (
-                            <div className="space-y-1">
-                              <p className="text-xs font-semibold text-gray-600">Quick options to show</p>
-                              {([
-                                { key: "today", label: "Today", checked: deliveryQuickToday, set: setDeliveryQuickToday },
-                                { key: "tomorrow", label: "Tomorrow", checked: deliveryQuickTomorrow, set: setDeliveryQuickTomorrow },
-                                { key: "nextTomorrow", label: "Next tomorrow", hint: "day after tomorrow", checked: deliveryQuickNextTomorrow, set: setDeliveryQuickNextTomorrow },
-                              ] as { key: string; label: string; hint?: string; checked: boolean; set: (v: boolean) => void }[]).map(({ key, label, hint, checked, set }) => (
-                                <label key={key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                                  <input type="checkbox" className="accent-[#1A6FBF]" checked={checked} onChange={(e) => { set(e.target.checked); setEmbedSettingsDirty(true); }} />
-                                  <span>{label}</span>
-                                  {hint && <span className="text-xs text-gray-400 italic">({hint})</span>}
-                                </label>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-4">
-                              <label className="flex flex-col gap-1">
-                                <span className="text-xs font-semibold text-gray-600">Earliest (days from today)</span>
-                                <input type="number" min={0} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white w-28" value={deliveryRangeEarliest} onChange={(e) => { const v = Math.max(0, parseInt(e.target.value, 10) || 0); setDeliveryRangeEarliest(v); if (v > deliveryRangeLatest) setDeliveryRangeLatest(v); setEmbedSettingsDirty(true); }} />
-                              </label>
-                              <label className="flex flex-col gap-1">
-                                <span className="text-xs font-semibold text-gray-600">Latest (days from today)</span>
-                                <input type="number" min={0} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white w-28" value={deliveryRangeLatest} onChange={(e) => { const v = Math.max(deliveryRangeEarliest, parseInt(e.target.value, 10) || 0); setDeliveryRangeLatest(v); setEmbedSettingsDirty(true); }} />
-                              </label>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Confirmation checkbox – grouped card with textarea */}
-                    <div className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="flex items-start gap-4 px-4 py-3.5">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800">Require a confirmation checkbox</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Customer must tick this before they can submit the form.</p>
-                        </div>
-                        <button type="button" role="switch" aria-checked={requireConfirmation} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${requireConfirmation ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setRequireConfirmation((v) => !v); setEmbedSettingsDirty(true); }}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${requireConfirmation ? "left-5" : "left-0.5"}`} />
-                        </button>
-                      </div>
-                      {requireConfirmation && (
-                        <div className="border-t border-gray-100 px-4 py-3.5 bg-gray-50">
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <span className="text-xs font-semibold text-gray-600">Checkbox text</span>
-                            <button className="!min-h-0 flex items-center gap-1 text-[11px] text-blue-600 hover:underline" onClick={() => { setConfirmationCheckboxText(CONFIRMATION_DEFAULT); setEmbedSettingsDirty(true); }}>
-                              <RotateCcw className="w-3 h-3" /> Reset to default
-                            </button>
-                          </div>
-                          <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-200" rows={3} value={confirmationCheckboxText} onChange={(e) => { setConfirmationCheckboxText(e.target.value); setEmbedSettingsDirty(true); }} />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Commitment fee notice – grouped card with sub-toggle and textarea */}
-                    <div className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="flex items-start gap-4 px-4 py-3.5">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800">Show commitment fee notice</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Displays a notice above the submit button. Customer must respond before submitting. You can optionally allow "I disagree" without blocking the order.</p>
-                        </div>
-                        <button type="button" role="switch" aria-checked={showCommitmentNotice} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${showCommitmentNotice ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setShowCommitmentNotice((v) => !v); if (showCommitmentNotice) setOrderFormCommitmentAccepted(false); setEmbedSettingsDirty(true); }}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${showCommitmentNotice ? "left-5" : "left-0.5"}`} />
-                        </button>
-                      </div>
-                      {showCommitmentNotice && (
-                        <div className="border-t border-gray-100 bg-gray-50 divide-y divide-gray-100">
-                          <div className="flex items-start gap-4 px-4 py-3.5">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-gray-700">Allow "I disagree"</p>
-                              <p className="text-xs text-gray-500 mt-0.5">Shows both choices on the form and still allows submission when either is selected. Off = customer must agree to proceed.</p>
-                            </div>
-                            <button type="button" role="switch" aria-checked={allowDisagree} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${allowDisagree ? "bg-[#1A6FBF]" : "bg-gray-200"}`} onClick={() => { setAllowDisagree((v) => !v); setEmbedSettingsDirty(true); }}>
-                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${allowDisagree ? "left-5" : "left-0.5"}`} />
-                            </button>
-                          </div>
-                          <div className="px-4 py-3.5">
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <span className="text-xs font-semibold text-gray-600">Notice text</span>
-                              <button className="!min-h-0 flex items-center gap-1 text-[11px] text-blue-600 hover:underline" onClick={() => { setCommitmentNoticeText(COMMITMENT_DEFAULT); setEmbedSettingsDirty(true); }}>
-                                <RotateCcw className="w-3 h-3" /> Reset to default
-                              </button>
-                            </div>
-                            <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-200" rows={3} value={commitmentNoticeText} onChange={(e) => { setCommitmentNoticeText(e.target.value); setEmbedSettingsDirty(true); }} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    ))}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <button disabled={!embedSettingsDirty} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${embedSettingsDirty ? "bg-[#1A6FBF] text-white hover:bg-blue-700" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`} onClick={() => { showToast("Embed form settings saved."); setEmbedSettingsDirty(false); }}>Save changes</button>
+                    <button className="flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => showToast("Embed form settings saved.")}>Save changes</button>
                     {readyEmbedProducts.length === 0 ? (
                       <span className="text-sm text-gray-400">Preview unavailable — create a product with packages first.</span>
                     ) : (
@@ -12031,7 +13139,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               ) : (
                                 <>
                                   {/* Code format tabs */}
-                                  <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit" role="tablist" aria-label={`${product.name} embed code format`}>
+                                  <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label={`${product.name} embed code format`}>
                                     {embedCodeTabs.map((tab) => (
                                       <button key={tab} role="tab" aria-selected={selectedCodeTab === tab} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all duration-200 whitespace-nowrap ${selectedCodeTab === tab ? "bg-white text-[#1A6FBF] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`} onClick={() => setProductEmbedCodeTab(product.id, tab)}>{tab}</button>
                                     ))}
@@ -12089,32 +13197,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               )}
             </div>
-          ) : activePage === "AI Agent" || activePage === "AI Sandbox" ? (
-            <section className="coming-soon-page">
-              <div className="coming-soon-background" aria-hidden="true">
-                <header>
-                  <span />
-                  <div />
-                </header>
-                <section className="coming-soon-soft-banner" />
-                <div className="coming-soon-grid">
-                  <article />
-                  <article />
-                  <article />
-                </div>
-                <section className="coming-soon-wide-panel" />
-              </div>
-              <article className="coming-soon-card">
-                <div className="coming-soon-icon">{activePage === "AI Agent" ? <Sparkles /> : <Bot />}</div>
-                <span className="development-pill">In Development</span>
-                <h1>{activePage} - Coming Soon</h1>
-                <p>
-                  {activePage === "AI Agent"
-                    ? "Our AI voice agent will automatically call and confirm customer orders, assign deliveries, and follow up - all hands-free. This feature is in final development."
-                    : "The AI agent testing sandbox lets you trigger real calls with fake orders so you can fine-tune your AI before going live."}
-                </p>
-              </article>
-            </section>
           ) : activePage === "Notifications" ? (
             <div className="space-y-6">
               <header className="flex flex-col gap-1">
@@ -12122,8 +13204,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm font-medium text-gray-500">Stay updated on orders, status changes, and important activities</p>
               </header>
 
+              <DataErrorBanner />
+              {dataLoading && <TableSkeleton cols={3} rows={4} />}
+              <div className={dataLoading ? "hidden" : ""}>
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center justify-between gap-4">
-                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar">
                   {(["All", "Unread"] as NotificationFilter[]).map((filter) => (
                     <button
                       key={filter}
@@ -12135,7 +13220,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   ))}
                 </nav>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled onClick={() => showToast("No read notifications to delete.")}><Trash2 className="w-4 h-4" /> Delete read</button>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={systemNotifications.filter((n) => n.read).length === 0} onClick={() => { setSystemNotifications((prev) => prev.filter((n) => !n.read)); showToast("Read notifications deleted."); }}><Trash2 className="w-4 h-4" /> Delete read</button>
               </div>
 
               {systemNotifications.length === 0 ? (
@@ -12154,21 +13239,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {unreadNotificationCount > 0 && <button className="text-xs font-semibold text-[#1A6FBF] hover:underline" onClick={markAllNotificationsRead}>Mark all read</button>}
                   </div>
                   <ul className="divide-y divide-gray-100">
-                    {(notificationFilter === "Unread" ? systemNotifications.filter((n) => !n.read) : systemNotifications).map((n) => (
-                      <li key={n.id} className={`flex items-start gap-3 px-5 py-4 ${!n.read ? "bg-blue-50/40" : ""}`}>
-                        <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${n.type === "low_stock" ? "bg-amber-100 text-amber-600" : n.type === "remittance_overdue" ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-500"}`}>
-                          {n.type === "low_stock" ? <AlertTriangle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm ${!n.read ? "font-semibold text-gray-900" : "text-gray-700"}`}>{n.message}</p>
-                          <p className="text-xs text-gray-400 mt-0.5">{new Date(n.createdAt).toLocaleString()}</p>
-                        </div>
-                        {!n.read && <span className="w-2 h-2 rounded-full bg-[#1A6FBF] mt-2 shrink-0" />}
-                      </li>
-                    ))}
+                    {(notificationFilter === "Unread" ? systemNotifications.filter((n) => !n.read) : systemNotifications).map((n) => {
+                      const isOrder = n.type.startsWith("order_");
+                      const iconCls = n.type === "low_stock" ? "bg-amber-100 text-amber-600"
+                        : n.type === "remittance_overdue" ? "bg-red-100 text-red-600"
+                        : n.type === "order_new" ? "bg-blue-100 text-blue-600"
+                        : n.type === "order_confirmed" ? "bg-emerald-100 text-emerald-600"
+                        : n.type === "order_delivered" ? "bg-green-100 text-green-600"
+                        : n.type === "order_cancelled" ? "bg-red-100 text-red-600"
+                        : "bg-gray-100 text-gray-500";
+                      const IconEl = n.type === "low_stock" ? AlertTriangle : isOrder ? ShoppingBag : Bell;
+                      return (
+                        <li key={n.id} className={`flex items-start gap-3 px-5 py-4 ${!n.read ? "bg-blue-50/40" : ""} ${isOrder && n.link ? "cursor-pointer hover:bg-gray-50" : ""}`}
+                          onClick={() => { if (isOrder && n.link) { window.location.hash = n.link.replace("#", ""); } }}>
+                          <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${iconCls}`}>
+                            <IconEl className="w-4 h-4" />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            {n.title && <p className={`text-xs font-bold uppercase tracking-wider ${!n.read ? "text-gray-700" : "text-gray-500"}`}>{n.title}</p>}
+                            <p className={`text-sm ${!n.read ? "font-semibold text-gray-900" : "text-gray-700"}`}>{n.message}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{new Date(n.createdAt).toLocaleString()}</p>
+                          </div>
+                          {!n.read && <span className="w-2 h-2 rounded-full bg-[#1A6FBF] mt-2 shrink-0" />}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               )}
+              </div>
             </div>
           ) : activePage === "Settings" ? (
             <div className="space-y-8">
@@ -12187,19 +13286,94 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm text-gray-500">Install Protohub as an app and manage notifications</p>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
                   <div className="flex items-start gap-3">
-                    <span className="w-9 h-9 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center shrink-0"><BellOff className="w-4 h-4" /></span>
+                    <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushSubscribed ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-600"}`}>
+                      {pushSubscribed ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                    </span>
                     <div className="flex-1">
                       <h3 className="text-sm font-bold text-gray-900 mb-1">Push Notifications</h3>
-                      <p className="text-sm text-gray-500 mb-3">Enable notifications to stay updated on orders</p>
-                      <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => showToast("Browser notification permission requested for this demo.")}>Enable Notifications</button>
+                      <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders</p>
+                      <p className="text-xs text-gray-400 mb-3">
+                        Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
+                        {" · "}Status: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Subscribed" : "Not subscribed"}</span>
+                      </p>
+                      {pushPermission === "denied" ? (
+                        <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                      ) : pushSubscribed ? (
+                        <button
+                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
+                          disabled={pushLoading}
+                          onClick={async () => {
+                            setPushLoading(true);
+                            try {
+                              await unsubscribeFromPush();
+                              setPushSubscribed(false);
+                              showToast("Push notifications disabled.");
+                            } catch (e: any) {
+                              showToast(e.message || "Failed to unsubscribe.");
+                            } finally {
+                              setPushLoading(false);
+                            }
+                          }}
+                        >
+                          {pushLoading ? "Processing…" : "Disable Notifications"}
+                        </button>
+                      ) : (
+                        <button
+                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1A6FBF] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          disabled={pushLoading}
+                          onClick={async () => {
+                            setPushLoading(true);
+                            try {
+                              await subscribeToPush();
+                              setPushSubscribed(true);
+                              setPushPermission(getPermissionState());
+                              showToast("Push notifications enabled!");
+                            } catch (e: any) {
+                              setPushPermission(getPermissionState());
+                              showToast(e.message || "Failed to enable notifications.");
+                            } finally {
+                              setPushLoading(false);
+                            }
+                          }}
+                        >
+                          {pushLoading ? "Processing…" : "Enable Notifications"}
+                        </button>
+                      )}
                     </div>
                   </div>
                   <hr className="border-gray-100" />
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
-                    <div className="flex items-center gap-4">
-                      <button className="text-sm text-[#1A6FBF] font-medium hover:underline" onClick={() => showToast("Service worker update requested.")}>Update Service Worker</button>
-                      <button className="text-sm text-[#1A6FBF] font-medium hover:underline" onClick={() => showToast("Push re-subscribe requested.")}>Force Re-subscribe</button>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <button
+                        className="text-sm text-[#1A6FBF] font-medium hover:underline"
+                        onClick={async () => {
+                          if ("serviceWorker" in navigator) {
+                            const reg = await navigator.serviceWorker.getRegistration();
+                            if (reg) { await reg.update(); showToast("Service worker updated."); }
+                            else { showToast("No service worker registered."); }
+                          }
+                        }}
+                      >Update Service Worker</button>
+                      <button
+                        className="text-sm text-[#1A6FBF] font-medium hover:underline disabled:opacity-50"
+                        disabled={pushLoading}
+                        onClick={async () => {
+                          setPushLoading(true);
+                          try {
+                            await unsubscribeFromPush();
+                            await subscribeToPush();
+                            setPushSubscribed(true);
+                            setPushPermission(getPermissionState());
+                            showToast("Re-subscribed successfully!");
+                          } catch (e: any) {
+                            setPushPermission(getPermissionState());
+                            showToast(e.message || "Re-subscribe failed.");
+                          } finally {
+                            setPushLoading(false);
+                          }
+                        }}
+                      >Force Re-subscribe</button>
                     </div>
                   </div>
                 </div>
@@ -12249,337 +13423,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   ))}
                 </div>
               </section>
-
-              {/* ── Email Settings ─────────────────────────────── */}
-              {(auth.getUser()?.role === "Owner" || auth.getUser()?.role === "Admin") && (
-                <section className="space-y-3">
-                  <h2 className="text-base font-bold text-gray-800">Email Notifications</h2>
-                  <p className="text-sm text-gray-500">Send transactional emails to customers via Mailjet. Only owners and admins can configure this.</p>
-
-                  {emailSettingsLoading ? (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex items-center justify-center">
-                      <span className="text-sm text-gray-400">Loading email settings…</span>
-                    </div>
-                  ) : (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-100">
-
-                      {/* Enable toggle */}
-                      <div className="p-5 flex items-center justify-between gap-4">
-                        <div>
-                          <h3 className="text-sm font-bold text-gray-900">Enable email sending</h3>
-                          <p className="text-sm text-gray-500 mt-0.5">Emails will only be sent when this is on and API keys are set.</p>
-                        </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={emailSettings.enabled}
-                          className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.enabled ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
-                          onClick={() => setEmailSettings((s) => ({ ...s, enabled: !s.enabled }))}
-                        >
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.enabled ? "left-5" : "left-0.5"}`} />
-                        </button>
-                      </div>
-
-                      {/* Provider selector */}
-                      <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Email Provider</h3>
-                        <div className="flex gap-3">
-                          {(["mailjet", "resend"] as const).map((p) => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => setEmailSettings((s) => ({ ...s, provider: p }))}
-                              className={`flex-1 py-2.5 rounded-lg border text-sm font-semibold transition-colors capitalize ${
-                                emailSettings.provider === p
-                                  ? "bg-[#1A6FBF] border-[#1A6FBF] text-white"
-                                  : "bg-white border-gray-200 text-gray-600 hover:border-[#1A6FBF] hover:text-[#1A6FBF]"
-                              }`}
-                            >
-                              {p === "mailjet" ? "Mailjet" : "Resend"}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-xs text-gray-400">
-                          {emailSettings.provider === "mailjet"
-                            ? "Uses your Mailjet account. Free tier: 200 emails/day, 6k/month."
-                            : "Uses your Resend account. Free tier: 3,000 emails/month."}
-                        </p>
-                      </div>
-
-                      {/* API keys — conditional per provider */}
-                      {emailSettings.provider === "mailjet" ? (
-                        <div className="p-5 space-y-4">
-                          <h3 className="text-sm font-bold text-gray-900">Mailjet API Keys</h3>
-                          <p className="text-xs text-gray-400">Find these in your Mailjet account → API Key Management.</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">API Key (Public)</label>
-                              <input
-                                type="text"
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
-                                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                                value={emailSettings.api_key_public}
-                                onChange={(e) => setEmailSettings((s) => ({ ...s, api_key_public: e.target.value }))}
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Secret Key (Private)</label>
-                              <input
-                                type="password"
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
-                                placeholder="••••••••••••••••••••••••••••••••"
-                                value={emailSettings.api_key_private}
-                                onChange={(e) => setEmailSettings((s) => ({ ...s, api_key_private: e.target.value }))}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-5 space-y-4">
-                          <h3 className="text-sm font-bold text-gray-900">Resend API Key</h3>
-                          <p className="text-xs text-gray-400">Find this in your Resend dashboard → API Keys.</p>
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">API Key</label>
-                            <input
-                              type="password"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono"
-                              placeholder="re_••••••••••••••••••••••••••••••••"
-                              value={emailSettings.resend_api_key}
-                              onChange={(e) => setEmailSettings((s) => ({ ...s, resend_api_key: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Sender identity */}
-                      <div className="p-5 space-y-4">
-                        <h3 className="text-sm font-bold text-gray-900">Sender Identity</h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">From Name</label>
-                            <input
-                              type="text"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                              placeholder="Your Store"
-                              value={emailSettings.from_name}
-                              onChange={(e) => setEmailSettings((s) => ({ ...s, from_name: e.target.value }))}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">From Email</label>
-                            <input
-                              type="email"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                              placeholder="orders@yourstore.com"
-                              value={emailSettings.from_email}
-                              onChange={(e) => setEmailSettings((s) => ({ ...s, from_email: e.target.value }))}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Reply-To (optional)</label>
-                            <input
-                              type="email"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                              placeholder="support@yourstore.com"
-                              value={emailSettings.reply_to}
-                              onChange={(e) => setEmailSettings((s) => ({ ...s, reply_to: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ── Customer email triggers ──────────────── */}
-                      <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Customer Emails</h3>
-                        <p className="text-xs text-gray-400">Sent directly to the customer. Requires the order to have a customer email address.</p>
-                        {([
-                          { key: "order_new",           label: "New order confirmation", desc: "Sent when an order is created" },
-                          { key: "order_status_change", label: "Status update",          desc: "Sent on any status change except Delivered" },
-                          { key: "order_delivered",     label: "Delivery confirmation",  desc: "Sent when status changes to Delivered" },
-                          { key: "payroll_approved",    label: "Payroll approved",       desc: "Sent to the team member when their payroll is approved" }
-                        ]).map(({ key, label, desc }) => (
-                          <div key={key} className="flex items-center justify-between gap-4 py-2">
-                            <div>
-                              <p className="text-sm font-medium text-gray-800">{label}</p>
-                              <p className="text-xs text-gray-400">{desc}</p>
-                            </div>
-                            <button type="button" role="switch" aria-checked={!!emailSettings.triggers[key]}
-                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.triggers[key] ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
-                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}>
-                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.triggers[key] ? "left-5" : "left-0.5"}`} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* ── Staff / internal triggers ────────────── */}
-                      <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Staff Notifications</h3>
-                        <p className="text-xs text-gray-400">Internal emails sent to your team. Owner receives all. Recipients shown per trigger.</p>
-                        {([
-                          { key: "internal_order_new",         label: "New order in",           desc: "→ Owner + Admins", badge: "owner+admin" },
-                          { key: "internal_order_assigned",    label: "Order assigned to rep",  desc: "→ Assigned rep only", badge: "rep" },
-                          { key: "internal_order_delivered",   label: "Order delivered",        desc: "→ Owner + Admins", badge: "owner+admin" },
-                          { key: "internal_order_rescheduled", label: "Order rescheduled",      desc: "→ Owner + Admins + Assigned rep", badge: "all" },
-                          { key: "internal_order_cancelled",   label: "Order cancelled",        desc: "→ Owner + Admins", badge: "owner+admin" },
-                          { key: "internal_order_failed",      label: "Order failed",           desc: "→ Owner + Admins", badge: "owner+admin" },
-                          { key: "internal_low_stock",         label: "Low stock alert",        desc: "→ Owner + Admins + Inventory Managers", badge: "owner+admin+inv" },
-                          { key: "internal_weekly_report",     label: "Weekly report",          desc: "→ Owner only (send manually or via cron)", badge: "owner" },
-                          { key: "internal_waybill_dispatched",label: "Waybill dispatched",     desc: "→ Owner + Admins", badge: "owner+admin" },
-                          { key: "internal_new_team_member",   label: "New team member welcome",desc: "→ New member only", badge: "member" }
-                        ]).map(({ key, label, desc }) => (
-                          <div key={key} className="flex items-center justify-between gap-4 py-2">
-                            <div>
-                              <p className="text-sm font-medium text-gray-800">{label}</p>
-                              <p className="text-xs text-gray-400">{desc}</p>
-                            </div>
-                            <button type="button" role="switch" aria-checked={!!emailSettings.triggers[key]}
-                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.triggers[key] ? "bg-[#1A6FBF]" : "bg-gray-200"}`}
-                              onClick={() => setEmailSettings((s) => ({ ...s, triggers: { ...s.triggers, [key]: !s.triggers[key] } }))}>
-                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.triggers[key] ? "left-5" : "left-0.5"}`} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* ── Weekly report manual trigger ─────────── */}
-                      <div className="p-5 space-y-3 bg-blue-50 border-t border-blue-100">
-                        <h3 className="text-sm font-bold text-gray-900">Weekly Report</h3>
-                        <p className="text-xs text-gray-500">Sends the weekly summary (orders, delivery rate, revenue, expenses, net profit) to all owners. Enable the trigger above, then send manually or automate via a Monday 8am cron on <code className="bg-white px-1 rounded border border-gray-200">POST /api/email/weekly-report</code>.</p>
-                        <button
-                          type="button"
-                          disabled={emailWeeklyReportSending}
-                          className="px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          onClick={async () => {
-                            setEmailWeeklyReportSending(true);
-                            try {
-                              await (await import("./lib/api")).emailSettingsApi.save(emailSettings); // ensure latest saved
-                              const res = await fetch(`${(import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000"}/api/email/weekly-report`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", Authorization: `Bearer ${(await import("./lib/auth")).auth.getAccessToken() ?? ""}` }
-                              });
-                              const data = await res.json();
-                              if (!res.ok) throw new Error(data.error);
-                              showToast("Weekly report sent to owner(s).");
-                            } catch (err: any) {
-                              showToast(`Failed: ${err.message}`);
-                            } finally {
-                              setEmailWeeklyReportSending(false);
-                            }
-                          }}
-                        >
-                          {emailWeeklyReportSending ? "Sending…" : "Send Weekly Report Now"}
-                        </button>
-                      </div>
-
-                      {/* ── Email templates ──────────────────────── */}
-                      <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Email Templates</h3>
-                        <p className="text-xs text-gray-400">Customise subject and body. Use <code className="bg-gray-100 px-1 rounded">{"{{variable}}"}</code> placeholders.</p>
-                        {([
-                          { key: "order_new",                   label: "Customer: New Order",         vars: "order_id, customer, phone, product_name, amount, currency, source" },
-                          { key: "order_status_change",         label: "Customer: Status Changed",     vars: "order_id, customer, product_name, amount, currency, from_status, status" },
-                          { key: "order_delivered",             label: "Customer: Delivered",          vars: "order_id, customer, product_name, amount, currency" },
-                          { key: "payroll_approved",            label: "Staff: Payroll Approved",      vars: "name, period, amount, currency" },
-                          { key: "internal_order_new",          label: "Staff: New Order In",          vars: "order_id, customer, phone, product_name, amount, currency, source, rep_name" },
-                          { key: "internal_order_assigned",     label: "Staff: Order Assigned to Rep", vars: "order_id, customer, phone, product_name, amount, currency, source, recipient_name" },
-                          { key: "internal_order_delivered",    label: "Staff: Order Delivered",       vars: "order_id, customer, product_name, amount, currency, rep_name" },
-                          { key: "internal_order_rescheduled",  label: "Staff: Order Rescheduled",     vars: "order_id, customer, phone, product_name, scheduled_date, call_outcome, response, recipient_name" },
-                          { key: "internal_order_cancelled",    label: "Staff: Order Cancelled",       vars: "order_id, customer, phone, product_name, amount, currency, response" },
-                          { key: "internal_order_failed",       label: "Staff: Order Failed",          vars: "order_id, customer, phone, product_name, amount, currency, response" },
-                          { key: "internal_low_stock",          label: "Staff: Low Stock Alert",       vars: "product_name, current_stock, reorder_point, recipient_name" },
-                          { key: "internal_weekly_report",      label: "Staff: Weekly Report",         vars: "org_name, week_start, week_end, total_orders, delivered, cancelled, failed, delivery_rate, currency, revenue, ads_spent, other_expenses, total_expenses, net_profit, top_products" },
-                          { key: "internal_waybill_dispatched", label: "Staff: Waybill Dispatched",    vars: "waybill_id, destination, items, rep_name" },
-                          { key: "internal_new_team_member",    label: "Staff: Welcome New Member",    vars: "recipient_name, role, org_name" }
-                        ]).map(({ key, label, vars }) => (
-                          <div key={key} className="border border-gray-100 rounded-lg overflow-hidden">
-                            <button type="button"
-                              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
-                              onClick={() => setEmailExpandedTemplate(emailExpandedTemplate === key ? null : key)}>
-                              <span className="text-sm font-semibold text-gray-700">{label}</span>
-                              <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${emailExpandedTemplate === key ? "rotate-90" : ""}`} />
-                            </button>
-                            {emailExpandedTemplate === key && (
-                              <div className="p-4 space-y-3 bg-white">
-                                <p className="text-xs text-gray-400">Variables: <span className="font-mono text-blue-600 text-[11px]">{vars.split(", ").map((v) => `{{${v}}}`).join("  ")}</span></p>
-                                <div>
-                                  <label className="block text-xs font-semibold text-gray-500 mb-1">Subject</label>
-                                  <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                                    value={emailSettings.templates[key]?.subject ?? ""}
-                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], subject: e.target.value } } }))} />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold text-gray-500 mb-1">Body</label>
-                                  <textarea rows={6} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 font-mono resize-y"
-                                    value={emailSettings.templates[key]?.body ?? ""}
-                                    onChange={(e) => setEmailSettings((s) => ({ ...s, templates: { ...s.templates, [key]: { ...s.templates[key], body: e.target.value } } }))} />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Test email */}
-                      <div className="p-5 space-y-3">
-                        <h3 className="text-sm font-bold text-gray-900">Send a Test Email</h3>
-                        <p className="text-xs text-gray-400">Verifies your API keys and sender identity are working. Save first.</p>
-                        <div className="flex gap-2">
-                          <input
-                            type="email"
-                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                            placeholder="recipient@example.com"
-                            value={emailTestTo}
-                            onChange={(e) => setEmailTestTo(e.target.value)}
-                          />
-                          <button
-                            type="button"
-                            disabled={emailTestSending || !emailTestTo}
-                            className="px-4 py-2 text-sm font-semibold bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
-                            onClick={async () => {
-                              if (!emailTestTo) return;
-                              setEmailTestSending(true);
-                              try {
-                                await emailSettingsApi.test(emailTestTo);
-                                showToast(`Test email sent to ${emailTestTo}.`);
-                              } catch (err: any) {
-                                showToast(`Failed: ${err.message}`);
-                              } finally {
-                                setEmailTestSending(false);
-                              }
-                            }}
-                          >
-                            {emailTestSending ? "Sending…" : "Send Test"}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Save button */}
-                      <div className="p-5 flex justify-end">
-                        <button
-                          type="button"
-                          disabled={emailSettingsSaving}
-                          className="px-6 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          onClick={async () => {
-                            setEmailSettingsSaving(true);
-                            try {
-                              await emailSettingsApi.save(emailSettings);
-                              showToast("Email settings saved.");
-                            } catch (err: any) {
-                              showToast(`Failed to save: ${err.message}`);
-                            } finally {
-                              setEmailSettingsSaving(false);
-                            }
-                          }}
-                        >
-                          {emailSettingsSaving ? "Saving…" : "Save Email Settings"}
-                        </button>
-                      </div>
-
-                    </div>
-                  )}
-                </section>
-              )}
             </div>
           ) : activePage === "Inventory" ? (
             inventoryView === "history" ? (
@@ -12606,27 +13449,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="w-full text-sm sticky-col-first">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                          {["Date","Product","Type","Qty","Balance After","Agent","Order","By","Note"].map((h) => (
+                          {["Date","Product","Type","Qty","Balance After","Route","Agent","Order","By","Note"].map((h) => (
                             <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {filteredStockMovements.length === 0 ? (
-                          <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400 text-sm">No stock movements found</td></tr>
+                          <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400 text-sm">No stock movements found</td></tr>
                         ) : (
                           filteredStockMovements.map((movement) => (
                             <tr key={movement.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{new Date(movement.date).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{new Date(movement.date ?? movement.createdAt ?? "").toLocaleString()}</td>
                               <td className="px-4 py-3 font-medium text-gray-900">{movement.productName}</td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${movement.type === "Stock Added" ? "bg-green-100 text-green-700" : movement.type === "Distributed to Agent" ? "bg-blue-100 text-blue-700" : movement.type === "Order Fulfilled" ? "bg-purple-100 text-purple-700" : movement.type === "Return" ? "bg-amber-100 text-amber-700" : movement.type === "Correction" ? "bg-orange-100 text-orange-700" : movement.type === "Waybill Out" ? "bg-rose-100 text-rose-700" : movement.type === "Waybill In" ? "bg-teal-100 text-teal-700" : "bg-gray-100 text-gray-600"}`}>{movement.type}</span>
                               </td>
                               <td className={`px-4 py-3 font-bold ${movement.qty < 0 ? "text-red-600" : "text-green-600"}`}>{movement.qty}</td>
                               <td className="px-4 py-3 text-gray-700">{movement.balanceAfter}</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{movement.fromLocation && movement.toLocation ? `${movement.fromLocation} → ${movement.toLocation}` : "-"}</td>
                               <td className="px-4 py-3 text-gray-600">{movement.agent || "-"}</td>
                               <td className="px-4 py-3 text-gray-600">{movement.order || "-"}</td>
                               <td className="px-4 py-3 text-gray-600">{movement.by}</td>
@@ -12782,7 +13626,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </div>
                               <p className="text-xs text-gray-400">Created {new Date(session.createdAt).toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" })} by {session.createdBy}</p>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                               <span className="text-xs text-gray-500">{verified}/{total} verified</span>
                               {discrepancies > 0 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">{discrepancies} discrepanc{discrepancies === 1 ? "y" : "ies"}</span>}
                               <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => setActiveStockCountId(isActive ? null : session.id)}>{isActive ? "Collapse" : "View"}</button>
@@ -12873,13 +13717,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </select>
                 </header>
 
+                <DataErrorBanner />
+                {dataLoading && <TableSkeleton cols={6} rows={5} />}
+                {!dataLoading && products.length === 0 && (
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
+                    <PackagePlus className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-bold text-gray-700">No products yet</p>
+                    <p className="text-xs text-gray-500 mt-1 mb-4">Add your first product to start tracking inventory.</p>
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1A6FBF] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addProduct")}>
+                      <Plus className="w-4 h-4" /> Add Product
+                    </button>
+                  </div>
+                )}
+                <div className={dataLoading || products.length === 0 ? "hidden" : ""}>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <label className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-200">
                     <Search className="w-4 h-4 text-gray-400 shrink-0" />
                     <span className="sr-only">Search inventory</span>
                     <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
                   </label>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <button className="flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openAddProductModal}><Plus className="w-4 h-4" /> Add Product</button>
                     <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => setInventoryView("history")}><History className="w-4 h-4" /> Stock History</button>
                     <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setStockProductId(products[0]?.id || ""); setStockChange("0"); setModal("updateStock"); }}><RefreshCw className="w-4 h-4" /> Update Stock</button>
@@ -13048,6 +13905,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                 </section>
+                </div>
               </div>
             )
           ) : null}
@@ -13065,7 +13923,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "carts" ? "max-w-2xl" : modal === "addPackage" || modal === "editPackage" ? "max-w-xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
                 {modal === "createTeam" && "Create New Team"}
@@ -13087,7 +13945,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {modal === "deleteProduct" && "Delete Product"}
                 {modal === "addPricing" && "Add Currency Pricing"}
                 {modal === "editPricing" && "Edit Pricing"}
-                {modal === "addPackage" && "Create New Package"}
+                {modal === "addPackage" && "Create Package"}
                 {modal === "editPackage" && "Edit Package"}
 	                {modal === "deletePackage" && "Delete Package"}
 	                {modal === "createOrder" && "Create New Order"}
@@ -13138,7 +13996,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </div>
             )}
-
 
             {modal === "notifications" && (
               <div className="px-6 py-5 flex flex-col gap-4">
@@ -13878,115 +14735,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
             )}
 
-            {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (() => {
-              const isEdit = modal === "editPackage";
-              const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 transition-colors";
-              const currencySymbol = productCurrencies[packageCurrency]?.symbol ?? "";
-              const eligibleCompanions = products.filter((p) => p.id !== selectedProduct.id);
-              const priceNum = Math.max(0, Number(packagePrice) || 0);
-              const qtyNum = Math.max(1, Number(packageQuantity) || 1);
-              const perUnitPrice = qtyNum > 0 ? priceNum / qtyNum : 0;
-              const addCompanion = () => {
-                const firstAvailable = eligibleCompanions.find((p) => !packageCompanions.some((c) => c.productId === p.id));
-                if (!firstAvailable) {
-                  showToast("All eligible products already added as companions.");
-                  return;
-                }
-                setPackageCompanions((prev) => [...prev, { productId: firstAvailable.id, quantity: 1 }]);
-              };
-              return (
-                <div className="px-6 py-5 space-y-5">
-                  <p className="text-sm text-gray-500 -mt-1">{isEdit ? `Update this package's details and pricing for ${selectedProduct.name}.` : `Create a new package option for customers to select during checkout.`}</p>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Package Name <span className="text-red-500">*</span></label>
-                    <input className={inputClass} value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="e.g., Regular, Silver, Exclusive" />
-                    <p className="text-xs text-gray-500 mt-1">Short name for this package option</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Description</label>
-                    <textarea rows={2} className={`${inputClass} resize-none`} value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="e.g., 1 Knee Massager + 1 Miracle Balm (Free)" />
-                    <p className="text-xs text-gray-500 mt-1">Optional description shown to customers</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Main Product Quantity <span className="text-red-500">*</span></label>
-                      <input type="number" min={1} className={inputClass} value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} />
-                      <p className="text-xs text-gray-500 mt-1">Number of base product units in this package</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Price ({currencySymbol}) <span className="text-red-500">*</span></label>
-                      <input type="number" min={0} step="0.01" className={inputClass} value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} />
-                      <p className="text-xs text-gray-500 mt-1">Total price charged to customer for this package</p>
-                    </div>
-                  </div>
-
-                  {qtyNum > 1 && priceNum > 0 && (
-                    <p className="text-xs text-gray-500 -mt-2">That works out to {formatProductMoney(perUnitPrice, packageCurrency)} per unit.</p>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Currency <span className="text-red-500">*</span></label>
-                    <select className={inputClass} value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>
-                      {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">Only currencies with configured pricing are shown</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-900 mb-1.5">Display Order</label>
-                    <input type="number" min={0} className={inputClass} value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} />
-                    <p className="text-xs text-gray-500 mt-1">Lower numbers appear first (0 = first)</p>
-                  </div>
-
-                  <section className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                    <header className="flex items-start justify-between gap-3 flex-wrap">
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-gray-900">Companion Products</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Add extra products to deduct during delivery, for example free gifts.</p>
-                      </div>
-                      <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors shrink-0" onClick={addCompanion}>
-                        <Plus className="w-3.5 h-3.5" /> Add Companion
-                      </button>
-                    </header>
-                    {packageCompanions.length === 0 ? (
-                      <p className="text-xs text-gray-500 mt-3">No companion products added.</p>
-                    ) : (
-                      <div className="mt-3 space-y-2">
-                        {packageCompanions.map((c, idx) => {
-                          const taken = new Set(packageCompanions.filter((_, i) => i !== idx).map((other) => other.productId));
-                          const available = eligibleCompanions.filter((p) => !taken.has(p.id) || p.id === c.productId);
-                          return (
-                            <div key={`${c.productId}-${idx}`} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-2">
-                              <select className="flex-1 min-w-0 text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={c.productId} onChange={(e) => setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, productId: e.target.value } : row))}>
-                                {available.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                              </select>
-                              <label className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-[11px] text-gray-500 font-medium">Qty</span>
-                                <input type="number" min={1} className="w-16 text-sm border border-gray-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-200" value={c.quantity} onChange={(e) => setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, quantity: Math.max(1, Number(e.target.value) || 1) } : row))} />
-                              </label>
-                              <button type="button" className="!min-h-0 p-1.5 text-gray-400 hover:text-red-600 rounded transition-colors shrink-0" aria-label="Remove companion" onClick={() => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx))}>
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {eligibleCompanions.length === 0 && (
-                      <p className="text-xs text-amber-600 mt-2">Add more products to your inventory before attaching companions.</p>
-                    )}
-                  </section>
-
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={!packageName.trim()} onClick={savePackage}>{isEdit ? "Save Package" : "Create Package"}</button>
-                  </div>
+            {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (
+              <div className="modal-form">
+                <p>{selectedProduct.name}</p>
+                <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
+                <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label><span>Main Product Quantity</span><input value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} inputMode="numeric" /></label>
+                  <label><span>Price</span><input value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} inputMode="decimal" /></label>
+                  <label><span>Currency</span><select value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
+                  <label><span>Display Order</span><input value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} inputMode="numeric" /></label>
                 </div>
-              );
-            })()}
+                <section className="text-sm text-gray-400 italic py-2">Companion products can be added after more inventory items exist.</section>
+                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePackage}>{modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
+              </div>
+            )}
 
             {modal === "deletePackage" && selectedPackage && (() => {
               const ordersUsingPackage = trackedOrders.filter((o) => o.packageId === selectedPackage.id);
@@ -14080,31 +14843,165 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              </div>
 	            )}
 
-	            {modal === "agentDetails" && selectedAgent && (
-	              <div className="px-6 py-5 flex flex-col gap-4">
-	                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-	                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedAgent.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Phone</span><strong className="text-sm font-semibold text-gray-900">{selectedAgent.phone}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Zone</span><strong className="text-sm font-semibold text-gray-900">{selectedAgent.zone}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedAgent.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Stock Value</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(agentStockValueFor(selectedAgent.id))}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Pending</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.agentId === selectedAgent.id && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New")).length}</strong></article>
-	                </div>
-	                <section className="flex flex-col gap-2 max-h-44 overflow-y-auto">
-	                  {agentStock.filter((stock) => stock.agentId === selectedAgent.id).map((stock) => {
-	                    const product = products.find((item) => item.id === stock.productId);
-	                    const pricing = product ? primaryPricing(product) : undefined;
-	                    const stockValue = stock.quantity * (pricing?.sellingPrice ?? 0);
-	                    return <p key={`${stock.agentId}-${stock.productId}`}><strong>{product?.name ?? "Unknown product"}</strong><br />Available {stock.quantity} · Defective {stock.defective} · Missing {stock.missing} · Value {pricing ? formatProductMoney(stockValue, pricing.currency) : "—"}</p>;
-	                  })}
-	                </section>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("assignAgentStock")}>Assign Stock</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("reconcileAgentStock")}>Reconcile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button></div>
-	              </div>
-	            )}
+	            {modal === "agentDetails" && selectedAgent && (() => {
+	              const agentOrders = trackedOrders.filter((o) => o.agentId === selectedAgent.id);
+	              const totalAssigned = agentOrders.length;
+	              const deliveredOrders = agentOrders.filter((o) => (o.status ?? "New") === "Delivered");
+	              const cancelledOrders = agentOrders.filter((o) => (o.status ?? "New") === "Cancelled");
+	              const failedOrders = agentOrders.filter((o) => (o.status ?? "New") === "Failed");
+	              const postponedOrders = agentOrders.filter((o) => (o.status ?? "New") === "Postponed");
+	              const pendingOrders = agentOrders.filter((o) => !["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
+	              const successRate = totalAssigned === 0 ? 0 : Math.round((deliveredOrders.length / totalAssigned) * 100);
+	              const totalRevenue = deliveredOrders.reduce((sum, o) => sum + o.amount, 0);
+	              const avgOrderValue = deliveredOrders.length === 0 ? 0 : Math.round(totalRevenue / deliveredOrders.length);
+	              const cap = selectedAgent.stockCapacity ?? 1000;
+	              const curStockTotal = agentStock.filter((s) => s.agentId === selectedAgent.id).reduce((sum, s) => sum + s.quantity, 0);
+	              const stockUtilization = cap === 0 ? 0 : Math.round((curStockTotal / cap) * 100);
+	              const thisMonthOrders = agentOrders.filter((o) => { const d = o.date || o.createdAt || ""; return d.startsWith(new Date().toISOString().slice(0, 7)); });
+	              const thisMonthDelivered = thisMonthOrders.filter((o) => (o.status ?? "New") === "Delivered").length;
+	              const thisMonthRate = thisMonthOrders.length === 0 ? 0 : Math.round((thisMonthDelivered / thisMonthOrders.length) * 100);
 
-	            {modal === "assignAgentStock" && selectedAgent && (
+	              return (
+	              <div className="px-6 py-5 flex flex-col gap-5 max-h-[70vh] overflow-y-auto">
+	                {/* Agent info header */}
+	                <div className="flex items-center gap-3">
+	                  <span className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-lg font-bold shrink-0">{userInitials(selectedAgent.name)}</span>
+	                  <div>
+	                    <h3 className="text-base font-bold text-gray-900">{selectedAgent.name}</h3>
+	                    <p className="text-sm text-gray-500">{selectedAgent.zone} · {selectedAgent.phone}</p>
+	                  </div>
+	                  <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-bold ${selectedAgent.active ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}>{selectedAgent.active ? "Active" : "Inactive"}</span>
+	                </div>
+
+	                {/* Performance Metrics */}
+	                <div>
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Performance Metrics</h4>
+	                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+	                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wide">Total Assigned</p>
+	                      <p className="text-xl font-extrabold text-blue-900 mt-0.5">{totalAssigned}</p>
+	                    </div>
+	                    <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-green-600 uppercase tracking-wide">Delivered</p>
+	                      <p className="text-xl font-extrabold text-green-900 mt-0.5">{deliveredOrders.length}</p>
+	                      <p className="text-[10px] text-green-700 mt-0.5">{successRate}% success rate</p>
+	                    </div>
+	                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wide">Pending</p>
+	                      <p className="text-xl font-extrabold text-amber-900 mt-0.5">{pendingOrders.length}</p>
+	                    </div>
+	                    <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide">Failed / Cancelled</p>
+	                      <p className="text-xl font-extrabold text-red-900 mt-0.5">{failedOrders.length + cancelledOrders.length}</p>
+	                      {postponedOrders.length > 0 && <p className="text-[10px] text-red-600 mt-0.5">{postponedOrders.length} postponed</p>}
+	                    </div>
+	                  </div>
+	                </div>
+
+	                {/* Revenue & Financial */}
+	                <div>
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Revenue</h4>
+	                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+	                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Total Revenue</p>
+	                      <p className="text-lg font-extrabold text-gray-900 mt-0.5">{formatMoney(totalRevenue)}</p>
+	                    </div>
+	                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Avg Order Value</p>
+	                      <p className="text-lg font-extrabold text-gray-900 mt-0.5">{formatMoney(avgOrderValue)}</p>
+	                    </div>
+	                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Stock Value Held</p>
+	                      <p className="text-lg font-extrabold text-gray-900 mt-0.5">{formatMoney(agentStockValueFor(selectedAgent.id))}</p>
+	                    </div>
+	                  </div>
+	                </div>
+
+	                {/* This Month snapshot */}
+	                <div>
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">This Month</h4>
+	                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+	                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">Orders</p>
+	                      <p className="text-xl font-extrabold text-purple-900 mt-0.5">{thisMonthOrders.length}</p>
+	                    </div>
+	                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">Delivered</p>
+	                      <p className="text-xl font-extrabold text-purple-900 mt-0.5">{thisMonthDelivered}</p>
+	                    </div>
+	                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+	                      <p className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">Delivery Rate</p>
+	                      <p className="text-xl font-extrabold text-purple-900 mt-0.5">{thisMonthRate}%</p>
+	                    </div>
+	                  </div>
+	                </div>
+
+	                {/* Stock Capacity */}
+	                <div>
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Stock Capacity</h4>
+	                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+	                    <div className="flex items-center justify-between mb-1.5">
+	                      <span className="text-xs font-semibold text-gray-600">{curStockTotal} / {cap} units</span>
+	                      <span className={`text-xs font-bold ${stockUtilization > 90 ? "text-red-600" : stockUtilization > 70 ? "text-amber-600" : "text-green-600"}`}>{stockUtilization}% utilized</span>
+	                    </div>
+	                    <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+	                      <div className={`h-full rounded-full transition-all ${stockUtilization > 90 ? "bg-red-500" : stockUtilization > 70 ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${Math.min(100, stockUtilization)}%` }} />
+	                    </div>
+	                  </div>
+	                </div>
+
+	                {/* Stock breakdown */}
+	                <div>
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Stock Breakdown</h4>
+	                  <div className="space-y-2 max-h-32 overflow-y-auto">
+	                    {agentStock.filter((stock) => stock.agentId === selectedAgent.id).length === 0 ? (
+	                      <p className="text-sm text-gray-400 italic">No stock assigned</p>
+	                    ) : agentStock.filter((stock) => stock.agentId === selectedAgent.id).map((stock) => {
+	                      const product = products.find((item) => item.id === stock.productId);
+	                      const pricing = product ? primaryPricing(product) : undefined;
+	                      const stockValue = stock.quantity * (pricing?.sellingPrice ?? 0);
+	                      return (
+	                        <div key={`${stock.agentId}-${stock.productId}`} className="flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2">
+	                          <div>
+	                            <p className="text-sm font-semibold text-gray-900">{product?.name ?? "Unknown"}</p>
+	                            <p className="text-xs text-gray-500">Qty {stock.quantity} · Defective {stock.defective} · Missing {stock.missing}</p>
+	                          </div>
+	                          <span className="text-sm font-bold text-gray-700">{pricing ? formatProductMoney(stockValue, pricing.currency) : "—"}</span>
+	                        </div>
+	                      );
+	                    })}
+	                  </div>
+	                </div>
+
+	                {/* Actions */}
+	                <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("assignAgentStock")}>Assign Stock</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("reconcileAgentStock")}>Reconcile</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
+	                </div>
+	              </div>
+	              );
+	            })()}
+
+	            {modal === "assignAgentStock" && selectedAgent && (() => {
+	              const cap = selectedAgent.stockCapacity ?? 1000;
+	              const curTotal = agentStock.filter((s) => s.agentId === selectedAgent.id).reduce((sum, s) => sum + s.quantity, 0);
+	              const avail = Math.max(0, cap - curTotal);
+	              const qtyNum = Math.max(1, Number(assignStockQty) || 1);
+	              const wouldExceed = curTotal + qtyNum > cap;
+	              return (
 	              <div className="modal-form">
 	                <p><strong>{selectedAgent.name}</strong></p>
+	                <div className={`text-xs font-semibold px-3 py-2 rounded-lg border ${wouldExceed ? "bg-red-50 border-red-200 text-red-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
+	                  Stock: {curTotal} / {cap} — {avail > 0 ? `${avail} available` : "at capacity"}
+	                </div>
 	                <label><span>Product</span><select value={assignStockProductId} onChange={(event) => setAssignStockProductId(event.target.value)}>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · warehouse {product.warehouseStock}</option>)}</select></label>
 	                <label><span>Quantity</span><input value={assignStockQty} onChange={(event) => setAssignStockQty(event.target.value)} inputMode="numeric" /></label>
+	                {wouldExceed && <p className="text-xs text-red-600 font-medium">This would exceed capacity by {curTotal + qtyNum - cap} units.</p>}
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignStockToSelectedAgent}>Assign Stock</button></div>
 	              </div>
-	            )}
+	              );
+	            })()}
 
 	            {modal === "reconcileAgentStock" && selectedAgent && (() => {
 	              const agentStockRows = agentStock.filter((s) => s.agentId === selectedAgent.id);
@@ -14174,7 +15071,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </div>
 
 	                  {/* Three category inputs */}
-	                  <div className="grid grid-cols-3 gap-3">
+	                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 	                    <div className="rounded-lg border border-green-200 bg-green-50 p-3">
 	                      <label className="block text-xs font-bold text-green-800 mb-1.5 uppercase tracking-wide">Returned</label>
 	                      <input type="number" min={0} className="w-full rounded-md border border-green-200 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-green-300" value={reconcileReturned} onChange={(event) => setReconcileReturned(event.target.value)} />
@@ -14218,7 +15115,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                              </span>
 	                              <div className="flex-1 min-w-0">
 	                                <p className="text-gray-800 font-medium truncate">{m.note || m.type}</p>
-	                                <p className="text-gray-400 mt-0.5">{new Date(m.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} \u00b7 {m.by}</p>
+	                                <p className="text-gray-400 mt-0.5">{new Date(m.date ?? m.createdAt ?? "").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} \u00b7 {m.by}</p>
 	                              </div>
 	                              <span className="text-gray-400 shrink-0 mt-0.5">bal {m.balanceAfter}</span>
 	                            </div>
@@ -14238,7 +15135,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "editAgent" && selectedAgent && (
 	              <div className="modal-form">
-	                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} /></label><label><span>Primary Zone</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} /></label><label><span>Address</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} /></label><div className="flex items-center justify-between py-1">
+	                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} /></label><label><span>Primary Zone</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} /></label><label><span>Address</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} /></label><label><span>Stock Capacity (max units this agent can hold)</span><input type="number" min={1} value={agentStockCapacity} onChange={(event) => setAgentStockCapacity(event.target.value === "" ? "" : Number(event.target.value))} /></label><div className="flex items-center justify-between py-1">
                   <div>
                     <span className="text-sm font-medium text-gray-700">Active Status</span>
                   </div>
@@ -14378,11 +15275,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   ))}
                 </div>
-                {payStructureType !== "Commission" && (
+                {payStructureType !== "Per Delivered Order" && (
                   <label><span>Fixed Salary (₦)</span><input value={fixedSalary} onChange={(event) => setFixedSalary(event.target.value)} inputMode="decimal" placeholder="e.g. 50000" /></label>
                 )}
-                {payStructureType !== "Fixed Salary" && (
+                {(payStructureType === "Per Delivered Order" || payStructureType === "Hybrid") && (
                   <label><span>Rate per delivered order (₦)</span><input value={commissionRate} onChange={(event) => setCommissionRate(event.target.value)} inputMode="decimal" placeholder="e.g. 2000" /></label>
+                )}
+                {payStructureType === "Performance Bonus" && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-gray-700">Bonus Tiers</span>
+                      <button type="button" className="!min-h-0 text-xs font-bold text-[#1A6FBF] hover:underline" onClick={() => setBonusTiers((prev) => [...prev, { threshold: 0, amount: 0 }])}>+ Add Tier</button>
+                    </div>
+                    <p className="text-[10px] text-gray-500 italic">Highest matching tier wins. e.g. if rep delivered 75 orders and tiers are 50→₦5k, 100→₦15k, the ₦5k tier applies.</p>
+                    {bonusTiers.map((tier, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">≥ Orders</label>
+                          <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.threshold || ""} placeholder="e.g. 50" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, threshold: Number(e.target.value) || 0 } : t))} />
+                        </div>
+                        <div className="flex-1">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Bonus (₦)</label>
+                          <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.amount || ""} placeholder="e.g. 5000" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, amount: Number(e.target.value) || 0 } : t))} />
+                        </div>
+                        <button type="button" className="!min-h-0 mt-4 p-1.5 text-red-400 hover:text-red-600 transition-colors" onClick={() => setBonusTiers((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
+                      </div>
+                    ))}
+                  </div>
                 )}
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>

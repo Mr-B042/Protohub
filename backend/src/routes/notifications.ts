@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -6,23 +7,47 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/", async (req, res) => {
+  // Return org-wide notifications (recipient_id IS NULL) + those addressed to this user
   const { data, error } = await supabase
     .from("system_notifications")
     .select("*")
     .eq("org_id", req.user!.orgId)
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`)
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });
 
-// Mark all as read
+// Create notification
+router.post("/", async (req, res) => {
+  const Schema = z.object({
+    type:      z.string().min(1),
+    message:   z.string().min(1),
+    productId: z.string().uuid().optional()
+  });
+  const parsed = Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  const { type, message, productId } = parsed.data;
+  const { data, error } = await supabase
+    .from("system_notifications")
+    .insert({ org_id: req.user!.orgId, type, message, product_id: productId ?? null })
+    .select().single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json(data);
+});
+
+// Mark all as read (org-wide + user's own)
 router.patch("/read-all", async (req, res) => {
   const { error } = await supabase
     .from("system_notifications")
     .update({ read: true })
     .eq("org_id", req.user!.orgId)
-    .eq("read", false);
+    .eq("read", false)
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ message: "All notifications marked as read." });
 });

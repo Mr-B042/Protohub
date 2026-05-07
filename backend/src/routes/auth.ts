@@ -158,7 +158,7 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     res.status(403).json({ error: "Only Owner or Admin can edit users." });
     return;
   }
-  const allowed = ["name", "role", "active"];
+  const allowed = ["name", "role", "active", "email", "permissions"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -172,6 +172,36 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
+});
+
+// ── DELETE /api/auth/team/:id ─────────────────────────────
+router.delete("/team/:id", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin"].includes(req.user!.role)) {
+    res.status(403).json({ error: "Only Owner or Admin can delete users." });
+    return;
+  }
+  // Prevent deleting yourself or the org owner
+  if (req.params.id === req.user!.id) {
+    res.status(400).json({ error: "You cannot delete your own account." });
+    return;
+  }
+  const { data: target } = await supabase
+    .from("users")
+    .select("role")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
+  if (!target) { res.status(404).json({ error: "User not found." }); return; }
+  if (target.role === "Owner") { res.status(400).json({ error: "The Owner account cannot be deleted." }); return; }
+
+  // Soft-delete: deactivate in DB
+  const { error } = await supabase
+    .from("users")
+    .update({ active: false })
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(204).send();
 });
 
 // ── POST /api/auth/invite ─────────────────────────────────
@@ -234,14 +264,26 @@ router.post("/reset-password", async (req, res) => {
 });
 
 // ── POST /api/auth/set-password ──────────────────────────
-// Used after the user clicks the reset link and has a valid access token.
+// If userId is provided and caller is Owner/Admin, reset that user's password.
+// Otherwise reset the caller's own password.
 router.post("/set-password", requireAuth, async (req, res) => {
-  const { password } = req.body;
-  if (!password || typeof password !== "string" || password.length < 8) {
-    res.status(400).json({ error: "Password must be at least 8 characters." });
+  const { password, userId } = req.body;
+  if (!password || typeof password !== "string" || password.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters." });
     return;
   }
-  const { error } = await supabase.auth.admin.updateUserById(req.user!.id, { password });
+  let targetId = req.user!.id;
+  if (userId && userId !== req.user!.id) {
+    if (!["Owner", "Admin"].includes(req.user!.role)) {
+      res.status(403).json({ error: "Only Owner or Admin can reset other users' passwords." });
+      return;
+    }
+    // Verify target belongs to same org
+    const { data: target } = await supabase.from("users").select("id").eq("id", userId).eq("org_id", req.user!.orgId).single();
+    if (!target) { res.status(404).json({ error: "User not found." }); return; }
+    targetId = userId;
+  }
+  const { error } = await supabase.auth.admin.updateUserById(targetId, { password });
   if (error) {
     res.status(500).json({ error: error.message });
     return;

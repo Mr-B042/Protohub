@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -7,6 +8,7 @@ import {
   sendInternalNewOrderEmail, sendOrderAssignedEmail,
   sendInternalDeliveredEmail
 } from "../lib/mailer.js";
+import { notifyOrderEvent } from "../lib/order-notifications.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -14,9 +16,9 @@ router.use(requireAuth);
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
 router.get("/", async (req, res) => {
-  const { status, source, search, page = "1", limit = "25", repId } = req.query;
+  const { status, source, search, page = "1", limit = "25", repId, since, dateFrom, dateTo } = req.query;
   const pageNum  = Math.max(1, parseInt(page as string, 10));
-  const pageSize = Math.min(100, parseInt(limit as string, 10));
+  const pageSize = Math.min(2000, parseInt(limit as string, 10));
   const from = (pageNum - 1) * pageSize;
   const to   = from + pageSize - 1;
 
@@ -39,6 +41,11 @@ router.get("/", async (req, res) => {
   if (search) {
     query = query.or(`customer.ilike.%${search}%,phone.ilike.%${search}%,id.ilike.%${search}%`);
   }
+  // since=ISO8601 — only orders newer than this timestamp (used for polling)
+  if (since) query = query.gt("created_at", since as string);
+  // dateFrom / dateTo — server-side date range filter (YYYY-MM-DD)
+  if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
+  if (dateTo)   query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
 
   const { data, error, count } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -119,6 +126,22 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Audit: creation event
+  await supabase.from("order_audit").insert({
+    order_id:    data.id,
+    org_id:      req.user!.orgId,
+    changed_by:  req.user!.id,
+    from_status: null,
+    to_status:   "New",
+    note:        "Order created"
+  });
+
+  // In-app notifications
+  await notifyOrderEvent(req.user!.orgId, {
+    id: data.id, customer: data.customer, productName: data.product_name,
+    assignedRepId: data.assigned_rep_id
+  }, "New");
+
   // Fire-and-forget emails
   // Customer confirmation (only if email in order form)
   sendNewOrderEmail(req.user!.orgId, {
@@ -162,9 +185,37 @@ router.patch("/:id/status", async (req, res) => {
   }
   const { status, callOutcome, response, agentId } = parsed.data;
 
-  // Fetch current status for audit trail
+  // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
-    .from("orders").select("status, org_id").eq("id", req.params.id).single();
+    .from("orders")
+    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city")
+    .eq("id", req.params.id).single();
+
+  // Resolve the effective agent (request may override)
+  const effectiveAgentId = agentId !== undefined ? agentId : existing?.agent_id;
+  const orderQty = existing?.quantity ?? 1;
+
+  // Pre-check: if marking Delivered and an agent is assigned, verify stock
+  if (status === "Delivered" && effectiveAgentId && existing?.product_id) {
+    const { data: agentStockRow } = await supabase
+      .from("agent_stock")
+      .select("quantity")
+      .eq("agent_id", effectiveAgentId)
+      .eq("product_id", existing.product_id)
+      .single();
+
+    const available = agentStockRow?.quantity ?? 0;
+    if (available < orderQty) {
+      // Fetch agent name for a clear error message
+      const { data: agentRow } = await supabase
+        .from("agents").select("name").eq("id", effectiveAgentId).single();
+      const agentName = agentRow?.name ?? effectiveAgentId;
+      res.status(400).json({
+        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${existing.product_name}.`
+      });
+      return;
+    }
+  }
 
   const updates: Record<string, unknown> = { status };
   if (callOutcome)  updates.call_outcome    = callOutcome;
@@ -190,8 +241,70 @@ router.patch("/:id/status", async (req, res) => {
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
 
-  // Fire-and-forget audit log
-  supabase.from("order_audit").insert({
+  // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
+  if (status === "Delivered" && effectiveAgentId && existing?.product_id) {
+    const today = new Date().toISOString().split("T")[0];
+
+    // 1. Deduct agent stock
+    const { data: currentStock } = await supabase
+      .from("agent_stock")
+      .select("quantity")
+      .eq("agent_id", effectiveAgentId)
+      .eq("product_id", existing.product_id)
+      .single();
+    const newAgentQty = Math.max(0, (currentStock?.quantity ?? 0) - orderQty);
+    await supabase.from("agent_stock")
+      .update({ quantity: newAgentQty })
+      .eq("agent_id", effectiveAgentId)
+      .eq("product_id", existing.product_id);
+
+    // Fetch agent name/zone for waybill
+    const { data: agentInfo } = await supabase
+      .from("agents").select("name, zone").eq("id", effectiveAgentId).single();
+    const agentName = agentInfo?.name ?? "Agent";
+    const agentZone = agentInfo?.zone ?? "";
+
+    // 2. Create waybill record (agent → customer)
+    const waybillId = `WB-${Date.now()}`;
+    const customerLocation = [existing.city, existing.state].filter(Boolean).join(", ") || "Customer";
+    await supabase.from("waybill_records").insert({
+      id:              waybillId,
+      org_id:          req.user!.orgId,
+      product_id:      existing.product_id,
+      product_name:    existing.product_name,
+      quantity:        orderQty,
+      waybill_fee:     0,
+      from_location:   agentZone,
+      to_location:     `Customer:${req.params.id}`,
+      agent_id:        effectiveAgentId,
+      status:          "Received",
+      dispatched_date: today,
+      received_date:   today,
+      notes:           `Auto-created on order delivery (${existing.customer})`
+    });
+
+    // 3. Log stock movement
+    await supabase.from("stock_movements").insert({
+      id:            `MOV-${randomUUID()}`,
+      org_id:        req.user!.orgId,
+      product_id:    existing.product_id,
+      product_name:  existing.product_name,
+      type:          "Order Fulfilled",
+      qty:           orderQty,
+      balance_after: newAgentQty,
+      agent_id:      effectiveAgentId,
+      order_id:      req.params.id,
+      by_name:       req.user!.name,
+      by_user_id:    req.user!.id,
+      waybill_id:    waybillId,
+      from_location: agentZone,
+      to_location:   customerLocation,
+      note:          `Delivered to ${existing.customer} — agent ${agentName} stock ${(currentStock?.quantity ?? 0)} → ${newAgentQty}`
+    });
+  }
+
+  // Audit log — awaited so failures are visible
+  const { error: auditErr } = await supabase.from("order_audit").insert({
     order_id:    req.params.id,
     org_id:      req.user!.orgId,
     changed_by:  req.user!.id,
@@ -199,6 +312,13 @@ router.patch("/:id/status", async (req, res) => {
     to_status:   status,
     note:        req.body.reason ?? null
   });
+  if (auditErr) console.error("Audit insert failed:", auditErr.message);
+
+  // In-app notifications
+  await notifyOrderEvent(req.user!.orgId, {
+    id: data.id, customer: data.customer, productName: data.product_name,
+    assignedRepId: data.assigned_rep_id
+  }, status);
 
   // Customer: status change email
   sendOrderStatusEmail(req.user!.orgId, {
@@ -232,9 +352,23 @@ router.get("/:id/audit", async (req, res) => {
 
 // ── PATCH /api/orders/:id ─────────────────────────────────
 router.patch("/:id", async (req, res) => {
+  // Guard: terminal statuses cannot be edited
+  const { data: current } = await supabase
+    .from("orders").select("status").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+  if (!current) { res.status(404).json({ error: "Order not found." }); return; }
+  if (current.status === "Delivered" || current.status === "Cancelled") {
+    res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
+    return;
+  }
+
   const allowed = ["customer","phone","whatsapp","email","address","city","state",
                    "response","notes","assigned_rep_id","agent_id","call_outcome",
-                   "scheduled_date","amount","quantity"];
+                   "scheduled_date","amount","quantity","product_id","package_id",
+                   "product_name","package_name","source","location","currency",
+                   "logistics_cost","amount_remitted","remittance_status",
+                   "upsell_from_qty","upsell_to_qty","upsell_note",
+                   "manual_bonus_override","manual_bonus_reason","bonus_manually_adjusted",
+                   "cross_sell_lines","free_gift_lines"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -255,12 +389,30 @@ router.patch("/:id", async (req, res) => {
 
 // ── DELETE /api/orders/:id ────────────────────────────────
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
+  // Fetch before deleting so we can log context
+  const { data: existing } = await supabase
+    .from("orders").select("status, customer, product_name, amount")
+    .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+
+  // Audit log before delete (so FK is still valid)
+  if (existing) {
+    await supabase.from("order_audit").insert({
+      order_id:    req.params.id,
+      org_id:      req.user!.orgId,
+      changed_by:  req.user!.id,
+      from_status: existing.status,
+      to_status:   "Deleted",
+      note:        `Order deleted (was ${existing.status}). Customer: ${existing.customer}, Product: ${existing.product_name}, Amount: ${existing.amount}`
+    });
+  }
+
   const { error } = await supabase
     .from("orders")
     .delete()
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
   if (error) { res.status(500).json({ error: error.message }); return; }
+
   res.status(204).send();
 });
 

@@ -87,18 +87,26 @@ export const authApi = {
     post<{ message: string }>("/api/auth/invite", body),
 
   resetPassword: (email: string) =>
-    post<{ message: string }>("/api/auth/reset-password", { email })
+    post<{ message: string }>("/api/auth/reset-password", { email }),
+
+  setPassword: (userId: string, password: string) =>
+    post<{ message: string }>("/api/auth/set-password", { userId, password })
 };
 
 // ── Products ──────────────────────────────────────────────
 export const productsApi = {
   list: () => get<any[]>("/api/products"),
+  // Public storefront view of one product, with cross-sells + free-gifts inlined.
+  // No auth required; safe to call from unauthenticated iframes.
+  public: (id: string) => get<{ product: any; related: any[] }>(`/api/public/products/${encodeURIComponent(id)}`),
   create: (body: unknown) => post<any>("/api/products", body),
   update: (id: string, body: unknown) => patch<any>(`/api/products/${id}`, body),
   delete: (id: string) => del<void>(`/api/products/${id}`),
   createPricing: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/pricings`, body),
   createPackage: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/packages`, body),
-  updatePackage: (productId: string, pkgId: string, body: unknown) => patch<any>(`/api/products/${productId}/packages/${pkgId}`, body)
+  updatePackage: (productId: string, pkgId: string, body: unknown) => patch<any>(`/api/products/${productId}/packages/${pkgId}`, body),
+  deletePricing: (productId: string, currency: string) => del<void>(`/api/products/${productId}/pricings/${currency}`),
+  deletePackage: (productId: string, pkgId: string) => del<void>(`/api/products/${productId}/packages/${pkgId}`)
 };
 
 // ── Orders ────────────────────────────────────────────────
@@ -121,7 +129,8 @@ export const agentsApi = {
   update: (id: string, body: unknown) => patch<any>(`/api/agents/${id}`, body),
   delete: (id: string) => del<void>(`/api/agents/${id}`),
   getStock: (id: string) => get<any[]>(`/api/agents/${id}/stock`),
-  assignStock: (id: string, body: unknown) => post<any>(`/api/agents/${id}/stock`, body)
+  assignStock: (id: string, body: unknown) => post<any>(`/api/agents/${id}/stock`, body),
+  reconcile: (id: string, body: unknown) => post<any>(`/api/agents/${id}/reconcile`, body)
 };
 
 // ── Stock ─────────────────────────────────────────────────
@@ -130,6 +139,7 @@ export const stockApi = {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ data: any[]; total: number }>(`/api/stock/movements${qs}`);
   },
+  createMovement: (body: unknown) => post<any>("/api/stock/movements", body),
   update: (body: unknown) => post<any>("/api/stock/update", body),
   countSessions: () => get<any[]>("/api/stock/count-sessions"),
   createSession: (body: unknown) => post<any>("/api/stock/count-sessions", body),
@@ -166,6 +176,7 @@ export const customersApi = {
 // ── Notifications ─────────────────────────────────────────
 export const notificationsApi = {
   list: () => get<any[]>("/api/notifications"),
+  create: (body: { type: string; message: string; productId?: string }) => post<any>("/api/notifications", body),
   markAllRead: () => patch<{ message: string }>("/api/notifications/read-all", {}),
   markRead: (id: string) => patch<any>(`/api/notifications/${id}/read`, {})
 };
@@ -174,13 +185,15 @@ export const notificationsApi = {
 export const waybillsApi = {
   list: () => get<any[]>("/api/waybills"),
   create: (body: unknown) => post<any>("/api/waybills", body),
+  update: (id: string, body: unknown) => patch<any>(`/api/waybills/${id}`, body),
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/waybills/${id}/status`, body)
 };
 
 // ── Team (users in org) ───────────────────────────────────
 export const teamApi = {
   list: () => get<any[]>("/api/auth/team"),
-  update: (id: string, body: unknown) => patch<any>(`/api/auth/team/${id}`, body)
+  update: (id: string, body: unknown) => patch<any>(`/api/auth/team/${id}`, body),
+  delete: (id: string) => del<void>(`/api/auth/team/${id}`)
 };
 
 // ── Email Settings ────────────────────────────────────────
@@ -188,6 +201,37 @@ export const emailSettingsApi = {
   get:  ()            => get<any>("/api/email-settings"),
   save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),
   test: (to: string)  => post<{ message: string }>("/api/email-settings/test", { to })
+};
+
+// ── Abandoned Carts ──────────────────────────────────────
+export const cartsApi = {
+  list: () => get<any[]>("/api/carts"),
+  create: (body: unknown) => post<any>("/api/carts", body),
+  // Public capture endpoint — no auth required, derives org from product_id.
+  // Use this from the embed form so it works inside customer-facing iframes.
+  capture: (body: unknown) => post<any>("/api/public/carts", body),
+  update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body)
+};
+
+// ── Pay Structures ───────────────────────────────────────
+export const payStructuresApi = {
+  list: () => get<any[]>("/api/pay-structures"),
+  save: (body: unknown) => post<any>("/api/pay-structures", body)
+};
+
+// ── Sales Teams ──────────────────────────────────────────
+export const salesTeamsApi = {
+  list: () => get<any[]>("/api/sales-teams"),
+  create: (body: unknown) => post<any>("/api/sales-teams", body),
+  update: (id: string, body: unknown) => patch<any>(`/api/sales-teams/${id}`, body),
+  delete: (id: string) => del<void>(`/api/sales-teams/${id}`)
+};
+
+// ── Penalties ────────────────────────────────────────────
+export const penaltiesApi = {
+  list: () => get<any[]>("/api/penalties"),
+  create: (body: unknown) => post<any>("/api/penalties", body),
+  delete: (id: string) => del<void>(`/api/penalties/${id}`)
 };
 
 export { ApiError };

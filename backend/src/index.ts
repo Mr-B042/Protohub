@@ -20,6 +20,13 @@ import notifRoutes         from "./routes/notifications.js";
 import waybillRoutes       from "./routes/waybills.js";
 import emailSettingsRoutes from "./routes/email-settings.js";
 import emailReportsRoutes  from "./routes/email-reports.js";
+import cartRoutes          from "./routes/carts.js";
+import publicCartRoutes    from "./routes/public-carts.js";
+import publicProductRoutes from "./routes/public-products.js";
+import payStructureRoutes  from "./routes/pay-structures.js";
+import salesTeamRoutes     from "./routes/sales-teams.js";
+import penaltyRoutes       from "./routes/penalties.js";
+import pushRoutes          from "./routes/push.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -30,12 +37,13 @@ app.use(cors({
   origin: process.env.FRONTEND_URL ?? "http://localhost:5173",
   credentials: true
 }));
-// Global rate limit
+// Global rate limit — skip for local development
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1"
 }));
 
 // Strict rate limit on auth endpoints — 10 requests per 15 minutes per IP
@@ -70,6 +78,13 @@ app.use("/api/notifications",  notifRoutes);
 app.use("/api/waybills",       waybillRoutes);
 app.use("/api/email-settings", emailSettingsRoutes);
 app.use("/api/email",          emailReportsRoutes);
+app.use("/api/public/carts",    publicCartRoutes);
+app.use("/api/public/products", publicProductRoutes);
+app.use("/api/carts",           cartRoutes);
+app.use("/api/pay-structures",  payStructureRoutes);
+app.use("/api/sales-teams",     salesTeamRoutes);
+app.use("/api/penalties",       penaltyRoutes);
+app.use("/api/push",            pushRoutes);
 
 // ── Request logger ────────────────────────────────────────
 app.use((req, _res, next) => {

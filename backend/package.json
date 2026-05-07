@@ -12,7 +12,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "db:migrate": "supabase db push",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "db:seed-agents": "tsx src/scripts/seed-agents.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -26,6 +27,7 @@
     "node-mailjet": "^6.0.11",
     "resend": "^6.12.2",
     "tsx": "^4.19.2",
+    "web-push": "^3.6.7",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -34,6 +36,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.9.0",
     "@types/node-cron": "^3.0.11",
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.7.2"
   }
 }

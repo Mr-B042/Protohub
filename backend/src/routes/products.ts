@@ -2,9 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 router.use(requireAuth);
+router.use((req, _res, next) => { logger.info("products route hit", { method: req.method, path: req.path, body: req.method === "POST" ? req.body : undefined }); next(); });
 
 // ── GET /api/products ─────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -65,7 +67,13 @@ router.patch("/:id",
   async (req, res) => {
     const { id } = req.params;
     const allowed = ["name", "sku", "description", "reorder_point", "active",
-                     "warehouse_stock", "agent_stock", "units_sold"];
+                     "warehouse_stock", "agent_stock", "units_sold",
+                     "bonus_config", "available_states", "role",
+                     "can_be_cross_sell", "can_be_free_gift",
+                     "cross_sell_product_ids", "cross_sell_price_overrides",
+                     "cross_sell_state_restrictions",
+                     "free_gift_product_ids", "free_gift_state_restrictions",
+                     "form_custom_text", "package_description"];
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -123,10 +131,12 @@ router.post("/:id/pricings",
   async (req, res) => {
     const parsed = PricingSchema.safeParse(req.body);
     if (!parsed.success) {
+      logger.error("createPricing validation failed", { body: req.body, errors: parsed.error.flatten().fieldErrors });
       res.status(400).json({ error: parsed.error.flatten().fieldErrors });
       return;
     }
     const { currency, sellingPrice, unitCost, isPrimary } = parsed.data;
+    logger.info("createPricing", { productId: req.params.id, currency, sellingPrice, unitCost, isPrimary });
 
     // If setting as primary, clear other primaries first
     if (isPrimary) {
@@ -144,11 +154,16 @@ router.post("/:id/pricings",
         selling_price: sellingPrice,
         unit_cost: unitCost,
         is_primary: isPrimary
-      })
+      }, { onConflict: "product_id,currency" })
       .select()
       .single();
 
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (error) {
+      logger.error("createPricing db error", { error: error.message });
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    logger.info("createPricing saved", { id: data?.id });
     res.status(201).json(data);
   }
 );
@@ -191,6 +206,75 @@ router.post("/:id/packages",
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.status(201).json(data);
+  }
+);
+
+// ── PATCH /api/products/:id/packages/:pkgId ─────────────
+const PackageUpdateSchema = z.object({
+  name:         z.string().min(1).optional(),
+  description:  z.string().optional(),
+  quantity:     z.number().int().min(1).optional(),
+  price:        z.number().min(0).optional(),
+  currency:     z.enum(["NGN", "USD", "GBP"]).optional(),
+  displayOrder: z.number().int().optional(),
+  active:       z.boolean().optional()
+});
+
+router.patch("/:id/packages/:pkgId",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const parsed = PackageUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const updates: Record<string, unknown> = {};
+    if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+    if (parsed.data.description !== undefined) updates.description = parsed.data.description;
+    if (parsed.data.quantity !== undefined) updates.quantity = parsed.data.quantity;
+    if (parsed.data.price !== undefined) updates.price = parsed.data.price;
+    if (parsed.data.currency !== undefined) updates.currency = parsed.data.currency;
+    if (parsed.data.displayOrder !== undefined) updates.display_order = parsed.data.displayOrder;
+    if (parsed.data.active !== undefined) updates.active = parsed.data.active;
+
+    const { data, error } = await supabase
+      .from("product_packages")
+      .update(updates)
+      .eq("id", req.params.pkgId)
+      .eq("product_id", req.params.id)
+      .select()
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: "Package not found." }); return; }
+    res.json(data);
+  }
+);
+
+// ── DELETE /api/products/:id/packages/:pkgId ────────────
+router.delete("/:id/packages/:pkgId",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const { error } = await supabase
+      .from("product_packages")
+      .delete()
+      .eq("id", req.params.pkgId)
+      .eq("product_id", req.params.id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(204).send();
+  }
+);
+
+// ── DELETE /api/products/:id/pricings/:currency ─────────
+router.delete("/:id/pricings/:currency",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const { error } = await supabase
+      .from("product_pricings")
+      .delete()
+      .eq("product_id", req.params.id)
+      .eq("currency", (req.params.currency as string).toUpperCase());
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(204).send();
   }
 );
 

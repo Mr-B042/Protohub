@@ -27,7 +27,8 @@ const ExpenseSchema = z.object({
   description: z.string().optional(),
   amount:      z.number().min(0),
   currency:    z.enum(["NGN", "USD", "GBP"]).default("NGN"),
-  paidBy:      z.string().optional()
+  paidBy:      z.string().optional(),
+  productId:   z.string().optional()
 });
 
 router.post("/", async (req, res) => {
@@ -39,7 +40,7 @@ router.post("/", async (req, res) => {
   const d = parsed.data;
   const { data, error } = await supabase
     .from("expenses")
-    .insert({ id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy })
+    .insert({ id: d.id, org_id: req.user!.orgId, date: d.date, category: d.category, description: d.description, amount: d.amount, currency: d.currency, paid_by: d.paidBy, product_id: d.productId ?? null })
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(201).json(data);

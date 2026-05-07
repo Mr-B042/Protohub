@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -45,7 +46,7 @@ router.post("/",
 
 // ── PATCH /api/agents/:id ─────────────────────────────────
 router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
-  const allowed = ["name", "zone", "phone", "status"];
+  const allowed = ["name", "zone", "phone", "status", "stock_capacity"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -101,6 +102,23 @@ router.post("/:id/stock",
     const { productId, quantity } = parsed.data;
     const agentId = req.params.id;
 
+    // Capacity check: sum all current stock for this agent
+    const { data: agent } = await supabase
+      .from("agents").select("name, stock_capacity").eq("id", agentId).single();
+    const capacity = agent?.stock_capacity ?? 1000;
+
+    const { data: allStock } = await supabase
+      .from("agent_stock").select("quantity").eq("agent_id", agentId);
+    const currentTotal = (allStock ?? []).reduce((sum, row) => sum + (row.quantity ?? 0), 0);
+
+    if (currentTotal + quantity > capacity) {
+      const available = Math.max(0, capacity - currentTotal);
+      res.status(400).json({
+        error: `Cannot assign — ${agent?.name ?? "Agent"} capacity is ${currentTotal}/${capacity}. Free up ${quantity - available} units first or increase capacity.`
+      });
+      return;
+    }
+
     // Upsert agent stock
     const { data: existing } = await supabase
       .from("agent_stock")
@@ -130,7 +148,7 @@ router.post("/:id/stock",
 
       // Log stock movement
       await supabase.from("stock_movements").insert({
-        id:           `MOV-${Date.now()}`,
+        id:           `MOV-${randomUUID()}`,
         org_id:       req.user!.orgId,
         product_id:   productId,
         product_name: product.name,
@@ -145,6 +163,94 @@ router.post("/:id/stock",
     }
 
     res.json({ agentId, productId, newQty });
+  }
+);
+
+// ── POST /api/agents/:id/reconcile ───────────────────────
+// Reconcile agent stock (returned, defective, missing)
+const ReconcileSchema = z.object({
+  productId: z.string().uuid(),
+  returned:  z.number().int().min(0).default(0),
+  defective: z.number().int().min(0).default(0),
+  missing:   z.number().int().min(0).default(0),
+  notes:     z.string().optional()
+});
+
+router.post("/:id/reconcile",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const parsed = ReconcileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const { productId, returned, defective, missing, notes } = parsed.data;
+    const agentId = req.params.id;
+    const totalRemoved = returned + defective + missing;
+    if (totalRemoved === 0) {
+      res.status(400).json({ error: "Enter at least one quantity to reconcile." });
+      return;
+    }
+
+    // Fetch current agent stock
+    const { data: stock } = await supabase
+      .from("agent_stock")
+      .select("quantity, defective, missing")
+      .eq("agent_id", agentId)
+      .eq("product_id", productId)
+      .single();
+
+    if (!stock || stock.quantity < totalRemoved) {
+      res.status(400).json({ error: `Not enough agent stock. Available: ${stock?.quantity ?? 0}` });
+      return;
+    }
+
+    const nextQty = stock.quantity - totalRemoved;
+
+    // Update agent stock
+    await supabase.from("agent_stock").update({
+      quantity: nextQty,
+      defective: (stock.defective ?? 0) + defective,
+      missing: (stock.missing ?? 0) + missing
+    }).eq("agent_id", agentId).eq("product_id", productId);
+
+    // Return good stock to warehouse
+    if (returned > 0) {
+      const { data: product } = await supabase.from("products").select("warehouse_stock, agent_stock, name").eq("id", productId).single();
+      if (product) {
+        await supabase.from("products").update({
+          warehouse_stock: product.warehouse_stock + returned,
+          agent_stock: Math.max(0, product.agent_stock - returned)
+        }).eq("id", productId);
+
+        await supabase.from("stock_movements").insert({
+          id: `MOV-${randomUUID()}`, org_id: req.user!.orgId,
+          product_id: productId, product_name: product.name,
+          type: "Return", qty: returned,
+          balance_after: product.warehouse_stock + returned,
+          agent_id: agentId, by_name: req.user!.name, by_user_id: req.user!.id,
+          note: `${returned} unit${returned !== 1 ? "s" : ""} returned to warehouse${notes ? ` — ${notes}` : ""}`
+        });
+      }
+    }
+
+    // Log write-off if defective/missing
+    if (defective > 0 || missing > 0) {
+      const { data: product } = await supabase.from("products").select("name").eq("id", productId).single();
+      const parts: string[] = [];
+      if (defective > 0) parts.push(`${defective} defective`);
+      if (missing > 0) parts.push(`${missing} missing`);
+      await supabase.from("stock_movements").insert({
+        id: `MOV-${randomUUID()}`, org_id: req.user!.orgId,
+        product_id: productId, product_name: product?.name ?? productId,
+        type: "Correction", qty: -(defective + missing),
+        balance_after: nextQty, agent_id: agentId,
+        by_name: req.user!.name, by_user_id: req.user!.id,
+        note: `${parts.join(", ")} written off${notes ? ` — ${notes}` : ""}`
+      });
+    }
+
+    res.json({ agentId, productId, quantity: nextQty });
   }
 );
 

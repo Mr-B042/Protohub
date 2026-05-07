@@ -10,6 +10,7 @@ import {
   CreditCard,
   HandCoins,
   Headphones,
+  Phone,
   LayoutDashboard,
   Megaphone,
   MessageCircle,
@@ -45,10 +46,9 @@ export const navItems = [
   { label: "User Management", icon: Users },
   { label: "Round-Robin", icon: Repeat2 },
   { label: "Embed Form", icon: Code2 },
-  { label: "AI Agent", icon: Headphones },
-  { label: "AI Sandbox", icon: Bot },
   { label: "Notifications", icon: Bell },
-  { label: "Call Rep Console", icon: Headphones },
+  { label: "Call Rep Console", icon: Phone },
+  { label: "Sales Rep Workspace", icon: Headphones },
   { label: "Settings", icon: Settings }
 ];
 

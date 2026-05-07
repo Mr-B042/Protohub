@@ -56,12 +56,23 @@ router.post("/generate", async (req, res) => {
   const entries = (reps ?? []).map((rep) => {
     const repOrders  = (orders ?? []).filter((o) => o.assigned_rep_id === rep.id);
     const delivered  = repOrders.length;
-    const revenue    = repOrders.reduce((sum, o) => sum + Number(o.amount), 0);
     const structure  = (structures ?? []).find((s) => s.user_id === rep.id);
-    const fixed      = structure?.fixed_salary ?? 0;
-    const commPct    = structure?.commission_pct ?? 0;
-    const commission = Math.round((revenue * commPct) / 100);
-    return { userId: rep.id, name: rep.name, delivered, fixedSalary: fixed, commission, total: fixed + commission };
+    const type       = structure?.type ?? "Per Delivered Order";
+    const fixed      = type === "Per Delivered Order" ? 0 : Number(structure?.fixed_salary ?? 0);
+    const rate       = Number(structure?.commission_pct ?? 0); // stores flat rate per order
+    const commission = (type === "Per Delivered Order" || type === "Hybrid") ? rate * delivered : 0;
+
+    // Performance tier bonus: highest matching tier
+    let tierBonus = 0;
+    if (type === "Performance Bonus" && Array.isArray(structure?.bonus_tiers)) {
+      const matched = (structure.bonus_tiers as { threshold: number; amount: number }[])
+        .filter((t) => delivered >= t.threshold)
+        .sort((a, b) => b.threshold - a.threshold);
+      tierBonus = matched[0]?.amount ?? 0;
+    }
+
+    const total = Math.max(0, fixed + commission + tierBonus);
+    return { userId: rep.id, name: rep.name, delivered, fixedSalary: fixed, commission, autoBonus: tierBonus, total };
   });
 
   const { data: run, error } = await supabase
