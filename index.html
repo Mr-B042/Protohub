@@ -19,16 +19,40 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Register service worker for push notifications
+      // Register service worker for push notifications + auto-update
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker.register("/sw.js")
             .then((reg) => {
               console.log("[SW] registered, scope:", reg.scope);
-              // Check for updates every 60 minutes
-              setInterval(() => reg.update(), 60 * 60 * 1000);
+
+              // Detect new SW: when one's installed and waiting, force a reload
+              // so users always get the latest JS bundle without manual cache-clear.
+              reg.addEventListener("updatefound", () => {
+                const newWorker = reg.installing;
+                if (!newWorker) return;
+                newWorker.addEventListener("statechange", () => {
+                  if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                    console.log("[SW] new version installed — reloading");
+                    window.location.reload();
+                  }
+                });
+              });
+
+              // Check for updates every 5 minutes (not 60) so deploys propagate fast
+              setInterval(() => reg.update(), 5 * 60 * 1000);
+              // Also check on focus (tab/app becomes active)
+              window.addEventListener("focus", () => reg.update());
             })
             .catch((err) => console.warn("[SW] registration failed:", err));
+
+          // Reload when SW takes control (covers the "first install" case)
+          let refreshing = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (refreshing) return;
+            refreshing = true;
+            window.location.reload();
+          });
         });
       }
     </script>

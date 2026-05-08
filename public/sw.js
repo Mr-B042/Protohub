@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v3";
+const CACHE_NAME = "protohub-v4-auto-update";
 
 // ── Install ──────────────────────────────────────────────
 self.addEventListener("install", (event) => {
