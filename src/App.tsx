@@ -4458,6 +4458,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const load = async () => {
       setDataLoading(true);
       setDataError(null);
+      // Owner-only / admin-only endpoints — backend enforces requireRole on
+      // sales-teams, pay-structures, payroll, and penalties. Skipping them for
+      // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
+      // Reps still get the rep-relevant endpoints (orders, carts, products...).
+      const role = auth.getUser()?.role;
+      const isAdmin = role === "Owner" || role === "Admin";
+      const skipped = Symbol("skipped");
+      type Skipped = typeof skipped;
+      const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
+        isAdmin ? p() : Promise.resolve(skipped as Skipped);
       try {
         const [
           apiProducts,
@@ -4476,7 +4486,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiPenalties
         ] = await Promise.allSettled([
           productsApi.list(),
-          ordersApi.list({ limit: "2000" }),
+          // 5000 covers ~1 year of orders for most orgs. The "Showing N of M"
+          // banner still surfaces if the org actually has more, so dashboard
+          // KPIs aren't silently truncated. For very large orgs, the right
+          // long-term fix is server-side paginated dashboard aggregation —
+          // tracked in the master scorecard.
+          ordersApi.list({ limit: "5000" }),
           agentsApi.list(),
           stockApi.movements({ limit: "500" }),
           expensesApi.list(),
@@ -4485,10 +4500,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           stockApi.countSessions(),
           teamApi.list(),
           cartsApi.list(),
-          salesTeamsApi.list(),
-          payStructuresApi.list(),
-          payrollApi.list(),
-          penaltiesApi.list()
+          ifAdmin(() => salesTeamsApi.list()),
+          ifAdmin(() => payStructuresApi.list()),
+          ifAdmin(() => payrollApi.list()),
+          ifAdmin(() => penaltiesApi.list())
         ]);
 
         if (cancelled) return;
@@ -7914,6 +7929,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const nextQuantity = currentQuantity - totalRemoved;
 
+    // Snapshots so we can roll back the agent_stock + warehouse + audit movements
+    // if the server rejects the reconcile. Pre-fix this handler made ZERO API
+    // calls — defective/missing/returned counts vanished on reload, which is real
+    // money walking out the door.
+    const productSnapshot = product;
+    const agentStockSnapshot = currentStock;
+    const synthesizedMovementIds: string[] = [];
+
     // Accumulate defective/missing tallies — do NOT reset to 0
     setAgentStock((value) =>
       value.map((stock) =>
@@ -7945,8 +7968,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       // Log return and write-offs as separate movements so the history is readable
       if (returned > 0) {
+        const movId = makeMovementId();
+        synthesizedMovementIds.push(movId);
         newMovements.push({
-          id: makeMovementId(),
+          id: movId,
           date: new Date().toISOString(),
           productId: product.id,
           productName: product.name,
@@ -7963,8 +7988,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const parts: string[] = [];
         if (defective > 0) parts.push(`${defective} defective`);
         if (missing > 0) parts.push(`${missing} missing`);
+        const movId = makeMovementId();
+        synthesizedMovementIds.push(movId);
         newMovements.push({
-          id: makeMovementId(),
+          id: movId,
           date: new Date().toISOString(),
           productId: product.id,
           productName: product.name,
@@ -7984,6 +8011,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     setModal(null);
     showToast(`${selectedAgent.name} stock reconciled.`);
+
+    // Persist server-side. The backend route updates agent_stock, books the
+    // warehouse return, and inserts its own stock_movement audit rows — our
+    // local synthesized movements are just optimistic placeholders that the
+    // next stockApi.movements load will reconcile.
+    agentsApi.reconcile(selectedAgent.id, {
+      productId: reconcileProductId,
+      returned,
+      defective,
+      missing,
+      notes: reconcileNotes.trim() || undefined
+    }).catch((err: any) => {
+      // Restore agent_stock row, product warehouse counts, and remove the
+      // synthesized audit movements.
+      if (agentStockSnapshot) {
+        setAgentStock((value) =>
+          value.map((s) =>
+            s.agentId === selectedAgent.id && s.productId === reconcileProductId ? agentStockSnapshot : s
+          )
+        );
+      }
+      if (productSnapshot && returned > 0) {
+        setProducts((value) => value.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
+      }
+      if (synthesizedMovementIds.length > 0) {
+        setStockMovements((value) => value.filter((m) => !synthesizedMovementIds.includes(m.id)));
+      }
+      showToast(`Reconcile failed for ${selectedAgent.name}: ${err?.message ?? "please retry"}.`);
+    });
 
     // Audit notification — surface the breakdown so anyone watching the
     // notification feed can see write-offs without digging into stock movements.
@@ -10385,8 +10441,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <label className="field-full">
                       <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                         <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>+234</span>
-                        <input style={{ flex: 1 }} value={orderFormPhone} onChange={(event) => setOrderFormPhone(event.target.value)} placeholder="Your Phone Number *" inputMode="tel" />
+                        <input
+                          style={{ flex: 1 }}
+                          value={orderFormPhone}
+                          onChange={(event) => setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""))}
+                          placeholder="Your Phone Number *"
+                          inputMode="tel"
+                          pattern="[0-9\s\-]{7,15}"
+                          autoComplete="tel-national"
+                          aria-label="Phone number — digits only, 7 to 15 characters"
+                        />
                       </div>
+                      {orderFormPhone.trim() && orderFormPhone.replace(/\D/g, "").length < 7 && (
+                        <span style={{ fontSize: 11, color: "#b91c1c", marginTop: 4, display: "block" }}>Please enter at least 7 digits.</span>
+                      )}
                     </label>
                     {showWhatsappField && (
                       <label className="field-full">
@@ -11533,6 +11601,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {orderProductIds.size === 0 ? "All Products" : orderProductIds.size === 1 ? products.find((p) => orderProductIds.has(p.id))?.name ?? "1 product" : `${orderProductIds.size} products`}
                     </button>
                     {showOrderProductFilter && (
+                      <>
+                        {/* Click-outside backdrop — same pattern as renderProductFilter. */}
+                        <div className="fixed inset-0 z-20" onClick={() => setShowOrderProductFilter(false)} />
                       <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[200px] max-h-64 overflow-y-auto">
                         <button
                           className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors mb-1 ${orderProductIds.size === 0 ? "bg-blue-50 text-[#1F8FE0]" : "text-gray-700 hover:bg-gray-50"}`}
@@ -11560,6 +11631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           })}
                         </div>
                       </div>
+                      </>
                     )}
                   </div>
                 </div>
