@@ -1223,7 +1223,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartStatus, setCartStatus] = useState<CartStatus>(() =>
     readPref<CartStatus>("protohub.carts.status", "All statuses", (raw) => raw as CartStatus)
   );
-  const [scheduleRange, setScheduleRange] = useState<ScheduleRange>("Today");
+  const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
+    readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
+  );
   const [scheduleCustomDate, setScheduleCustomDate] = useState("");
   const [scheduleWeekStart, setScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
@@ -1539,7 +1541,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.carts.productIds", JSON.stringify(Array.from(cartProductIds))); }, [cartProductIds]);
   // Scheduled Deliveries
   const [schedulePage, setSchedulePage] = useState(1);
-  const [scheduleProductIds, setScheduleProductIds] = useState<Set<string>>(new Set());
+  const [scheduleProductIds, setScheduleProductIds] = useState<Set<string>>(() =>
+    readPref<Set<string>>("protohub.schedule.productIds", new Set<string>(), (raw) => {
+      try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
+    })
+  );
+  useEffect(() => { writePref("protohub.schedule.range", scheduleRange); }, [scheduleRange]);
+  useEffect(() => { writePref("protohub.schedule.productIds", JSON.stringify(Array.from(scheduleProductIds))); }, [scheduleProductIds]);
   const [showScheduleProductFilter, setShowScheduleProductFilter] = useState(false);
   // Deliveries product filter
   const [deliveriesProductIds, setDeliveriesProductIds] = useState<Set<string>>(new Set());
@@ -6794,6 +6802,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const scheduledDate = scheduleDateForRange(range);
+    const orderSnapshot = order;
     setTrackedOrders((value) =>
       value.map((o) =>
         o.id === orderId
@@ -6811,10 +6820,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     );
     showToast(`${orderId} scheduled for ${displayDateFromKey(scheduledDate)}.`);
-    // Persist to backend
+    // Persist to backend with rollback so a network/RLS reject doesn't strand
+    // the schedule cell in the wrong date until the next reload.
     const updates: Record<string, unknown> = { scheduled_date: scheduledDate };
     if (order && (order.status === "New" || !order.status)) updates.status = "Confirmed";
-    ordersApi.update(orderId, updates).catch(() => showToast(`Failed to save schedule for ${orderId}. Please retry.`));
+    ordersApi.update(orderId, updates).catch((err: any) => {
+      if (orderSnapshot) setTrackedOrders((value) => value.map((o) => o.id === orderId ? orderSnapshot : o));
+      showToast(`Failed to save schedule for ${orderId}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
 
