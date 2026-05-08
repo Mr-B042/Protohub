@@ -445,17 +445,50 @@ router.patch("/:id", async (req, res) => {
     return;
   }
 
-  const allowed = ["customer","phone","whatsapp","email","address","city","state",
-                   "response","notes","assigned_rep_id","agent_id","call_outcome",
-                   "scheduled_date","amount","quantity","product_id","package_id",
-                   "product_name","package_name","source","location","currency",
-                   "logistics_cost","amount_remitted","remittance_status",
-                   "upsell_from_qty","upsell_to_qty","upsell_note",
-                   "manual_bonus_override","manual_bonus_reason","bonus_manually_adjusted",
-                   "cross_sell_lines","free_gift_lines"];
+  // DB column → list of accepted input keys (snake + common camel aliases).
+  // The frontend's snake_case-only call sites still work; new camelCase
+  // payloads (which are natural after the snake→camel normalize boundary in
+  // api.ts) no longer silently no-op.
+  const allowed: Record<string, string[]> = {
+    customer:                  ["customer"],
+    phone:                     ["phone"],
+    whatsapp:                  ["whatsapp"],
+    email:                     ["email"],
+    address:                   ["address"],
+    city:                      ["city"],
+    state:                     ["state"],
+    response:                  ["response"],
+    notes:                     ["notes"],
+    assigned_rep_id:           ["assigned_rep_id", "assignedRepId"],
+    agent_id:                  ["agent_id", "agentId"],
+    call_outcome:              ["call_outcome", "callOutcome"],
+    scheduled_date:            ["scheduled_date", "scheduledDate"],
+    amount:                    ["amount"],
+    quantity:                  ["quantity"],
+    product_id:                ["product_id", "productId"],
+    package_id:                ["package_id", "packageId"],
+    product_name:              ["product_name", "productName"],
+    package_name:              ["package_name", "packageName"],
+    source:                    ["source"],
+    location:                  ["location"],
+    currency:                  ["currency"],
+    logistics_cost:            ["logistics_cost", "logisticsCost"],
+    amount_remitted:           ["amount_remitted", "amountRemitted"],
+    remittance_status:         ["remittance_status", "remittanceStatus"],
+    upsell_from_qty:           ["upsell_from_qty", "upsellFromQty"],
+    upsell_to_qty:             ["upsell_to_qty", "upsellToQty"],
+    upsell_note:               ["upsell_note", "upsellNote"],
+    manual_bonus_override:     ["manual_bonus_override", "manualBonusOverride"],
+    manual_bonus_reason:       ["manual_bonus_reason", "manualBonusReason"],
+    bonus_manually_adjusted:   ["bonus_manually_adjusted", "bonusManuallyAdjusted"],
+    cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
+    free_gift_lines:           ["free_gift_lines", "freeGiftLines"]
+  };
   const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  for (const [dbKey, inputKeys] of Object.entries(allowed)) {
+    for (const inKey of inputKeys) {
+      if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
+    }
   }
 
   // Validate cross-org references
