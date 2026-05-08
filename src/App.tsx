@@ -1163,11 +1163,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const role = (u.role as EditableUserRole | undefined) ?? "Viewer";
     return defaultLandingByRole[role] ?? "Dashboard";
   });
-  const [period, setPeriod] = useState<Period>("Today");
+  // Dashboard UI prefs are persisted to localStorage so each user keeps their
+  // last view across reloads. Pure UI state (no business data) — safe to keep
+  // local. Keys are namespaced under protohub.dashboard.* so the cache-version
+  // purger doesn't blow them away.
+  const readPref = <T,>(key: string, fallback: T, parse: (raw: string) => T | null): T => {
+    if (typeof window === "undefined") return fallback;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw == null) return fallback;
+      const parsed = parse(raw);
+      return parsed ?? fallback;
+    } catch { return fallback; }
+  };
+  const writePref = (key: string, value: string) => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem(key, value); } catch { /* private mode */ }
+  };
+
+  const [period, setPeriod] = useState<Period>(() =>
+    readPref<Period>("protohub.dashboard.period", "Today", (raw) => raw as Period)
+  );
   const [ordersPeriod, setOrdersPeriod] = useState<Period>("This Month");
-  const [conversion, setConversion] = useState(0);
+  const [conversion, setConversion] = useState(() =>
+    readPref<number>("protohub.dashboard.conversion", 0, (raw) => {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    })
+  );
   const [ordersConversion, setOrdersConversion] = useState(0);
-  const [currency, setCurrency] = useState<CurrencyCode>("NGN");
+  const [currency, setCurrency] = useState<CurrencyCode>(() =>
+    readPref<CurrencyCode>("protohub.dashboard.currency", "NGN", (raw) =>
+      raw === "NGN" || raw === "USD" || raw === "GBP" ? raw : null
+    )
+  );
   const [showDateRange, setShowDateRange] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>({ start: "", end: "" });
   const [showOrdersDateRange, setShowOrdersDateRange] = useState(false);
@@ -1428,10 +1457,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [dashboardNavSpan, setDashboardNavSpan] = useState<NavSpan>("1W");
   const [dashboardProductIds, setDashboardProductIds] = useState<Set<string>>(new Set());
   // Revenue Performance chart filters
-  const [revPerfMode, setRevPerfMode] = useState<"Cumulative" | "Daily">("Cumulative");
-  const [revPerfGranularity, setRevPerfGranularity] = useState<"Day" | "Week" | "Month">("Day");
+  const [revPerfMode, setRevPerfMode] = useState<"Cumulative" | "Daily">(() =>
+    readPref<"Cumulative" | "Daily">("protohub.dashboard.revPerfMode", "Cumulative", (raw) =>
+      raw === "Cumulative" || raw === "Daily" ? raw : null
+    )
+  );
+  const [revPerfGranularity, setRevPerfGranularity] = useState<"Day" | "Week" | "Month">(() =>
+    readPref<"Day" | "Week" | "Month">("protohub.dashboard.revPerfGranularity", "Day", (raw) =>
+      raw === "Day" || raw === "Week" || raw === "Month" ? raw : null
+    )
+  );
   const [revPerfStatuses, setRevPerfStatuses] = useState<Set<string>>(new Set(["Delivered"]));
-  const [revPerfShowPrevious, setRevPerfShowPrevious] = useState(true);
+  const [revPerfShowPrevious, setRevPerfShowPrevious] = useState(() =>
+    readPref<boolean>("protohub.dashboard.revPerfShowPrevious", true, (raw) =>
+      raw === "true" ? true : raw === "false" ? false : null
+    )
+  );
+
+  // Mirror dashboard prefs to localStorage on change.
+  useEffect(() => { writePref("protohub.dashboard.period", period); }, [period]);
+  useEffect(() => { writePref("protohub.dashboard.conversion", String(conversion)); }, [conversion]);
+  useEffect(() => { writePref("protohub.dashboard.currency", currency); }, [currency]);
+  useEffect(() => { writePref("protohub.dashboard.revPerfMode", revPerfMode); }, [revPerfMode]);
+  useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
+  useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   const [revPerfStatusOpen, setRevPerfStatusOpen] = useState(false);
   const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
   const cartSyncTimerRef = useRef<number | null>(null);
@@ -4372,10 +4421,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setDataError("Unable to reach the server. Please check your connection and refresh.");
         }
 
-        if (apiProducts.status === "fulfilled" && apiProducts.value?.length) {
+        // Accept empty arrays — server-side bulk delete should clear local
+        // cache, not be silently ignored. Pre-fix logic kept stale data after
+        // every entity was deleted on another device.
+        if (apiProducts.status === "fulfilled" && Array.isArray(apiProducts.value)) {
           setProducts(apiProducts.value as any);
         }
-        if (apiOrders.status === "fulfilled" && apiOrders.value?.data?.length) {
+        if (apiOrders.status === "fulfilled" && Array.isArray(apiOrders.value?.data)) {
           setTrackedOrders(apiOrders.value.data as any);
           // Seed the poll timestamp so the 30s poller only fetches orders newer than this batch
           const first = apiOrders.value.data[0];
@@ -4389,7 +4441,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             setOrdersCappedWarning(null);
           }
         }
-        if (apiAgents.status === "fulfilled" && apiAgents.value?.length) {
+        if (apiAgents.status === "fulfilled" && Array.isArray(apiAgents.value)) {
           // Server stores agents.status (enum: Active / Inactive / …) but the
           // frontend type uses `active: boolean`. Normalise here so every
           // place that filters by `agent.active` keeps working. Also surface
@@ -4407,7 +4459,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           );
           if (flat.length) setAgentStock(flat as any);
         }
-        if (apiMovements.status === "fulfilled" && apiMovements.value?.data?.length) {
+        if (apiMovements.status === "fulfilled" && Array.isArray(apiMovements.value?.data)) {
           // Backend stores snake_case columns including agent_id (UUID, not name),
           // order_id, by_user_id, by_name, waybill_id, from_location, to_location.
           // Frontend StockMovement type expects friendlier camelCase names.
@@ -4434,7 +4486,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             toLocation:   m.toLocation   ?? m.to_location   ?? undefined
           })) as any);
         }
-        if (apiExpenses.status === "fulfilled" && apiExpenses.value?.length) {
+        if (apiExpenses.status === "fulfilled" && Array.isArray(apiExpenses.value)) {
           // Backend stores "category" but frontend ExpenseRecord uses "type" — normalise at boundary
           setExpenses((apiExpenses.value as any[]).map((e: any) => ({
             ...e,
@@ -4442,7 +4494,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             productName: e.productName ?? e.productName ?? ""
           })) as any);
         }
-        if (apiWaybills.status === "fulfilled" && apiWaybills.value?.length) {
+        if (apiWaybills.status === "fulfilled" && Array.isArray(apiWaybills.value)) {
           // Backend columns (snake → camel) don't 1:1 match the frontend
           // WaybillRecord type. Remap so the form preserves all the fields
           // (sending/receiving state, partner, note, sent/received dates).
@@ -4465,13 +4517,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             createdAt:        w.createdAt ?? w.created_at ?? new Date().toISOString()
           })) as any);
         }
-        if (apiNotifications.status === "fulfilled" && apiNotifications.value?.length) {
+        if (apiNotifications.status === "fulfilled" && Array.isArray(apiNotifications.value)) {
           setSystemNotifications(apiNotifications.value as any);
         }
-        if (apiStockCounts.status === "fulfilled" && apiStockCounts.value?.length) {
+        if (apiStockCounts.status === "fulfilled" && Array.isArray(apiStockCounts.value)) {
           setStockCounts(apiStockCounts.value as any);
         }
-        if (apiTeam.status === "fulfilled" && apiTeam.value?.length) {
+        if (apiTeam.status === "fulfilled" && Array.isArray(apiTeam.value)) {
           setUsers(apiTeam.value.map((u: any) => ({
             id: u.id,
             name: u.name,
