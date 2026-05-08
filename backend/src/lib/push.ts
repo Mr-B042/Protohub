@@ -56,7 +56,11 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
             keys: { p256dh: sub.p256dh, auth: sub.auth }
           },
           message,
-          { TTL: 60 * 60 } // 1 hour
+          {
+            TTL: 60 * 60,         // 1 hour — drop if undeliverable that long
+            urgency: "high",      // bypass FCM coalescing / battery delays
+            topic: "protohub-evt" // collapse repeated alerts for same device
+          }
         );
       } catch (err: any) {
         // 410 Gone or 404 = subscription expired, remove it
