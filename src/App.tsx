@@ -5400,8 +5400,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // products and the user still needs to filter them.
     const sorted = [...products].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
     return (
-      <div className="relative" onMouseLeave={() => setShow(false)}>
-        <button onClick={() => setShow(!show)} className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
+      <div className="relative w-full sm:w-auto" onMouseLeave={() => setShow(false)}>
+        <button onClick={() => setShow(!show)} className={`!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
           <Package className="w-4 h-4" />
           {ids.size === 0 ? "All Products" : ids.size === 1 ? products.find(p => ids.has(p.id))?.name ?? "1 product" : `${ids.size} products`}
           {ids.size > 0 && (
@@ -12175,8 +12175,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>
                   <p className="text-sm font-medium text-gray-500">Track captured carts, monitor rep follow-up, and reassign leads when needed.</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportCartsCsv}>
+                {/* Desktop-only action buttons — on mobile these appear below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportCartsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
                 </div>
@@ -12186,24 +12187,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={7} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-col gap-2 mb-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button key={item} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCartsPeriodChange(item)}>{item}</button>
+                      <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCartsPeriodChange(item)}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCartsDateRange(v => !v)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCartsDateRange(v => !v)}>
                       <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showCartsDateRange && renderDateRangeCalendar("carts-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(cartProductIds, setCartProductIds, showCartProductFilter, setShowCartProductFilter)}
+                  {/* Mobile-only: Export CSV stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportCartsCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
               </div>
