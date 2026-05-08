@@ -17969,6 +17969,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
                 <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates.</p>
+                {/* Critical warning when running in browser tab — push won't fire when site is closed */}
+                {!isInstalled && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 text-sm">
+                      <p className="font-bold text-amber-900 m-0 mb-1">Install the app for background notifications</p>
+                      <p className="text-amber-800 m-0 leading-relaxed">
+                        You're running in a browser tab. Push notifications only arrive when this site is <strong>open in a tab</strong>. To get alerts when the app is closed, install it to your home screen first.
+                      </p>
+                      <p className="text-xs text-amber-700 mt-2 m-0">
+                        <strong>iPhone (Safari):</strong> Share button → Add to Home Screen.{" "}
+                        <strong>Android (Chrome):</strong> menu (⋮) → Install app.{" "}
+                        Then open from the home-screen icon — not the browser.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
                   <div className="flex items-start gap-3">
                     <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushSubscribed ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-600"}`}>
