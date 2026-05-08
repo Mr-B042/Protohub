@@ -12772,7 +12772,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
                         <div className="flex items-center gap-1">
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => { setEditTeamId(team.id); setEditTeamName(team.name); setEditTeamLeadId(team.leadId ?? ""); setModal("editTeam"); }}><Pencil className="w-4 h-4" /></button>
-                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => { if (confirm(`Delete team "${team.name}"? This cannot be undone.`)) { salesTeamsApi.delete(team.id).catch(() => showToast("Failed to delete team on server.")); setExtraTeams((prev) => prev.filter((t) => t.id !== team.id)); showToast(`Team "${team.name}" deleted.`); } }}><Trash2 className="w-4 h-4" /></button>
+                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => {
+                            if (!confirm(`Delete team "${team.name}"? This cannot be undone.`)) return;
+                            const teamSnapshot = team;
+                            setExtraTeams((prev) => prev.filter((t) => t.id !== team.id));
+                            showToast(`Team "${team.name}" deleted.`);
+                            salesTeamsApi.delete(team.id).catch((err: any) => {
+                              setExtraTeams((prev) => [...prev, teamSnapshot]);
+                              showToast(`Failed to delete ${teamSnapshot.name}: ${err?.message ?? "please retry"}.`);
+                            });
+                          }}><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
