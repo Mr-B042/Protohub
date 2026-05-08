@@ -17931,6 +17931,104 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm font-medium text-gray-500">Manage your account settings and preferences</p>
               </header>
 
+              <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
+                <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushSubscribed ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-600"}`}>
+                      {pushSubscribed ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                    </span>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">Push Notifications</h3>
+                      <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders</p>
+                      <p className="text-xs text-gray-400 mb-3">
+                        Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
+                        {" · "}Status: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Subscribed" : "Not subscribed"}</span>
+                      </p>
+                      {pushPermission === "denied" ? (
+                        <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                      ) : pushSubscribed ? (
+                        <button
+                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
+                          disabled={pushLoading}
+                          onClick={async () => {
+                            setPushLoading(true);
+                            try {
+                              await unsubscribeFromPush();
+                              setPushSubscribed(false);
+                              showToast("Push notifications disabled.");
+                            } catch (e: any) {
+                              showToast(e.message || "Failed to unsubscribe.");
+                            } finally {
+                              setPushLoading(false);
+                            }
+                          }}
+                        >
+                          {pushLoading ? "Processing…" : "Disable Notifications"}
+                        </button>
+                      ) : (
+                        <button
+                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          disabled={pushLoading}
+                          onClick={async () => {
+                            setPushLoading(true);
+                            try {
+                              await subscribeToPush();
+                              setPushSubscribed(true);
+                              setPushPermission(getPermissionState());
+                              showToast("Push notifications enabled!");
+                            } catch (e: any) {
+                              setPushPermission(getPermissionState());
+                              showToast(e.message || "Failed to enable notifications.");
+                            } finally {
+                              setPushLoading(false);
+                            }
+                          }}
+                        >
+                          {pushLoading ? "Processing…" : "Enable Notifications"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <hr className="border-gray-100" />
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <button
+                        className="text-sm text-[#1F8FE0] font-medium hover:underline"
+                        onClick={async () => {
+                          if ("serviceWorker" in navigator) {
+                            const reg = await navigator.serviceWorker.getRegistration();
+                            if (reg) { await reg.update(); showToast("Service worker updated."); }
+                            else { showToast("No service worker registered."); }
+                          }
+                        }}
+                      >Update Service Worker</button>
+                      <button
+                        className="text-sm text-[#1F8FE0] font-medium hover:underline disabled:opacity-50"
+                        disabled={pushLoading}
+                        onClick={async () => {
+                          setPushLoading(true);
+                          try {
+                            await unsubscribeFromPush();
+                            await subscribeToPush();
+                            setPushSubscribed(true);
+                            setPushPermission(getPermissionState());
+                            showToast("Re-subscribed successfully!");
+                          } catch (e: any) {
+                            setPushPermission(getPermissionState());
+                            showToast(e.message || "Re-subscribe failed.");
+                          } finally {
+                            setPushLoading(false);
+                          }
+                        }}
+                      >Force Re-subscribe</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               {(currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Timezone</h2>
@@ -18269,105 +18367,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </p>
                 </div>
               </section>
-
-              <section className="space-y-3">
-                <h2 className="text-base font-bold text-gray-800">Progressive Web App</h2>
-                <p className="text-sm text-gray-500">Install Protohub as an app and manage notifications</p>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                  <div className="flex items-start gap-3">
-                    <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushSubscribed ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-600"}`}>
-                      {pushSubscribed ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-                    </span>
-                    <div className="flex-1">
-                      <h3 className="text-sm font-bold text-gray-900 mb-1">Push Notifications</h3>
-                      <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders</p>
-                      <p className="text-xs text-gray-400 mb-3">
-                        Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
-                        {" · "}Status: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Subscribed" : "Not subscribed"}</span>
-                      </p>
-                      {pushPermission === "denied" ? (
-                        <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
-                      ) : pushSubscribed ? (
-                        <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
-                          disabled={pushLoading}
-                          onClick={async () => {
-                            setPushLoading(true);
-                            try {
-                              await unsubscribeFromPush();
-                              setPushSubscribed(false);
-                              showToast("Push notifications disabled.");
-                            } catch (e: any) {
-                              showToast(e.message || "Failed to unsubscribe.");
-                            } finally {
-                              setPushLoading(false);
-                            }
-                          }}
-                        >
-                          {pushLoading ? "Processing…" : "Disable Notifications"}
-                        </button>
-                      ) : (
-                        <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          disabled={pushLoading}
-                          onClick={async () => {
-                            setPushLoading(true);
-                            try {
-                              await subscribeToPush();
-                              setPushSubscribed(true);
-                              setPushPermission(getPermissionState());
-                              showToast("Push notifications enabled!");
-                            } catch (e: any) {
-                              setPushPermission(getPermissionState());
-                              showToast(e.message || "Failed to enable notifications.");
-                            } finally {
-                              setPushLoading(false);
-                            }
-                          }}
-                        >
-                          {pushLoading ? "Processing…" : "Enable Notifications"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <hr className="border-gray-100" />
-                  <div>
-                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
-                    <div className="flex flex-wrap items-center gap-4">
-                      <button
-                        className="text-sm text-[#1F8FE0] font-medium hover:underline"
-                        onClick={async () => {
-                          if ("serviceWorker" in navigator) {
-                            const reg = await navigator.serviceWorker.getRegistration();
-                            if (reg) { await reg.update(); showToast("Service worker updated."); }
-                            else { showToast("No service worker registered."); }
-                          }
-                        }}
-                      >Update Service Worker</button>
-                      <button
-                        className="text-sm text-[#1F8FE0] font-medium hover:underline disabled:opacity-50"
-                        disabled={pushLoading}
-                        onClick={async () => {
-                          setPushLoading(true);
-                          try {
-                            await unsubscribeFromPush();
-                            await subscribeToPush();
-                            setPushSubscribed(true);
-                            setPushPermission(getPermissionState());
-                            showToast("Re-subscribed successfully!");
-                          } catch (e: any) {
-                            setPushPermission(getPermissionState());
-                            showToast(e.message || "Re-subscribe failed.");
-                          } finally {
-                            setPushLoading(false);
-                          }
-                        }}
-                      >Force Re-subscribe</button>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
               {(currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Abandoned cart notifications</h2>
