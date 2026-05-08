@@ -8,6 +8,9 @@ const VAPID_EMAIL = process.env.VAPID_EMAIL ?? "mailto:admin@protohub.app";
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log(`[push] VAPID configured — pubKey length=${VAPID_PUBLIC_KEY.length}, privKey length=${VAPID_PRIVATE_KEY.length}, email=${VAPID_EMAIL}`);
+} else {
+  console.warn(`[push] VAPID NOT configured — VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY ? `(len ${VAPID_PUBLIC_KEY.length})` : "EMPTY"}, VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY ? `(len ${VAPID_PRIVATE_KEY.length})` : "EMPTY"}, VAPID_EMAIL=${VAPID_EMAIL}`);
 }
 
 export function getVapidPublicKey(): string {
