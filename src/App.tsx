@@ -7889,6 +7889,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const _uaId = selectedAgent.id;
     const capacityVal = typeof agentStockCapacity === "number" && agentStockCapacity > 0 ? agentStockCapacity : 1000;
+    const agentSnapshot = selectedAgent;
     setAgents((value) =>
       value.map((agent) =>
         agent.id === selectedAgent.id
@@ -7898,7 +7899,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setModal(null);
     showToast(`${agentName.trim()} updated.`);
-    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive", stock_capacity: capacityVal }).catch(() => {});
+    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive", stock_capacity: capacityVal }).catch((err: any) => {
+      setAgents((value) => value.map((a) => a.id === _uaId ? agentSnapshot : a));
+      showToast(`Failed to update ${agentSnapshot.name}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const deleteSelectedAgent = () => {
