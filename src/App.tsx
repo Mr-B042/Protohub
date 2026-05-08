@@ -2006,6 +2006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [createOrderProductId, setCreateOrderProductId] = useState("");
   const [createOrderPackageId, setCreateOrderPackageId] = useState("");
   const [createOrderQuantity, setCreateOrderQuantity] = useState("1");
+  const [createOrderAmount, setCreateOrderAmount] = useState("");
   const [createOrderSource, setCreateOrderSource] = useState<Exclude<OrderSource, "All Sources">>("Website");
   const [createOrderRepId, setCreateOrderRepId] = useState("auto");
   const [createOrderContext, setCreateOrderContext] = useState<CreateOrderContext>("admin");
@@ -6360,7 +6361,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       currency: modal === "addPricing" ? pricingCurrency : selectedPricingCurrency,
       sellingPrice: Math.max(0, Number(pricingSellingPrice) || 0),
       unitCost: Math.max(0, Number(pricingCost) || 0),
-      primary: false
+      primary: modal === "editPricing"
+        ? (selectedProduct.pricings.find((p) => p.currency === selectedPricingCurrency)?.primary ?? false)
+        : false
     };
 
     if (modal === "addPricing" && selectedProduct.pricings.some((item) => item.currency === nextPricing.currency)) {
@@ -7127,6 +7130,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setCreateOrderProductId(order.productId ?? "");
       setCreateOrderPackageId(order.packageId ?? "");
       setCreateOrderQuantity(String(quantityForOrder(order)));
+      setCreateOrderAmount(String(order.amount ?? ""));
       setCreateOrderSource(order.source ?? orderSourceFromUtm(order.utmSource));
       setCreateOrderRepId(order.assignedRepId ?? "auto");
     }
@@ -7187,6 +7191,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreateOrderProductId(selectedOrder.productId ?? "");
     setCreateOrderPackageId(selectedOrder.packageId ?? "");
     setCreateOrderQuantity(String(quantityForOrder(selectedOrder)));
+    setCreateOrderAmount(String(selectedOrder.amount ?? ""));
     setCreateOrderSource(selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource));
     setCreateOrderRepId(selectedOrder.assignedRepId ?? "auto");
     setCreateOrderAgentId(selectedOrder.agentId ?? "");
@@ -7207,7 +7212,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const packageRecord = product.packages.find((item) => item.id === createOrderPackageId);
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
-    const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
+    const autoAmount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
+    // Allow a manual price override (discount or partial delivery).
+    const parsedManual = Number(createOrderAmount);
+    const amount = createOrderAmount.trim() !== "" && !isNaN(parsedManual) && parsedManual >= 0
+      ? parsedManual
+      : autoAmount;
     const _soeId = selectedOrder.id;
     const orderSnapshot = selectedOrder;
     setTrackedOrders((value) =>
@@ -19655,7 +19665,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 	                  <label><span>Product</span><select value={createOrderProductId} onChange={(event) => { const product = products.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
 	                  <label><span>Package</span><select value={createOrderPackageId} onChange={(event) => { const product = products.find((item) => item.id === createOrderProductId); const offer = product?.packages.find((item) => item.id === event.target.value); setCreateOrderPackageId(event.target.value); if (offer) setCreateOrderQuantity(String(offer.quantity)); }}><option value="">Manual quantity</option>{products.find((item) => item.id === createOrderProductId)?.packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatProductMoney(item.price, item.currency)}</option>)}</select></label>
-	                  <label><span>Quantity</span><input value={createOrderQuantity} onChange={(event) => setCreateOrderQuantity(event.target.value)} inputMode="numeric" /></label>
+	                  <label><span>Quantity</span><input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pkg = prod?.packages.find((item) => item.id === createOrderPackageId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); setCreateOrderAmount(String(pkg?.price ?? qty * (pri?.sellingPrice ?? 0))); }} inputMode="numeric" /></label>
+	                  <label><span>Order Amount</span><input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" /></label>
 	                  <label><span>Sales Rep</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
 	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{activeAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}</select></label>
 	                </div>
