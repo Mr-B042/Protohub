@@ -12674,7 +12674,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div className="flex items-center gap-1">
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="View" aria-label="View" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepView("detail"); setRepDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepName(row.user.name); setSalesRepEmail(row.user.email); setSalesRepActive(row.user.active); setModal("editSalesRep"); }}><Pencil className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => { const next = !row.user.active; setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user)); showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`); usersApi.update(row.user.id, { active: next }).catch(() => showToast("Saved locally — sync to server failed.")); }}><RefreshCw className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => {
+                                  const next = !row.user.active;
+                                  const prev = row.user.active;
+                                  setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user));
+                                  showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`);
+                                  usersApi.update(row.user.id, { active: next }).catch((err: any) => {
+                                    setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: prev } : user));
+                                    showToast(`Failed to ${next ? "activate" : "deactivate"} ${row.user.name}: ${err?.message ?? "please retry"}.`);
+                                  });
+                                }}><RefreshCw className="w-4 h-4" /></button>
                               </div>
                             </td>
                           </tr>
