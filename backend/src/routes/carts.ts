@@ -109,7 +109,7 @@ router.post("/", async (req, res) => {
 // so callers naturally hold camelCase ids — making the schema accept both
 // avoids a class of "patch silently noop'd" bugs.
 const CartPatchSchema = z.object({
-  status:          z.enum(["Open abandoned", "Assigned", "In progress", "Abandoned", "Contacted", "Converted", "No response", "Not interested"]).optional(),
+  status:          z.enum(["Open abandoned", "Assigned", "Contacted", "Converted", "Lost"]).optional(),
   assigned_rep_id: z.string().uuid().optional().nullable(),
   assignedRepId:   z.string().uuid().optional().nullable(),
   last_activity:   z.string().optional(),

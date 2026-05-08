@@ -39,18 +39,37 @@ router.post("/generate", async (req, res) => {
     .eq("role", "Sales Rep")
     .eq("active", true);
 
+  // Parse "Month Year" safely — new Date("May 2026 1") is non-standard and
+  // fails in some Node versions; "May 1, 2026" is unambiguous.
+  const parts = period.trim().split(/\s+/);
+  const periodDate = parts.length === 2
+    ? new Date(`${parts[0]} 1, ${parts[1]}`)
+    : new Date(`${period} 1`);
+  if (isNaN(periodDate.getTime())) {
+    res.status(400).json({ error: `Invalid period format. Use "Month Year", e.g. "May 2026".` });
+    return;
+  }
+  const periodStart = `${periodDate.getFullYear()}-${String(periodDate.getMonth() + 1).padStart(2, "0")}-01`;
+  const nextMonth = new Date(periodDate.getFullYear(), periodDate.getMonth() + 1, 1);
+  const periodEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
+
+  // Guard against duplicate runs for the same period
+  const { data: existingRun } = await supabase
+    .from("payroll_runs")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("period", period)
+    .maybeSingle();
+  if (existingRun) {
+    res.status(409).json({ error: `A payroll run for "${period}" already exists.` });
+    return;
+  }
+
   // Fetch pay structures
   const { data: structures } = await supabase
     .from("pay_structures")
     .select("*")
     .eq("org_id", orgId);
-
-  // Count delivered orders per rep for the period (e.g. "May 2026")
-  // Parse "Month Year" into a proper date range
-  const periodDate = new Date(`${period} 1`);
-  const periodStart = `${periodDate.getFullYear()}-${String(periodDate.getMonth() + 1).padStart(2, "0")}-01`;
-  const nextMonth = new Date(periodDate.getFullYear(), periodDate.getMonth() + 1, 1);
-  const periodEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
 
   const { data: orders } = await supabase
     .from("orders")
@@ -59,6 +78,13 @@ router.post("/generate", async (req, res) => {
     .eq("status", "Delivered")
     .gte("delivered_date", periodStart)
     .lt("delivered_date", periodEnd);
+
+  // Fetch penalties for this period to deduct from totals
+  const { data: penalties } = await supabase
+    .from("rep_penalties")
+    .select("user_id, amount")
+    .eq("org_id", orgId)
+    .eq("period", period);
 
   const entries = (reps ?? []).map((rep) => {
     const repOrders  = (orders ?? []).filter((o) => o.assigned_rep_id === rep.id);
@@ -78,8 +104,12 @@ router.post("/generate", async (req, res) => {
       tierBonus = matched[0]?.amount ?? 0;
     }
 
-    const total = Math.max(0, fixed + commission + tierBonus);
-    return { userId: rep.id, name: rep.name, delivered, fixedSalary: fixed, commission, autoBonus: tierBonus, total };
+    const penaltyTotal = (penalties ?? [])
+      .filter((p) => p.user_id === rep.id)
+      .reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+
+    const total = Math.max(0, fixed + commission + tierBonus - penaltyTotal);
+    return { userId: rep.id, name: rep.name, delivered, fixedSalary: fixed, commission, autoBonus: tierBonus, penalties: penaltyTotal, total };
   });
 
   const { data: run, error } = await supabase

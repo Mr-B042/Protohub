@@ -1,3 +1,5 @@
+
+
 import { Router } from "express";
 import { z } from "zod";
 import { supabase, supabaseAuth, supabaseAnon } from "../lib/supabase.js";
@@ -9,9 +11,9 @@ const router = Router();
 // ── POST /api/auth/register ───────────────────────────────
 // Creates the first user (Owner) and their organization.
 const RegisterSchema = z.object({
-  orgName:  z.string().min(2).max(160),
-  name:     z.string().min(2).max(120),
-  email:    z.string().email().max(254),
+  orgName: z.string().min(2).max(160),
+  name: z.string().min(2).max(120),
+  email: z.string().email().max(254),
   password: z.string().min(8).max(200)
 });
 
@@ -42,7 +44,7 @@ router.post("/register", async (req, res) => {
     .single();
   if (orgError || !org) {
     // Rollback: delete the auth user we just created so a retry can reuse the email.
-    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
+    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => { });
     if ((orgError as { code?: string } | null)?.code === "23505") {
       res.status(409).json({ error: "An organization with this name already exists." });
       return;
@@ -71,7 +73,7 @@ router.post("/register", async (req, res) => {
 
 // ── POST /api/auth/login ──────────────────────────────────
 const LoginSchema = z.object({
-  email:    z.string().email(),
+  email: z.string().email(),
   password: z.string().min(1)
 });
 
@@ -114,13 +116,13 @@ router.post("/login", async (req, res) => {
   logger.info("login success", { userId: profile.id, email, role: profile.role });
 
   res.json({
-    accessToken:  data.session.access_token,
+    accessToken: data.session.access_token,
     refreshToken: data.session.refresh_token,
     user: {
-      id:    profile.id,
+      id: profile.id,
       orgId: profile.org_id,
-      name:  profile.name,
-      role:  profile.role,
+      name: profile.name,
+      role: profile.role,
       email: data.user.email
     }
   });
@@ -139,7 +141,7 @@ router.post("/refresh", async (req, res) => {
     return;
   }
   res.json({
-    accessToken:  data.session.access_token,
+    accessToken: data.session.access_token,
     refreshToken: data.session.refresh_token
   });
 });
@@ -159,7 +161,7 @@ router.get("/me", requireAuth, async (req, res) => {
     branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" },
     payroll: {
       topPerformerBonusEnabled: !!org?.top_performer_bonus_enabled,
-      topPerformerBonusAmount:  Number(org?.top_performer_bonus_amount ?? 0)
+      topPerformerBonusAmount: Number(org?.top_performer_bonus_amount ?? 0)
     },
     timezone: org?.timezone ?? "Africa/Lagos",
     adminCartNotifications: !!org?.admin_cart_notifications
@@ -194,7 +196,7 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
     name: data?.name ?? "",
     logoUrl: data?.logo_url ?? "",
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
-    topPerformerBonusAmount:  Number(data?.top_performer_bonus_amount ?? 0),
+    topPerformerBonusAmount: Number(data?.top_performer_bonus_amount ?? 0),
     timezone: data?.timezone ?? "Africa/Lagos",
     adminCartNotifications: !!data?.admin_cart_notifications
   });
@@ -242,6 +244,11 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   }
   // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
   // Allow-list the DB column names and accept either casing on input.
+  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"] as const;
+  if (req.body.role !== undefined && !VALID_ROLES.includes(req.body.role)) {
+    res.status(400).json({ error: { role: [`Invalid role. Must be one of: ${VALID_ROLES.join(", ")}.`] } });
+    return;
+  }
   const allowed: Record<string, string> = {
     name: "name",
     role: "role",
@@ -330,10 +337,10 @@ router.post("/invite", requireAuth, async (req, res) => {
   }
 
   const Schema = z.object({
-    name:     z.string().min(2).max(120),
-    email:    z.string().email().max(254),
+    name: z.string().min(2).max(120),
+    email: z.string().email().max(254),
     password: z.string().min(8).max(200),
-    role:     z.enum(["Admin", "Sales Rep", "Inventory Manager"])
+    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"])
   });
 
   const parsed = Schema.safeParse(req.body);

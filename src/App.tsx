@@ -4469,7 +4469,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
       // Reps still get the rep-relevant endpoints (orders, carts, products...).
       const role = auth.getUser()?.role;
-      const isAdmin = role === "Owner" || role === "Admin";
+      // Manager is included so Sales Teams / Sales Reps pages they're allowed
+      // to see actually hydrate with data instead of rendering empty tables.
+      const isAdmin = role === "Owner" || role === "Admin" || role === "Manager";
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
@@ -5797,17 +5799,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const printWaybill = (w: WaybillRecord) => {
     const win = window.open("", "_blank", "width=800,height=600");
     if (!win) return;
-    win.document.write(`<!DOCTYPE html><html><head><title>Waybill ${w.id}</title>
+    // Notes and product/state names are user-editable; escape every interpolation.
+    const esc = (v: unknown) => String(v ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    win.document.write(`<!DOCTYPE html><html><head><title>Waybill ${esc(w.id)}</title>
 <style>body{font-family:Arial,sans-serif;margin:40px;color:#111}h1{font-size:20px;margin-bottom:4px}h2{font-size:14px;font-weight:normal;color:#555;margin:0 0 24px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;font-size:13px}th{background:#f5f5f5;font-weight:600}.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}.status-transit{background:#dbeafe;color:#1d4ed8}.status-received{background:#dcfce7;color:#15803d}.status-returned{background:#fef3c7;color:#92400e}.status-cancelled{background:#f3f4f6;color:#6b7280}@media print{button{display:none}}</style></head>
 <body>
 <h1>ProtoHub CRM — Waybill</h1>
-<h2>${w.id} · Printed ${new Date().toLocaleDateString("en-GB")}</h2>
+<h2>${esc(w.id)} · Printed ${new Date().toLocaleDateString("en-GB")}</h2>
 <table>
-<tr><th>Product</th><td>${w.productName}</td><th>Quantity</th><td>${w.quantity} units</td></tr>
-<tr><th>From</th><td>${w.sendingState}</td><th>To</th><td>${w.receivingState}</td></tr>
-<tr><th>Logistics Partner</th><td>${w.logisticsPartner || "—"}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "—"}</td></tr>
-<tr><th>Date Sent</th><td>${w.dateSent}</td><th>Date Received</th><td>${w.dateReceived || "—"}</td></tr>
-<tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${w.status}</span></td><th>Notes</th><td>${w.note || "—"}</td></tr>
+<tr><th>Product</th><td>${esc(w.productName)}</td><th>Quantity</th><td>${esc(w.quantity)} units</td></tr>
+<tr><th>From</th><td>${esc(w.sendingState)}</td><th>To</th><td>${esc(w.receivingState)}</td></tr>
+<tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "—")}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "—"}</td></tr>
+<tr><th>Date Sent</th><td>${esc(w.dateSent)}</td><th>Date Received</th><td>${esc(w.dateReceived || "—")}</td></tr>
+<tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${esc(w.status)}</span></td><th>Notes</th><td>${esc(w.note || "—")}</td></tr>
 </table>
 <br/><button onclick="window.print()" style="padding:8px 20px;background:#1F8FE0;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Print</button>
 </body></html>`);
@@ -7416,7 +7422,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Print window was blocked.");
       return;
     }
-    printWindow.document.write(`<html><head><title>Invoice ${order.id}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111827}h1{margin:0 0 8px}.meta{color:#667085;margin-bottom:24px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #d0d5dd;padding:12px;text-align:left}.total{font-size:22px;font-weight:800;text-align:right;margin-top:24px}</style></head><body><h1>Protohub Invoice</h1><p class="meta">${order.id} · ${order.customer} · ${order.date}</p><p><strong>Phone:</strong> ${order.phone}</p><p><strong>Address:</strong> ${order.address ?? ""} ${order.city ?? ""} ${order.state ?? ""}</p><table><thead><tr><th>Product</th><th>Package</th><th>Qty</th><th>Total</th></tr></thead><tbody><tr><td>${order.productName}</td><td>${order.packageName}</td><td>${quantityForOrder(order)}</td><td>${formatProductMoney(order.amount, order.currency)}</td></tr></tbody></table><p class="total">Grand Total: ${formatProductMoney(order.amount, order.currency)}</p></body></html>`);
+    // Customer fields originate from the public embed form (anonymous input),
+    // so anything here can be hostile. Escape every interpolation.
+    const esc = (v: unknown) => String(v ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    printWindow.document.write(`<html><head><title>Invoice ${esc(order.id)}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111827}h1{margin:0 0 8px}.meta{color:#667085;margin-bottom:24px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #d0d5dd;padding:12px;text-align:left}.total{font-size:22px;font-weight:800;text-align:right;margin-top:24px}</style></head><body><h1>Protohub Invoice</h1><p class="meta">${esc(order.id)} · ${esc(order.customer)} · ${esc(order.date)}</p><p><strong>Phone:</strong> ${esc(order.phone)}</p><p><strong>Address:</strong> ${esc(order.address ?? "")} ${esc(order.city ?? "")} ${esc(order.state ?? "")}</p><table><thead><tr><th>Product</th><th>Package</th><th>Qty</th><th>Total</th></tr></thead><tbody><tr><td>${esc(order.productName)}</td><td>${esc(order.packageName)}</td><td>${esc(quantityForOrder(order))}</td><td>${esc(formatProductMoney(order.amount, order.currency))}</td></tr></tbody></table><p class="total">Grand Total: ${esc(formatProductMoney(order.amount, order.currency))}</p></body></html>`);
     printWindow.document.close();
     printWindow.print();
     showToast(`Print invoice opened for ${order.id}.`);
@@ -7509,6 +7520,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     if (!publicProduct || !orderFormName.trim() || !orderFormPhone.trim()) {
       showToast("Customer name and phone are required.");
+      return;
+    }
+
+    // Reject obvious bot garbage early — Nigerian numbers are 10–11 digits;
+    // accept 7–15 digits to allow international numbers and room for typos.
+    const phoneDigits = orderFormPhone.replace(/\D/g, "");
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      showToast("Please enter a valid phone number.");
       return;
     }
 
@@ -8989,8 +9008,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    if (userPassword.trim().length < 6) {
-      showToast("Password must be at least 6 characters.");
+    if (userPassword.trim().length < 8) {
+      showToast("Password must be at least 8 characters.");
       return;
     }
 
@@ -9032,8 +9051,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    if (userPassword.trim() && userPassword.trim().length < 6) {
-      showToast("New password must be at least 6 characters.");
+    if (userPassword.trim() && userPassword.trim().length < 8) {
+      showToast("New password must be at least 8 characters.");
       return;
     }
 
@@ -9048,6 +9067,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const prevUsers = users;
     const _uuId = selectedUser.id;
+    const _uuPw = userPassword.trim();
     setUsers((value) =>
       value.map((user) =>
         user.id === selectedUser.id
@@ -9063,6 +9083,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setUsers(prevUsers);
       showToast(`Failed to update user: ${err.message}`);
     });
+    // Password change goes through a dedicated auth endpoint — sending it
+    // alongside the team patch would be silently dropped by the backend.
+    if (_uuPw) {
+      authApi.setPassword(_uuId, _uuPw).catch((err: any) => {
+        showToast(`Profile saved, but password change failed: ${err.message}`);
+      });
+    }
   };
 
   const resetUserPassword = () => {
@@ -9071,8 +9098,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    if (userPassword.trim().length < 6) {
-      showToast("Temporary password must be at least 6 characters.");
+    if (userPassword.trim().length < 8) {
+      showToast("Temporary password must be at least 8 characters.");
       return;
     }
 

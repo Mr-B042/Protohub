@@ -126,6 +126,106 @@ app.listen(PORT, () => {
   logger.info("server started", { port: PORT });
 });
 
+// ── Abandoned-cart staleness cron — daily at 9:00 AM ─────
+// Fires an in-app notification per org for every cart that has been
+// sitting in 'Open abandoned' or 'Assigned' status for more than 3 days
+// without any activity.
+cron.schedule("0 9 * * *", async () => {
+  logger.info("cron: checking stale abandoned carts");
+  try {
+    const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: staleCarts, error } = await supabase
+      .from("abandoned_carts")
+      .select("org_id")
+      .in("status", ["Open abandoned", "Assigned"])
+      .lt("last_activity", cutoff);
+    if (error) { logger.error("cron: stale carts query failed", { error: error.message }); return; }
+
+    // Group by org
+    const countByOrg: Record<string, number> = {};
+    for (const cart of staleCarts ?? []) {
+      countByOrg[cart.org_id] = (countByOrg[cart.org_id] ?? 0) + 1;
+    }
+
+    for (const [orgId, count] of Object.entries(countByOrg)) {
+      // Skip if an unread notification of this type was sent in the last 24h
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existing } = await supabase
+        .from("system_notifications")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("type", "info")
+        .ilike("message", "Stale abandoned carts%")
+        .eq("read", false)
+        .gte("created_at", since)
+        .limit(1);
+      if (existing && existing.length > 0) continue;
+
+      await supabase.from("system_notifications").insert({
+        org_id:  orgId,
+        type:    "info",
+        message: `Stale abandoned carts: ${count} cart${count === 1 ? "" : "s"} with no activity for 3+ days — follow up now.`
+      });
+    }
+    logger.info("cron: stale carts done", { orgsNotified: Object.keys(countByOrg).length });
+  } catch (e) {
+    logger.error("cron: stale carts job crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Remittance overdue cron — daily at 9:05 AM ────────────
+// Fires a 'remittance_overdue' notification per org for every delivered
+// order whose agent has not remitted cash within 7 days of delivery.
+cron.schedule("5 9 * * *", async () => {
+  logger.info("cron: checking overdue remittances");
+  try {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // date only
+    const { data: overdueOrders, error } = await supabase
+      .from("orders")
+      .select("org_id, id, amount, amount_remitted, logistics_cost")
+      .eq("status", "Delivered")
+      .neq("remittance_status", "Paid")
+      .lte("delivered_date", cutoff);
+    if (error) { logger.error("cron: overdue remittance query failed", { error: error.message }); return; }
+
+    // Group by org
+    const summaryByOrg: Record<string, { count: number; outstanding: number }> = {};
+    for (const order of overdueOrders ?? []) {
+      const net = (order.amount ?? 0) - (order.logistics_cost ?? 0);
+      const paid = order.amount_remitted ?? 0;
+      const owed = Math.max(0, net - paid);
+      if (owed <= 0) continue;
+      if (!summaryByOrg[order.org_id]) summaryByOrg[order.org_id] = { count: 0, outstanding: 0 };
+      summaryByOrg[order.org_id].count++;
+      summaryByOrg[order.org_id].outstanding += owed;
+    }
+
+    for (const [orgId, { count, outstanding }] of Object.entries(summaryByOrg)) {
+      // Skip if an unread remittance_overdue notification was sent in the last 24h
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existing } = await supabase
+        .from("system_notifications")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("type", "remittance_overdue")
+        .eq("read", false)
+        .gte("created_at", since)
+        .limit(1);
+      if (existing && existing.length > 0) continue;
+
+      const formatted = outstanding.toLocaleString("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 });
+      await supabase.from("system_notifications").insert({
+        org_id:  orgId,
+        type:    "remittance_overdue",
+        message: `Remittance overdue: ${count} delivered order${count === 1 ? "" : "s"} unpaid for 7+ days — ${formatted} outstanding.`
+      });
+    }
+    logger.info("cron: overdue remittances done", { orgsNotified: Object.keys(summaryByOrg).length });
+  } catch (e) {
+    logger.error("cron: overdue remittances job crashed", { error: (e as Error).message });
+  }
+});
+
 // ── Weekly report cron — every Sunday at 7:00 AM ──────────
 cron.schedule("0 7 * * 0", async () => {
   logger.info("cron: sending weekly reports");

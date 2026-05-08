@@ -346,6 +346,12 @@ router.post("/count-entries/:entryId/adjust",
       .eq("agent_id", entry.agent_id)
       .eq("product_id", entry.product_id);
 
+    // Sync denormalized total on the products row
+    const { data: allAgentStock } = await supabase
+      .from("agent_stock").select("quantity").eq("product_id", entry.product_id);
+    const newAgentTotal = (allAgentStock ?? []).reduce((sum, r) => sum + (r.quantity ?? 0), 0);
+    await supabase.from("products").update({ agent_stock: newAgentTotal }).eq("id", entry.product_id);
+
     // Log movement
     await supabase.from("stock_movements").insert({
       id:           movementId(),

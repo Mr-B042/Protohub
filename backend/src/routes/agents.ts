@@ -156,13 +156,13 @@ router.post("/:id/stock",
     // Deduct from warehouse
     const { data: product } = await supabase
       .from("products")
-      .select("warehouse_stock, name")
+      .select("warehouse_stock, agent_stock, name")
       .eq("id", productId)
       .single();
     if (product) {
       await supabase.from("products").update({
         warehouse_stock: Math.max(0, product.warehouse_stock - quantity),
-        agent_stock: supabase.rpc("increment_agent_stock" as never, { x: quantity, product_id: productId } as never)
+        agent_stock: (product.agent_stock ?? 0) + quantity
       }).eq("id", productId);
 
       // Log stock movement

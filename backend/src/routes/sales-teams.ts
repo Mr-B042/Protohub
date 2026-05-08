@@ -25,6 +25,15 @@ const TeamSchema = z.object({
   memberIds:  z.array(z.string().uuid()).default([])
 });
 
+/** Verify every UUID in `ids` belongs to a row in `table` for the caller's org. */
+async function checkOrgUuids(table: "users" | "products", ids: string[], orgId: string): Promise<string | null> {
+  if (ids.length === 0) return null;
+  const { data } = await supabase.from(table).select("id").in("id", ids).eq("org_id", orgId);
+  const found = new Set((data ?? []).map((r) => r.id));
+  const missing = ids.filter((id) => !found.has(id));
+  return missing.length ? `Cross-org reference: ${missing.length} ${table} id(s) not in your organization.` : null;
+}
+
 router.post("/", async (req, res) => {
   const parsed = TeamSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -32,6 +41,13 @@ router.post("/", async (req, res) => {
     return;
   }
   const { name, leadId, productIds, memberIds } = parsed.data;
+
+  const allUserIds = [...new Set([...(leadId ? [leadId] : []), ...memberIds])];
+  const userErr    = await checkOrgUuids("users", allUserIds, req.user!.orgId);
+  if (userErr) { res.status(400).json({ error: userErr }); return; }
+  const productErr = await checkOrgUuids("products", productIds, req.user!.orgId);
+  if (productErr) { res.status(400).json({ error: productErr }); return; }
+
   const { data, error } = await supabase
     .from("sales_teams")
     .insert({ org_id: req.user!.orgId, name, lead_id: leadId ?? null, product_ids: productIds, member_ids: memberIds })
@@ -55,6 +71,20 @@ router.patch("/:id", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
+
+  const userIdsToCheck = [
+    ...(parsed.data.lead_id ? [parsed.data.lead_id] : []),
+    ...(parsed.data.member_ids ?? [])
+  ];
+  if (userIdsToCheck.length) {
+    const userErr = await checkOrgUuids("users", [...new Set(userIdsToCheck)], req.user!.orgId);
+    if (userErr) { res.status(400).json({ error: userErr }); return; }
+  }
+  if (parsed.data.product_ids?.length) {
+    const productErr = await checkOrgUuids("products", parsed.data.product_ids, req.user!.orgId);
+    if (productErr) { res.status(400).json({ error: productErr }); return; }
+  }
+
   const updates: Record<string, unknown> = {};
   if (parsed.data.name !== undefined)        updates.name        = parsed.data.name;
   if (parsed.data.lead_id !== undefined)     updates.lead_id     = parsed.data.lead_id;

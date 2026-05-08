@@ -24,6 +24,7 @@ const PenaltySchema = z.object({
   type:             z.string().min(1),
   amount:           z.number().min(0).default(0),
   removeAllBonuses: z.boolean().default(false),
+  period:           z.string().optional(),
   orderId:          z.string().optional(),
   reason:           z.string().optional(),
   byName:           z.string().optional()
@@ -50,6 +51,7 @@ router.post("/", async (req, res) => {
       type: d.type,
       amount: d.amount,
       remove_all_bonuses: d.removeAllBonuses,
+      period: d.period ?? null,
       order_id: d.orderId ?? null,
       reason: d.reason ?? null,
       by_name: d.byName ?? req.user!.name

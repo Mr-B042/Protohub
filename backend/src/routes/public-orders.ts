@@ -116,6 +116,20 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
 
+  // Block flagged customers. customer_flags.phone stores digits only.
+  const normalizedPhone = d.phone.replace(/\D/g, "");
+  const { data: flagged } = await supabase
+    .from("customer_flags")
+    .select("id")
+    .eq("org_id", product.org_id)
+    .eq("phone", normalizedPhone)
+    .maybeSingle();
+  if (flagged) {
+    logger.warn("public-orders: flagged customer blocked", { ip: req.ip });
+    res.status(403).json({ error: "Order cannot be placed." });
+    return;
+  }
+
   // 2. Recompute amount server-side. Never trust client amount.
   let amount = Number(pkg.price ?? 0);
 
@@ -187,35 +201,56 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   // Auto-include companions (silent bundles) — append even if client didn't list them.
-  for (const c of companions) {
-    if (!c.autoInclude) continue;
-    if (c.stateRestrictions?.length && (!d.state || !c.stateRestrictions.includes(d.state))) continue;
-    if (resolved.some((r) => r.productId === c.productId)) continue; // already added explicitly
-    const xsProduct = (await supabase.from("products").select("id, name, org_id, active").eq("id", c.productId).maybeSingle()).data;
-    if (!xsProduct || !xsProduct.active || xsProduct.org_id !== product.org_id) continue;
+  // Batch-fetch all auto-include companion products + pricings up front to avoid N+1.
+  const autoCompanions = companions.filter(
+    (c) => c.autoInclude
+      && !resolved.some((r) => r.productId === c.productId)
+      && (!c.stateRestrictions?.length || (d.state && c.stateRestrictions.includes(d.state)))
+  );
+  const autoIds = Array.from(new Set(autoCompanions.map((c) => c.productId)));
+  const autoProducts = autoIds.length
+    ? (await supabase.from("products").select("id, name, org_id, active").in("id", autoIds)).data ?? []
+    : [];
+  const autoPricings = autoIds.length
+    ? (await supabase.from("product_pricings").select("product_id, selling_price, is_primary").in("product_id", autoIds)).data ?? []
+    : [];
+
+  for (const c of autoCompanions) {
+    const autoProduct = autoProducts.find((p) => p.id === c.productId);
+    if (!autoProduct || !autoProduct.active || autoProduct.org_id !== product.org_id) continue;
     let unitPrice = 0;
     if (c.pricingMode === "free")        unitPrice = 0;
     else if (c.pricingMode === "fixed")  unitPrice = Number(c.fixedPrice ?? 0);
     else {
-      const primary = (await supabase.from("product_pricings").select("selling_price, is_primary").eq("product_id", c.productId).order("is_primary", { ascending: false }).limit(1).maybeSingle()).data;
+      const primary = autoPricings.find((p) => p.product_id === c.productId && p.is_primary)
+                   ?? autoPricings.find((p) => p.product_id === c.productId);
       unitPrice = Number(primary?.selling_price ?? 0);
     }
     const lineTotal = unitPrice * c.quantity;
     amount += lineTotal;
-    resolved.push({ productId: c.productId, productName: xsProduct.name, quantity: c.quantity, amount: lineTotal });
+    resolved.push({ productId: c.productId, productName: autoProduct.name, quantity: c.quantity, amount: lineTotal });
   }
 
-  // 3. Round-robin assign to a sales rep in this org (lowest position number).
-  const { data: rep } = await supabase
+  // 3. Round-robin assign to the sales rep with the lowest position, then
+  //    advance that rep to max+1 so the next order goes to the next rep.
+  const { data: reps } = await supabase
     .from("users")
     .select("id, round_robin_position")
     .eq("org_id", product.org_id)
     .eq("active", true)
     .eq("role", "Sales Rep")
-    .order("round_robin_position", { ascending: true, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
+    .order("round_robin_position", { ascending: true, nullsFirst: false });
+
+  const rep = (reps ?? [])[0] ?? null;
   const assignedRepId = rep?.id ?? null;
+
+  if (rep) {
+    const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
+    supabase.from("users")
+      .update({ round_robin_position: maxPos + 1 })
+      .eq("id", rep.id)
+      .then(() => {});  // fire-and-forget
+  }
 
   const source = sourceFromUtm(d.utmSource);
   const location = [d.city, d.state].filter(Boolean).join(", ") || null;

@@ -30,9 +30,12 @@ router.get("/", async (req, res) => {
   }>();
 
   for (const o of data ?? []) {
-    const existing = map.get(o.phone);
+    // Normalize to digits-only so "+234 801..." and "0801..." group together
+    // and flag lookups (which use the same normalization) always match.
+    const key = o.phone.replace(/\D/g, "");
+    const existing = map.get(key);
     if (!existing) {
-      map.set(o.phone, {
+      map.set(key, {
         phone: o.phone, name: o.customer, city: o.city, state: o.state,
         totalOrders: 1, totalSpend: o.status === "Delivered" ? Number(o.amount) : 0,
         delivered: o.status === "Delivered" ? 1 : 0,

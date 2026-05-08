@@ -252,12 +252,18 @@ router.patch("/:id/status", async (req, res) => {
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id")
+    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Cancelled orders cannot be re-opened
+  if (existing.status === "Cancelled") {
+    res.status(400).json({ error: "Cannot change status of a Cancelled order." });
+    return;
+  }
 
   // Sales Reps can only change status on their own orders
   if (req.user!.role === "Sales Rep" && existing.assigned_rep_id !== req.user!.id) {
@@ -307,7 +313,9 @@ router.patch("/:id/status", async (req, res) => {
   if (agentId !== undefined) updates.agent_id = agentId;
 
   if (status === "Delivered") {
-    updates.delivered_date  = new Date().toISOString().split("T")[0];
+    // Use WAT (UTC+1) so the date is correct for Nigeria even near midnight UTC
+    const watDate = new Date(Date.now() + 60 * 60 * 1000);
+    updates.delivered_date  = watDate.toISOString().split("T")[0];
     updates.stock_deducted  = true;
   } else if (existing?.status === "Delivered") {
     updates.delivered_date = null;
@@ -385,6 +393,40 @@ router.patch("/:id/status", async (req, res) => {
       to_location:   customerLocation,
       note:          `Delivered to ${existing.customer} — agent ${agentName} stock ${(currentStock?.quantity ?? 0)} → ${newAgentQty}`
     });
+  }
+
+  // ── Un-delivery side-effects: restore agent stock, delete waybill, log reversal ──
+  if (existing?.status === "Delivered" && status !== "Delivered" && existing?.stock_deducted && existing?.agent_id && existing?.product_id) {
+    const orderQty = existing.quantity ?? 1;
+    const { data: currentStock } = await supabase
+      .from("agent_stock").select("quantity")
+      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id).single();
+    const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
+    await supabase.from("agent_stock")
+      .update({ quantity: restoredQty })
+      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id);
+
+    const { data: agentInfo } = await supabase
+      .from("agents").select("name").eq("id", existing.agent_id).single();
+    await supabase.from("stock_movements").insert({
+      id:            `MOV-${randomUUID()}`,
+      org_id:        req.user!.orgId,
+      product_id:    existing.product_id,
+      product_name:  existing.product_name,
+      type:          "Status Reversal",
+      qty:           orderQty,
+      balance_after: restoredQty,
+      agent_id:      existing.agent_id,
+      order_id:      req.params.id,
+      by_name:       req.user!.name,
+      by_user_id:    req.user!.id,
+      note:          `Delivery reversed — order ${req.params.id} changed to ${status} (agent ${agentInfo?.name ?? existing.agent_id} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
+    });
+
+    await supabase.from("waybill_records")
+      .delete()
+      .eq("org_id", req.user!.orgId)
+      .eq("to_location", `Customer:${req.params.id}`);
   }
 
   // Audit log — awaited so failures are visible

@@ -66,8 +66,11 @@ router.patch("/:id",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
     const { id } = req.params;
+    // Stock fields (warehouse_stock / agent_stock) are intentionally excluded.
+    // All stock changes must go through /api/stock/* or /api/agents/:id/stock so
+    // they generate stock_movements rows for the audit trail.
     const allowed = ["name", "sku", "description", "reorder_point", "active",
-                     "warehouse_stock", "agent_stock", "units_sold",
+                     "units_sold",
                      "bonus_config", "available_states", "role",
                      "can_be_cross_sell", "can_be_free_gift",
                      "cross_sell_product_ids", "cross_sell_price_overrides",
@@ -108,8 +111,17 @@ router.delete("/:id",
   }
 );
 
+/** Verify a product ID belongs to the caller's org. Returns false and sends 404 if not. */
+async function checkProductOrg(productId: string | string[], orgId: string, res: import("express").Response): Promise<boolean> {
+  const id = Array.isArray(productId) ? productId[0]! : productId;
+  const { data } = await supabase.from("products").select("id").eq("id", id).eq("org_id", orgId).single();
+  if (!data) { res.status(404).json({ error: "Product not found." }); return false; }
+  return true;
+}
+
 // ── GET /api/products/:id/pricings ────────────────────────
 router.get("/:id/pricings", async (req, res) => {
+  if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
   const { data, error } = await supabase
     .from("product_pricings")
     .select("*")
@@ -129,6 +141,7 @@ const PricingSchema = z.object({
 router.post("/:id/pricings",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
+    if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PricingSchema.safeParse(req.body);
     if (!parsed.success) {
       logger.error("createPricing validation failed", { body: req.body, errors: parsed.error.flatten().fieldErrors });
@@ -207,6 +220,7 @@ const PackageSchema = z.object({
 router.post("/:id/packages",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
+    if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -238,6 +252,7 @@ const PackageUpdateSchema = z.object({
 router.patch("/:id/packages/:pkgId",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
+    if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -270,6 +285,7 @@ router.patch("/:id/packages/:pkgId",
 router.delete("/:id/packages/:pkgId",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
+    if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const { error } = await supabase
       .from("product_packages")
       .delete()
@@ -284,6 +300,7 @@ router.delete("/:id/packages/:pkgId",
 router.delete("/:id/pricings/:currency",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
+    if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const { error } = await supabase
       .from("product_pricings")
       .delete()
