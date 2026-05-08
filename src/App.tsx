@@ -1289,7 +1289,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reorderPoint, setReorderPoint] = useState("0");
   const [stockChange, setStockChange] = useState("0");
   const [products, setProducts] = useState<Product[]>([]);
-  const [inventoryView, setInventoryView] = useState<InventoryView>("dashboard");
+  const [inventoryView, setInventoryView] = useState<InventoryView>(() =>
+    readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
+      raw === "dashboard" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" ? raw : null
+    )
+  );
   const [selectedProductId, setSelectedProductId] = useState("");
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
@@ -1562,6 +1566,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.deliveries.period", deliveriesPeriod); }, [deliveriesPeriod]);
   useEffect(() => { writePref("protohub.deliveries.agent",  deliveryAgent);     }, [deliveryAgent]);
   useEffect(() => { writePref("protohub.deliveries.productIds", JSON.stringify(Array.from(deliveriesProductIds))); }, [deliveriesProductIds]);
+  useEffect(() => { writePref("protohub.inventory.view", inventoryView); }, [inventoryView]);
   const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
   // Customer Directory product filter
   const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(new Set());
@@ -6048,10 +6053,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
     }
     const _suProdId = product.id;
+    const productSnapshot = product;
     setStockChange("0");
     setModal(null);
     showToast(`${product.name} stock updated to ${nextBalance}.`);
-    stockApi.update({ productId: _suProdId, change: actualChange, note: actualChange >= 0 ? "Manual stock increase" : "Manual stock reduction" }).catch(() => {});
+    // Roll back the optimistic warehouse-stock mutation if the API rejects it.
+    // Without this, two reps could each apply +5 locally on a flaky network and
+    // only one persists, leaving the warehouse balance off by 5 until reload.
+    stockApi.update({ productId: _suProdId, change: actualChange, note: actualChange >= 0 ? "Manual stock increase" : "Manual stock reduction" }).catch((err: any) => {
+      setProducts((value) => value.map((item) => item.id === _suProdId ? productSnapshot : item));
+      showToast(`Stock change for ${productSnapshot.name} not synced: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openProductDetails = (product: Product) => {
@@ -6087,6 +6099,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           freeGiftProductIds: (p.freeGiftProductIds ?? []).filter((id) => id !== selectedProduct.id),
         }))
     );
+    // Snapshot the slice we're about to remove so a server reject can fully
+    // restore it (product, its movements, and its agent-stock rows).
+    const productSnapshot = selectedProduct;
+    const movementsSnapshot = stockMovements.filter((m) => m.productId === selectedProduct.id);
+    const agentStockSnapshot = agentStock.filter((s) => s.productId === selectedProduct.id);
     setStockMovements((value) => value.filter((movement) => movement.productId !== selectedProduct.id));
     setAgentStock((value) => value.filter((stock) => stock.productId !== selectedProduct.id));
     const _dpId = selectedProduct.id;
@@ -6094,7 +6111,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setInventoryView("dashboard");
     setModal(null);
     showToast(`${selectedProduct.name} deleted.`);
-    productsApi.delete(_dpId).catch(() => {});
+    productsApi.delete(_dpId).catch((err: any) => {
+      setProducts((prev) => [productSnapshot, ...prev]);
+      setStockMovements((prev) => [...movementsSnapshot, ...prev]);
+      setAgentStock((prev) => [...agentStockSnapshot, ...prev]);
+      showToast(`Failed to delete ${productSnapshot.name}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const duplicateProduct = (source: Product) => {
