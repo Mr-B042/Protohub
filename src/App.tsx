@@ -1569,7 +1569,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.inventory.view", inventoryView); }, [inventoryView]);
   const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
   // Customer Directory product filter
-  const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(new Set());
+  const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(() =>
+    readPref<Set<string>>("protohub.customers.productIds", new Set<string>(), (raw) => {
+      try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
+    })
+  );
+  useEffect(() => { writePref("protohub.customers.productIds", JSON.stringify(Array.from(customerProductIds))); }, [customerProductIds]);
   const [showCustomerProductFilter, setShowCustomerProductFilter] = useState(false);
   // Campaign Orders period + week nav + product filter
   const [campaignPeriod, setCampaignPeriod] = useState<Period>("This Month");
