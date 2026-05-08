@@ -1580,7 +1580,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.customers.productIds", JSON.stringify(Array.from(customerProductIds))); }, [customerProductIds]);
   const [showCustomerProductFilter, setShowCustomerProductFilter] = useState(false);
   // Campaign Orders period + week nav + product filter
-  const [campaignPeriod, setCampaignPeriod] = useState<Period>("This Month");
+  const [campaignPeriod, setCampaignPeriod] = useState<Period>(() =>
+    readPref<Period>("protohub.adTracking.period", "This Month", (raw) => raw as Period)
+  );
   const [showCampaignDateRange, setShowCampaignDateRange] = useState(false);
   const [campaignDateRange, setCampaignDateRange] = useState<DateRange>({ start: "", end: "" });
   const [campaignNavStart, setCampaignNavStart] = useState(getSundayKey);
@@ -1595,7 +1597,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0);
     return d.toISOString().slice(0, 10);
   });
-  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">("Campaign Orders");
+  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
+    readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
+      raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
+    )
+  );
+  useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
+  useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
   const [campaignPage, setCampaignPage] = useState(1);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
