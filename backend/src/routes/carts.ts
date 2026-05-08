@@ -103,13 +103,41 @@ router.post("/", async (req, res) => {
 
 // ── PATCH /api/carts/:id ─────────────────────────────────
 // Update status, assigned rep, etc.
+//
+// Accepts both snake_case (assigned_rep_id) and camelCase (assignedRepId).
+// The frontend hydrates carts as camelCase via the snake→camel normalizer,
+// so callers naturally hold camelCase ids — making the schema accept both
+// avoids a class of "patch silently noop'd" bugs.
+const CartPatchSchema = z.object({
+  status:          z.enum(["Open abandoned", "Assigned", "In progress", "Abandoned", "Contacted", "Converted", "No response", "Not interested"]).optional(),
+  assigned_rep_id: z.string().uuid().optional().nullable(),
+  assignedRepId:   z.string().uuid().optional().nullable(),
+  last_activity:   z.string().optional(),
+  lastActivity:    z.string().optional()
+}).strict();
+
 router.patch("/:id",
   requireRole("Owner", "Admin", "Sales Rep"),
   async (req, res) => {
-    const allowed = ["status", "assigned_rep_id", "last_activity"];
+    const parsed = CartPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
     const updates: Record<string, unknown> = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    if (parsed.data.status !== undefined) updates.status = parsed.data.status;
+    const repId = parsed.data.assigned_rep_id ?? parsed.data.assignedRepId;
+    if (repId !== undefined) {
+      // Validate assigned rep belongs to this org
+      if (repId) {
+        const { data: repCheck } = await supabase
+          .from("users").select("id").eq("id", repId).eq("org_id", req.user!.orgId).single();
+        if (!repCheck) {
+          res.status(400).json({ error: "Rep not found in your organization." });
+          return;
+        }
+      }
+      updates.assigned_rep_id = repId;
     }
     updates.last_activity = new Date().toISOString();
 

@@ -1220,7 +1220,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showOrderProductFilter, setShowOrderProductFilter] = useState(false);
   const [ordersPage, setOrdersPage] = useState(1);
   const [cartSearch, setCartSearch] = useState("");
-  const [cartStatus, setCartStatus] = useState<CartStatus>("All statuses");
+  const [cartStatus, setCartStatus] = useState<CartStatus>(() =>
+    readPref<CartStatus>("protohub.carts.status", "All statuses", (raw) => raw as CartStatus)
+  );
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>("Today");
   const [scheduleCustomDate, setScheduleCustomDate] = useState("");
   const [scheduleWeekStart, setScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
@@ -1496,6 +1498,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
   useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
+  // Abandoned Carts filters — declared further down. We can't reference
+  // cartsPeriod / cartProductIds here without TDZ errors; mirror happens via
+  // setter wrappers further below in the carts state block.
+  useEffect(() => { writePref("protohub.carts.status", cartStatus); }, [cartStatus]);
   const [revPerfStatusOpen, setRevPerfStatusOpen] = useState(false);
   const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
   const cartSyncTimerRef = useRef<number | null>(null);
@@ -1512,15 +1518,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [revPerfStatusOpen]);
   const [showDashboardProductFilter, setShowDashboardProductFilter] = useState(false);
   // Abandoned Carts period + week nav + product filter
-  const [cartsPeriod, setCartsPeriod] = useState<Period>("This Month");
+  const [cartsPeriod, setCartsPeriod] = useState<Period>(() =>
+    readPref<Period>("protohub.carts.period", "This Month", (raw) => raw as Period)
+  );
   const [showCartsDateRange, setShowCartsDateRange] = useState(false);
   const [cartsDateRange, setCartsDateRange] = useState<DateRange>({ start: "", end: "" });
   const [cartsNavStart, setCartsNavStart] = useState(getSundayKey);
   const [cartsNavSpan, setCartsNavSpan] = useState<NavSpan>("1W");
-  const [cartProductIds, setCartProductIds] = useState<Set<string>>(new Set());
+  const [cartProductIds, setCartProductIds] = useState<Set<string>>(() =>
+    readPref<Set<string>>("protohub.carts.productIds", new Set<string>(), (raw) => {
+      try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
+    })
+  );
   const [cartsPage, setCartsPage] = useState(1);
   const [selectedCartIds, setSelectedCartIds] = useState<Set<string>>(new Set());
   const [showCartProductFilter, setShowCartProductFilter] = useState(false);
+  // Persist Abandoned Carts UI prefs after their declarations (avoids the
+  // TDZ trap we'd hit if these lived next to the Orders persistence effects).
+  useEffect(() => { writePref("protohub.carts.period", cartsPeriod); }, [cartsPeriod]);
+  useEffect(() => { writePref("protohub.carts.productIds", JSON.stringify(Array.from(cartProductIds))); }, [cartProductIds]);
   // Scheduled Deliveries
   const [schedulePage, setSchedulePage] = useState(1);
   const [scheduleProductIds, setScheduleProductIds] = useState<Set<string>>(new Set());
@@ -6817,7 +6833,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setAbandonedDraftCartId("");
     showToast(`Recovered cart converted to ${orderId}.`);
-    cartsApi.update(_mdcId, { status: "Converted" }).catch(() => {});
+    // Public-form (unauth) submits already mark the cart Converted server-side
+    // through the public-orders endpoint's cartId parameter — calling the
+    // auth-required cartsApi.update from an unauthenticated context would
+    // 401 → request() reload the page → customer loses the success screen.
+    if (auth.isLoggedIn()) {
+      const snapshot = abandonedCarts.find((c) => c.id === _mdcId);
+      cartsApi.update(_mdcId, { status: "Converted" }).catch((err: any) => {
+        if (snapshot) setAbandonedCarts((value) => value.map((c) => c.id === _mdcId ? snapshot : c));
+        showToast(`Cart conversion not synced: ${err?.message ?? "please retry"}.`);
+      });
+    }
   };
 
   const resetCreateOrderForm = () => {
@@ -8247,14 +8273,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, assignedRepId: reassignRepId, status: "Assigned", lastActivity: new Date().toISOString() } : cart)));
+    // Snapshot for rollback. The optimistic update happens immediately so the
+    // modal can close without flicker; a server failure restores the row.
+    const cartSnapshot = selectedCart;
+    const targetCartId = selectedCart.id;
+    setAbandonedCarts((value) => value.map((cart) => (cart.id === targetCartId ? { ...cart, assignedRepId: reassignRepId, status: "Assigned", lastActivity: new Date().toISOString() } : cart)));
     setModal(null);
-    showToast(`${selectedCart.id} assigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "sales rep"}.`);
+    showToast(`${targetCartId} assigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "sales rep"}.`);
+    // Persist — the previous version was local-only; reassignments were lost on reload.
+    cartsApi.update(targetCartId, { assignedRepId: reassignRepId, status: "Assigned" }).catch((err: any) => {
+      setAbandonedCarts((value) => value.map((cart) => (cart.id === targetCartId ? cartSnapshot : cart)));
+      showToast(`Failed to assign ${targetCartId}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const updateCartStatus = (cartId: string, status: Exclude<CartStatus, "All statuses">) => {
+    const snapshot = abandonedCarts.find((c) => c.id === cartId);
     setAbandonedCarts((value) => value.map((cart) => (cart.id === cartId ? { ...cart, status, lastActivity: new Date().toISOString() } : cart)));
-    cartsApi.update(cartId, { status }).catch(() => showToast(`Failed to save status for ${cartId}. Please retry.`));
+    cartsApi.update(cartId, { status }).catch((err: any) => {
+      // Roll back local state so the table doesn't lie about persistence.
+      if (snapshot) setAbandonedCarts((value) => value.map((cart) => (cart.id === cartId ? snapshot : cart)));
+      showToast(`Failed to save status for ${cartId}: ${err?.message ?? "please retry"}.`);
+    });
     showToast(`${cartId} marked ${status}.`);
   };
 
@@ -8264,6 +8304,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const cart = abandonedCarts.find((c) => c.id === id);
       return cart && cart.status !== "Converted";
     });
+    // Snapshot the slice we're about to mutate so partial failures can revert
+    // their own ids without disturbing the ones that succeeded.
+    const snapshots = new Map(abandonedCarts.filter((c) => ids.includes(c.id)).map((c) => [c.id, c]));
     setAbandonedCarts((value) =>
       value.map((cart) =>
         selectedCartIds.has(cart.id) && cart.status !== "Converted"
@@ -8275,9 +8318,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const results = await Promise.allSettled(
       ids.map((id) => cartsApi.update(id, { status }))
     );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed > 0) {
-      showToast(`${ids.length - failed} cart${ids.length - failed !== 1 ? "s" : ""} marked ${status}. ${failed} failed — please retry.`);
+    const failedIds: string[] = [];
+    results.forEach((r, i) => { if (r.status === "rejected") failedIds.push(ids[i]); });
+    if (failedIds.length > 0) {
+      setAbandonedCarts((value) =>
+        value.map((cart) => failedIds.includes(cart.id) ? (snapshots.get(cart.id) ?? cart) : cart)
+      );
+      showToast(`${ids.length - failedIds.length} cart${ids.length - failedIds.length !== 1 ? "s" : ""} marked ${status}. ${failedIds.length} failed — please retry.`);
     } else {
       showToast(`${ids.length} cart${ids.length > 1 ? "s" : ""} marked ${status}.`);
     }
