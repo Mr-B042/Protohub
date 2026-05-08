@@ -16,17 +16,22 @@ router.use(requireAuth);
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
 router.get("/", async (req, res) => {
-  const { status, source, search, page = "1", limit = "25", repId, since, dateFrom, dateTo } = req.query;
+  const { status, source, search, page = "1", limit = "25", repId, since, updatedSince, dateFrom, dateTo } = req.query;
   const pageNum  = Math.max(1, parseInt(page as string, 10));
   const pageSize = Math.min(2000, parseInt(limit as string, 10));
   const from = (pageNum - 1) * pageSize;
   const to   = from + pageSize - 1;
 
+  // updatedSince polling needs the result sorted by updated_at so the client
+  // can read result.data[0].updated_at as the next high-water mark. Default
+  // listing keeps newest-by-created_at order for the UI table.
+  const sortColumn = updatedSince ? "updated_at" : "created_at";
+
   let query = supabase
     .from("orders")
     .select("*", { count: "exact" })
     .eq("org_id", req.user!.orgId)
-    .order("created_at", { ascending: false })
+    .order(sortColumn, { ascending: false })
     .range(from, to);
 
   // Sales Reps only see their own orders
@@ -39,10 +44,17 @@ router.get("/", async (req, res) => {
   if (status && status !== "All Orders") query = query.eq("status", status);
   if (source && source !== "All Sources") query = query.eq("source", source);
   if (search) {
-    query = query.or(`customer.ilike.%${search}%,phone.ilike.%${search}%,id.ilike.%${search}%`);
+    // Escape PostgREST filter special characters to prevent filter injection
+    const safe = (search as string).replace(/[.,()"\\%_]/g, (ch) => `\\${ch}`);
+    query = query.or(`customer.ilike.%${safe}%,phone.ilike.%${safe}%,id.ilike.%${safe}%`);
   }
-  // since=ISO8601 — only orders newer than this timestamp (used for polling)
+  // since=ISO8601 — orders created after this timestamp (initial new-order polling).
   if (since) query = query.gt("created_at", since as string);
+  // updatedSince=ISO8601 — orders changed after this timestamp. Catches status
+  // updates and edits that don't bump created_at, so collaborating reps see
+  // each other's changes within the poll interval instead of waiting for a
+  // full reload. orders.updated_at is auto-bumped by the set_updated_at trigger.
+  if (updatedSince) query = query.gt("updated_at", updatedSince as string);
   // dateFrom / dateTo — server-side date range filter (YYYY-MM-DD)
   if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
   if (dateTo)   query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
@@ -54,7 +66,7 @@ router.get("/", async (req, res) => {
 
 // ── POST /api/orders ──────────────────────────────────────
 const OrderSchema = z.object({
-  id:             z.string().min(1),
+  id:             z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/, "Order ID must be alphanumeric (hyphens and underscores allowed)"),
   customer:       z.string().min(1),
   phone:          z.string().min(1),
   whatsapp:       z.string().optional(),
@@ -91,6 +103,46 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+
+  // Validate productId belongs to this org
+  if (d.productId) {
+    const { data: productCheck } = await supabase
+      .from("products").select("id").eq("id", d.productId).eq("org_id", req.user!.orgId).single();
+    if (!productCheck) {
+      res.status(400).json({ error: "Product not found in your organization." });
+      return;
+    }
+  }
+
+  // Validate packageId belongs to this org (via its parent product)
+  if (d.packageId) {
+    const { data: pkgCheck } = await supabase
+      .from("product_packages")
+      .select("id, product_id")
+      .eq("id", d.packageId)
+      .single();
+    if (!pkgCheck) {
+      res.status(400).json({ error: "Package not found." });
+      return;
+    }
+    // Verify the package's product belongs to this org
+    const { data: pkgProductCheck } = await supabase
+      .from("products").select("id").eq("id", pkgCheck.product_id).eq("org_id", req.user!.orgId).single();
+    if (!pkgProductCheck) {
+      res.status(400).json({ error: "Package does not belong to your organization." });
+      return;
+    }
+  }
+
+  // Validate assignedRepId belongs to this org
+  if (d.assignedRepId) {
+    const { data: repCheck } = await supabase
+      .from("users").select("id").eq("id", d.assignedRepId).eq("org_id", req.user!.orgId).single();
+    if (!repCheck) {
+      res.status(400).json({ error: "Assigned rep not found in your organization." });
+      return;
+    }
+  }
 
   const { data, error } = await supabase
     .from("orders")
@@ -200,8 +252,28 @@ router.patch("/:id/status", async (req, res) => {
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city")
-    .eq("id", req.params.id).single();
+    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
+
+  if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Sales Reps can only change status on their own orders
+  if (req.user!.role === "Sales Rep" && existing.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only update orders assigned to you." });
+    return;
+  }
+
+  // Validate agentId belongs to this org
+  if (agentId) {
+    const { data: agentCheck } = await supabase
+      .from("agents").select("id").eq("id", agentId).eq("org_id", req.user!.orgId).single();
+    if (!agentCheck) {
+      res.status(400).json({ error: "Agent not found in your organization." });
+      return;
+    }
+  }
 
   // Resolve the effective agent (request may override)
   const effectiveAgentId = agentId !== undefined ? agentId : existing?.agent_id;
@@ -386,6 +458,20 @@ router.patch("/:id", async (req, res) => {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
   }
 
+  // Validate cross-org references
+  if (updates.agent_id) {
+    const { data: agentCheck } = await supabase.from("agents").select("id").eq("id", updates.agent_id).eq("org_id", req.user!.orgId).single();
+    if (!agentCheck) { res.status(400).json({ error: "Agent not found in your organization." }); return; }
+  }
+  if (updates.assigned_rep_id) {
+    const { data: repCheck } = await supabase.from("users").select("id").eq("id", updates.assigned_rep_id).eq("org_id", req.user!.orgId).single();
+    if (!repCheck) { res.status(400).json({ error: "Rep not found in your organization." }); return; }
+  }
+  if (updates.product_id) {
+    const { data: productCheck } = await supabase.from("products").select("id").eq("id", updates.product_id).eq("org_id", req.user!.orgId).single();
+    if (!productCheck) { res.status(400).json({ error: "Product not found in your organization." }); return; }
+  }
+
   const { data, error } = await supabase
     .from("orders")
     .update(updates)
@@ -401,22 +487,60 @@ router.patch("/:id", async (req, res) => {
 
 // ── DELETE /api/orders/:id ────────────────────────────────
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
-  // Fetch before deleting so we can log context
+  // Fetch before deleting so we can log context and reverse side-effects
   const { data: existing } = await supabase
-    .from("orders").select("status, customer, product_name, amount")
+    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, quantity, stock_deducted")
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
 
-  // Audit log before delete (so FK is still valid)
-  if (existing) {
-    await supabase.from("order_audit").insert({
-      order_id:    req.params.id,
-      org_id:      req.user!.orgId,
-      changed_by:  req.user!.id,
-      from_status: existing.status,
-      to_status:   "Deleted",
-      note:        `Order deleted (was ${existing.status}). Customer: ${existing.customer}, Product: ${existing.product_name}, Amount: ${existing.amount}`
+  if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Reverse stock deduction if order was Delivered with an agent
+  if (existing.status === "Delivered" && existing.stock_deducted && existing.agent_id && existing.product_id) {
+    const orderQty = existing.quantity ?? 1;
+
+    // Restore agent stock
+    const { data: currentStock } = await supabase
+      .from("agent_stock").select("quantity")
+      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id).single();
+    const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
+    await supabase.from("agent_stock")
+      .update({ quantity: restoredQty })
+      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id);
+
+    // Log reversal stock movement
+    const { data: agentInfo } = await supabase
+      .from("agents").select("name").eq("id", existing.agent_id).single();
+    await supabase.from("stock_movements").insert({
+      id:            `MOV-${randomUUID()}`,
+      org_id:        req.user!.orgId,
+      product_id:    existing.product_id,
+      product_name:  existing.product_name,
+      type:          "Delete Reversal",
+      qty:           orderQty,
+      balance_after: restoredQty,
+      agent_id:      existing.agent_id,
+      order_id:      req.params.id,
+      by_name:       req.user!.name,
+      by_user_id:    req.user!.id,
+      note:          `Stock restored — order ${req.params.id} deleted (agent ${agentInfo?.name ?? existing.agent_id} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
     });
+
+    // Remove the auto-created waybill for this order
+    await supabase.from("waybill_records")
+      .delete()
+      .eq("org_id", req.user!.orgId)
+      .eq("to_location", `Customer:${req.params.id}`);
   }
+
+  // Audit log before delete (so FK is still valid)
+  await supabase.from("order_audit").insert({
+    order_id:    req.params.id,
+    org_id:      req.user!.orgId,
+    changed_by:  req.user!.id,
+    from_status: existing.status,
+    to_status:   "Deleted",
+    note:        `Order deleted (was ${existing.status}). Customer: ${existing.customer}, Product: ${existing.product_name}, Amount: ${existing.amount}`
+  });
 
   const { error } = await supabase
     .from("orders")

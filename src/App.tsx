@@ -1203,10 +1203,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [ordersDateRange, setOrdersDateRange] = useState<DateRange>({ start: "", end: "" });
   const [orderSearch, setOrderSearch] = useState("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
-  const [orderStatus, setOrderStatus] = useState<OrderStatus>("All Orders");
-  const [orderSource, setOrderSource] = useState<OrderSource>("All Sources");
-  const [orderLocation, setOrderLocation] = useState<OrderLocation>("All Locations");
-  const [orderProductIds, setOrderProductIds] = useState<Set<string>>(new Set());
+  const [orderStatus, setOrderStatus] = useState<OrderStatus>(() =>
+    readPref<OrderStatus>("protohub.orders.status", "All Orders", (raw) => raw as OrderStatus)
+  );
+  const [orderSource, setOrderSource] = useState<OrderSource>(() =>
+    readPref<OrderSource>("protohub.orders.source", "All Sources", (raw) => raw as OrderSource)
+  );
+  const [orderLocation, setOrderLocation] = useState<OrderLocation>(() =>
+    readPref<OrderLocation>("protohub.orders.location", "All Locations", (raw) => raw as OrderLocation)
+  );
+  const [orderProductIds, setOrderProductIds] = useState<Set<string>>(() =>
+    readPref<Set<string>>("protohub.orders.productIds", new Set<string>(), (raw) => {
+      try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
+    })
+  );
   const [showOrderProductFilter, setShowOrderProductFilter] = useState(false);
   const [ordersPage, setOrdersPage] = useState(1);
   const [cartSearch, setCartSearch] = useState("");
@@ -1481,6 +1491,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfMode", revPerfMode); }, [revPerfMode]);
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
+  // Mirror Orders page filters too — same UI-pref rationale.
+  useEffect(() => { writePref("protohub.orders.status",   orderStatus);   }, [orderStatus]);
+  useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
+  useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
+  useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
   const [revPerfStatusOpen, setRevPerfStatusOpen] = useState(false);
   const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
   const cartSyncTimerRef = useRef<number | null>(null);
@@ -4429,9 +4444,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
         if (apiOrders.status === "fulfilled" && Array.isArray(apiOrders.value?.data)) {
           setTrackedOrders(apiOrders.value.data as any);
-          // Seed the poll timestamp so the 30s poller only fetches orders newer than this batch
+          // Seed the poll timestamps so the 30s poller only refetches deltas.
+          // updatedSince (preferred) catches status changes made on other devices;
+          // since is a fallback for the very first poll if updatedAt isn't set.
           const first = apiOrders.value.data[0];
-          if (first) latestOrderTimestamp.current = first.createdAt ?? first.created_at ?? "";
+          if (first) {
+            latestOrderTimestamp.current = first.createdAt ?? first.created_at ?? "";
+            // Walk the batch for the largest updatedAt — list is sorted by created_at,
+            // so an old order edited recently could sit deep in the list.
+            const maxUpdated = (apiOrders.value.data as any[]).reduce<string>((acc, o) => {
+              const u = o.updatedAt ?? o.updated_at ?? "";
+              return u > acc ? u : acc;
+            }, "");
+            if (maxUpdated) latestOrderUpdatedAt.current = maxUpdated;
+          }
           // Warn if we hit the fetch cap
           const total = apiOrders.value.total ?? 0;
           const fetched = apiOrders.value.data.length;
@@ -4620,25 +4646,46 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Order polling — merge new orders every 30s ────────────
-  // Tracks the latest createdAt we've seen so polling only fetches newer rows.
+  // ── Order polling — merge new + updated orders every 30s ────
+  // Polls by updatedSince so STATUS changes / edits made by other reps come
+  // through, not just freshly-created orders. Existing rows are upserted in
+  // place; new rows are prepended.
   const latestOrderTimestamp = useRef<string>("");
+  const latestOrderUpdatedAt = useRef<string>("");
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
     const poll = async () => {
       try {
         const params: Record<string, string> = { limit: "100" };
-        if (latestOrderTimestamp.current) params.since = latestOrderTimestamp.current;
+        // Prefer updatedSince once we've seen our first batch — it's a superset
+        // of "new since" because creating bumps updated_at too. On first poll we
+        // fall back to since (createdAt) so the very-first poll after mount
+        // doesn't wastefully refetch already-loaded rows.
+        if (latestOrderUpdatedAt.current) params.updatedSince = latestOrderUpdatedAt.current;
+        else if (latestOrderTimestamp.current) params.since = latestOrderTimestamp.current;
         const result = await ordersApi.list(params);
         if (!result?.data?.length) return;
-        // Update the high-water mark
-        const newest = result.data[0]?.createdAt ?? result.data[0]?.created_at;
-        if (newest) latestOrderTimestamp.current = newest;
-        // Merge: add orders that don't exist in state yet
+        // Update high-water marks. The server sorts by updated_at when
+        // updatedSince is supplied, so result.data[0] holds the newest stamp.
+        const newestUpdated = result.data[0]?.updatedAt ?? result.data[0]?.updated_at;
+        if (newestUpdated) latestOrderUpdatedAt.current = newestUpdated;
+        const newestCreated = result.data[0]?.createdAt ?? result.data[0]?.created_at;
+        if (newestCreated) latestOrderTimestamp.current = newestCreated;
+        // Upsert: replace existing orders in place, prepend new ones.
         setTrackedOrders((prev) => {
-          const existingIds = new Set(prev.map((o) => o.id));
-          const incoming = (result.data as TrackedOrder[]).filter((o) => !existingIds.has(o.id));
-          return incoming.length > 0 ? [...incoming, ...prev] : prev;
+          const incoming = result.data as TrackedOrder[];
+          if (incoming.length === 0) return prev;
+          const incomingById = new Map(incoming.map((o) => [o.id, o]));
+          let changed = false;
+          const merged = prev.map((o) => {
+            const update = incomingById.get(o.id);
+            if (update) { incomingById.delete(o.id); changed = true; return { ...o, ...update }; }
+            return o;
+          });
+          // Anything left in incomingById is genuinely new — prepend.
+          const fresh = Array.from(incomingById.values());
+          if (fresh.length > 0) { changed = true; return [...fresh, ...merged]; }
+          return changed ? merged : prev;
         });
       } catch { /* silent — polling failure shouldn't disrupt the UI */ }
     };
@@ -6572,7 +6619,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ]);
   };
 
-  const updateOrderStatus = (orderId: string, nextStatus: Exclude<OrderStatus, "All Orders">, reason?: string) => {
+  const updateOrderStatus = (orderId: string, nextStatus: Exclude<OrderStatus, "All Orders">, reason?: string, skipApi = false) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     if (!order) {
       return;
@@ -6653,7 +6700,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     );
     showToast(`${orderId} moved to ${nextStatus}.`);
-    ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch(() => {});
+    // Snapshot pre-update state so we can roll back if the API rejects the
+    // change (network blip, rep no longer authorized, RLS denial). Without
+    // this the optimistic UI lies to the user and the change disappears on
+    // next reload. skipApi=true is used by the bulk handler, which fires its
+    // own batched ordersApi.updateStatus and rolls back from its own snapshot.
+    if (!skipApi) {
+      const orderSnapshot = order;
+      ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch((err: any) => {
+        setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
+        showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
+      });
+    }
     // Re-sync the delivery-fee expense so a Failed/Cancelled flip turns the
     // line into a "Failed Delivery" expense, and a recovery flips it back.
     syncOrderDeliveryExpense({ ...order, status: nextStatus });
@@ -6685,16 +6743,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const bulkUpdateOrderStatus = async (nextStatus: Exclude<OrderStatus, "All Orders">) => {
     if (selectedOrderIds.size === 0) return;
     const ids = Array.from(selectedOrderIds);
-    // Apply optimistic local updates
-    ids.forEach((orderId) => updateOrderStatus(orderId, nextStatus));
+    // Snapshot orders before optimistic mutation so individual failures can be
+    // rolled back without affecting the ones that succeeded.
+    const snapshots = new Map(trackedOrders.filter((o) => selectedOrderIds.has(o.id)).map((o) => [o.id, o]));
+    // skipApi=true: optimistic local update only — bulk handler owns the
+    // network round-trip in a single batch below.
+    ids.forEach((orderId) => updateOrderStatus(orderId, nextStatus, undefined, true));
     setSelectedOrderIds(new Set());
-    // Await all API calls to detect partial failures
     const results = await Promise.allSettled(
       ids.map((orderId) => ordersApi.updateStatus(orderId, { status: nextStatus }))
     );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed > 0) {
-      showToast(`${ids.length - failed} order${ids.length - failed !== 1 ? "s" : ""} moved to ${nextStatus}. ${failed} failed — please retry.`);
+    // Per-id rollback for any rejected promise — fail-soft: succeeded orders
+    // keep their new status, failed ones snap back to their pre-mutation form.
+    const failedIds: string[] = [];
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        failedIds.push(ids[i]);
+      }
+    });
+    if (failedIds.length > 0) {
+      setTrackedOrders((value) =>
+        value.map((item) => failedIds.includes(item.id) ? (snapshots.get(item.id) ?? item) : item)
+      );
+      showToast(`${ids.length - failedIds.length} order${ids.length - failedIds.length !== 1 ? "s" : ""} moved to ${nextStatus}. ${failedIds.length} failed — please retry.`);
     } else {
       showToast(`${ids.length} order${ids.length > 1 ? "s" : ""} moved to ${nextStatus}.`);
     }
