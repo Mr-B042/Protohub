@@ -1457,7 +1457,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [expenseProduct, setExpenseProduct] = useState("General Expense");
   const [expenseDescription, setExpenseDescription] = useState("");
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
-  const [financePeriod, setFinancePeriod] = useState<Period>("This Month");
+  const [financePeriod, setFinancePeriod] = useState<Period>(() =>
+    readPref<Period>("protohub.finance.period", "This Month", (raw) => raw as Period)
+  );
+  useEffect(() => { writePref("protohub.finance.period", financePeriod); }, [financePeriod]);
   // Week navigator state — one weekStart + span per filterable page
   const getSundayKey = () => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); };
   type NavSpan = "1W" | "2W" | "3W" | "1M";
