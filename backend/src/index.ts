@@ -22,6 +22,7 @@ import emailSettingsRoutes from "./routes/email-settings.js";
 import emailReportsRoutes  from "./routes/email-reports.js";
 import cartRoutes          from "./routes/carts.js";
 import publicCartRoutes    from "./routes/public-carts.js";
+import publicOrderRoutes   from "./routes/public-orders.js";
 import publicProductRoutes from "./routes/public-products.js";
 import embedSettingsRoutes       from "./routes/embed-settings.js";
 import publicEmbedSettingsRoutes from "./routes/public-embed-settings.js";
@@ -41,6 +42,11 @@ app.set("trust proxy", 1);
 
 // ── Security ──────────────────────────────────────────────
 app.use(helmet());
+
+// Public endpoints are designed to be hit from customer-owned domains hosting
+// the embed iframe — they need wildcard CORS. Authenticated endpoints stay
+// locked to the configured FRONTEND_URL.
+app.use("/api/public", cors({ origin: "*", credentials: false }));
 app.use(cors({
   origin: process.env.FRONTEND_URL ?? "http://localhost:5173",
   credentials: true
@@ -88,6 +94,7 @@ app.use("/api/waybills",       waybillRoutes);
 app.use("/api/email-settings", emailSettingsRoutes);
 app.use("/api/email",          emailReportsRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
+app.use("/api/public/orders",          publicOrderRoutes);
 app.use("/api/public/products",        publicProductRoutes);
 app.use("/api/public/embed-settings",  publicEmbedSettingsRoutes);
 app.use("/api/embed-settings",         embedSettingsRoutes);

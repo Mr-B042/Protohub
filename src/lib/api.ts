@@ -258,6 +258,24 @@ export const cartsApi = {
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body)
 };
 
+// ── Public Orders ────────────────────────────────────────
+// Raw fetch so we don't pick up the Authorization header (no auth context for
+// embed-form customers) and don't trigger request()'s 401 → reload behavior.
+export const publicOrdersApi = {
+  create: async (body: unknown) => {
+    const res = await fetch(`${BASE}/api/public/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : "Order failed.");
+    }
+    return snakeToCamel<{ id: string; amount: number; currency: string; crossSellLines: any[] }>(await res.json());
+  }
+};
+
 // ── Pay Structures ───────────────────────────────────────
 export const payStructuresApi = {
   list: () => get<any[]>("/api/pay-structures"),

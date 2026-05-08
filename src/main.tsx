@@ -52,6 +52,12 @@ function Root() {
     return <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />;
   }
 
+  // Public embed form is hit by unauthenticated customers. App detects the
+  // hash internally and renders the form-only branch — bypass the auth gate.
+  if (hash.startsWith("#/order-form/embed")) {
+    return <App onLogout={handleLogout} />;
+  }
+
   if (!loggedIn) {
     return <LoginScreen onLogin={handleLogin} />;
   }

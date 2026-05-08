@@ -86,9 +86,9 @@ import {
   getPermissionState
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, agentsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi
+  embedSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
 import {
   Line,
@@ -109,14 +109,14 @@ import {
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type DeliveryAgent = string;
-type ScheduleRange = "Today" | "Tomorrow" | "Next tomorrow" | "Custom";
+type ScheduleRange = "Today" | "Tomorrow" | "Day After" | "Custom";
 type RepStatus = "All statuses" | "Active" | "Inactive";
 type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
@@ -203,6 +203,7 @@ type ManagedUser = {
   permissions?: UserPermission[];
   // Owner-granted page-level overrides on top of the role's defaults.
   extraPages?: ActivePage[];
+  roundRobinPosition?: number;
 };
 type PayStructureType = "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";
 type BonusTier = { threshold: number; amount: number };
@@ -469,6 +470,7 @@ type PayrollRun = {
   label: string;
   notes: string;
   total: number;
+  status?: "Draft" | "Approved" | "Paid";
   createdAt: string;
   rows: { userId: string; name: string; delivered: number; fixedSalary: number; commission: number; autoBonus?: number; deductions?: number; total: number }[];
   topPerformer?: { names: string[]; amountEach: number; delivered: number };
@@ -540,7 +542,7 @@ const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Proc
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
-const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Next tomorrow", "Custom"];
+const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
 const repStatuses: RepStatus[] = ["All statuses", "Active", "Inactive"];
 const agentZones: AgentZone[] = ["All Zones", "Lagos Island", "Mainland", "Abuja"];
 const agentStatuses: AgentStatus[] = ["All Status", "Active", "Order in Progress", "Inactive"];
@@ -914,7 +916,9 @@ const daysInPeriodSoFar = (activePeriod: Period, range: DateRange) => {
   if (activePeriod === "Custom" && range.start && range.end) {
     const start = new Date(`${range.start}T00:00:00`);
     const end = new Date(`${range.end}T00:00:00`);
-    return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    // Cap end to today so future dates don't deflate the daily average
+    const capped = end.getTime() > now.getTime() ? now : end;
+    return Math.max(1, Math.round((capped.getTime() - start.getTime()) / 86_400_000) + 1);
   }
 
   if (activePeriod === "Today") {
@@ -1209,6 +1213,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [deliveriesDateRange, setDeliveriesDateRange] = useState<DateRange>({ start: "", end: "" });
   const [deliverySearch, setDeliverySearch] = useState("");
   const [deliveryAgent, setDeliveryAgent] = useState<DeliveryAgent>("All Agents");
+  const [deliveriesPage, setDeliveriesPage] = useState(1);
   const [inventorySearch, setInventorySearch] = useState("");
   const [productName, setProductName] = useState("");
   const [productDescription, setProductDescription] = useState("");
@@ -1268,9 +1273,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesRepPassword, setSalesRepPassword] = useState("");
   const [salesRepRole, setSalesRepRole] = useState<EditableUserRole>("Sales Rep");
   const [salesRepActive, setSalesRepActive] = useState(true);
+  const [salesRepPage, setSalesRepPage] = useState(1);
   const [agentSearch, setAgentSearch] = useState("");
   const [agentZone, setAgentZone] = useState<AgentZone>("All Zones");
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("All Status");
+  const [agentsPage, setAgentsPage] = useState(1);
   const [agentName, setAgentName] = useState("");
   const [agentPhone, setAgentPhone] = useState("");
   const [agentZoneInput, setAgentZoneInput] = useState("");
@@ -1318,6 +1325,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Selected expense for the Expense Details modal
   const [selectedExpenseId, setSelectedExpenseId] = useState<string>("");
   const [waybillStatusFilter, setWaybillStatusFilter] = useState<WaybillStatus | "All">("All");
+  const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
   const [payrollTab, setPayrollTab] = useState<PayrollTab>("Pay Rates");
@@ -1335,10 +1343,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Branding: company logo (data URL or remote URL) + display name
   const [companyLogo, setCompanyLogo] = useState<string>(() => readStored<string>(storageKeys.companyLogo, ""));
   const [companyName, setCompanyName] = useState<string>(() => readStored<string>(storageKeys.companyName, "Protohub"));
+  const [adminCartNotifications, setAdminCartNotifications] = useState(false);
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
+  const adminCartSyncedRef = useRef(false);
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
@@ -1382,10 +1392,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [customerDateRange, setCustomerDateRange] = useState<DateRange>({ start: "", end: "" });
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerSource, setCustomerSource] = useState<CustomerSource>("Source: All");
+  const [customerPage, setCustomerPage] = useState(1);
   const [expensePeriod, setExpensePeriod] = useState<Period>("This Month");
   const [showExpenseDateRange, setShowExpenseDateRange] = useState(false);
   const [expenseDateRange, setExpenseDateRange] = useState<DateRange>({ start: "", end: "" });
   const [expenseSearch, setExpenseSearch] = useState("");
+  const [expensePage, setExpensePage] = useState(1);
   const [expenseFilter, setExpenseFilter] = useState<ExpenseFilter>("All Types");
   const [expenseCurrency, setExpenseCurrency] = useState<CurrencyCode>("NGN");
   const [expenseType, setExpenseType] = useState<ExpenseType>("Other");
@@ -1445,7 +1457,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartsPage, setCartsPage] = useState(1);
   const [selectedCartIds, setSelectedCartIds] = useState<Set<string>>(new Set());
   const [showCartProductFilter, setShowCartProductFilter] = useState(false);
-  // Scheduled Deliveries product filter
+  // Scheduled Deliveries
+  const [schedulePage, setSchedulePage] = useState(1);
   const [scheduleProductIds, setScheduleProductIds] = useState<Set<string>>(new Set());
   const [showScheduleProductFilter, setShowScheduleProductFilter] = useState(false);
   // Deliveries product filter
@@ -1471,14 +1484,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return d.toISOString().slice(0, 10);
   });
   const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">("Campaign Orders");
+  const [campaignPage, setCampaignPage] = useState(1);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
   const [adSpendDraft, setAdSpendDraft] = useState<Record<string, string>>({});
   const [adSpendSaving, setAdSpendSaving] = useState(false);
   const [financeRepSearch, setFinanceRepSearch] = useState("");
+  const [outstandingPage, setOutstandingPage] = useState(1);
   const [financeProductSearch, setFinanceProductSearch] = useState("");
   const [userSearch, setUserSearch] = useState("");
+  const [userPage, setUserPage] = useState(1);
+  const [notifPage, setNotifPage] = useState(1);
   const [userRole, setUserRole] = useState<UserRole>("All Roles");
   const [userStatus, setUserStatus] = useState<UserStatus>("All Status");
   const [expandedPermissionsUserId, setExpandedPermissionsUserId] = useState<string | null>(null);
@@ -1584,6 +1601,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setTimezoneSetting(res.timezone);
         timezoneSyncedRef.current = res.timezone;
       }
+      if (typeof res?.adminCartNotifications === "boolean") {
+        setAdminCartNotifications(res.adminCartNotifications);
+        adminCartSyncedRef.current = res.adminCartNotifications;
+      }
       brandingHydratedRef.current = true;
       const serverVersion = Number(res?.cacheVersion ?? 0);
       const localKey = "protohub.cacheVersion";
@@ -1636,11 +1657,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       payrollSyncedRef.current.amount !== bonusAmtNum;
     const timezoneChanged =
       !!timezoneSetting && timezoneSyncedRef.current !== timezoneSetting;
-    if (!brandingChanged && !payrollChanged && !timezoneChanged) return;
+    const cartNotifChanged = adminCartSyncedRef.current !== adminCartNotifications;
+    if (!brandingChanged && !payrollChanged && !timezoneChanged && !cartNotifChanged) return;
     const body: Record<string, unknown> = {};
     if (brandingChanged) { body.name = companyName; body.logoUrl = companyLogo; }
     if (payrollChanged)  { body.topPerformerBonusEnabled = topPerformerBonusEnabled; body.topPerformerBonusAmount = bonusAmtNum; }
     if (timezoneChanged) { body.timezone = timezoneSetting; }
+    if (cartNotifChanged) { body.adminCartNotifications = adminCartNotifications; }
     const handle = setTimeout(() => {
       authApi.updateBranding(body as any)
         .then((saved: any) => {
@@ -1653,11 +1676,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             amount:  Number(saved?.topPerformerBonusAmount ?? bonusAmtNum)
           };
           timezoneSyncedRef.current = saved?.timezone ?? timezoneSetting;
+          adminCartSyncedRef.current = saved?.adminCartNotifications ?? adminCartNotifications;
         })
-        .catch(() => { /* role-gated; safe to ignore */ });
+        .catch((err: any) => { showToast(`Settings sync failed: ${err.message}`); });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting]);
+  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {
@@ -1745,7 +1769,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
-  const [adminCartNotifications, setAdminCartNotifications] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
   // PWA install
@@ -1892,7 +1915,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const toggleShowPassword = (key: string) => setShowPasswordFields((v) => ({ ...v, [key]: !v[key] }));
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamLeadId, setNewTeamLeadId] = useState("");
-  const [extraTeams, setExtraTeams] = useState<{ id: string; name: string; leadId: string | undefined; productIds: string[] }[]>([]);
+  const [editTeamId, setEditTeamId] = useState("");
+  const [editTeamName, setEditTeamName] = useState("");
+  const [editTeamLeadId, setEditTeamLeadId] = useState("");
+  const [extraTeams, setExtraTeams] = useState<{ id: string; name: string; leadId: string | undefined; productIds: string[]; memberIds: string[] }[]>([]);
   const [remittanceTargetOrderId, setRemittanceTargetOrderId] = useState("");
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
@@ -1917,6 +1943,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>([]);
   const [dataLoading, setDataLoading] = useState(() => auth.isLoggedIn());
   const [dataError, setDataError] = useState<string | null>(null);
+  const [ordersCappedWarning, setOrdersCappedWarning] = useState<string | null>(null);
   const [penaltyTargetRepId, setPenaltyTargetRepId] = useState<string>("");
   const [penaltyType, setPenaltyType] = useState<RepPenaltyType>("Wrong Data Entry");
   const [penaltyAmount, setPenaltyAmount] = useState("500");
@@ -1964,13 +1991,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
     : null;
   const publicProductId = publicEmbedParams?.get("product") ?? "";
-  const publicCurrency = (publicEmbedParams?.get("currency") as ProductCurrencyCode | null) ?? "NGN";
+  // Clamp the currency param to the allowed enum so a hostile URL can't smuggle
+  // an arbitrary string into the order record.
+  const rawPublicCurrency = publicEmbedParams?.get("currency") ?? "NGN";
+  const publicCurrency: ProductCurrencyCode =
+    rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" ? rawPublicCurrency : "NGN";
   const publicUtmSource = publicEmbedParams?.get("utm_source") ?? "direct";
   const publicUtmCampaign = publicEmbedParams?.get("utm_campaign") ?? "embed";
   const publicUtmMedium = publicEmbedParams?.get("utm_medium") ?? "";
   const publicUtmContent = publicEmbedParams?.get("utm_content") ?? "";
   const publicUtmTerm = publicEmbedParams?.get("utm_term") ?? "";
-  const publicRedirectUrl = publicEmbedParams?.get("redirect_url") ?? "";
+  // Only http(s) redirect targets are honored — defends against `javascript:` /
+  // `data:` smuggling that would execute in the parent window after submit.
+  const rawPublicRedirect = publicEmbedParams?.get("redirect_url") ?? "";
+  const publicRedirectUrl = (() => {
+    if (!rawPublicRedirect) return "";
+    try {
+      const u = new URL(rawPublicRedirect);
+      return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : "";
+    } catch { return ""; }
+  })();
+  const [publicHoneypot, setPublicHoneypot] = useState("");
   const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
   const publicProduct = products.find((product) => product.id === publicProductId);
@@ -2206,8 +2247,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const saveAdSpend = async () => {
     setAdSpendSaving(true);
     const activeProds = products.filter((p) => p.active);
+    const prevExpenses = expenses;
     try {
       for (const product of activeProds) {
+        const productCurrency = (["NGN", "USD", "GBP"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
         for (const day of adSpendWeekDays) {
           const key = `${product.id}-${day}`;
           const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
@@ -2219,7 +2262,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (draftVal > 0) {
             const newExp: ExpenseRecord = {
               id: `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-              type: "Ad Spend", amount: draftVal, currency: "NGN", date: day,
+              type: "Ad Spend", amount: draftVal, currency: productCurrency, date: day,
               productId: product.id, productName: product.name,
               description: `Ad spend – ${product.name} – ${day}`
             };
@@ -2233,7 +2276,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
       }
       showToast("Ad spend saved.");
-    } catch { showToast("Save failed — check connection."); }
+    } catch {
+      setExpenses(prevExpenses);
+      showToast("Save failed — changes rolled back. Check connection.");
+    }
     setAdSpendSaving(false);
   };
 
@@ -2279,11 +2325,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const rawDate = order.deliveredDate ?? order.createdAt ?? order.date;
     const parsed = rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(rawDate) : undefined;
     if (parsed && !Number.isNaN(parsed.getTime())) {
-      return Math.min(23, Math.max(1, parsed.getHours()));
+      return Math.min(23, Math.max(0, parsed.getHours()));
     }
-    // Date-only or unparseable: bucket deterministically into hour 1 instead of
+    // Date-only or unparseable: bucket deterministically into hour 0 instead of
     // wall-clock now, which would shift the chart every hour the user watches it.
-    return 1;
+    return 0;
   };
   const revenueByHour = (orders: TrackedOrder[]) =>
     orders.reduce<number[]>((acc, order) => {
@@ -2394,7 +2440,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const dashboardCurrentRevenueByHour  = revenueByHour(revPerfCurrent.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
     const dashboardPreviousRevenueByHour = revenueByHour(revPerfPrevious.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
     dashboardRevenueChartData = revenueData.map((point, index) => {
-      const hour = index + 1;
+      const hour = index;
       const cur  = dashboardCurrentRevenueByHour[hour]  ?? 0;
       const prev = dashboardPreviousRevenueByHour[hour] ?? 0;
       currentRevenueRunningTotal  += cur;
@@ -2540,6 +2586,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesViewer = viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
     return matchesSchedule && matchesProduct && matchesViewer;
   });
+  const SCHEDULE_PAGE_SIZE = 25;
+  const scheduleTotalPages = Math.max(1, Math.ceil(scheduledDeliveryRows.length / SCHEDULE_PAGE_SIZE));
+  const schedulePageClamped = Math.min(schedulePage, scheduleTotalPages);
+  const pagedScheduleRows = scheduledDeliveryRows.slice((schedulePageClamped - 1) * SCHEDULE_PAGE_SIZE, schedulePageClamped * SCHEDULE_PAGE_SIZE);
   const agentNameForOrder = (order: TrackedOrder) => agents.find((agent) => agent.id === order.agentId)?.name ?? "Unassigned";
   const pfDeliveryBase = deliveriesProductIds.size === 0 ? deliveredInPeriodRows : deliveredInPeriodRows.filter(o => matchesProductFilter(o.productId, o.productName, deliveriesProductIds));
   const filteredDeliveryRows = pfDeliveryBase.filter((order) => {
@@ -2549,6 +2599,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesAgent = deliveryAgent === "All Agents" || agentName === deliveryAgent || (!order.agentId && deliveryAgent === "Unassigned");
     return matchesSearch && matchesAgent;
   });
+  const DELIVERIES_PAGE_SIZE = 25;
+  const deliveriesTotalPages = Math.max(1, Math.ceil(filteredDeliveryRows.length / DELIVERIES_PAGE_SIZE));
+  const deliveriesPageClamped = Math.min(deliveriesPage, deliveriesTotalPages);
+  const pagedDeliveryRows = filteredDeliveryRows.slice((deliveriesPageClamped - 1) * DELIVERIES_PAGE_SIZE, deliveriesPageClamped * DELIVERIES_PAGE_SIZE);
   const deliveredRevenueInPeriod = pfDeliveryBase.reduce((sum, order) => sum + order.amount, 0);
   const averageFulfillmentDays =
     pfDeliveryBase.length === 0
@@ -2577,13 +2631,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesStatus = salesStatus === "All statuses" || (salesStatus === "Active" ? row.user.active : !row.user.active);
     return matchesSearch && matchesStatus;
   });
+  const SALES_REP_PAGE_SIZE = 25;
+  const salesRepTotalPages = Math.max(1, Math.ceil(filteredSalesRepRows.length / SALES_REP_PAGE_SIZE));
+  const salesRepPageClamped = Math.min(salesRepPage, salesRepTotalPages);
+  const pagedSalesRepRows = filteredSalesRepRows.slice((salesRepPageClamped - 1) * SALES_REP_PAGE_SIZE, salesRepPageClamped * SALES_REP_PAGE_SIZE);
   const totalSalesRepOrders = salesRepRows.reduce((sum, row) => sum + row.orders, 0);
   const avgSalesConversion = salesRepRows.length === 0 ? 0 : Math.round(salesRepRows.reduce((sum, row) => sum + row.conversion, 0) / salesRepRows.length);
   const salesTeams = extraTeams;
-  const teamForRep = (rep: ManagedUser) => salesTeams[salesRepUsers.findIndex((user) => user.id === rep.id) % salesTeams.length] ?? salesTeams[0];
+  const teamForRep = (rep: ManagedUser) => salesTeams.find((t) => t.memberIds.includes(rep.id)) ?? undefined;
+  const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
   const agentRows = agents.map((agent) => {
-    const assigned = trackedOrders.filter((order) => order.agentId === agent.id);
+    const assigned = trackedOrders.filter((order) =>
+      order.agentId === agent.id
+      && isInPeriod(orderCreatedKey(order), agentsPeriod, agentsDateRange)
+      && matchesProductFilter(order.productId, order.productName, agentProductIds)
+    );
     const deliveredList = assigned.filter((order) => (order.status ?? "New") === "Delivered");
     const delivered = deliveredList.length;
     const deliveredUnits = deliveredList.reduce((sum, o) => sum + quantityForOrder(o), 0);
@@ -2619,6 +2682,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesStatus = agentStatus === "All Status" || row.status === agentStatus;
     return matchesSearch && matchesZone && matchesStatus;
   });
+  const AGENTS_PAGE_SIZE = 25;
+  const agentsTotalPages = Math.max(1, Math.ceil(filteredAgentRows.length / AGENTS_PAGE_SIZE));
+  const agentsPageClamped = Math.min(agentsPage, agentsTotalPages);
+  const pagedAgentRows = filteredAgentRows.slice((agentsPageClamped - 1) * AGENTS_PAGE_SIZE, agentsPageClamped * AGENTS_PAGE_SIZE);
   const filteredExpenses = expenses.filter((expense) => {
     const search = expenseSearch.trim().toLowerCase();
     const matchesSearch = !search || `${expense.id} ${expense.type} ${expense.productName} ${expense.description}`.toLowerCase().includes(search);
@@ -2645,13 +2712,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
   const financeCogs = financeDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-  const financeGrossProfit = financeRevenue - financeCogs;
-  const financeNetProfit = financeGrossProfit - financeExpenseTotal;
+  const financeLogisticsCost = financeDeliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+  const financeDeliveryExpenses = financeExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
+  const financeOpex = financeExpenseTotal - financeDeliveryExpenses;
+  const financeGrossProfit = financeRevenue - financeCogs - financeLogisticsCost;
+  const financeNetProfit = financeGrossProfit - financeOpex;
   const financeGrossMargin = financeRevenue === 0 ? 0 : Math.round((financeGrossProfit / financeRevenue) * 1000) / 10;
   const financeNetMargin = financeRevenue === 0 ? 0 : Math.round((financeNetProfit / financeRevenue) * 1000) / 10;
   const financeDeliveredCount = financeDeliveredRows.length;
   const financeAvgCpa = financeDeliveredCount === 0 ? 0 : Math.round(financeExpenseTotal / financeDeliveredCount);
-  const financeRoi = financeCogs + financeExpenseTotal === 0 ? 0 : Math.round((financeNetProfit / (financeCogs + financeExpenseTotal)) * 100);
+  const financeRoi = financeCogs + financeLogisticsCost + financeOpex === 0 ? 0 : Math.round((financeNetProfit / (financeCogs + financeLogisticsCost + financeOpex)) * 100);
   const financeRepRows = salesRepUsers.map((user) => {
     const delivered = financeDeliveredRows.filter((order) => order.assignedRepId === user.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
@@ -2762,9 +2832,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           onBlur={(e) => {
             const next = Math.max(0, Number(e.target.value) || 0);
             if (next === fee) return;
+            const prevOrders = trackedOrders;
             const updated = { ...order, logisticsCost: next };
             setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? updated : o));
-            ordersApi.update(order.id, { logistics_cost: next }).catch(() => {});
+            ordersApi.update(order.id, { logistics_cost: next }).catch((err: any) => {
+              setTrackedOrders(prevOrders);
+              showToast(`Failed to save delivery fee: ${err.message}`);
+            });
             syncOrderDeliveryExpense(updated);
           }}
           className={`!min-h-0 w-20 text-sm font-bold bg-transparent focus:outline-none ${isFailed && fee > 0 ? "text-rose-600" : "text-gray-900"}`}
@@ -2782,8 +2856,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const expenseId = `EXP-DEL-${order.id}`;
     const fee = Number(order.logisticsCost ?? 0);
     if (!fee || fee <= 0) {
+      const removedExpense = expenses.find((e) => e.id === expenseId);
       setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
-      expensesApi.delete(expenseId).catch(() => {});
+      expensesApi.delete(expenseId).catch((err: any) => {
+        if (removedExpense) setExpenses((prev) => [removedExpense, ...prev]);
+        showToast(`Failed to remove delivery expense: ${err.message}`);
+      });
       return;
     }
     const failed = order.status === "Failed" || order.status === "Cancelled";
@@ -2798,7 +2876,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       id: expenseId,
       type: category,
       amount: fee,
-      currency: "NGN",
+      currency: (["NGN", "USD", "GBP"].includes(order.currency) ? order.currency : "NGN") as CurrencyCode,
       date,
       productId: order.productId,
       productName: order.productName,
@@ -2809,8 +2887,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       id: expenseRecord.id, date: expenseRecord.date, category: expenseRecord.type,
       description: expenseRecord.description, amount: expenseRecord.amount, currency: expenseRecord.currency,
       productId: expenseRecord.productId
-    } as any).catch((err) => {
-      console.warn(`[delivery-fee expense] failed to persist for ${order.id}:`, err);
+    } as any).catch((err: any) => {
+      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+      showToast(`Failed to sync delivery expense: ${err.message}`);
     });
   };
 
@@ -2821,6 +2900,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
     const expected = Math.max(0, order.amount - newLogistics);
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
+    const prevOrders = trackedOrders;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: newLogistics,
@@ -2828,13 +2908,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       remittanceStatus: status,
       notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...(o.notes ?? [])]
     } : o));
-    const _rrId = order.id;
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
     setModal(null);
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
-    showToast(`${order.id} remittance saved (${status}).${newLogistics > 0 ? ` Delivery cost ₦${newLogistics.toLocaleString()} booked to expenses.` : ""}`);
-    ordersApi.update(_rrId, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status }).catch(() => {});
+    showToast(`${order.id} remittance saved (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
+    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status }).catch((err: any) => {
+      setTrackedOrders(prevOrders);
+      showToast(`Failed to save remittance: ${err.message}`);
+    });
   };
 
   const openRecordRemittance = (order: TrackedOrder) => {
@@ -2864,7 +2946,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCustomerFlags((prev) => ({ ...prev, [key]: { flagged: true, reason, flaggedAt: new Date().toISOString() } }));
     setModal(null);
     showToast("Customer flagged.");
-    customersApi.flag({ phone: flagTargetPhone, reason }).catch(() => {});
+    customersApi.flag({ phone: flagTargetPhone, reason }).catch((err: any) => {
+      setCustomerFlags((prev) => { const next = { ...prev }; delete next[key]; return next; });
+      showToast(`Failed to flag customer: ${err.message}`);
+    });
     pushSystemNotification({
       type: "info",
       title: "Customer flagged as high-risk",
@@ -2873,9 +2958,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const unflagCustomer = (phone: string) => {
     const key = normalizePhone(phone);
-    setCustomerFlags((prev) => { const next = { ...prev }; delete next[key]; return next; });
-    customersApi.unflag(phone).catch(() => {});
+    const prev = customerFlags[key];
+    setCustomerFlags((flags) => { const next = { ...flags }; delete next[key]; return next; });
     showToast("Customer flag removed.");
+    customersApi.unflag(phone).catch((err: any) => {
+      if (prev) setCustomerFlags((flags) => ({ ...flags, [key]: prev }));
+      showToast(`Failed to unflag customer: ${err.message}`);
+    });
   };
 
   // ===== System notifications =====
@@ -2904,9 +2993,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .catch(() => { /* swallow — local copy is still in state */ });
   };
   const markAllNotificationsRead = () => {
-    setSystemNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    notificationsApi.markAllRead().catch(() => {});
+    const prev = systemNotifications;
+    setSystemNotifications((p) => p.map((n) => ({ ...n, read: true })));
     showToast("All notifications marked as read.");
+    notificationsApi.markAllRead().catch((err: any) => {
+      setSystemNotifications(prev);
+      showToast(`Failed to mark all read: ${err.message}`);
+    });
   };
   const markOneNotificationRead = (id: string) => {
     setSystemNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
@@ -3086,7 +3179,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const updateProductStates = (productId: string, states: string[]) => {
+    const prevProducts = products;
     setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, availableStates: states } : p));
+    productsApi.update(productId, { available_states: states }).catch((err: any) => {
+      setProducts(prevProducts);
+      showToast(`Failed to save state restrictions: ${err.message}`);
+    });
   };
 
   const updateProductRole = (productId: string, role: ProductRole) => {
@@ -3222,11 +3320,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       message: `${record.repName} — ${penaltyType}${amountPart}${bonusPart}${penaltyOrderId ? ` (order ${penaltyOrderId})` : ""}${penaltyReason.trim() ? ` — ${penaltyReason.trim()}` : ""}`,
       orderId: penaltyOrderId || undefined
     });
+    penaltiesApi.create({
+      repId: record.repId,
+      repName: record.repName,
+      type: record.type,
+      amount: record.amount,
+      removeAllBonuses: record.removeAllBonuses,
+      orderId: record.orderId,
+      reason: record.reason,
+      byName: record.by
+    }).then((saved: any) => {
+      if (saved?.id) setRepPenalties((prev) => prev.map((p) => p.id === record.id ? { ...p, id: saved.id } : p));
+    }).catch((err: any) => {
+      setRepPenalties((prev) => prev.filter((p) => p.id !== record.id));
+      showToast(`Failed to save penalty: ${err.message}`);
+    });
   };
 
   const removePenalty = (penaltyId: string) => {
+    const removed = repPenalties.find((p) => p.id === penaltyId);
     setRepPenalties((prev) => prev.filter((p) => p.id !== penaltyId));
     showToast("Penalty removed");
+    penaltiesApi.delete(penaltyId).catch((err: any) => {
+      if (removed) setRepPenalties((prev) => [removed, ...prev]);
+      showToast(`Failed to remove penalty: ${err.message}`);
+    });
   };
 
   // ===== Bonus engine =====
@@ -3728,7 +3846,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       openOrders: trackedOrders.filter((order) => order.assignedRepId === user.id && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New")).length,
       delivered: deliveredOrderRows.filter((order) => order.assignedRepId === user.id).length
     }))
-    .sort((a, b) => a.openOrders - b.openOrders || a.user.name.localeCompare(b.user.name));
+    .sort((a, b) => (a.user.roundRobinPosition ?? 0) - (b.user.roundRobinPosition ?? 0) || a.user.name.localeCompare(b.user.name));
   const roundRobinExcludedRows = salesRepUsers
     .filter((user) => !user.active)
     .map((user) => ({
@@ -4223,7 +4341,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiNotifications,
           apiStockCounts,
           apiTeam,
-          apiCarts
+          apiCarts,
+          apiSalesTeams,
+          apiPayStructures,
+          apiPayrollRuns,
+          apiPenalties
         ] = await Promise.allSettled([
           productsApi.list(),
           ordersApi.list({ limit: "2000" }),
@@ -4234,16 +4356,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           notificationsApi.list(),
           stockApi.countSessions(),
           teamApi.list(),
-          cartsApi.list()
+          cartsApi.list(),
+          salesTeamsApi.list(),
+          payStructuresApi.list(),
+          payrollApi.list(),
+          penaltiesApi.list()
         ]);
 
         if (cancelled) return;
 
         // Check if ALL requests rejected (total API failure)
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts];
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
         const allFailed = allResults.every((r) => r.status === "rejected");
         if (allFailed) {
-          setDataError("Unable to reach the server. Showing cached data.");
+          setDataError("Unable to reach the server. Please check your connection and refresh.");
         }
 
         if (apiProducts.status === "fulfilled" && apiProducts.value?.length) {
@@ -4254,6 +4380,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           // Seed the poll timestamp so the 30s poller only fetches orders newer than this batch
           const first = apiOrders.value.data[0];
           if (first) latestOrderTimestamp.current = first.createdAt ?? first.created_at ?? "";
+          // Warn if we hit the fetch cap
+          const total = apiOrders.value.total ?? 0;
+          const fetched = apiOrders.value.data.length;
+          if (total > fetched) {
+            setOrdersCappedWarning(`Showing most recent ${fetched.toLocaleString()} of ${total.toLocaleString()} orders. Dashboard stats may be incomplete.`);
+          } else {
+            setOrdersCappedWarning(null);
+          }
         }
         if (apiAgents.status === "fulfilled" && apiAgents.value?.length) {
           // Server stores agents.status (enum: Active / Inactive / …) but the
@@ -4344,7 +4478,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             email: u.email,
             role: u.role,
             active: u.active,
-            created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : ""
+            created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "",
+            roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
           })));
         }
         if (apiCarts.status === "fulfilled" && Array.isArray(apiCarts.value)) {
@@ -4373,6 +4508,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
             createdAt:    c.createdAt ?? c.created_at ?? ""
           })) as any);
+        }
+        if (apiSalesTeams.status === "fulfilled" && Array.isArray(apiSalesTeams.value)) {
+          setExtraTeams(apiSalesTeams.value.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            leadId: t.lead_id ?? undefined,
+            productIds: Array.isArray(t.product_ids) ? t.product_ids : [],
+            memberIds: Array.isArray(t.member_ids) ? t.member_ids : []
+          })));
+        }
+        if (apiPayStructures.status === "fulfilled" && Array.isArray(apiPayStructures.value)) {
+          setPayStructures(apiPayStructures.value.map((s: any) => ({
+            userId: s.userId ?? s.user_id,
+            type: s.type ?? "Per Delivered Order",
+            fixedSalary: Number(s.fixedSalary ?? s.fixed_salary ?? 0),
+            commissionRate: Number(s.commissionRate ?? s.commission_pct ?? s.commissionPct ?? 0),
+            bonusTiers: Array.isArray(s.bonusTiers ?? s.bonus_tiers) ? (s.bonusTiers ?? s.bonus_tiers) : [],
+            updatedAt: s.updatedAt ?? s.updated_at ?? ""
+          })));
+        }
+        if (apiPayrollRuns.status === "fulfilled" && Array.isArray(apiPayrollRuns.value)) {
+          setPayrollRuns(apiPayrollRuns.value.map((r: any) => ({
+            id: r.id,
+            month: r.month ?? r.period ?? "",
+            label: r.label ?? r.period ?? "",
+            notes: r.notes ?? "",
+            total: Number(r.total ?? 0),
+            status: r.status ?? "Draft",
+            createdAt: r.createdAt ?? r.created_at ?? "",
+            rows: Array.isArray(r.rows ?? r.entries) ? (r.rows ?? r.entries) : [],
+            topPerformer: r.topPerformer ?? r.top_performer ?? undefined
+          })));
+        }
+        if (apiPenalties.status === "fulfilled" && Array.isArray(apiPenalties.value)) {
+          setRepPenalties(apiPenalties.value.map((p: any) => ({
+            id: p.id,
+            repId: p.repId ?? p.rep_id,
+            repName: p.repName ?? p.rep_name ?? "",
+            type: p.type,
+            amount: Number(p.amount ?? 0),
+            removeAllBonuses: p.removeAllBonuses ?? p.remove_all_bonuses ?? false,
+            orderId: p.orderId ?? p.order_id ?? undefined,
+            reason: p.reason ?? "",
+            date: p.date ?? p.createdAt ?? p.created_at ?? "",
+            by: p.by ?? p.byName ?? p.by_name ?? ""
+          })));
         }
       } catch (_) {
         if (!cancelled) setDataError("Unable to reach the server. Showing cached data.");
@@ -4623,6 +4804,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleDeliveriesPeriodChange = (nextPeriod: Period) => {
     setDeliveriesPeriod(nextPeriod);
     setShowDeliveriesDateRange(false);
+    setDeliveriesPage(1);
     showToast(`Deliveries period set to ${nextPeriod}.`);
   };
 
@@ -4663,6 +4845,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleAgentsPeriodChange = (nextPeriod: Period) => {
     setAgentsPeriod(nextPeriod);
     setShowAgentsDateRange(false);
+    setAgentsPage(1);
     if (nextPeriod !== "Custom") setAgentsDateRange({ start: "", end: "" });
   };
 
@@ -4691,6 +4874,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleNotificationsPeriodChange = (nextPeriod: Period) => {
     setNotificationsPeriod(nextPeriod);
     setShowNotificationsDateRange(false);
+    setNotifPage(1);
     if (nextPeriod !== "Custom") setNotificationsDateRange({ start: "", end: "" });
   };
 
@@ -4714,6 +4898,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleWaybillsPeriodChange = (nextPeriod: Period) => {
     setWaybillsPeriod(nextPeriod);
     setShowWaybillsDateRange(false);
+    setWaybillPage(1);
     if (nextPeriod !== "Custom") setWaybillsDateRange({ start: "", end: "" });
   };
 
@@ -4795,6 +4980,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleCampaignPeriodChange = (nextPeriod: Period) => {
     setCampaignPeriod(nextPeriod);
     setShowCampaignDateRange(false);
+    setCampaignPage(1);
     showToast(`Campaign period set to ${nextPeriod}.`);
   };
   const applyCampaignDateRange = () => {
@@ -4808,6 +4994,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleCustomerPeriodChange = (nextPeriod: Period) => {
     setCustomerPeriod(nextPeriod);
     setShowCustomerDateRange(false);
+    setCustomerPage(1);
     showToast(`Customer period set to ${nextPeriod}.`);
   };
 
@@ -4842,6 +5029,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleExpensePeriodChange = (nextPeriod: Period) => {
     setExpensePeriod(nextPeriod);
     setShowExpenseDateRange(false);
+    setExpensePage(1);
     showToast(`Expenses period set to ${nextPeriod}.`);
   };
 
@@ -4876,6 +5064,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const handleFinancePeriodChange = (nextPeriod: Period) => {
     setFinancePeriod(nextPeriod);
     setShowFinanceDateRange(false);
+    setOutstandingPage(1);
     showToast(`Financial reports period set to ${nextPeriod}.`);
   };
 
@@ -5146,6 +5335,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Dashboard Report"],
       ["Period", selectedPeriodLabel],
       ["Currency", selectedCurrency.label],
+      ["Product Filter", dashboardProductIds.size === 0 ? "All Products" : products.filter(p => dashboardProductIds.has(p.id)).map(p => p.name).join(", ")],
       ["Total Revenue", formatMoney(dashboardRevenue)],
       ["COGS", formatMoney(dashboardCogs)],
       ["Gross Profit", formatMoney(dashboardGrossProfit)],
@@ -5188,6 +5378,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Status", orderStatus],
       ["Source", orderSource],
       ["Location", orderLocation],
+      ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
       ["Total Handled", String(filteredOrderRows.length)],
       ["Delivery Rate", `${exportDeliveryRate}%`],
       ["Revenue Generated", formatMoney(exportRevenue)],
@@ -5262,8 +5453,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const exportAgentsCsv = () => {
+    const productFilterLabel = agentProductIds.size === 0 ? "All" : [...agentProductIds].map((id) => products.find((p) => p.id === id)?.name ?? id).join(", ");
     const rows = [
       ["Agents Report"],
+      ["Period", agentsPeriod === "Custom" ? `${agentsDateRange.start || "?"} to ${agentsDateRange.end || "?"}` : agentsPeriod],
+      ["Product Filter", productFilterLabel],
       ["Currency", selectedCurrency.label],
       ["Search", agentSearch || "All"],
       ["Zone", agentZone],
@@ -5437,20 +5631,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const exportFinancialReport = () => {
-    const rows = [
+    const header = [
       ["Financial Report"],
       ["Tab", financeTab],
       ["Period", selectedFinancePeriodLabel],
       ["Currency", selectedCurrency.label],
-      ["Revenue", formatMoney(financeRevenue)],
-      ["COGS", formatMoney(financeCogs)],
-      ["Gross Profit", formatMoney(financeGrossProfit)],
-      ["Gross Margin", `${financeGrossMargin}%`],
-      ["Total Expenses", formatMoney(financeExpenseTotal)],
-      ["Net Profit", formatMoney(financeNetProfit)],
-      ["Net Margin", `${financeNetMargin}%`],
-      ["Delivered Orders", String(financeDeliveredCount)]
+      []
     ];
+    let tabRows: string[][] = [];
+    if (financeTab === "Sales Rep Finance") {
+      tabRows = [
+        ["Sales Rep", "Revenue", "Delivered", "Net Profit", "CPA", "ROI %"],
+        ...filteredFinanceRepRows.map((r) => [r.user.name, formatMoney(r.revenue), String(r.delivered), formatMoney(r.netProfit), formatMoney(r.cpa), `${r.roi}%`])
+      ];
+    } else if (financeTab === "Agent Costs") {
+      tabRows = [
+        ["Agent", "Zone", "Deliveries", "Success Rate", "Stock Value", "Profit Contribution"],
+        ...financeAgentRows.map((r) => [r.agent.name, r.agent.zone, String(r.deliveries), `${r.successRate}%`, formatMoney(r.stockValue), formatMoney(r.profitContribution)])
+      ];
+    } else if (financeTab === "Remittance") {
+      tabRows = [
+        ["Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Received", "Outstanding", "% Paid"],
+        ...filteredRemittanceRows.map((r) => { const pct = r.expected === 0 ? 0 : Math.round((r.remitted / r.expected) * 100); return [r.partnerName, String(r.orderCount), formatMoney(r.revenue), formatMoney(r.logisticsCost), formatMoney(r.expected), formatMoney(r.remitted), formatMoney(r.outstanding), `${pct}%`]; })
+      ];
+    } else if (financeTab === "Profit & Loss") {
+      tabRows = [
+        ["Account", "Current Period"],
+        ["Revenue", formatMoney(financeRevenue)],
+        ["COGS", formatMoney(financeCogs)],
+        ["Logistics / Delivery Fees", formatMoney(financeLogisticsCost)],
+        ["Gross Profit", formatMoney(financeGrossProfit)],
+        ["Operating Expenses", formatMoney(financeOpex)],
+        ["Net Profit", formatMoney(financeNetProfit)]
+      ];
+    } else {
+      tabRows = [
+        ["Revenue", formatMoney(financeRevenue)],
+        ["COGS", formatMoney(financeCogs)],
+        ["Gross Profit", formatMoney(financeGrossProfit)],
+        ["Gross Margin", `${financeGrossMargin}%`],
+        ["Total Expenses", formatMoney(financeExpenseTotal)],
+        ["Net Profit", formatMoney(financeNetProfit)],
+        ["Net Margin", `${financeNetMargin}%`],
+        ["Delivered Orders", String(financeDeliveredCount)]
+      ];
+    }
+    const rows = [...header, ...tabRows];
 
     const csv = rows
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
@@ -6404,11 +6630,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCallQueueIndex((prev) => prev >= callQueue.length - 1 ? Math.max(0, callQueue.length - 2) : prev);
   };
 
-  const bulkUpdateOrderStatus = (nextStatus: Exclude<OrderStatus, "All Orders">) => {
+  const bulkUpdateOrderStatus = async (nextStatus: Exclude<OrderStatus, "All Orders">) => {
     if (selectedOrderIds.size === 0) return;
-    selectedOrderIds.forEach((orderId) => updateOrderStatus(orderId, nextStatus));
-    showToast(`${selectedOrderIds.size} order${selectedOrderIds.size > 1 ? "s" : ""} moved to ${nextStatus}.`);
+    const ids = Array.from(selectedOrderIds);
+    // Apply optimistic local updates
+    ids.forEach((orderId) => updateOrderStatus(orderId, nextStatus));
     setSelectedOrderIds(new Set());
+    // Await all API calls to detect partial failures
+    const results = await Promise.allSettled(
+      ids.map((orderId) => ordersApi.updateStatus(orderId, { status: nextStatus }))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      showToast(`${ids.length - failed} order${ids.length - failed !== 1 ? "s" : ""} moved to ${nextStatus}. ${failed} failed — please retry.`);
+    } else {
+      showToast(`${ids.length} order${ids.length > 1 ? "s" : ""} moved to ${nextStatus}.`);
+    }
   };
 
   const scheduleOrder = (orderId: string, range: ScheduleRange) => {
@@ -6435,6 +6672,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     );
     showToast(`${orderId} scheduled for ${displayDateFromKey(scheduledDate)}.`);
+    // Persist to backend
+    const updates: Record<string, unknown> = { scheduled_date: scheduledDate };
+    if (order && (order.status === "New" || !order.status)) updates.status = "Confirmed";
+    ordersApi.update(orderId, updates).catch(() => showToast(`Failed to save schedule for ${orderId}. Please retry.`));
   };
 
 
@@ -6907,8 +7148,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
 
-  const submitPublicOrder = () => {
+  const submitPublicOrder = async () => {
     if (publicOrderSubmitting) return;
+    if (publicHoneypot) {
+      // Spam bot — pretend success without doing anything.
+      setPublicOrderSubmitted({ orderId: "blocked", customer: orderFormName.trim() });
+      return;
+    }
     if (!publicProduct || !orderFormName.trim() || !orderFormPhone.trim()) {
       showToast("Customer name and phone are required.");
       return;
@@ -6988,84 +7234,125 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return { id: makeFreeGiftLineId(), productId: gid, productName: p.name, quantity: 1 };
     }).filter(Boolean) as FreeGiftLine[];
 
-    setTrackedOrders((value) => [
-      {
-        id: orderId,
-        productId: publicProduct.id,
-        packageId: chosenPackage.id,
-        customer: orderFormName.trim(),
-        phone: orderFormPhone.trim(),
-        whatsapp: orderFormWhatsapp.trim(),
-        email: orderFormEmail.trim(),
-        address: orderFormAddress.trim(),
-        city: orderFormCity.trim(),
-        state: orderFormState.trim(),
-        productName: publicProduct.name,
-        packageName: chosenPackage.name,
-        quantity: chosenPackage.quantity,
-        amount: chosenPackage.price + xsTotal,
-        currency: chosenPackage.currency,
-        utmSource: publicUtmSource,
-        utmCampaign: publicUtmCampaign,
-        utmMedium: publicUtmMedium || undefined,
-        utmContent: publicUtmContent || undefined,
-        utmTerm: publicUtmTerm || undefined,
-        referrer: publicReferrer || undefined,
-        confirmationChecked: orderFormConfirmed,
-        preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
-        source,
-        status: "New",
-        response: "Awaiting confirmation",
-        location,
-        deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
-        assignedRepId: repForNewRecord(),
-        crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
-        freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
-        notes: [
-          { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
-          { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
-              "Public form submission details:",
-              `Customer name: ${orderFormName.trim()}`,
-              `Phone: ${orderFormPhone.trim()}`,
-              orderFormWhatsapp.trim() ? `WhatsApp: ${orderFormWhatsapp.trim()}` : null,
-              `Address: ${[orderFormAddress.trim(), orderFormCity.trim(), orderFormState.trim()].filter(Boolean).join(", ")}`,
-              orderFormDeliveryWindow.trim() ? `Preferred delivery: ${orderFormDeliveryWindow.trim()}` : null,
-              `Confirmation checkbox: ${orderFormConfirmed ? "Accepted" : "Not accepted"}`,
-              `Selected package(s): ${chosenPackage.name} (${chosenPackage.quantity} units, ${formatProductMoney(chosenPackage.price, chosenPackage.currency)})`,
-              `UTM source: ${publicUtmSource || "—"}`,
-              `UTM campaign: ${publicUtmCampaign || "—"}`,
-              publicUtmMedium ? `UTM medium: ${publicUtmMedium}` : null,
-              publicUtmContent ? `UTM content: ${publicUtmContent}` : null,
-              publicUtmTerm ? `UTM term: ${publicUtmTerm}` : null,
-              publicReferrer ? `Referrer: ${publicReferrer}` : null,
-            ].filter(Boolean).join("\n")
-          }
-        ],
-        createdAt: todayKey(),
-        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-      },
-      ...value
-    ]);
+    // Only mirror into local state when an authenticated admin is previewing
+    // the form — anonymous customers have no UI that consumes trackedOrders.
+    const isAdminPreview = auth.isLoggedIn();
+    if (isAdminPreview) {
+      setTrackedOrders((value) => [
+        {
+          id: orderId,
+          productId: publicProduct.id,
+          packageId: chosenPackage.id,
+          customer: orderFormName.trim(),
+          phone: orderFormPhone.trim(),
+          whatsapp: orderFormWhatsapp.trim(),
+          email: orderFormEmail.trim(),
+          address: orderFormAddress.trim(),
+          city: orderFormCity.trim(),
+          state: orderFormState.trim(),
+          productName: publicProduct.name,
+          packageName: chosenPackage.name,
+          quantity: chosenPackage.quantity,
+          amount: chosenPackage.price + xsTotal,
+          currency: chosenPackage.currency,
+          utmSource: publicUtmSource,
+          utmCampaign: publicUtmCampaign,
+          utmMedium: publicUtmMedium || undefined,
+          utmContent: publicUtmContent || undefined,
+          utmTerm: publicUtmTerm || undefined,
+          referrer: publicReferrer || undefined,
+          confirmationChecked: orderFormConfirmed,
+          preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+          source,
+          status: "New",
+          response: "Awaiting confirmation",
+          location,
+          deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
+          assignedRepId: repForNewRecord(),
+          crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
+          freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
+          notes: [
+            { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
+            { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
+                "Public form submission details:",
+                `Customer name: ${orderFormName.trim()}`,
+                `Phone: ${orderFormPhone.trim()}`,
+                orderFormWhatsapp.trim() ? `WhatsApp: ${orderFormWhatsapp.trim()}` : null,
+                `Address: ${[orderFormAddress.trim(), orderFormCity.trim(), orderFormState.trim()].filter(Boolean).join(", ")}`,
+                orderFormDeliveryWindow.trim() ? `Preferred delivery: ${orderFormDeliveryWindow.trim()}` : null,
+                `Confirmation checkbox: ${orderFormConfirmed ? "Accepted" : "Not accepted"}`,
+                `Selected package(s): ${chosenPackage.name} (${chosenPackage.quantity} units, ${formatProductMoney(chosenPackage.price, chosenPackage.currency)})`,
+                `UTM source: ${publicUtmSource || "—"}`,
+                `UTM campaign: ${publicUtmCampaign || "—"}`,
+                publicUtmMedium ? `UTM medium: ${publicUtmMedium}` : null,
+                publicUtmContent ? `UTM content: ${publicUtmContent}` : null,
+                publicUtmTerm ? `UTM term: ${publicUtmTerm}` : null,
+                publicReferrer ? `Referrer: ${publicReferrer}` : null,
+              ].filter(Boolean).join("\n")
+            }
+          ],
+          createdAt: todayKey(),
+          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        },
+        ...value
+      ]);
+    }
     setPublicOrderSubmitting(true);
-    ordersApi.create({
-      id: orderId, customer: orderFormName.trim(), phone: orderFormPhone.trim(),
-      whatsapp: orderFormWhatsapp.trim() || undefined, email: orderFormEmail.trim() || undefined,
-      address: orderFormAddress.trim() || undefined, city: orderFormCity.trim() || undefined,
-      state: orderFormState.trim() || undefined,
-      productId: publicProduct.id, packageId: chosenPackage.id,
-      productName: publicProduct.name, packageName: chosenPackage.name,
-      quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
-      currency: chosenPackage.currency, source,
-      utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
-      utmMedium: publicUtmMedium || undefined,
-      utmContent: publicUtmContent || undefined,
-      utmTerm: publicUtmTerm || undefined,
-      referrer: publicReferrer || undefined,
-      confirmationChecked: orderFormConfirmed,
-      preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
-      assignedRepId: repForNewRecord() || undefined,
-      date: new Date().toISOString()
-    }).catch(() => {});
+    try {
+      if (isAdminPreview) {
+        // Authenticated admin previewing the form — keep the full create payload.
+        await ordersApi.create({
+          id: orderId, customer: orderFormName.trim(), phone: orderFormPhone.trim(),
+          whatsapp: orderFormWhatsapp.trim() || undefined, email: orderFormEmail.trim() || undefined,
+          address: orderFormAddress.trim() || undefined, city: orderFormCity.trim() || undefined,
+          state: orderFormState.trim() || undefined,
+          productId: publicProduct.id, packageId: chosenPackage.id,
+          productName: publicProduct.name, packageName: chosenPackage.name,
+          quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
+          currency: chosenPackage.currency, source,
+          utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
+          utmMedium: publicUtmMedium || undefined,
+          utmContent: publicUtmContent || undefined,
+          utmTerm: publicUtmTerm || undefined,
+          referrer: publicReferrer || undefined,
+          confirmationChecked: orderFormConfirmed,
+          preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+          assignedRepId: repForNewRecord() || undefined,
+          date: new Date().toISOString()
+        });
+      } else {
+        // Anonymous customer — server recomputes amount from canonical pricing.
+        // We send packageId + cross-sell line ids; server handles the math.
+        await publicOrdersApi.create({
+          id: orderId,
+          cartId: abandonedDraftCartId || undefined,
+          customer: orderFormName.trim(),
+          phone: orderFormPhone.trim(),
+          whatsapp: orderFormWhatsapp.trim() || undefined,
+          email: orderFormEmail.trim() || undefined,
+          address: orderFormAddress.trim() || undefined,
+          city: orderFormCity.trim() || undefined,
+          state: orderFormState.trim() || undefined,
+          packageId: chosenPackage.id,
+          crossSellLines: orderFormCrossSells
+            .filter((c) => c.productId && c.quantity > 0)
+            .map((c) => ({ productId: c.productId, quantity: c.quantity })),
+          utmSource: publicUtmSource || undefined,
+          utmCampaign: publicUtmCampaign || undefined,
+          utmMedium: publicUtmMedium || undefined,
+          utmContent: publicUtmContent || undefined,
+          utmTerm: publicUtmTerm || undefined,
+          referrer: publicReferrer || undefined,
+          confirmationChecked: orderFormConfirmed,
+          preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+          company: publicHoneypot
+        });
+      }
+    } catch (err: any) {
+      setPublicOrderSubmitting(false);
+      showToast(err?.message ?? "Could not submit your order. Please try again.");
+      return;
+    }
     markDraftCartConverted(orderId);
     setOrderFormName("");
     setOrderFormPhone("");
@@ -7100,11 +7387,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const createTeam = () => {
     if (!newTeamName.trim()) { showToast("Team name is required."); return; }
     if (salesTeams.some((t) => t.name.toLowerCase() === newTeamName.trim().toLowerCase())) { showToast(`A team named "${newTeamName.trim()}" already exists.`); return; }
-    setExtraTeams((prev) => [...prev, { id: `team-${Date.now().toString(36)}`, name: newTeamName.trim(), leadId: newTeamLeadId || undefined, productIds: [] }]);
+    const localId = `team-${Date.now().toString(36)}`;
+    const teamName = newTeamName.trim();
+    const teamLeadId = newTeamLeadId || undefined;
+    setExtraTeams((prev) => [...prev, { id: localId, name: teamName, leadId: teamLeadId, productIds: [], memberIds: [] }]);
     setNewTeamName("");
     setNewTeamLeadId("");
     setModal(null);
-    showToast(`Team "${newTeamName.trim()}" created.`);
+    showToast(`Team "${teamName}" created.`);
+    salesTeamsApi.create({ name: teamName, leadId: teamLeadId, productIds: [], memberIds: [] })
+      .then((saved: any) => {
+        setExtraTeams((prev) => prev.map((t) => t.id === localId ? { ...t, id: saved.id } : t));
+      })
+      .catch(() => {
+        setExtraTeams((prev) => prev.filter((t) => t.id !== localId));
+        showToast("Failed to create team on server. Please try again.");
+      });
   };
 
   const createSalesRep = () => {
@@ -7112,8 +7410,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Sales rep name and email are required.");
       return;
     }
-    if (salesRepPassword.trim().length > 0 && salesRepPassword.trim().length < 6) {
-      showToast("Password must be at least 6 characters.");
+    if (salesRepPassword.trim().length < 8) {
+      showToast("Password must be at least 8 characters.");
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(salesRepEmail.trim())) {
@@ -7133,6 +7431,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       active: salesRepActive,
       created: displayDateFromKey(todayKey())
     };
+    const _repLocalId = rep.id;
     setUsers((value) => [...value, rep]);
     setSalesRepName("");
     setSalesRepEmail("");
@@ -7141,9 +7440,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSalesRepActive(true);
     setModal(null);
     showToast(`Sales rep "${rep.name}" created and added to round-robin.`);
-    if (salesRepPassword.trim()) {
-      authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role }).catch(() => showToast("Sales rep saved locally — invite sync failed."));
-    }
+    authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role })
+      .then(() => {
+        usersApi.list().then((all: any[]) => {
+          const saved = all.find((u: any) => u.email === rep.email);
+          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? { ...u, id: saved.id } : u));
+        }).catch(() => {});
+      })
+      .catch(() => {
+        setUsers((prev) => prev.filter((u) => u.id !== _repLocalId));
+        showToast("Failed to create user on server. Please try again.");
+      });
   };
 
   const createAgent = () => {
@@ -7179,7 +7486,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setAgents((prev) => prev.map((a) => a.id === _agLocalId ? { ...a, id: saved.id } : a));
         setSelectedAgentId(saved.id);
       })
-      .catch(() => showToast(`Agent saved locally — sync failed.`));
+      .catch(() => {
+        setAgents((prev) => prev.filter((a) => a.id !== _agLocalId));
+        showToast("Failed to create agent on server. Please try again.");
+      });
   };
 
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
@@ -7743,6 +8053,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "Cancelled" } : w));
+    waybillsApi.updateStatus(waybillId, { status: "Cancelled" }).catch((err: any) => {
+      setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "In Transit" } : w));
+      showToast(`Failed to cancel waybill: ${err.message}`);
+    });
     showToast(`Waybill cancelled. Stock returned to sender.`);
     if (product) {
       pushSystemNotification({
@@ -7776,9 +8090,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
     setWaybillErrors({});
+    const updatedFee = Math.max(0, Number(waybillFee) || 0);
     setWaybillRecords((prev) => prev.map((w) => w.id === waybillEditId ? {
       ...w,
-      waybillFee: Math.max(0, Number(waybillFee) || 0),
+      waybillFee: updatedFee,
       logisticsPartner: waybillPartner.trim(),
       toAgentId: waybillToAgentId || undefined,
       receivingState,
@@ -7787,6 +8102,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } : w));
     setModal(null);
     showToast("Waybill updated.");
+    waybillsApi.update(waybillEditId!, {
+      waybill_fee: updatedFee,
+      carrier: waybillPartner.trim(),
+      to_location: receivingState,
+      agent_id: waybillToAgentId || null,
+      dispatched_date: waybillDateSent,
+      notes: waybillNote.trim() || null,
+    }).catch((err: any) => showToast(`Failed to save waybill: ${err.message}`));
   };
 
   const openCartModal = (cart: AbandonedCartRecord, nextModal: ModalType) => {
@@ -7808,11 +8131,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const updateCartStatus = (cartId: string, status: Exclude<CartStatus, "All statuses">) => {
     setAbandonedCarts((value) => value.map((cart) => (cart.id === cartId ? { ...cart, status, lastActivity: new Date().toISOString() } : cart)));
+    cartsApi.update(cartId, { status }).catch(() => showToast(`Failed to save status for ${cartId}. Please retry.`));
     showToast(`${cartId} marked ${status}.`);
   };
 
-  const bulkUpdateCartStatus = (status: Exclude<CartStatus, "All statuses" | "Converted">) => {
+  const bulkUpdateCartStatus = async (status: Exclude<CartStatus, "All statuses" | "Converted">) => {
     if (selectedCartIds.size === 0) return;
+    const ids = Array.from(selectedCartIds).filter((id) => {
+      const cart = abandonedCarts.find((c) => c.id === id);
+      return cart && cart.status !== "Converted";
+    });
     setAbandonedCarts((value) =>
       value.map((cart) =>
         selectedCartIds.has(cart.id) && cart.status !== "Converted"
@@ -7820,8 +8148,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : cart
       )
     );
-    showToast(`${selectedCartIds.size} cart${selectedCartIds.size > 1 ? "s" : ""} marked ${status}.`);
     setSelectedCartIds(new Set());
+    const results = await Promise.allSettled(
+      ids.map((id) => cartsApi.update(id, { status }))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      showToast(`${ids.length - failed} cart${ids.length - failed !== 1 ? "s" : ""} marked ${status}. ${failed} failed — please retry.`);
+    } else {
+      showToast(`${ids.length} cart${ids.length > 1 ? "s" : ""} marked ${status}.`);
+    }
   };
 
   const exportCartsCsv = () => {
@@ -7836,6 +8172,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Currency", selectedCurrency.label],
       ["Search", cartSearch || "All"],
       ["Status", cartStatus],
+      ["Product Filter", cartProductIds.size === 0 ? "All Products" : products.filter(p => cartProductIds.has(p.id)).map(p => p.name).join(", ")],
       ["Total Captured", String(filteredAbandonedCarts.length)],
       ["Converted", String(exportConverted)],
       ["Lost", String(exportLost)],
@@ -7868,6 +8205,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     link.remove();
     URL.revokeObjectURL(url);
     showToast("Abandoned carts exported as CSV.");
+  };
+
+  const exportDeliveriesCsv = () => {
+    const rows = [
+      ["Deliveries Report"],
+      ["Period", deliveriesPeriod === "Custom" && deliveriesDateRange.start && deliveriesDateRange.end ? `${deliveriesDateRange.start} to ${deliveriesDateRange.end}` : deliveriesPeriod],
+      ["Currency", selectedCurrency.label],
+      ["Product Filter", deliveriesProductIds.size === 0 ? "All Products" : products.filter(p => deliveriesProductIds.has(p.id)).map(p => p.name).join(", ")],
+      ["Agent Filter", deliveryAgent],
+      ["Search", deliverySearch || "All"],
+      ["Total Delivered", String(filteredDeliveryRows.length)],
+      ["Total Revenue", formatMoney(deliveredRevenueInPeriod)],
+      ["Avg Fulfillment", `${averageFulfillmentDays.toFixed(1)} days`],
+      [],
+      ["Order ID", "Customer", "Phone", "Product", "Package", "Qty", "Location", "Agent", "Delivered Date", "Fulfillment Days", "Revenue"],
+      ...filteredDeliveryRows.map((order) => [
+        order.id,
+        order.customer,
+        order.phone,
+        order.productName,
+        order.packageName,
+        String(quantityForOrder(order)),
+        order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
+        agentNameForOrder(order),
+        order.deliveredDate,
+        fulfillmentDaysForOrder(order).toFixed(1),
+        formatProductMoney(order.amount, order.currency)
+      ])
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `deliveries-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast("Deliveries exported as CSV.");
   };
 
   const convertSelectedCart = () => {
@@ -7957,12 +8335,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const toggleUserPermission = (userId: string, permission: UserPermission) => {
+    const prevUsers = users;
     setUsers((prev) => prev.map((u) => {
       if (u.id !== userId || u.role === "Owner") return u;
       const perms = u.permissions ?? defaultPermsByRole[u.role] ?? [];
       return { ...u, permissions: perms.includes(permission) ? perms.filter((p) => p !== permission) : [...perms, permission] };
     }));
     showToast("Permissions updated.");
+    const user = users.find((u) => u.id === userId);
+    if (user && user.role !== "Owner") {
+      const perms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+      const nextPerms = perms.includes(permission) ? perms.filter((p) => p !== permission) : [...perms, permission];
+      teamApi.update(userId, { permissions: nextPerms }).catch((err: any) => {
+        setUsers(prevUsers);
+        showToast(`Failed to update permissions: ${err.message}`);
+      });
+    }
   };
 
   const openPayRateModal = (userId: string) => {
@@ -8011,6 +8399,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonusTiers: payStructureType === "Performance Bonus" ? bonusTiers.filter((t) => t.threshold > 0 && t.amount > 0).sort((a, b) => a.threshold - b.threshold) : [],
       updatedAt
     };
+    const prevStructures = [...payStructures];
     setPayStructures((value) => {
       const exists = value.some((item) => item.userId === selectedPayUser.id);
       return exists ? value.map((item) => (item.userId === selectedPayUser.id ? nextStructure : item)) : [...value, nextStructure];
@@ -8018,6 +8407,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPayRateUpdatedAt(updatedAt);
     setModal(null);
     showToast(`Pay structure saved for ${selectedPayUser.name}.`);
+    payStructuresApi.save({
+      userId: selectedPayUser.id,
+      type: nextStructure.type,
+      fixedSalary: nextStructure.fixedSalary,
+      commissionRate: nextStructure.commissionRate,
+      bonusTiers: nextStructure.bonusTiers
+    }).catch((err: any) => {
+      setPayStructures(prevStructures);
+      showToast(`Failed to save pay rate: ${err.message}`);
+    });
   };
 
   const previewPayroll = () => {
@@ -8036,12 +8435,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const localId = makePayrollRunId();
     const run: PayrollRun = {
-      id: makePayrollRunId(),
+      id: localId,
       month: payrollMonth,
       label: payrollLabel || `${payrollMonth} Payroll`,
       notes: payrollNotes,
       total: payrollGrandTotal,
+      status: "Draft",
       createdAt: new Date().toISOString(),
       rows: payrollPreviewRows,
       topPerformer: topPerformerInfo ?? undefined
@@ -8049,6 +8450,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPayrollRuns((value) => [run, ...value]);
     setPayrollTab("History");
     showToast(`${run.label} saved as a draft.`);
+    payrollApi.generate({ period: payrollMonth }).then((saved: any) => {
+      if (saved?.id) setPayrollRuns((prev) => prev.map((r) => r.id === localId ? { ...r, id: saved.id } : r));
+    }).catch((err: any) => {
+      setPayrollRuns((prev) => prev.filter((r) => r.id !== localId));
+      showToast(`Failed to save payroll: ${err.message}`);
+    });
   };
 
   const createExpense = () => {
@@ -8077,7 +8484,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setExpenseCurrency("NGN");
     setModal(null);
     showToast(`${expenseType} expense for ${new Intl.NumberFormat(currencies[expenseCurrency]?.locale ?? "en-NG", { style: "currency", currency: expenseCurrency, maximumFractionDigits: 0 }).format(amount)} created.`);
-    expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency }).catch(() => {});
+    expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency }).catch((err: any) => {
+      setExpenses((prev) => prev.filter((e) => e.id !== record.id));
+      showToast(`Failed to create expense: ${err.message}`);
+    });
   };
 
   const createUser = () => {
@@ -8117,9 +8527,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     setModal(null);
     showToast(`User "${userFullName.trim()}" created.`);
-    if (userPassword.trim()) {
-      authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch(() => showToast("User saved locally — invite sync failed."));
-    }
+    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch((err: any) => {
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      showToast(`Failed to create user: ${err.message}`);
+    });
   };
 
   const updateUser = () => {
@@ -8147,6 +8558,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const prevUsers = users;
     const _uuId = selectedUser.id;
     setUsers((value) =>
       value.map((user) =>
@@ -8159,7 +8571,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     setModal(null);
     showToast(`User "${userFullName.trim()}" updated.`);
-    teamApi.update(_uuId, { name: userFullName.trim(), role: newUserRole, active: newUserActive }).catch(() => {});
+    teamApi.update(_uuId, { name: userFullName.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
+      setUsers(prevUsers);
+      showToast(`Failed to update user: ${err.message}`);
+    });
   };
 
   const resetUserPassword = () => {
@@ -8199,6 +8614,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    // Snapshot for rollback
+    const prevUsers = users;
+    const prevOrders = trackedOrders;
     // Unassign historical orders so they don't show a ghost rep name
     setTrackedOrders((prev) =>
       prev.map((o) => (o.assignedRepId === selectedUser.id ? { ...o, assignedRepId: undefined } : o))
@@ -8207,7 +8625,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setUsers((value) => value.filter((user) => user.id !== selectedUser.id));
     setModal(null);
     showToast(`"${selectedUser.name}" deleted.`);
-    teamApi.delete(_duId).catch(() => showToast("User removed locally — sync failed."));
+    teamApi.delete(_duId).catch((err: any) => {
+      setUsers(prevUsers);
+      setTrackedOrders(prevOrders);
+      showToast(`Failed to delete user: ${err.message}`);
+    });
   };
 
   const repTabRoute = (tab: RepConsoleTab) =>
@@ -9147,7 +9569,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
                 <div className="flex items-center gap-1">
                   <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-                    {(["Today", "Tomorrow", "Next tomorrow"] as ScheduleRange[]).map((range) => (
+                    {(["Today", "Tomorrow", "Day After"] as ScheduleRange[]).map((range) => (
                       <button key={range}
                         className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${repScheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
                         onClick={() => setRepScheduleRange(range)}>
@@ -9539,6 +9961,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div style={{ padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12, fontSize: 13, color: "#075985", whiteSpace: "pre-line", marginBottom: 12 }}>{publicProduct.formCustomText}</div>
                   )}
                   <div className="public-form-clean-grid">
+                    {/* Honeypot — hidden from real users, irresistible to bots.
+                        autocomplete="off" + aria-hidden + tabIndex=-1 + visually
+                        offscreen so a real human never sees or focuses it. */}
+                    <input
+                      type="text"
+                      name="company"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      aria-hidden="true"
+                      value={publicHoneypot}
+                      onChange={(e) => setPublicHoneypot(e.target.value)}
+                      style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+                    />
                     <label className="field-full">
                       <input value={orderFormName} onChange={(event) => setOrderFormName(event.target.value)} placeholder="Your Name *" />
                     </label>
@@ -9688,7 +10123,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const opts: { v: string; label: string }[] = [];
                       if (deliveryQuickToday)        opts.push({ v: "Today",        label: "Today" });
                       if (deliveryQuickTomorrow)     opts.push({ v: "Tomorrow",     label: "Tomorrow" });
-                      if (deliveryQuickNextTomorrow) opts.push({ v: "Next tomorrow", label: "Next tomorrow" });
+                      if (deliveryQuickNextTomorrow) opts.push({ v: "Day After", label: "Day After" });
                       if (opts.length === 0) opts.push({ v: "Tomorrow", label: "Tomorrow" });
                       return (
                         <label>
@@ -9866,13 +10301,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     </div>
   );
 
-  const DataErrorBanner = () => dataError ? (
-    <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
-      <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-      <span className="font-medium text-red-800 flex-1">{dataError}</span>
-      <button className="!min-h-0 px-4 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" onClick={() => retryLoadData.current()}>Retry</button>
-    </div>
-  ) : null;
+  const DataErrorBanner = () => (
+    <>
+      {dataError && (
+        <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
+          <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+          <span className="font-medium text-red-800 flex-1">{dataError}</span>
+          <button className="!min-h-0 px-4 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" onClick={() => retryLoadData.current()}>Retry</button>
+        </div>
+      )}
+      {ordersCappedWarning && (
+        <div className="flex items-center gap-3 px-5 py-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+          <span className="font-medium text-amber-800 flex-1">{ordersCappedWarning}</span>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div className={`app-shell !flex h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
@@ -11216,10 +11661,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* Quick shortcuts */}
                     <div className="flex items-center gap-1 bg-gray-200/50 p-1 rounded-lg">
-                      {(["Today", "Tomorrow", "Next tomorrow"] as ScheduleRange[]).map((range) => (
+                      {(["Today", "Tomorrow", "Day After"] as ScheduleRange[]).map((range) => (
                         <button key={range}
                           className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${scheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
-                          onClick={() => setScheduleRange(range)}>
+                          onClick={() => { setScheduleRange(range); setSchedulePage(1); }}>
                           {range}
                         </button>
                       ))}
@@ -11279,12 +11724,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
                       const dayKey = formatDateKey(d);
                       const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
-                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey).length;
+                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey && matchesProductFilter(o.productId, o.productName, scheduleProductIds)).length;
                       const isToday = dayKey === todayKey();
                       const isSelected = scheduleRange === "Custom" && scheduleCustomDate === dayKey;
                       return (
                         <button key={dayKey}
-                          onClick={() => { setScheduleCustomDate(dayKey); setScheduleRange("Custom"); }}
+                          onClick={() => { setScheduleCustomDate(dayKey); setScheduleRange("Custom"); setSchedulePage(1); }}
                           className={`!min-h-0 flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-semibold transition-colors
                             ${isSelected ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : isToday ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
                           <span className="text-[10px] font-medium opacity-70">{dayLabel}</span>
@@ -11316,7 +11761,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {scheduledDeliveryRows.length === 0 ? (
                         <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No scheduled deliveries in this range.</td></tr>
                       ) : (
-                        scheduledDeliveryRows.map((order) => {
+                        pagedScheduleRows.map((order) => {
                           const phoneClean    = (order.phone ?? "").replace(/\D/g, "");
                           const whatsappClean = (order.whatsapp ?? order.phone ?? "").replace(/\D/g, "");
                           const repName       = users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned";
@@ -11383,6 +11828,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
+                {/* Pagination */}
+                {scheduleTotalPages > 1 && (
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                    <span>
+                      {scheduledDeliveryRows.length === 0
+                        ? "0 deliveries"
+                        : `${(schedulePageClamped - 1) * SCHEDULE_PAGE_SIZE + 1}–${Math.min(schedulePageClamped * SCHEDULE_PAGE_SIZE, scheduledDeliveryRows.length)} of ${scheduledDeliveryRows.length}`}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={schedulePageClamped <= 1}
+                        onClick={() => setSchedulePage((p) => Math.max(1, p - 1))}
+                      >‹ Prev</button>
+                      {Array.from({ length: scheduleTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === scheduleTotalPages || Math.abs(p - schedulePageClamped) <= 1)
+                        .reduce<(number | "…")[]>((acc, p, idx, arr) => {
+                          if (idx > 0 && typeof arr[idx - 1] === "number" && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…");
+                          acc.push(p);
+                          return acc;
+                        }, [])
+                        .map((p, idx) =>
+                          p === "…"
+                            ? <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 select-none">…</span>
+                            : <button
+                                key={p}
+                                className={`!min-h-0 w-7 h-7 rounded-md border text-xs font-semibold transition-colors ${schedulePageClamped === p ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-100"}`}
+                                onClick={() => setSchedulePage(p as number)}
+                              >{p}</button>
+                        )}
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={schedulePageClamped >= scheduleTotalPages}
+                        onClick={() => setSchedulePage((p) => Math.min(scheduleTotalPages, p + 1))}
+                      >Next ›</button>
+                    </div>
+                  </div>
+                )}
               </section>
               </div>
             </div>
@@ -11392,6 +11875,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Deliveries</h1>
                   <p className="text-sm font-medium text-gray-500">Orders fulfilled in the selected period, anchored to delivery date</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportDeliveriesCsv}>
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
                 </div>
               </header>
 
@@ -11416,6 +11904,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
+                  {renderProductFilter(deliveriesProductIds, setDeliveriesProductIds, showDeliveriesProductFilter, setShowDeliveriesProductFilter)}
                 </div>
                 {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange)}
               </div>
@@ -11450,14 +11939,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span className="sr-only">Search deliveries</span>
                     <input className="bg-transparent outline-none text-sm w-full min-w-0" value={deliverySearch} onChange={(event) => setDeliverySearch(event.target.value)} placeholder="Search customer or order #" />
                   </label>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => showToast(deliverySearch ? `${filteredDeliveryRows.length} deliver${filteredDeliveryRows.length === 1 ? "y" : "ies"} found for "${deliverySearch}".` : `Showing all ${filteredDeliveryRows.length} deliveries.`)}>Search</button>
+                  {deliverySearch && (
+                    <button className="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setDeliverySearch("")}>Clear</button>
+                  )}
                   <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Delivery agent" value={deliveryAgent} onChange={(event) => {
                     setDeliveryAgent(event.target.value as DeliveryAgent);
-                    showToast(`Delivery agent filter set to ${event.target.value}.`);
+                    setDeliveriesPage(1);
                   }}>
                     {deliveryAgentOptions.map((agent) => <option key={agent}>{agent}</option>)}
                   </select>
-                  {renderProductFilter(deliveriesProductIds, setDeliveriesProductIds, showDeliveriesProductFilter, setShowDeliveriesProductFilter)}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -11477,7 +11967,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {filteredDeliveryRows.length === 0 ? (
                         <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
                       ) : (
-                        filteredDeliveryRows.map((order) => (
+                        pagedDeliveryRows.map((order) => (
                           <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
                             <td className="px-4 py-4">
@@ -11500,11 +11990,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </table>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  <span>{filteredDeliveryRows.length} deliver{filteredDeliveryRows.length === 1 ? "y" : "ies"}</span>
-                  <div className="flex items-center gap-1">
-                    
-                    
-                  </div>
+                  <span>
+                    {filteredDeliveryRows.length === 0
+                      ? "0 deliveries"
+                      : `${(deliveriesPageClamped - 1) * DELIVERIES_PAGE_SIZE + 1}–${Math.min(deliveriesPageClamped * DELIVERIES_PAGE_SIZE, filteredDeliveryRows.length)} of ${filteredDeliveryRows.length} deliver${filteredDeliveryRows.length === 1 ? "y" : "ies"}`}
+                  </span>
+                  {deliveriesTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={deliveriesPageClamped <= 1}
+                        onClick={() => setDeliveriesPage((p) => Math.max(1, p - 1))}
+                      >‹ Prev</button>
+                      {Array.from({ length: deliveriesTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === deliveriesTotalPages || Math.abs(p - deliveriesPageClamped) <= 1)
+                        .reduce<(number | "…")[]>((acc, p, idx, arr) => {
+                          if (idx > 0 && typeof arr[idx - 1] === "number" && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…");
+                          acc.push(p);
+                          return acc;
+                        }, [])
+                        .map((p, idx) =>
+                          p === "…"
+                            ? <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 select-none">…</span>
+                            : <button
+                                key={p}
+                                className={`!min-h-0 w-7 h-7 rounded-md border text-xs font-semibold transition-colors ${deliveriesPageClamped === p ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-100"}`}
+                                onClick={() => setDeliveriesPage(p as number)}
+                              >{p}</button>
+                        )}
+                      <button
+                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        disabled={deliveriesPageClamped >= deliveriesTotalPages}
+                        onClick={() => setDeliveriesPage((p) => Math.min(deliveriesTotalPages, p + 1))}
+                      >Next ›</button>
+                    </div>
+                  )}
                 </div>
               </section>
               </div>
@@ -11889,10 +12409,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search sales representatives</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => setSalesSearch(event.target.value)} placeholder="Search by name, email..." />
+                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => { setSalesSearch(event.target.value); setSalesRepPage(1); }} placeholder="Search by name, email..." />
                 </label>
                 <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Sales rep status" value={salesStatus} onChange={(event) => {
                   setSalesStatus(event.target.value as RepStatus);
+                  setSalesRepPage(1);
                   showToast(`Sales rep status filter set to ${event.target.value}.`);
                 }}>
                   {repStatuses.map((status) => <option key={status}>{status}</option>)}
@@ -11902,7 +12423,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Sales representatives table">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => showToast("Sales representatives refreshed.")}><RefreshCw className="w-4 h-4" /></button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -11920,10 +12441,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredSalesRepRows.length === 0 ? (
+                      {pagedSalesRepRows.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No sales representatives found</td></tr>
                       ) : (
-                        filteredSalesRepRows.map((row) => (
+                        pagedSalesRepRows.map((row) => (
                           <tr key={row.user.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-4 font-bold text-gray-900">{row.user.name}</td>
                             <td className="px-4 py-4 text-gray-600">{row.user.email}</td>
@@ -11937,7 +12458,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div className="flex items-center gap-1">
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="View" aria-label="View" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepView("detail"); setRepDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepName(row.user.name); setSalesRepEmail(row.user.email); setSalesRepActive(row.user.active); setModal("editSalesRep"); }}><Pencil className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => { setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: !user.active } : user)); showToast(`${row.user.name} status updated.`); }}><RefreshCw className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => { const next = !row.user.active; setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user)); showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`); usersApi.update(row.user.id, { active: next }).catch(() => showToast("Saved locally — sync to server failed.")); }}><RefreshCw className="w-4 h-4" /></button>
                               </div>
                             </td>
                           </tr>
@@ -11948,10 +12469,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredSalesRepRows.length} Sales Rep{filteredSalesRepRows.length === 1 ? "" : "s"}</span>
-                  <div className="flex items-center gap-1">
-                    
-                    
-                  </div>
+                  {salesRepTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button disabled={salesRepPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setSalesRepPage(salesRepPageClamped - 1)}>&laquo; Prev</button>
+                      {Array.from({ length: salesRepTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === salesRepTotalPages || Math.abs(p - salesRepPageClamped) <= 1)
+                        .map((p, idx, arr) => (
+                          <span key={p}>
+                            {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1">...</span>}
+                            <button className={`px-2 py-1 rounded border ${p === salesRepPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-100"}`} onClick={() => setSalesRepPage(p)}>{p}</button>
+                          </span>
+                        ))}
+                      <button disabled={salesRepPageClamped >= salesRepTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setSalesRepPage(salesRepPageClamped + 1)}>Next &raquo;</button>
+                    </div>
+                  )}
                 </div>
               </section>
               </div>
@@ -11985,7 +12516,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Sales teams summary">
                 {[
                   { label: "Total Teams", value: salesTeams.length, helper: "active selling groups", icon: Users, tone: "blue" },
-                  { label: "Assigned Reps", value: salesRepUsers.length, helper: "mapped to a team", icon: UserRound, tone: "green" },
+                  { label: "Assigned Reps", value: assignedRepCount, helper: `of ${salesRepUsers.length} mapped to a team`, icon: UserRound, tone: "green" },
                   { label: "Scoped Products", value: products.filter((p) => productTeamScope(p).length > 0).length, helper: "product-team links", icon: PackageCheck, tone: "orange" },
                   { label: "All-Team Products", value: products.filter((p) => productTeamScope(p).length === 0).length, helper: "visible to every rep", icon: Boxes, tone: "purple" },
                 ].map(({ label, value, helper, icon: Icon, tone }) => (
@@ -12002,30 +12533,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 ))}
               </section>
 
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
                   <h2 className="text-sm font-bold text-gray-800">Team Configuration</h2>
-                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-600 rounded-md hover:bg-gray-100 transition-colors" onClick={() => showToast("Team creation will save name, lead, members, and product scope.")}><Info className="w-3.5 h-3.5" /> Workflow</button>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { label: "Team Name", value: salesTeams[0]?.name ?? "No teams yet" },
-                    { label: "Team Lead", value: users.find((user) => user.id === salesTeams[0]?.leadId)?.name ?? "Unassigned" },
-                    { label: "Product Scope", value: salesTeams.length === 0 ? "Create a team to configure scope" : "Specific products or all teams" },
-                    { label: "Assignment Rule", value: "Round-robin inside team" },
-                  ].map(({ label, value }) => (
-                    <div key={label} className="flex flex-col gap-1">
-                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
-                      <strong className="text-sm font-semibold text-gray-800">{value}</strong>
+                {salesTeams.map((team) => {
+                  const lead = users.find((u) => u.id === team.leadId);
+                  const memberCount = team.memberIds.length;
+                  const scopedCount = team.productIds.length;
+                  return (
+                    <div key={team.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
+                        <div className="flex items-center gap-1">
+                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => { setEditTeamId(team.id); setEditTeamName(team.name); setEditTeamLeadId(team.leadId ?? ""); setModal("editTeam"); }}><Pencil className="w-4 h-4" /></button>
+                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => { if (confirm(`Delete team "${team.name}"? This cannot be undone.`)) { salesTeamsApi.delete(team.id).catch(() => showToast("Failed to delete team on server.")); setExtraTeams((prev) => prev.filter((t) => t.id !== team.id)); showToast(`Team "${team.name}" deleted.`); } }}><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Team Lead</span>
+                          <strong className="text-sm font-semibold text-gray-800">{lead?.name ?? "Unassigned"}</strong>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Members</span>
+                          <strong className="text-sm font-semibold text-gray-800">{memberCount} rep{memberCount !== 1 ? "s" : ""}</strong>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Product Scope</span>
+                          <strong className="text-sm font-semibold text-gray-800">{scopedCount === 0 ? "All products" : `${scopedCount} product${scopedCount !== 1 ? "s" : ""}`}</strong>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Assignment</span>
+                          <strong className="text-sm font-semibold text-gray-800">Round-robin</strong>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Team members">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">Team Members</h2>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{salesRepUsers.length} reps assigned</span>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{assignedRepCount} of {salesRepUsers.length} reps assigned</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -12835,14 +13386,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {renderProductFilter(agentProductIds, setAgentProductIds, showAgentProductFilter, setShowAgentProductFilter)}
                   <select
                     className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                    aria-label="Agent status"
-                    value={agentStatus}
-                    onChange={(e) => setAgentStatus(e.target.value as AgentStatus)}
-                  >
-                    {agentStatuses.map((status) => <option value={status} key={status}>{status === "All Status" ? "Status: All" : status}</option>)}
-                  </select>
-                  <select
-                    className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                     aria-label="Currency"
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
@@ -12886,16 +13429,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search agents</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={agentSearch} onChange={(event) => setAgentSearch(event.target.value)} placeholder="Search by name or phone..." />
+                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={agentSearch} onChange={(event) => { setAgentSearch(event.target.value); setAgentsPage(1); }} placeholder="Search by name or phone..." />
                 </label>
                 <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent zone" value={agentZone} onChange={(event) => {
                   setAgentZone(event.target.value as AgentZone);
+                  setAgentsPage(1);
                   showToast(`Agent zone filter set to ${event.target.value}.`);
                 }}>
                   {agentZoneOptions.map((zone) => <option value={zone} key={zone}>{zone === "All Zones" ? "Zone: All" : zone}</option>)}
                 </select>
                 <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent status" value={agentStatus} onChange={(event) => {
                   setAgentStatus(event.target.value as AgentStatus);
+                  setAgentsPage(1);
                   showToast(`Agent status filter set to ${event.target.value}.`);
                 }}>
                   {agentStatuses.map((status) => <option value={status} key={status}>{status === "All Status" ? "Status: All" : status}</option>)}
@@ -12913,10 +13458,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredAgentRows.length === 0 ? (
+                      {pagedAgentRows.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
                       ) : (
-                        filteredAgentRows.map((row) => (
+                        pagedAgentRows.map((row) => (
                           <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedAgentId(row.agent.id); setAgentView("detail"); setAgentDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
@@ -12966,8 +13511,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                <div className="px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  Showing {filteredAgentRows.length} of {agents.length} agents
+                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                  <span>Showing {filteredAgentRows.length} of {agents.length} agents</span>
+                  {agentsTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button disabled={agentsPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setAgentsPage(agentsPageClamped - 1)}>&laquo; Prev</button>
+                      {Array.from({ length: agentsTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === agentsTotalPages || Math.abs(p - agentsPageClamped) <= 1)
+                        .map((p, idx, arr) => (
+                          <span key={p}>
+                            {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1">...</span>}
+                            <button className={`px-2 py-1 rounded border ${p === agentsPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-100"}`} onClick={() => setAgentsPage(p)}>{p}</button>
+                          </span>
+                        ))}
+                      <button disabled={agentsPageClamped >= agentsTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setAgentsPage(agentsPageClamped + 1)}>Next &raquo;</button>
+                    </div>
+                  )}
                 </div>
               </section>
               </div>
@@ -12988,17 +13547,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className={dataLoading ? "hidden" : ""}>
               {/* Summary cards */}
               {(() => {
-                const inTransit = waybillRecords.filter((w) => w.status === "In Transit");
-                const received = waybillRecords.filter((w) => w.status === "Received");
-                const totalFees = waybillRecords.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
+                const base = waybillRecords.filter((w) =>
+                  (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
+                  && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
+                );
+                const inTransit = base.filter((w) => w.status === "In Transit");
+                const received = base.filter((w) => w.status === "Received");
+                const totalFees = base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
                 const inTransitUnits = inTransit.reduce((s, w) => s + w.quantity, 0);
                 return (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                       { label: "In Transit", value: inTransit.length, sub: `${inTransitUnits} units`, color: "text-blue-700 bg-blue-50 border-blue-200" },
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
-                      { label: "Total Waybill Fees", value: `₦${totalFees.toLocaleString()}`, sub: "all time", color: "text-purple-700 bg-purple-50 border-purple-200" },
-                      { label: "Total Transfers", value: waybillRecords.length, sub: "all records", color: "text-gray-700 bg-gray-50 border-gray-200" },
+                      { label: "Total Waybill Fees", value: formatMoney(totalFees), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" },
+                      { label: "Total Transfers", value: base.length, sub: "filtered", color: "text-gray-700 bg-gray-50 border-gray-200" },
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -13075,6 +13638,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   );
                 }
+                const WAYBILL_PAGE_SIZE = 25;
+                const waybillTotalPages = Math.ceil(filtered.length / WAYBILL_PAGE_SIZE);
+                const waybillPageClamped = Math.min(waybillPage, waybillTotalPages);
+                const pagedWaybills = filtered.slice((waybillPageClamped - 1) * WAYBILL_PAGE_SIZE, waybillPageClamped * WAYBILL_PAGE_SIZE);
                 const statusColors: Record<WaybillStatus, string> = {
                   "In Transit": "bg-blue-100 text-blue-700",
                   "Received": "bg-green-100 text-green-700",
@@ -13084,6 +13651,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   "Missing": "bg-red-100 text-red-700",
                 };
                 return (
+                  <>
                   <div className="rounded-xl border border-gray-200 overflow-x-auto">
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
@@ -13094,7 +13662,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {filtered.map((w) => (
+                        {pagedWaybills.map((w) => (
                           <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{w.id}</td>
                             <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{w.productName}</td>
@@ -13105,7 +13673,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className="text-gray-900 font-medium">{w.receivingState}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
-                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? `₦${w.waybillFee.toLocaleString()}` : "—"}</td>
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</td>
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{w.dateSent}</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColors[w.status]}`}>{w.status}</span>
@@ -13137,6 +13705,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </tbody>
                     </table>
                   </div>
+                  {waybillTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-1 pt-2 text-sm">
+                      <button disabled={waybillPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setWaybillPage(waybillPageClamped - 1)}>&laquo; Prev</button>
+                      {Array.from({ length: waybillTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === waybillTotalPages || Math.abs(p - waybillPageClamped) <= 2)
+                        .map((p, idx, arr) => (
+                          <span key={p}>
+                            {idx > 0 && arr[idx - 1]! < p - 1 && <span className="px-1 text-gray-400">…</span>}
+                            <button className={`px-2 py-1 rounded border ${p === waybillPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillPage(p)}>{p}</button>
+                          </span>
+                        ))}
+                      <button disabled={waybillPageClamped >= waybillTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setWaybillPage(waybillPageClamped + 1)}>Next &raquo;</button>
+                    </div>
+                  )}
+                  </>
                 );
               })()}
               </div>
@@ -13356,16 +13939,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                          {["Run", "Month", "People", "Total", "Created", "Notes"].map((h) => (
+                          {["Run", "Month", "People", "Total", "Status", "Created", "Notes", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {payrollRuns.length === 0 ? (
-                          <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No payroll records yet. Use the "Run Payroll" tab to create one.</td></tr>
+                          <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No payroll records yet. Use the "Run Payroll" tab to create one.</td></tr>
                         ) : (
-                          payrollRuns.map((run) => (
+                          payrollRuns.map((run) => {
+                            const status = run.status ?? "Draft";
+                            const statusColor = status === "Paid" ? "bg-green-100 text-green-700" : status === "Approved" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600";
+                            return (
                             <tr key={run.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4">
                                 <div className="font-bold text-gray-900">{run.label}</div>
@@ -13374,10 +13960,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-4 text-gray-700">{run.month}</td>
                               <td className="px-4 py-4 text-gray-700">{run.rows.length}</td>
                               <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatMoney(run.total)}</td>
+                              <td className="px-4 py-4"><span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColor}`}>{status}</span></td>
                               <td className="px-4 py-4 text-gray-500">{displayDateFromKey(run.createdAt)}</td>
                               <td className="px-4 py-4 text-gray-500">{run.notes || "-"}</td>
+                              <td className="px-4 py-4 whitespace-nowrap">
+                                <div className="flex gap-2">
+                                  {status === "Draft" && (
+                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors" onClick={() => {
+                                      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+                                      showToast(`${run.label} approved.`);
+                                      payrollApi.approve(run.id).catch((err: any) => {
+                                        setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Draft" } : r));
+                                        showToast(`Failed to approve: ${err.message}`);
+                                      });
+                                    }}>Approve</button>
+                                  )}
+                                  {status === "Approved" && (
+                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors" onClick={() => {
+                                      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Paid" } : r));
+                                      showToast(`${run.label} marked as paid.`);
+                                      payrollApi.markPaid(run.id).catch((err: any) => {
+                                        setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+                                        showToast(`Failed to mark paid: ${err.message}`);
+                                      });
+                                    }}>Mark Paid</button>
+                                  )}
+                                  {status === "Paid" && <span className="text-xs text-green-600 font-medium">Completed</span>}
+                                </div>
+                              </td>
                             </tr>
-                          ))
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -13459,7 +14072,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {customerSources.map((source) => <option key={source}>{source}</option>)}
                 </select>
                 {renderProductFilter(customerProductIds, setCustomerProductIds, showCustomerProductFilter, setShowCustomerProductFilter)}
-                <button className="w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => showToast("Customers refreshed.")}><RefreshCw className="w-4 h-4" /></button>
+                <button className="w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => { retryLoadData.current(); showToast("Refreshing customer data…"); }}><RefreshCw className="w-4 h-4" /></button>
               </div>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Customers table">
@@ -13472,11 +14085,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         ))}
                       </tr>
                     </thead>
+                    {(() => {
+                      const CUST_PAGE_SIZE = 25;
+                      const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUST_PAGE_SIZE));
+                      const custPageClamped = Math.min(customerPage, custTotalPages);
+                      const pagedCustomers = filteredCustomers.slice((custPageClamped - 1) * CUST_PAGE_SIZE, custPageClamped * CUST_PAGE_SIZE);
+                      return (
                     <tbody className="divide-y divide-gray-100">
-                      {filteredCustomers.length === 0 ? (
+                      {pagedCustomers.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
                       ) : (
-                        filteredCustomers.map((customer) => {
+                        pagedCustomers.map((customer) => {
                           const reliability = customer.orders === 0 ? 0 : Math.round((customer.successful / customer.orders) * 100);
                           const flagged = isCustomerFlagged(customer.phone);
                           const flagData = customerFlags[normalizePhone(customer.phone)];
@@ -13511,15 +14130,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         })
                       )}
                     </tbody>
+                      );
+                    })()}
                   </table>
                 </div>
+                {(() => {
+                  const CUST_PAGE_SIZE = 25;
+                  const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUST_PAGE_SIZE));
+                  const custPageClamped = Math.min(customerPage, custTotalPages);
+                  return (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredCustomers.length} customer{filteredCustomers.length === 1 ? "" : "s"}</span>
-                  <div className="flex items-center gap-1">
-                    
-                    
-                  </div>
+                  {custTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button disabled={custPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setCustomerPage(custPageClamped - 1)}>&laquo; Prev</button>
+                      {Array.from({ length: custTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === custTotalPages || Math.abs(p - custPageClamped) <= 2)
+                        .map((p, idx, arr) => (
+                          <span key={p}>
+                            {idx > 0 && arr[idx - 1]! < p - 1 && <span className="px-1 text-gray-400">…</span>}
+                            <button className={`px-2 py-1 rounded border ${p === custPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setCustomerPage(p)}>{p}</button>
+                          </span>
+                        ))}
+                      <button disabled={custPageClamped >= custTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setCustomerPage(custPageClamped + 1)}>Next &raquo;</button>
+                    </div>
+                  )}
                 </div>
+                  );
+                })()}
               </section>
               </div>
             </div>
@@ -13531,7 +14169,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <p className="text-sm font-medium text-gray-500">Monitor and manage your e-commerce operational costs</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => showToast("Expenses refreshed.")}>
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
                     <RefreshCw className="w-4 h-4" /> Refresh
                   </button>
                   <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
@@ -13687,24 +14325,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </select>
               </div>
 
+              {(() => {
+                const EXP_PAGE_SIZE = 25;
+                const expTotalPages = Math.max(1, Math.ceil(filteredExpenses.length / EXP_PAGE_SIZE));
+                const expPageClamped = Math.min(expensePage, expTotalPages);
+                const pagedExpenses = filteredExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
+                return (
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Expenses table">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="px-4 py-3"><input type="checkbox" aria-label="Select all expenses" /></th>
                         {["Date", "Type", "Product / Ref", "Amount", "Description", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredExpenses.length === 0 ? (
-                        <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</td></tr>
+                      {pagedExpenses.length === 0 ? (
+                        <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</td></tr>
                       ) : (
-                        filteredExpenses.map((expense) => (
+                        pagedExpenses.map((expense) => (
                           <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-4"><input type="checkbox" aria-label={`Select ${expense.id}`} /></td>
                             <td className="px-4 py-4 text-gray-600">{displayDateFromKey(expense.date)}</td>
                             <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
                             <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
@@ -13721,12 +14363,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</span>
-                  <div className="flex items-center gap-1">
-
-
-                  </div>
+                  {expTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button disabled={expPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped - 1)}>&laquo; Prev</button>
+                      {Array.from({ length: expTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === expTotalPages || Math.abs(p - expPageClamped) <= 2)
+                        .map((p, idx, arr) => (
+                          <span key={p}>
+                            {idx > 0 && arr[idx - 1]! < p - 1 && <span className="px-1 text-gray-400">…</span>}
+                            <button className={`px-2 py-1 rounded border ${p === expPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setExpensePage(p)}>{p}</button>
+                          </span>
+                        ))}
+                      <button disabled={expPageClamped >= expTotalPages} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped + 1)}>Next &raquo;</button>
+                    </div>
+                  )}
                 </div>
               </section>
+                );
+              })()}
               </div>
             </div>
           ) : activePage === "Finance & Accounting" ? (
@@ -14492,7 +15146,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             if (outstanding.length === 0) {
                               return <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">All delivered orders are fully remitted. 🎉</td></tr>;
                             }
-                            return outstanding.slice(0, 20).map((order) => {
+                            const OS_PAGE = 25;
+                            const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
+                            const osPageClamped = Math.min(outstandingPage, osTotalPages);
+                            const pagedOutstanding = outstanding.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
+                            return pagedOutstanding.map((order) => {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                               return (
@@ -14513,6 +15171,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </tbody>
                       </table>
                     </div>
+                    {(() => {
+                      const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid");
+                      const OS_PAGE = 25;
+                      const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
+                      if (osTotalPages <= 1) return null;
+                      const osPageClamped = Math.min(outstandingPage, osTotalPages);
+                      return (
+                        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                          <span>Showing {(osPageClamped - 1) * OS_PAGE + 1}–{Math.min(osPageClamped * OS_PAGE, outstanding.length)} of {outstanding.length}</span>
+                          <div className="flex items-center gap-1">
+                            <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={osPageClamped <= 1} onClick={() => setOutstandingPage(osPageClamped - 1)}>Prev</button>
+                            {Array.from({ length: osTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === osTotalPages || Math.abs(p - osPageClamped) <= 1).map((p, idx, arr) => (<>
+                              {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
+                              <button key={p} className={`px-2 py-1 rounded border ${p === osPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setOutstandingPage(p)}>{p}</button>
+                            </>))}
+                            <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={osPageClamped >= osTotalPages} onClick={() => setOutstandingPage(osPageClamped + 1)}>Next</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -14523,11 +15201,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const prevRevenue = prevDelivered.reduce((s, o) => s + o.amount, 0);
                 const prevCogs = prevDelivered.reduce((s, o) => s + costForOrder(o), 0);
                 const prevLogistics = prevDelivered.reduce((s, o) => s + orderLogisticsCost(o), 0);
-                const prevExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange)).reduce((s, e) => s + e.amount, 0);
+                const prevAllExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange));
+                const prevExpenseTotal = prevAllExpenses.reduce((s, e) => s + e.amount, 0);
+                const prevDeliveryExp = prevAllExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
+                const prevOpex = prevExpenseTotal - prevDeliveryExp;
                 const prevGross = prevRevenue - prevCogs - prevLogistics;
-                const prevNet = prevGross - prevExpenses;
-                const trueGrossProfit = financeRevenue - financeCogs - totalLogisticsCost;
-                const trueNetProfit = trueGrossProfit - financeExpenseTotal;
+                const prevNet = prevGross - prevOpex;
                 const chg = (cur: number, prev: number) => {
                   const pct = percentChange(cur, prev);
                   const cls = pct >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
@@ -14550,11 +15229,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-gray-700">Delivered Orders</td><td className="px-4 py-3 font-semibold text-gray-900">{formatMoney(financeRevenue)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevRevenue)}</td><td className="px-4 py-3">{chg(financeRevenue, prevRevenue)}</td></tr>
                           <tr className="bg-red-50"><td className="px-4 py-2 font-bold text-red-600 text-xs uppercase tracking-wide" colSpan={4}>Cost of Goods Sold (COGS)</td></tr>
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Product Sourcing Costs</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeCogs)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevCogs)})</td><td className="px-4 py-3">{chg(financeCogs, prevCogs)}</td></tr>
-                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Logistics / Delivery Fees</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(totalLogisticsCost)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevLogistics)})</td><td className="px-4 py-3">{chg(totalLogisticsCost, prevLogistics)}</td></tr>
-                          <tr className="bg-green-50"><td className="px-4 py-3 font-bold text-green-700">Gross Profit</td><td className="px-4 py-3 font-bold text-green-700">{formatMoney(trueGrossProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevGross)}</td><td className="px-4 py-3">{chg(trueGrossProfit, prevGross)}</td></tr>
+                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Logistics / Delivery Fees</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeLogisticsCost)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevLogistics)})</td><td className="px-4 py-3">{chg(financeLogisticsCost, prevLogistics)}</td></tr>
+                          <tr className="bg-green-50"><td className="px-4 py-3 font-bold text-green-700">Gross Profit</td><td className="px-4 py-3 font-bold text-green-700">{formatMoney(financeGrossProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevGross)}</td><td className="px-4 py-3">{chg(financeGrossProfit, prevGross)}</td></tr>
                           <tr className="bg-red-50"><td className="px-4 py-2 font-bold text-red-600 text-xs uppercase tracking-wide" colSpan={4}>Operating Expenses</td></tr>
-                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Expenses</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeExpenseTotal)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevExpenses)})</td><td className="px-4 py-3">{chg(financeExpenseTotal, prevExpenses)}</td></tr>
-                          <tr className="bg-blue-50"><td className="px-4 py-3 font-bold text-[#1F8FE0]">Net Profit</td><td className="px-4 py-3 font-bold text-[#1F8FE0]">{formatMoney(trueNetProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevNet)}</td><td className="px-4 py-3">{chg(trueNetProfit, prevNet)}</td></tr>
+                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Expenses</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeOpex)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevOpex)})</td><td className="px-4 py-3">{chg(financeOpex, prevOpex)}</td></tr>
+                          <tr className="bg-blue-50"><td className="px-4 py-3 font-bold text-[#1F8FE0]">Net Profit</td><td className="px-4 py-3 font-bold text-[#1F8FE0]">{formatMoney(financeNetProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevNet)}</td><td className="px-4 py-3">{chg(financeNetProfit, prevNet)}</td></tr>
                         </tbody>
                       </table>
                     </div>
@@ -14811,7 +15490,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
                   { title: "Active Campaigns", value: String(new Set(campaignBaseOrders.filter((o) => o.utmCampaign && o.utmCampaign !== "manual").map((o) => o.utmCampaign)).size), helper: "unique campaigns", icon: Zap, tone: "purple" },
                   { title: "Top Source", value: (() => { const sources = filteredCampaignOrders.map((o) => o.utmSource); if (!sources.length) return "—"; const counts: Record<string, number> = {}; sources.forEach((s) => { counts[s] = (counts[s] || 0) + 1; }); return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; })(), helper: "most orders", icon: Globe, tone: "green" },
-                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.reduce((sum, o) => sum + o.amount, 0)), helper: "from tracked orders", icon: CircleDollarSign, tone: "orange" }
+                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -14855,26 +15534,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {filteredCampaignOrders.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</td></tr>
                       ) : (
-                        filteredCampaignOrders.map((order) => (
-                          <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
-                            <td className="px-4 py-4">
-                              <div className="font-semibold text-gray-900">{order.customer}</div>
-                              <div className="text-xs text-gray-400">{order.phone}</div>
-                            </td>
-                            <td className="px-4 py-4 text-gray-700">{order.productName}</td>
-                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
-                            <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
-                            <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
-                            <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
-                            <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
-                            <td className="px-4 py-4 text-gray-500">{formatDateTime(order.createdAt ?? order.date)}</td>
-                          </tr>
-                        ))
+                        (() => {
+                          const CAMP_PAGE = 25;
+                          const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                          const campPageClamped = Math.min(campaignPage, campTotalPages);
+                          return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                            <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
+                              <td className="px-4 py-4">
+                                <div className="font-semibold text-gray-900">{order.customer}</div>
+                                <div className="text-xs text-gray-400">{order.phone}</div>
+                              </td>
+                              <td className="px-4 py-4 text-gray-700">{order.productName}</td>
+                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
+                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
+                              <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
+                              <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
+                              <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
+                              <td className="px-4 py-4 text-gray-500">{formatDateTime(order.createdAt ?? order.date)}</td>
+                            </tr>
+                          ));
+                        })()
                       )}
                     </tbody>
                   </table>
                 </div>
+                {(() => {
+                  const CAMP_PAGE = 25;
+                  const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                  if (campTotalPages <= 1) return null;
+                  const campPageClamped = Math.min(campaignPage, campTotalPages);
+                  return (
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredCampaignOrders.length)} of {filteredCampaignOrders.length}</span>
+                      <div className="flex items-center gap-1">
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
+                        {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
+                          {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
+                          <button key={p} className={`px-2 py-1 rounded border ${p === campPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setCampaignPage(p)}>{p}</button>
+                        </>))}
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped >= campTotalPages} onClick={() => setCampaignPage(campPageClamped + 1)}>Next</button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </section>
               </>)}
 
@@ -15071,7 +15774,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
                   { title: "Active Users", value: String(activeUserCount), helper: `${users.length - activeUserCount} inactive`, icon: CheckCircle2, tone: "green" },
-                  { title: "New Users (Month)", value: String(users.length), helper: "joined this month", icon: UserPlus, tone: "purple" },
+                  { title: "New Users (Month)", value: String(users.filter((u) => { if (!u.created) return false; const d = new Date(u.created); const now = new Date(); return !isNaN(d.getTime()) && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length), helper: "joined this month", icon: UserPlus, tone: "purple" },
                 ].map(({ title, value, helper, icon: Icon, tone }) => (
                   <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-2">
@@ -15136,10 +15839,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search users</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search users by name, email..." />
+                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={userSearch} onChange={(event) => { setUserSearch(event.target.value); setUserPage(1); }} placeholder="Search users by name, email..." />
                 </label>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User role" value={userRole} onChange={(event) => { setUserRole(event.target.value as UserRole); showToast(`User role filter set to ${event.target.value}.`); }}>{userRoles.map((role) => <option key={role}>{role}</option>)}</select>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User status" value={userStatus} onChange={(event) => { setUserStatus(event.target.value as UserStatus); showToast(`User status filter set to ${event.target.value}.`); }}>{userStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User role" value={userRole} onChange={(event) => { setUserRole(event.target.value as UserRole); setUserPage(1); showToast(`User role filter set to ${event.target.value}.`); }}>{userRoles.map((role) => <option key={role}>{role}</option>)}</select>
+                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User status" value={userStatus} onChange={(event) => { setUserStatus(event.target.value as UserStatus); setUserPage(1); showToast(`User status filter set to ${event.target.value}.`); }}>{userStatuses.map((status) => <option key={status}>{status}</option>)}</select>
               </div>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Users table">
@@ -15147,7 +15850,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="px-4 py-3 bg-gray-50"><input type="checkbox" aria-label="Select all users" /></th>
                         {["Name & Email", "Role", "Permissions", "Status", "Created", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
@@ -15155,9 +15857,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </thead>
                     <tbody>
                       {filteredUsers.length === 0 ? (
-                        <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
+                        <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
                       ) : (
-                        filteredUsers.map((user) => {
+                        (() => { const USER_PAGE = 25; const uTotalPages = Math.ceil(filteredUsers.length / USER_PAGE); const uPageClamped = Math.min(userPage, uTotalPages); return filteredUsers.slice((uPageClamped - 1) * USER_PAGE, uPageClamped * USER_PAGE); })().map((user) => {
                           const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
@@ -15165,7 +15867,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           return (
                             <>
                               <tr key={user.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
-                                <td className="px-4 py-4"><input type="checkbox" aria-label={`Select ${user.name}`} /></td>
                                 <td className="px-4 py-4">
                                   <div className="flex items-center gap-2">
                                     <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(user.name)}</span>
@@ -15187,8 +15888,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </td>
                                 <td className="px-4 py-4">
                                   <button type="button" className="flex items-center gap-2 text-sm" onClick={() => {
+                                    const prevActive = user.active;
                                     setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: !item.active } : item));
                                     showToast(`${user.name} marked ${user.active ? "inactive" : "active"}.`);
+                                    teamApi.update(user.id, { active: !prevActive }).catch((err: any) => {
+                                      setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
+                                      showToast(`Failed to update status: ${err.message}`);
+                                    });
                                   }}>
                                     <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
                                       <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
@@ -15215,7 +15921,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </tr>
                               {isExpanded && (
                                 <tr key={`${user.id}-perms`} className="bg-blue-50/30 border-t border-blue-100">
-                                  <td colSpan={7} className="px-6 py-4">
+                                  <td colSpan={6} className="px-6 py-4">
                                     <div className="flex items-start justify-between gap-3 mb-3">
                                       <div>
                                         <p className="text-sm font-semibold text-gray-900">{user.name} — Permissions</p>
@@ -15223,7 +15929,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                         {!isOwner && <p className="text-xs text-gray-500 mt-0.5">Toggle individual permissions for this user.</p>}
                                       </div>
                                       {!isOwner && (
-                                        <button className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline" onClick={() => setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPermsByRole[u.role] } : u))}>Reset to defaults</button>
+                                        <button className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline" onClick={() => {
+                                          const prevUsers = users;
+                                          const defaultPerms = defaultPermsByRole[user.role] ?? [];
+                                          setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
+                                          teamApi.update(user.id, { permissions: defaultPerms }).catch((err: any) => {
+                                            setUsers(prevUsers);
+                                            showToast(`Failed to reset permissions: ${err.message}`);
+                                          });
+                                        }}>Reset to defaults</button>
                                       )}
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -15265,7 +15979,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                           </div>
                                           <button
                                             className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
-                                            onClick={() => setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: [] } : u))}
+                                            onClick={() => {
+                                              const prevUsers = users;
+                                              setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: [] } : u));
+                                              teamApi.update(user.id, { extra_pages: [] }).catch((err: any) => {
+                                                setUsers(prevUsers);
+                                                showToast(`Failed to reset page access: ${err.message}`);
+                                              });
+                                            }}
                                           >Reset extras</button>
                                         </div>
                                         {(() => {
@@ -15282,12 +16003,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                                     <button
                                                       type="button"
                                                       className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${granted ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
-                                                      onClick={() => setUsers((prev) => prev.map((u) => {
-                                                        if (u.id !== user.id) return u;
-                                                        const next = new Set(u.extraPages ?? []);
-                                                        if (granted) next.delete(page); else next.add(page);
-                                                        return { ...u, extraPages: Array.from(next) as ActivePage[] };
-                                                      }))}
+                                                      onClick={() => {
+                                                        const prevUsers = users;
+                                                        const nextExtras = (() => { const s = new Set(user.extraPages ?? []); if (granted) s.delete(page); else s.add(page); return Array.from(s) as ActivePage[]; })();
+                                                        setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: nextExtras } : u));
+                                                        teamApi.update(user.id, { extra_pages: nextExtras }).catch((err: any) => {
+                                                          setUsers(prevUsers);
+                                                          showToast(`Failed to update page access: ${err.message}`);
+                                                        });
+                                                      }}
                                                     >
                                                       <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${granted ? "left-4" : "left-0.5"}`} />
                                                     </button>
@@ -15312,14 +16036,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  <span>{filteredUsers.length} user{filteredUsers.length === 1 ? "" : "s"}</span>
-                  <div className="flex items-center gap-1">
-                    
-                    <button className="px-3 py-1.5 rounded border border-[#1F8FE0] bg-blue-50 text-[#1F8FE0] font-bold">1</button>
-
-                  </div>
-                </div>
+                {(() => {
+                  const USER_PAGE = 25;
+                  const uTotalPages = Math.ceil(filteredUsers.length / USER_PAGE);
+                  const uPageClamped = Math.min(userPage, uTotalPages || 1);
+                  return (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                      <span>{filteredUsers.length} user{filteredUsers.length === 1 ? "" : "s"}{uTotalPages > 1 ? ` · page ${uPageClamped} of ${uTotalPages}` : ""}</span>
+                      {uTotalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={uPageClamped <= 1} onClick={() => setUserPage(uPageClamped - 1)}>Prev</button>
+                          {Array.from({ length: uTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === uTotalPages || Math.abs(p - uPageClamped) <= 1).map((p, idx, arr) => (<>
+                            {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
+                            <button key={p} className={`px-2 py-1 rounded border ${p === uPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setUserPage(p)}>{p}</button>
+                          </>))}
+                          <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={uPageClamped >= uTotalPages} onClick={() => setUserPage(uPageClamped + 1)}>Next</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </section>
               </div>
             </div>
@@ -15329,45 +16065,59 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Round-Robin Management</h1>
                   <p className="text-sm font-medium text-gray-500">Configure the lead distribution sequence for your sales team.</p>
-                  {(() => { const nextRep = users.find((u) => u.role === "Sales Rep" && u.active); return nextRep ? <p className="text-sm font-bold text-gray-700 mt-1">Next in line: <span className="text-[#1F8FE0]">{nextRep.name}</span></p> : null; })()}
+                  {roundRobinActiveRows[0] ? <p className="text-sm font-bold text-gray-700 mt-1">Next in line: <span className="text-[#1F8FE0]">{roundRobinActiveRows[0].user.name}</span></p> : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
-                    const reps = users.filter((u) => u.role === "Sales Rep" && u.active);
-                    if (reps.length === 0) return;
-                    const first = reps[0];
-                    setUsers((prev) => {
-                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
-                      const rotated = [...reps.slice(1), first];
-                      return [...nonReps, ...rotated];
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
+                    const sorted = roundRobinActiveRows.map((r) => r.user);
+                    if (sorted.length < 2) return;
+                    const rotated = [...sorted.slice(1), sorted[0]];
+                    const prevUsers = users;
+                    setUsers((prev) => prev.map((u) => {
+                      const idx = rotated.findIndex((r) => r.id === u.id);
+                      return idx >= 0 ? { ...u, roundRobinPosition: idx } : u;
+                    }));
+                    showToast(`Round-robin advanced — ${rotated[0].name} is now #1 in the sequence.`);
+                    teamApi.updateRoundRobin(rotated.map((r) => r.id)).catch((err: any) => {
+                      setUsers(prevUsers);
+                      showToast(`Failed to save sequence: ${err.message}`);
                     });
-                    showToast(`Round-robin advanced — ${reps[1]?.name ?? reps[0].name} is now #1 in the sequence.`);
                   }}>
                     <Repeat2 className="w-4 h-4" /> Advance Sequence
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
-                    const reps = users.filter((u) => u.role === "Sales Rep" && u.active);
-                    if (reps.length === 0) return;
-                    const skipped = reps[0];
-                    setUsers((prev) => {
-                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
-                      const rotated = [...reps.slice(1), skipped];
-                      return [...nonReps, ...rotated];
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
+                    const sorted = roundRobinActiveRows.map((r) => r.user);
+                    if (sorted.length < 2) return;
+                    const skipped = sorted[0];
+                    // Skip moves to second-to-last (not last) — differs from Advance
+                    const rest = sorted.slice(1);
+                    const reordered = [...rest.slice(0, -1), skipped, rest[rest.length - 1]];
+                    const prevUsers = users;
+                    setUsers((prev) => prev.map((u) => {
+                      const idx = reordered.findIndex((r) => r.id === u.id);
+                      return idx >= 0 ? { ...u, roundRobinPosition: idx } : u;
+                    }));
+                    showToast(`Skipped ${skipped.name}. Next: ${rest[0].name}.`);
+                    teamApi.updateRoundRobin(reordered.map((r) => r.id)).catch((err: any) => {
+                      setUsers(prevUsers);
+                      showToast(`Failed to save sequence: ${err.message}`);
                     });
-                    const nextUp = reps[1]?.name ?? skipped.name;
-                    showToast(`Skipped ${skipped.name}. Next: ${nextUp}.`);
                   }}>
                     <SkipForward className="w-4 h-4" /> Skip Rep
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={activeSalesRepUsers.length === 0} onClick={() => {
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
-                    setUsers((prev) => {
-                      const nonReps = prev.filter((u) => u.role !== "Sales Rep" || !u.active);
-                      const reps = prev.filter((u) => u.role === "Sales Rep" && u.active).sort((a, b) => a.name.localeCompare(b.name));
-                      return [...nonReps, ...reps];
-                    });
-                    const sorted = activeSalesRepUsers.slice().sort((a, b) => a.name.localeCompare(b.name));
+                    const sorted = roundRobinActiveRows.map((r) => r.user).sort((a, b) => a.name.localeCompare(b.name));
+                    const prevUsers = users;
+                    setUsers((prev) => prev.map((u) => {
+                      const idx = sorted.findIndex((r) => r.id === u.id);
+                      return idx >= 0 ? { ...u, roundRobinPosition: idx } : u;
+                    }));
                     showToast(`Sequence reset. ${sorted[0]?.name ?? "No reps"} is now #1.`);
+                    teamApi.updateRoundRobin(sorted.map((r) => r.id)).catch((err: any) => {
+                      setUsers(prevUsers);
+                      showToast(`Failed to save sequence: ${err.message}`);
+                    });
                   }}>
                     <RefreshCw className="w-4 h-4" /> Reset Sequence
                   </button>
@@ -15571,7 +16321,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
                         <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} />
+                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -15702,7 +16452,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div className="flex flex-col gap-1.5">
                                 <label className="inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" className="w-4 h-4 accent-[#1F8FE0]" checked={deliveryQuickToday} onChange={(e) => setDeliveryQuickToday(e.target.checked)} /> Today</label>
                                 <label className="inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" className="w-4 h-4 accent-[#1F8FE0]" checked={deliveryQuickTomorrow} onChange={(e) => setDeliveryQuickTomorrow(e.target.checked)} /> Tomorrow</label>
-                                <label className="inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" className="w-4 h-4 accent-[#1F8FE0]" checked={deliveryQuickNextTomorrow} onChange={(e) => setDeliveryQuickNextTomorrow(e.target.checked)} /> Next tomorrow <span className="text-gray-400">(day after tomorrow)</span></label>
+                                <label className="inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" className="w-4 h-4 accent-[#1F8FE0]" checked={deliveryQuickNextTomorrow} onChange={(e) => setDeliveryQuickNextTomorrow(e.target.checked)} /> Day After <span className="text-gray-400">(day after tomorrow)</span></label>
                               </div>
                             </div>
                           ) : (
@@ -15853,7 +16603,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
                           <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Extra revenue · 30d</p>
-                          <p className="text-2xl font-extrabold text-[#1F8FE0] mt-0.5">{formatProductMoney(totalRevenue, "NGN")}</p>
+                          <p className="text-2xl font-extrabold text-[#1F8FE0] mt-0.5">{formatMoney(totalRevenue)}</p>
                         </div>
                       </div>
 
@@ -16013,7 +16763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                       <div className="flex items-center gap-2">
                                         <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={embedUrl} aria-label={`${product.name} direct embed URL`} />
                                         <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.location.href = embedUrl; }}><ExternalLink className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(embedUrl, "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
                                       </div>
                                     </div>
                                   ) : (
@@ -16095,6 +16845,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {renderWeekNav(notificationsNavStart, setNotificationsNavStart, notificationsNavSpan, setNotificationsNavSpan, setNotificationsPeriod, setNotificationsDateRange)}
               </div>
 
+              {(() => {
+                // Apply period + product filter to system notifications
+                const scopedNotifications = systemNotifications
+                  .filter((n) => isInPeriod(n.createdAt, notificationsPeriod, notificationsDateRange))
+                  .filter((n) => notificationProductIds.size === 0 || (n.productId ? notificationProductIds.has(n.productId) : false));
+                const scopedUnread = scopedNotifications.filter((n) => !n.read).length;
+                const scopedReadCount = scopedNotifications.filter((n) => n.read).length;
+                const visibleList = notificationFilter === "Unread" ? scopedNotifications.filter((n) => !n.read) : scopedNotifications;
+                const perPage = 25;
+                const totalPages = Math.max(1, Math.ceil(visibleList.length / perPage));
+                const safePage = Math.min(notifPage, totalPages);
+                const pageSlice = visibleList.slice((safePage - 1) * perPage, safePage * perPage);
+                const startIdx = (safePage - 1) * perPage + 1;
+                const endIdx = Math.min(safePage * perPage, visibleList.length);
+                return (<>
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center justify-between gap-4">
                 <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar">
                   {(["All", "Unread"] as NotificationFilter[]).map((filter) => (
@@ -16102,32 +16867,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       key={filter}
                       data-testid={`notification-filter-${slugify(filter)}`}
                       className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all duration-200 ${notificationFilter === filter ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
-                      onClick={() => setNotificationFilter(filter)}
+                      onClick={() => { setNotificationFilter(filter); setNotifPage(1); }}
                     >
                       {filter}
                     </button>
                   ))}
                 </nav>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={systemNotifications.filter((n) => n.read).length === 0} onClick={() => { setSystemNotifications((prev) => prev.filter((n) => !n.read)); showToast("Read notifications deleted."); }}><Trash2 className="w-4 h-4" /> Delete read</button>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={scopedReadCount === 0} onClick={() => { const prev = systemNotifications; setSystemNotifications((p) => p.filter((n) => !n.read)); setNotifPage(1); showToast("Read notifications deleted."); notificationsApi.deleteRead().catch((err: any) => { setSystemNotifications(prev); showToast(`Failed to delete: ${err.message}`); }); }}><Trash2 className="w-4 h-4" /> Delete read</button>
               </div>
 
-              {(() => {
-                // Apply period + product filter to system notifications
-                const scopedNotifications = systemNotifications
-                  .filter((n) => isInPeriod(n.createdAt, notificationsPeriod, notificationsDateRange))
-                  .filter((n) => notificationProductIds.size === 0 || (n.productId ? notificationProductIds.has(n.productId) : false));
-                const scopedUnread = scopedNotifications.filter((n) => !n.read).length;
-                const visibleList = notificationFilter === "Unread" ? scopedNotifications.filter((n) => !n.read) : scopedNotifications;
-                if (scopedNotifications.length === 0) {
-                  return (
+              {scopedNotifications.length === 0 ? (
                     <section className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 gap-3">
                       <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><Bell className="w-6 h-6" /></span>
                       <h2 className="text-base font-bold text-gray-700">No notifications in this period</h2>
                       <p className="text-sm text-gray-400">Try a wider period, or wait for new system events.</p>
                     </section>
-                  );
-                }
-                return (
+              ) : (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                     <div>
@@ -16137,7 +16892,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {scopedUnread > 0 && <button className="text-xs font-semibold text-[#1F8FE0] hover:underline" onClick={markAllNotificationsRead}>Mark all read</button>}
                   </div>
                   <ul className="divide-y divide-gray-100">
-                    {visibleList.map((n) => {
+                    {pageSlice.map((n) => {
                       const isOrder = n.type.startsWith("order_");
                       const iconCls = n.type === "low_stock" ? "bg-amber-100 text-amber-600"
                         : n.type === "remittance_overdue" ? "bg-red-100 text-red-600"
@@ -16242,8 +16997,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       );
                     })}
                   </ul>
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                      <span>Showing {startIdx}–{endIdx} of {visibleList.length}</span>
+                      <div className="flex items-center gap-1">
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={safePage <= 1} onClick={() => setNotifPage(safePage - 1)}>Prev</button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1).reduce<(number | "…")[]>((acc, p) => { if (acc.length > 0) { const last = acc[acc.length - 1]; if (typeof last === "number" && p - last > 1) acc.push("…"); } acc.push(p); return acc; }, []).map((p, i) => typeof p === "string" ? <span key={`e${i}`} className="px-1">…</span> : <button key={p} className={`px-2 py-1 rounded border ${p === safePage ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setNotifPage(p)}>{p}</button>)}
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={safePage >= totalPages} onClick={() => setNotifPage(safePage + 1)}>Next</button>
+                      </div>
+                    </div>
+                  )}
                 </section>
-                );
+              )}
+              </>);
               })()}
               </div>
             </div>
@@ -16305,7 +17071,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                     <div className="flex-1 min-w-[240px] space-y-2">
                       <h3 className="text-sm font-bold text-gray-900">Company logo</h3>
-                      <p className="text-xs text-gray-500">PNG or JPG, square works best (1:1). Stored locally in your browser.</p>
+                      <p className="text-xs text-gray-500">PNG or JPG, square works best (1:1). Synced across your organization.</p>
                       <div className="flex items-center gap-2 flex-wrap">
                         <label className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer">
                           <Upload className="w-4 h-4" />
@@ -17286,6 +18052,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
                 {modal === "createTeam" && "Create New Team"}
+                {modal === "editTeam" && "Edit Team"}
                 {modal === "notifications" && "Notifications"}
                 {modal === "help" && "Dashboard Help"}
                 {modal === "signout" && "Sign Out"}
@@ -17357,6 +18124,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </div>
             )}
+
+            {modal === "editTeam" && (() => {
+              const team = salesTeams.find((t) => t.id === editTeamId);
+              if (!team) return null;
+              const dirty = editTeamName.trim() !== team.name || (editTeamLeadId || undefined) !== team.leadId;
+              return (
+                <div className="modal-form">
+                  <label><span>Team Name *</span><input value={editTeamName} onChange={(e) => setEditTeamName(e.target.value)} placeholder="e.g. Lagos Closers" /></label>
+                  <label><span>Team Lead</span><select value={editTeamLeadId} onChange={(e) => setEditTeamLeadId(e.target.value)}><option value="">No lead assigned</option>{salesRepUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
+                  <label><span>Members</span></label>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {salesRepUsers.map((u) => {
+                      const isMember = team.memberIds.includes(u.id);
+                      return (
+                        <button key={u.id} type="button" className={`!min-h-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${isMember ? "bg-blue-50 border-[#1F8FE0] text-[#1F8FE0] font-semibold" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
+                          onClick={() => {
+                            const next = isMember ? team.memberIds.filter((id) => id !== u.id) : [...team.memberIds, u.id];
+                            setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, memberIds: next } : t));
+                            salesTeamsApi.update(team.id, { member_ids: next }).catch(() => showToast("Failed to update members on server."));
+                          }}>
+                          {u.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button disabled={!dirty || !editTeamName.trim()} className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors" onClick={() => {
+                      const updates: Record<string, unknown> = {};
+                      if (editTeamName.trim() !== team.name) updates.name = editTeamName.trim();
+                      const nextLead = editTeamLeadId || null;
+                      if (nextLead !== (team.leadId ?? null)) updates.lead_id = nextLead;
+                      setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, name: editTeamName.trim(), leadId: editTeamLeadId || undefined } : t));
+                      setModal(null);
+                      showToast(`Team "${editTeamName.trim()}" updated.`);
+                      salesTeamsApi.update(team.id, updates).catch(() => showToast("Saved locally — sync to server failed."));
+                    }}>Save changes</button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {modal === "notifications" && (
               <div className="px-6 py-5 flex flex-col gap-4">
@@ -19025,10 +19833,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const emailTaken = !!emailNormalized && users.some((u) => u.email.toLowerCase() === emailNormalized);
               const pwd = salesRepPassword;
               const pwdLen = pwd.length;
-              const pwdTooShort = pwdLen > 0 && pwdLen < 6;
+              const pwdTooShort = pwdLen < 8;
               const pwdStrength = pwdLen === 0
                 ? null
-                : pwdLen < 6
+                : pwdLen < 8
                   ? { label: "Too short", cls: "text-red-600 bg-red-50" }
                   : pwdLen < 10 || !/[A-Z]/.test(pwd) || !/\d/.test(pwd)
                     ? { label: "OK", cls: "text-amber-700 bg-amber-50" }
@@ -19844,9 +20652,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         onClick={() => {
                           if (!salesRepName.trim() || !salesRepEmail.trim()) { showToast("Name and email are required."); return; }
                           if (emailTaken) { showToast("Another user already uses this email."); return; }
-                          setUsers((value) => value.map((user) => user.id === selectedSalesRep.id ? { ...user, name: salesRepName.trim(), email: salesRepEmail.trim(), active: salesRepActive } : user));
+                          const updates = { name: salesRepName.trim(), email: salesRepEmail.trim(), active: salesRepActive };
+                          setUsers((value) => value.map((user) => user.id === selectedSalesRep.id ? { ...user, ...updates } : user));
                           setModal(null);
                           showToast(`${salesRepName.trim()} updated.`);
+                          usersApi.update(selectedSalesRep.id, updates).catch(() => showToast("Saved locally — sync to server failed."));
                         }}
                       >Save changes</button>
                     </div>
@@ -21042,10 +21852,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-md"
                       onClick={async () => {
                         if (!window.confirm(`Delete expense ${expense.id}? This cannot be undone.`)) return;
+                        const snapshot = expense;
                         setExpenses((prev) => prev.filter((e) => e.id !== expense.id));
-                        try { await expensesApi.delete(expense.id); } catch (err) { console.warn(err); }
                         showToast(`Expense ${expense.id} deleted.`);
                         closeModal();
+                        try { await expensesApi.delete(expense.id); } catch (err: any) {
+                          setExpenses((prev) => [snapshot, ...prev]);
+                          showToast(`Failed to delete expense: ${err.message}`);
+                        }
                       }}
                     ><Trash2 className="w-3.5 h-3.5" /> Delete expense</button>
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
