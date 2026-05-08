@@ -3247,9 +3247,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const closeStockCountSession = (sessionId: string) => {
+    const snapshot = stockCounts.find((s) => s.id === sessionId);
     setStockCounts((prev) => prev.map((s) => s.id === sessionId ? { ...s, status: "Closed", closedAt: new Date().toISOString() } : s));
-    stockApi.closeSession(sessionId).catch(() => showToast("Session closed locally — sync failed."));
     showToast("Stock count session closed.");
+    stockApi.closeSession(sessionId).catch((err: any) => {
+      if (snapshot) setStockCounts((prev) => prev.map((s) => s.id === sessionId ? snapshot : s));
+      showToast(`Failed to close session: ${err?.message ?? "please retry"}.`);
+    });
   };
 
 
@@ -6010,9 +6014,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then((saved: any) => {
         setProducts((prev) => prev.map((p) => p.id === id ? { ...p, id: saved.id } : p));
         setSelectedProductId(saved.id);
-        if (stock > 0) stockApi.update({ productId: saved.id, change: stock, note: "Opening stock" }).catch(() => {});
+        if (stock > 0) {
+          // Opening stock failure leaves the product created with 0 in DB
+          // and the right number locally — surface that so the admin can retry.
+          stockApi.update({ productId: saved.id, change: stock, note: "Opening stock" }).catch((err: any) => {
+            showToast(`Opening stock for ${product.name} not synced: ${err?.message ?? "please retry from Inventory."}`);
+          });
+        }
       })
-      .catch(() => showToast("Product saved locally — sync to database failed."));
+      .catch((err: any) => {
+        // Roll back: remove the locally-created product + its opening movement.
+        setProducts((prev) => prev.filter((p) => p.id !== id));
+        if (stock > 0) setStockMovements((prev) => prev.filter((m) => m.productId !== id));
+        showToast(`Failed to create ${product.name}: ${err?.message ?? "please retry"}.`);
+      });
   };
 
   const submitStockUpdate = () => {
@@ -6230,6 +6245,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!selectedProduct) return;
     if (!productName.trim()) { showToast("Product name is required."); return; }
     const _epId = selectedProduct.id;
+    const productSnapshot = selectedProduct;
     setProducts((prev) => prev.map((p) => p.id === selectedProduct.id ? {
       ...p,
       name: productName.trim(),
@@ -6240,7 +6256,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } : p));
     setModal(null);
     showToast(`${productName.trim()} saved.`);
-    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0 }).catch(() => {});
+    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0 }).catch((err: any) => {
+      setProducts((prev) => prev.map((p) => p.id === _epId ? productSnapshot : p));
+      showToast(`Failed to save ${productSnapshot.name}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openPricingView = (product: Product) => {
@@ -6298,6 +6317,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const _spProdId = selectedProduct.id;
+    const productSnapshot = selectedProduct;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -6314,7 +6334,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     showToast(`${productCurrencies[nextPricing.currency].label} pricing saved.`);
     if (modal === "addPricing") {
-      productsApi.createPricing(_spProdId, { currency: nextPricing.currency, selling_price: nextPricing.sellingPrice, unit_cost: nextPricing.unitCost, primary: false }).catch(() => {});
+      productsApi.createPricing(_spProdId, { currency: nextPricing.currency, selling_price: nextPricing.sellingPrice, unit_cost: nextPricing.unitCost, primary: false }).catch((err: any) => {
+        setProducts((prev) => prev.map((p) => p.id === _spProdId ? productSnapshot : p));
+        showToast(`Failed to add ${productCurrencies[nextPricing.currency].label} pricing: ${err?.message ?? "please retry"}.`);
+      });
     }
   };
 
@@ -6384,6 +6407,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
 
     const _pkgProdId = selectedProduct.id;
+    const productSnapshot = selectedProduct;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -6401,9 +6425,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, companionProducts: packageCompanions }).catch(() => {});
+      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, companionProducts: packageCompanions }).catch((err: any) => {
+        setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
+        showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
+      });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, companionProducts: packageCompanions }).catch(() => {});
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, companionProducts: packageCompanions }).catch((err: any) => {
+        setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
+        showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
+      });
     }
   };
 
@@ -6423,6 +6453,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
       companionProducts: item.companionProducts ? [...item.companionProducts] : []
     };
+    const _dupProdId = selectedProduct.id;
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id ? { ...p, packages: [...p.packages, clone] } : p)
     );
@@ -6431,7 +6462,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quantity: clone.quantity, price: clone.price, currency: clone.currency,
       displayOrder: clone.displayOrder, active: clone.active,
       companionProducts: clone.companionProducts
-    }).catch(() => {});
+    }).catch((err: any) => {
+      setProducts((prev) => prev.map((p) => p.id === _dupProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
+      showToast(`Failed to duplicate "${item.name}": ${err?.message ?? "please retry"}.`);
+    });
     showToast(`Duplicated "${item.name}".`);
   };
 
@@ -6439,12 +6473,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const togglePackageActive = (item: ProductPackage) => {
     if (!selectedProduct) return;
     const next = !item.active;
+    const prev = item.active;
+    const _tpProdId = selectedProduct.id;
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id
         ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, active: next } : pkg) }
         : p)
     );
-    productsApi.updatePackage(selectedProduct.id, item.id, { active: next }).catch(() => {});
+    productsApi.updatePackage(selectedProduct.id, item.id, { active: next }).catch((err: any) => {
+      setProducts((value) =>
+        value.map((p) => p.id === _tpProdId
+          ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, active: prev } : pkg) }
+          : p)
+      );
+      showToast(`Failed to ${next ? "activate" : "deactivate"} package: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   // Reorder: move a package up/down by swapping displayOrder with neighbour.
@@ -6463,8 +6506,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             pkg.id === b.id ? { ...pkg, displayOrder: aOrder } : pkg) }
         : p)
     );
-    productsApi.updatePackage(selectedProduct.id, a.id, { displayOrder: bOrder }).catch(() => {});
-    productsApi.updatePackage(selectedProduct.id, b.id, { displayOrder: aOrder }).catch(() => {});
+    // Both calls need to succeed for the swap to be coherent. If either fails,
+    // restore both packages to their original displayOrder so the UI matches DB.
+    const _mvProdId = selectedProduct.id;
+    Promise.all([
+      productsApi.updatePackage(selectedProduct.id, a.id, { displayOrder: bOrder }),
+      productsApi.updatePackage(selectedProduct.id, b.id, { displayOrder: aOrder })
+    ]).catch((err: any) => {
+      setProducts((value) =>
+        value.map((p) => p.id === _mvProdId
+          ? { ...p, packages: p.packages.map((pkg) =>
+              pkg.id === a.id ? { ...pkg, displayOrder: aOrder } :
+              pkg.id === b.id ? { ...pkg, displayOrder: bOrder } : pkg) }
+          : p)
+      );
+      showToast(`Failed to reorder packages: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   // Companion lines that auto-attach to the order based on chosen package + state.
