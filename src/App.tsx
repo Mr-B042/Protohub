@@ -10969,7 +10969,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
 
   return (
-    <div className={`app-shell !flex h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
+    <div className={`app-shell !flex h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
       {isSpying && spiedUser && (
         <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 px-4 py-2 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
           <Eye className="w-4 h-4" />
