@@ -19789,6 +19789,57 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </section>
 	                )}
 	
+	                {/* Section 7: Form Submission Details */}
+	                {(selectedOrder.utmSource || selectedOrder.referrer || selectedOrder.confirmationChecked != null) && (
+	                  <section>
+	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
+	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+	                      {selectedOrder.confirmationChecked != null && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">Confirmation</span>
+	                          <span className="text-gray-900 font-medium">{selectedOrder.confirmationChecked ? "Accepted" : "Not accepted"}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.utmSource && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Source</span>
+	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmSource}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.utmCampaign && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Campaign</span>
+	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmCampaign}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.utmMedium && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Medium</span>
+	                          <span className="text-gray-900 font-medium">{selectedOrder.utmMedium}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.utmContent && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Content</span>
+	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmContent}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.utmTerm && (
+	                        <div className="flex items-start gap-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Term</span>
+	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmTerm}</span>
+	                        </div>
+	                      )}
+	                      {selectedOrder.referrer && (
+	                        <div className="flex items-start gap-2 sm:col-span-2">
+	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">Referrer</span>
+	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.referrer}</span>
+	                        </div>
+	                      )}
+	                    </div>
+	                  </section>
+	                )}
+
 	                {/* Footer */}
 	                <div className="flex justify-end pt-2 border-t border-gray-100">
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
