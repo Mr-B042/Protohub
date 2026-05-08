@@ -102,6 +102,7 @@ router.post("/",
     if (d.productId) {
       const { data: product } = await supabase
         .from("products").select("warehouse_stock").eq("id", d.productId).single();
+      const balanceAfter = Math.max(0, (product?.warehouse_stock ?? 0) - d.quantity);
       await supabase.from("stock_movements").insert({
         id:            `MOV-${randomUUID()}`,
         org_id:        req.user!.orgId,
@@ -109,7 +110,7 @@ router.post("/",
         product_name:  d.productName,
         type:          "Waybill Out",
         qty:           d.quantity,
-        balance_after: product?.warehouse_stock ?? 0,
+        balance_after: balanceAfter,
         agent_id:      d.agentId ?? null,
         by_name:       req.user!.name,
         by_user_id:    req.user!.id,
@@ -205,6 +206,11 @@ router.patch("/:id/status",
         : "Correction";
       const { data: product } = await supabase
         .from("products").select("warehouse_stock").eq("id", data.product_id).single();
+      // "In" movements add stock back; "Correction" (Defective/Missing) removes it.
+      const isInbound = movType === "Waybill In";
+      const balanceAfter = isInbound
+        ? (product?.warehouse_stock ?? 0) + data.quantity
+        : Math.max(0, (product?.warehouse_stock ?? 0) - data.quantity);
       await supabase.from("stock_movements").insert({
         id:            `MOV-${randomUUID()}`,
         org_id:        req.user!.orgId,
@@ -212,7 +218,7 @@ router.patch("/:id/status",
         product_name:  data.product_name,
         type:          movType,
         qty:           data.quantity,
-        balance_after: product?.warehouse_stock ?? 0,
+        balance_after: balanceAfter,
         agent_id:      data.agent_id ?? null,
         by_name:       req.user!.name,
         by_user_id:    req.user!.id,

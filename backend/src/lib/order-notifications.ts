@@ -9,10 +9,13 @@ type OrderContext = {
 };
 
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
-  New:       { type: "order_new",       title: "New Order",        recipientRoles: ["Owner"], includeRep: true },
-  Confirmed: { type: "order_confirmed", title: "Order Confirmed",  recipientRoles: ["Owner"], includeRep: false },
-  Delivered: { type: "order_delivered",  title: "Order Delivered",  recipientRoles: ["Owner"], includeRep: true },
-  Cancelled: { type: "order_cancelled", title: "Order Cancelled",  recipientRoles: ["Owner"], includeRep: false },
+  New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner"], includeRep: true },
+  Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner"], includeRep: false },
+  Delivered:    { type: "order_delivered",    title: "Order Delivered",    recipientRoles: ["Owner"], includeRep: true },
+  Cancelled:    { type: "order_cancelled",    title: "Order Cancelled",    recipientRoles: ["Owner"], includeRep: false },
+  Failed:       { type: "order_failed",       title: "Order Failed",       recipientRoles: ["Owner"], includeRep: false },
+  Rescheduled:  { type: "order_rescheduled",  title: "Order Rescheduled",  recipientRoles: ["Owner"], includeRep: true },
+  Assigned:     { type: "order_assigned",     title: "Order Assigned",     recipientRoles: [],        includeRep: true },
 };
 
 /**
@@ -21,7 +24,7 @@ const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRole
  */
 export async function notifyOrderEvent(orgId: string, order: OrderContext, toStatus: string) {
   const config = STATUS_CONFIG[toStatus];
-  if (!config) return; // Postponed, Failed, etc. — no notification
+  if (!config) return; // Postponed and other untracked statuses — no notification
 
   try {
     // Fetch owners (and optionally the assigned rep) in one query

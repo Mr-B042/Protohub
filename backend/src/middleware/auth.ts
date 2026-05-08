@@ -22,12 +22,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   // Fetch the user's profile from our users table
   const { data: profile, error: profileError } = await supabase
     .from("users")
-    .select("id, org_id, role, email, name")
+    .select("id, org_id, role, email, name, active")
     .eq("id", user.id)
     .single();
 
   if (profileError || !profile) {
     res.status(403).json({ error: "User profile not found. Contact your administrator." });
+    return;
+  }
+
+  if (profile.active === false) {
+    res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
     return;
   }
 

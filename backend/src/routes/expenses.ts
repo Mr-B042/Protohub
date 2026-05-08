@@ -38,9 +38,18 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+
+  // Guard against cross-org id collision: if this id already exists for a
+  // different org, reject it so we don't silently overwrite their data.
+  const { data: existing } = await supabase
+    .from("expenses").select("org_id").eq("id", d.id).maybeSingle();
+  if (existing && existing.org_id !== req.user!.orgId) {
+    res.status(409).json({ error: "Expense ID already exists." });
+    return;
+  }
+
   // Upsert by id so callers (e.g. order delivery-fee sync, waybill creation)
-  // can call this repeatedly with the same id when state changes — category
-  // and amount get updated instead of failing on duplicate key.
+  // can call this repeatedly with the same id when state changes.
   const { data, error } = await supabase
     .from("expenses")
     .upsert(
