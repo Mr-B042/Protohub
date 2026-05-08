@@ -142,7 +142,7 @@ router.post("/refresh", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const { data: org } = await supabase
     .from("organizations")
-    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount")
+    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone")
     .eq("id", req.user!.orgId)
     .single();
   res.json({
@@ -152,7 +152,8 @@ router.get("/me", requireAuth, async (req, res) => {
     payroll: {
       topPerformerBonusEnabled: !!org?.top_performer_bonus_enabled,
       topPerformerBonusAmount:  Number(org?.top_performer_bonus_amount ?? 0)
-    }
+    },
+    timezone: org?.timezone ?? "Africa/Lagos"
   });
 });
 
@@ -170,19 +171,21 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   if (typeof req.body.logoUrl === "string") updates.logo_url = req.body.logoUrl;
   if (typeof req.body.topPerformerBonusEnabled === "boolean") updates.top_performer_bonus_enabled = req.body.topPerformerBonusEnabled;
   if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
+  if (typeof req.body.timezone === "string" && req.body.timezone.trim()) updates.timezone = req.body.timezone.trim();
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
   const { data, error } = await supabase
     .from("organizations")
     .update(updates)
     .eq("id", req.user!.orgId)
-    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount")
+    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone")
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({
     name: data?.name ?? "",
     logoUrl: data?.logo_url ?? "",
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
-    topPerformerBonusAmount:  Number(data?.top_performer_bonus_amount ?? 0)
+    topPerformerBonusAmount:  Number(data?.top_performer_bonus_amount ?? 0),
+    timezone: data?.timezone ?? "Africa/Lagos"
   });
 });
 

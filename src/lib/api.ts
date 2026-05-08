@@ -86,10 +86,11 @@ export const authApi = {
     cacheVersion?: number;
     branding?: { name: string; logoUrl: string };
     payroll?: { topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number };
+    timezone?: string;
   }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
-  updateBranding: (body: { name?: string; logoUrl?: string; topPerformerBonusEnabled?: boolean; topPerformerBonusAmount?: number }) =>
-    patch<{ name: string; logoUrl: string; topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number }>("/api/auth/org-branding", body),
+  updateBranding: (body: { name?: string; logoUrl?: string; topPerformerBonusEnabled?: boolean; topPerformerBonusAmount?: number; timezone?: string }) =>
+    patch<{ name: string; logoUrl: string; topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number; timezone: string }>("/api/auth/org-branding", body),
 
   invite: (body: { name: string; email: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),
@@ -177,6 +178,7 @@ export const payrollApi = {
 // ── Customers ─────────────────────────────────────────────
 export const customersApi = {
   list: () => get<any[]>("/api/customers"),
+  flags: () => get<{ phone: string; reason: string; flagged_at?: string; flagged_by?: string }[]>("/api/customers/flags"),
   flag: (body: { phone: string; reason: string }) => post<any>("/api/customers/flags", body),
   unflag: (phone: string) => del<void>(`/api/customers/flags/${phone}`)
 };

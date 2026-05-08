@@ -1083,29 +1083,15 @@ const userInitials = (name: string) =>
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
 
+// All domain data lives on the backend. Only a handful of org-scoped UI
+// settings are mirrored to localStorage as a fast first-paint cache before
+// /api/auth/me hydrates them on mount.
 const storageKeys = {
-  products: "protohub.products",
-  stockMovements: "protohub.stockMovements",
-  trackedOrders: "protohub.trackedOrders",
-  users: "protohub.users",
-  agents: "protohub.agents",
-  agentStock: "protohub.agentStock",
-  payStructures: "protohub.payStructures",
-  payrollRuns: "protohub.payrollRuns",
-  expenses: "protohub.expenses",
-  abandonedCarts: "protohub.abandonedCarts",
-  extraTeams: "protohub.extraTeams",
-  repPenalties: "protohub.repPenalties",
-  formOrderSummaryTitle: "protohub.formOrderSummaryTitle",
+  formOrderSummaryTitle:   "protohub.formOrderSummaryTitle",
   formOrderSummaryEnabled: "protohub.formOrderSummaryEnabled",
-  waybillRecords: "protohub.waybillRecords",
-  customerFlags: "protohub.customerFlags",
-  systemNotifications: "protohub.systemNotifications",
-  stockCounts: "protohub.stockCounts",
-  topPerformerBonusEnabled: "protohub.topPerformerBonusEnabled",
-  topPerformerBonusAmount: "protohub.topPerformerBonusAmount",
-  companyLogo: "protohub.companyLogo",
-  companyName: "protohub.companyName"
+  customerFlags:           "protohub.customerFlags",
+  companyLogo:             "protohub.companyLogo",
+  companyName:             "protohub.companyName"
 };
 
 const defaultUsers: ManagedUser[] = [];
@@ -1134,18 +1120,6 @@ const readStored = <T,>(key: string, fallback: T): T => {
     return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
-  }
-};
-
-const readStoredExpenses = () => {
-  if (typeof window === "undefined") return defaultExpenses;
-  try {
-    const raw = window.localStorage.getItem(storageKeys.expenses);
-    if (!raw) return defaultExpenses;
-    const parsed = JSON.parse(raw) as ExpenseRecord[];
-    return Array.isArray(parsed) ? parsed : defaultExpenses;
-  } catch {
-    return defaultExpenses;
   }
 };
 
@@ -1364,6 +1338,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
+  const timezoneSyncedRef = useRef("");
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
@@ -1604,6 +1579,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setTopPerformerBonusAmount(String(amt));
         payrollSyncedRef.current = { enabled: en, amount: amt };
       }
+      if (typeof res?.timezone === "string" && res.timezone) {
+        setStoredTimezone(res.timezone);
+        setTimezoneSetting(res.timezone);
+        timezoneSyncedRef.current = res.timezone;
+      }
       brandingHydratedRef.current = true;
       const serverVersion = Number(res?.cacheVersion ?? 0);
       const localKey = "protohub.cacheVersion";
@@ -1623,6 +1603,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         window.location.reload();
       }
     }).catch(() => { /* fail-quiet; not critical */ });
+
+    // Hydrate customer flags from server so flagged numbers appear on every device.
+    customersApi.flags().then((rows: any[]) => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const next: Record<string, CustomerFlag> = {};
+      for (const r of rows) {
+        const phone = String((r.phone ?? "")).replace(/\D/g, "");
+        if (!phone) continue;
+        next[phone] = {
+          flagged: true,
+          reason: String(r.reason ?? ""),
+          flaggedAt: String(r.flaggedAt ?? r.flagged_at ?? new Date().toISOString())
+        };
+      }
+      setCustomerFlags((prev) => ({ ...prev, ...next }));
+    }).catch(() => { /* defaults stay */ });
   }, []);
 
   // Sync org-level settings (branding + payroll bonus) back to the server,
@@ -1638,10 +1634,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const payrollChanged =
       payrollSyncedRef.current.enabled !== topPerformerBonusEnabled ||
       payrollSyncedRef.current.amount !== bonusAmtNum;
-    if (!brandingChanged && !payrollChanged) return;
+    const timezoneChanged =
+      !!timezoneSetting && timezoneSyncedRef.current !== timezoneSetting;
+    if (!brandingChanged && !payrollChanged && !timezoneChanged) return;
     const body: Record<string, unknown> = {};
     if (brandingChanged) { body.name = companyName; body.logoUrl = companyLogo; }
     if (payrollChanged)  { body.topPerformerBonusEnabled = topPerformerBonusEnabled; body.topPerformerBonusAmount = bonusAmtNum; }
+    if (timezoneChanged) { body.timezone = timezoneSetting; }
     const handle = setTimeout(() => {
       authApi.updateBranding(body as any)
         .then((saved: any) => {
@@ -1653,11 +1652,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             enabled: !!saved?.topPerformerBonusEnabled,
             amount:  Number(saved?.topPerformerBonusAmount ?? bonusAmtNum)
           };
+          timezoneSyncedRef.current = saved?.timezone ?? timezoneSetting;
         })
         .catch(() => { /* role-gated; safe to ignore */ });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount]);
+  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {

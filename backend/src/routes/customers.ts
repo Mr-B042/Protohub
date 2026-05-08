@@ -61,6 +61,18 @@ router.get("/", async (req, res) => {
   res.json(customers);
 });
 
+// ── GET /api/customers/flags ──────────────────────────────
+// Returns all flag rows for the org. Used to hydrate the frontend's
+// local flag map on mount so flagged numbers appear on every device.
+router.get("/flags", async (req, res) => {
+  const { data, error } = await supabase
+    .from("customer_flags")
+    .select("phone, reason, flagged_at, flagged_by")
+    .eq("org_id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json(data ?? []);
+});
+
 // ── POST /api/customers/flags ─────────────────────────────
 const FlagSchema = z.object({
   phone:  z.string().min(1),
