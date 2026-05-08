@@ -11702,12 +11702,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Orders Management</h1>
                   <p className="text-sm font-medium text-gray-500">Track and manage all customer orders in real-time</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportOrdersCsv}>
+                {/* Desktop-only action buttons — on mobile these appear below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportOrdersCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
                   {canMutate && (
-                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors flex-1 sm:flex-none" onClick={openCreateOrderModal}>
+                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateOrderModal}>
                       <Plus className="w-4 h-4" /> Create Order
                     </button>
                   )}
@@ -11719,23 +11720,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className={dataLoading ? "hidden" : ""}>
               {/* Period + date + currency controls */}
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button key={item} className={`!min-h-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${ordersPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleOrdersPeriodChange(item)}>{item}</button>
+                      <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${ordersPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleOrdersPeriodChange(item)}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowOrdersDateRange((v) => !v)}>
-                      <CalendarDays className="w-4 h-4" /> {ordersPeriod === "Custom" ? "Edit date range" : "Date range"}
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowOrdersDateRange((v) => !v)}>
+                      <CalendarDays className="w-4 h-4" /> {ordersPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showOrdersDateRange && renderDateRangeCalendar("orders-date-range-panel", ordersDateRange, setOrdersDateRange, applyOrdersDateRange, () => setShowOrdersDateRange(false))}
                   </div>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Currency" value={currency} onChange={(event) => { const c = event.target.value as CurrencyCode; setCurrency(c); showToast(`Currency changed to ${currencies[c].label}.`); }}>
-                    <option value="NGN">₦ Naira</option>
-                    <option value="USD">$ Dollar</option>
-                    <option value="GBP">£ Pound</option>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Currency" value={currency} onChange={(event) => { const c = event.target.value as CurrencyCode; setCurrency(c); showToast(`Currency changed to ${currencies[c].label}.`); }}>
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
                   </select>
+                  {/* Mobile-only: Create Order + Export CSV stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    {canMutate && (
+                      <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateOrderModal}>
+                        <Plus className="w-4 h-4" /> Create Order
+                      </button>
+                    )}
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportOrdersCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(ordersNavStart, setOrdersNavStart, ordersNavSpan, setOrdersNavSpan, setOrdersPeriod, setOrdersDateRange)}
               </div>
