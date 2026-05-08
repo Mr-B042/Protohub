@@ -7239,16 +7239,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Use the server's response as the authoritative state so the next
     // background poll can't revert this with a stale row. Show the success
     // toast only on confirmed save, error toast on failure with revert.
+    console.log(`[saveOrderAgent] PATCH /api/orders/${_soaId}`, { agent_id: createOrderAgentId || null });
     ordersApi.update(_soaId, { agent_id: createOrderAgentId || null })
       .then((updated: any) => {
+        console.log(`[saveOrderAgent] PATCH success`, updated);
         if (updated && updated.id === _soaId) {
           setTrackedOrders((value) => value.map((o) => o.id === _soaId ? { ...o, ...updated } : o));
         }
         showToast(`${_soaId} delivery agent updated.`);
       })
       .catch((err: any) => {
+        console.error(`[saveOrderAgent] PATCH failed`, err);
         setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
-        showToast(`Failed to update agent for ${_soaId}: ${err?.message ?? "please retry"}.`);
+        // Use alert so the user CAN'T miss the error — toast vanishes too quickly on mobile
+        const msg = `Failed to assign agent for ${_soaId}.\n\nError: ${err?.message ?? "Unknown"}\nStatus: ${err?.status ?? "no status"}\n\nThis means the change was NOT saved to the server. Please screenshot this and report it.`;
+        showToast(`Failed to assign: ${err?.message ?? "see alert"}`);
+        if (typeof window !== "undefined") window.alert(msg);
       });
   };
 
