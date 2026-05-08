@@ -23,6 +23,7 @@ async function request<T>(
   const token = auth.getAccessToken();
   const res = await fetch(`${BASE}${path}`, {
     method,
+    cache: "no-store", // never read from or write to HTTP cache
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {})
