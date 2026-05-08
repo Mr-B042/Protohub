@@ -9626,7 +9626,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   aria-label="Assign delivery agent"
                 >
                   <option value="">Unassigned</option>
-                  {agentsForOrder(order).map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}
+                  {agentsForOrder(order).map((agent) => { const rec = order.productId ? agentStock.find((s) => s.agentId === agent.id && s.productId === order.productId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = quantityForOrder(order); const stockTag = !order.productId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
                 </select>
                 <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={saveOrderAgent}>Assign Agent</button>
               </div>
@@ -20042,7 +20042,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <div className="flex items-center gap-2">
 	                    <select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)} aria-label="Delivery agent">
 	                      <option value="">Unassigned</option>
-	                      {activeAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}
+	                      {activeAgents.map((agent) => { const orderProductId = selectedOrder?.productId; const rec = orderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === orderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
 	                    </select>
 	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderAgent}>Send to Agent</button>
 	                  </div>
@@ -20132,7 +20132,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
 	                  </label>
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
-	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{activeAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}</select></label>
+	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{activeAgents.map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}</select></label>
 	                </div>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("orderWorkflow")}>Back</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
