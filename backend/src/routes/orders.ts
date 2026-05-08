@@ -162,6 +162,7 @@ router.post("/", async (req, res) => {
       package_name:    d.packageName,
       quantity:        d.quantity,
       amount:          d.amount,
+      original_amount: d.amount,
       currency:        d.currency,
       source:          d.source,
       location:        d.location,

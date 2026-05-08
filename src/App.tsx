@@ -366,6 +366,7 @@ type TrackedOrder = {
   packageName: string;
   quantity?: number;
   amount: number;
+  originalAmount?: number;
   currency: ProductCurrencyCode;
   utmSource: string;
   utmCampaign: string;
@@ -19401,8 +19402,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                        ))}
 	                      </tbody>
 	                      <tfoot>
+	                        {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== selectedOrder.amount && (
+	                          <tr className="border-t border-gray-100">
+	                            <td colSpan={3} className="px-4 py-2 text-xs text-gray-400">Original order amount</td>
+	                            <td className="px-4 py-2 text-right text-xs text-gray-400 line-through">{formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)}</td>
+	                          </tr>
+	                        )}
 	                        <tr className="border-t border-gray-200">
-	                          <td colSpan={3} className="px-4 py-2.5 text-sm font-semibold text-gray-700">Grand Total</td>
+	                          <td colSpan={3} className="px-4 py-2.5 text-sm font-semibold text-gray-700">
+	                            {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== selectedOrder.amount ? "Final Collected" : "Grand Total"}
+	                          </td>
 	                          <td className="px-4 py-2.5 text-right font-semibold text-[#1F8FE0]">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
 	                        </tr>
 	                      </tfoot>
@@ -19690,7 +19699,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <label><span>Product</span><select value={createOrderProductId} onChange={(event) => { const product = products.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
 	                  <label><span>Package</span><select value={createOrderPackageId} onChange={(event) => { const product = products.find((item) => item.id === createOrderProductId); const offer = product?.packages.find((item) => item.id === event.target.value); setCreateOrderPackageId(event.target.value); if (offer) setCreateOrderQuantity(String(offer.quantity)); }}><option value="">Manual quantity</option>{products.find((item) => item.id === createOrderProductId)?.packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatProductMoney(item.price, item.currency)}</option>)}</select></label>
 	                  <label><span>Quantity</span><input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" /></label>
-	                  <label><span>Order Amount</span><input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" /></label>
+	                  <label>
+	                    <span>Order Amount {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
+	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
+	                  </label>
 	                  <label><span>Sales Rep</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
 	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{activeAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}</select></label>
 	                </div>
