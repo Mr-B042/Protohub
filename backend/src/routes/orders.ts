@@ -238,7 +238,7 @@ router.post("/", async (req, res) => {
 // ── PATCH /api/orders/:id/status ──────────────────────────
 const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
-  callOutcome: z.enum(["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"]).optional(),
+  callOutcome: z.string().optional(),
   response:    z.string().optional(),
   agentId:     z.string().uuid().optional().nullable()
 });
@@ -484,12 +484,26 @@ router.get("/:id/audit", async (req, res) => {
 });
 
 // ── PATCH /api/orders/:id ─────────────────────────────────
+// Fields that may be written even after an order is Delivered/Cancelled.
+// Everything else is locked on terminal orders.
+const POST_TERMINAL_FIELDS = new Set([
+  "bonus_paid", "bonusPaid",
+  "manual_bonus_override", "manualBonusOverride",
+  "manual_bonus_reason", "manualBonusReason",
+  "bonus_manually_adjusted", "bonusManuallyAdjusted",
+  "call_outcome", "callOutcome",
+]);
+
 router.patch("/:id", async (req, res) => {
-  // Guard: terminal statuses cannot be edited
   const { data: current } = await supabase
     .from("orders").select("status").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
   if (!current) { res.status(404).json({ error: "Order not found." }); return; }
-  if (current.status === "Delivered" || current.status === "Cancelled") {
+
+  const isTerminal = current.status === "Delivered" || current.status === "Cancelled";
+  const requestedKeys = Object.keys(req.body);
+  const hasNonTerminalField = requestedKeys.some((k) => !POST_TERMINAL_FIELDS.has(k));
+
+  if (isTerminal && hasNonTerminalField) {
     res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
     return;
   }
