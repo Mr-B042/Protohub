@@ -2285,6 +2285,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const salesRepUsers = users.filter((user) => user.role === "Sales Rep");
   const activeSalesRepUsers = salesRepUsers.filter((user) => user.active);
+  // All active users available for order assignment — Sales Reps first, then other roles
+  const assignableUsers = users.filter((u) => u.active).sort((a, b) => {
+    const rank = (r: string) => r === "Sales Rep" ? 0 : 1;
+    return rank(a.role) - rank(b.role) || a.name.localeCompare(b.name);
+  });
   const activeAgents = agents.filter((agent) => agent.active);
   const deliveryAgentOptions = ["All Agents", "Unassigned", ...agents.map((agent) => agent.name)];
   const agentZoneOptions = ["All Zones", ...Array.from(new Set(agents.map((agent) => agent.zone).filter(Boolean)))];
@@ -19145,7 +19150,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             className="px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                           >
                             <option value="auto">Auto · next rep in round-robin</option>
-                            {salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.active ? "" : " (inactive)"}</option>)}
+                            {assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}
                           </select>
                           <span className="text-[11px] text-gray-400">Auto routes to the next active rep based on round-robin order.</span>
                         </label>
@@ -19804,7 +19809,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <span>Order Amount {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
 	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
 	                  </label>
-	                  <label><span>Sales Rep</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>
+	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
 	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{activeAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}</option>)}</select></label>
 	                </div>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("orderWorkflow")}>Back</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
@@ -19812,7 +19817,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            )}
 
 	            {modal === "reassignOrder" && selectedOrder && (
-	              <div className="modal-form">{activeSalesRepUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active sales reps available. Activate a sales rep first.</p> : <><label><span>New Sales Rep</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label><label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} /></label></>}<div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{activeSalesRepUsers.length > 0 && <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}</div></div>
+	              <div className="modal-form">{assignableUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active users available to assign.</p> : <><label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label><label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} /></label></>}<div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{assignableUsers.length > 0 && <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}</div></div>
 	            )}
 
 	            {modal === "sendToAgent" && selectedOrder && (() => {
