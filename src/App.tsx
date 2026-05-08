@@ -20194,25 +20194,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      </label>
 	                    </div>
 	                  )}
-	                  <label>
-	                    <span>Delivery Agent</span>
-	                    <select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}>
-	                      <option value="">— Choose an agent —</option>
-	                      {visibleRows.length === 0 ? (
-	                        <option disabled>No matching agents — toggle "Show all states" above</option>
-	                      ) : visibleRows.map(({ agent, stockQty, sameState }) => {
-	                        const ok    = stockQty >= orderQty;
-	                        const empty = stockQty === 0;
-	                        const stockTag = empty ? "⚠ no stock" : ok ? `✓ ${stockQty} in stock` : `⚠ only ${stockQty} (needs ${orderQty})`;
-	                        const stateTag = sameState ? "" : ` · ⚠ different state`;
-	                        return (
-	                          <option key={agent.id} value={agent.id}>
-	                            {agent.name} · {agent.zone} — {stockTag}{stateTag}
-	                          </option>
-	                        );
-	                      })}
-	                    </select>
-	                  </label>
+	                  <div>
+	                    <span className="text-xs font-semibold text-gray-700 block mb-2">Delivery Agent — pick one:</span>
+	                    {visibleRows.length === 0 ? (
+	                      <div className="px-3 py-4 text-center text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200">No matching agents — toggle "Show all states" above</div>
+	                    ) : (
+	                      <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto">
+	                        {visibleRows.map(({ agent, stockQty, sameState }) => {
+	                          const ok = stockQty >= orderQty;
+	                          const empty = stockQty === 0;
+	                          const isSelected = createOrderAgentId === agent.id;
+	                          const stockColor = empty ? "text-rose-600 bg-rose-50 border-rose-200" : ok ? "text-emerald-700 bg-emerald-50 border-emerald-200" : "text-amber-700 bg-amber-50 border-amber-200";
+	                          const stockLabel = empty ? "No stock" : ok ? `${stockQty} in stock` : `Only ${stockQty} (needs ${orderQty})`;
+	                          return (
+	                            <button
+	                              key={agent.id}
+	                              type="button"
+	                              onClick={() => setCreateOrderAgentId(agent.id)}
+	                              className={`!min-h-0 w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border-2 transition-colors ${isSelected ? "border-[#1F8FE0] bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+	                            >
+	                              <div className="flex flex-col min-w-0 flex-1">
+	                                <div className="flex items-center gap-2 flex-wrap">
+	                                  <span className="text-sm font-bold text-gray-900 truncate">{agent.name}</span>
+	                                  {!sameState && orderState && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">⚠ different state</span>}
+	                                </div>
+	                                <span className="text-xs text-gray-500">Zone: {agent.zone || "—"}</span>
+	                              </div>
+	                              <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${stockColor}`}>{stockLabel}</span>
+	                            </button>
+	                          );
+	                        })}
+	                      </div>
+	                    )}
+	                  </div>
 	                  {selectedAgentRow && (
 	                    <>
 	                      {!selectedAgentRow.sameState && orderState && (
