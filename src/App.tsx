@@ -5368,23 +5368,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const thisWeek = () => { const s = getSundayKey(); setNavStart(s); apply(s, navSpan); };
     const changeSpan = (span: NavSpan) => { setNavSpan(span); apply(navStart, span); };
     return (
-      <div className="flex flex-wrap items-center gap-2">
-        {/* Span selector */}
-        <div className="flex items-center bg-gray-100 p-0.5 rounded-lg">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
+        {/* Row 1: Span selector — full width on mobile, evenly distributed */}
+        <div className="flex items-center bg-gray-100 p-0.5 rounded-lg w-full sm:w-auto">
           {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
             <button key={s} onClick={() => changeSpan(s)}
-              className={`!min-h-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              className={`!min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
               {s}
             </button>
           ))}
         </div>
-        {/* Navigation */}
-        <div className="flex items-center gap-1">
-          <button onClick={prev} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button onClick={thisWeek} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
-          <button onClick={next} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
+        {/* Row 2: Navigation — full width on mobile, "This Week" stretches between arrows */}
+        <div className="flex items-center gap-1 w-full sm:w-auto">
+          <button onClick={prev} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
+          <button onClick={thisWeek} className="!min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
+          <button onClick={next} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
-        {/* Range label */}
+        {/* Row 3: Range label — left-aligned on mobile, muted */}
         <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
       </div>
     );
@@ -11769,14 +11769,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
 
               {/* Active filter context pill */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-xs font-semibold text-[#1F8FE0]">
-                  <CalendarDays className="w-3 h-3" /> {selectedOrdersPeriodLabel}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
-                  {currency} · {selectedCurrency.label}
-                </span>
-                <span className="text-xs text-gray-400">· All amounts in this currency</span>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full overflow-x-hidden">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-xs font-semibold text-[#1F8FE0]">
+                    <CalendarDays className="w-3 h-3" /> {selectedOrdersPeriodLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
+                    {currency} · {selectedCurrency.label}
+                  </span>
+                </div>
+                <span className="text-xs text-gray-400"><span className="hidden sm:inline">· </span>All amounts in this currency</span>
               </div>
 
               {/* Metric cards */}
