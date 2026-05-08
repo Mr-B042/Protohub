@@ -18,11 +18,17 @@ router.get("/", async (req, res) => {
 
 // ── POST /api/pay-structures ─────────────────────────────
 // Upsert pay structure for a user
+const BonusTierSchema = z.object({
+  threshold: z.number().int().min(1),
+  amount:    z.number().min(0)
+});
+
 const PayStructureSchema = z.object({
   userId:         z.string().uuid(),
-  type:           z.enum(["Commission", "Fixed Salary", "Fixed + Commission"]),
+  type:           z.enum(["Per Delivered Order", "Fixed Salary", "Hybrid", "Performance Bonus"]),
   fixedSalary:    z.number().min(0).default(0),
-  commissionRate: z.number().min(0).default(0)
+  commissionRate: z.number().min(0).default(0),
+  bonusTiers:     z.array(BonusTierSchema).default([])
 });
 
 router.post("/", async (req, res) => {
@@ -31,7 +37,11 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { userId, type, fixedSalary, commissionRate } = parsed.data;
+  const { userId, type, fixedSalary, commissionRate, bonusTiers } = parsed.data;
+
+  // Validate user belongs to this org
+  const { data: userCheck } = await supabase.from("users").select("id").eq("id", userId).eq("org_id", req.user!.orgId).single();
+  if (!userCheck) { res.status(400).json({ error: "User not found in your organization." }); return; }
 
   const { data, error } = await supabase
     .from("pay_structures")
@@ -41,6 +51,7 @@ router.post("/", async (req, res) => {
       type,
       fixed_salary:   fixedSalary,
       commission_pct: commissionRate,
+      bonus_tiers:    bonusTiers,
       updated_at:     new Date().toISOString()
     }, { onConflict: "org_id,user_id" })
     .select()

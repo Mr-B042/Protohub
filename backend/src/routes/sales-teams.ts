@@ -19,9 +19,10 @@ router.get("/", async (req, res) => {
 
 // ── POST /api/sales-teams ────────────────────────────────
 const TeamSchema = z.object({
-  name:       z.string().min(1),
+  name:       z.string().min(1).max(120),
   leadId:     z.string().uuid().optional(),
-  productIds: z.array(z.string()).default([])
+  productIds: z.array(z.string().uuid()).default([]),
+  memberIds:  z.array(z.string().uuid()).default([])
 });
 
 router.post("/", async (req, res) => {
@@ -30,10 +31,10 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { name, leadId, productIds } = parsed.data;
+  const { name, leadId, productIds, memberIds } = parsed.data;
   const { data, error } = await supabase
     .from("sales_teams")
-    .insert({ org_id: req.user!.orgId, name, lead_id: leadId ?? null, product_ids: productIds })
+    .insert({ org_id: req.user!.orgId, name, lead_id: leadId ?? null, product_ids: productIds, member_ids: memberIds })
     .select()
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -41,12 +42,30 @@ router.post("/", async (req, res) => {
 });
 
 // ── PATCH /api/sales-teams/:id ───────────────────────────
+const TeamPatchSchema = z.object({
+  name:       z.string().min(1).max(120).optional(),
+  lead_id:    z.string().uuid().nullable().optional(),
+  product_ids: z.array(z.string().uuid()).optional(),
+  member_ids:  z.array(z.string().uuid()).optional()
+}).strict();
+
 router.patch("/:id", async (req, res) => {
-  const allowed = ["name", "lead_id", "product_ids"];
-  const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  const parsed = TeamPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
   }
+  const updates: Record<string, unknown> = {};
+  if (parsed.data.name !== undefined)        updates.name        = parsed.data.name;
+  if (parsed.data.lead_id !== undefined)     updates.lead_id     = parsed.data.lead_id;
+  if (parsed.data.product_ids !== undefined) updates.product_ids = parsed.data.product_ids;
+  if (parsed.data.member_ids !== undefined)  updates.member_ids  = parsed.data.member_ids;
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update." });
+    return;
+  }
+
   const { data, error } = await supabase
     .from("sales_teams")
     .update(updates)

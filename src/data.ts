@@ -101,8 +101,8 @@ export const cartStats = [
   { label: "Needs attention", value: "0", icon: Bell, tone: "rose" }
 ];
 
-export const revenueData = Array.from({ length: 23 }, (_, index) => ({
-  hour: String(index + 1).padStart(2, "0") + ":",
+export const revenueData = Array.from({ length: 24 }, (_, index) => ({
+  hour: String(index).padStart(2, "0") + ":",
   current: 0,
   previous: 0
 }));

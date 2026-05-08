@@ -64,4 +64,16 @@ router.patch("/:id/read", async (req, res) => {
   res.json(data);
 });
 
+// Delete all read notifications for this org+user
+router.delete("/read", async (req, res) => {
+  const { error } = await supabase
+    .from("system_notifications")
+    .delete()
+    .eq("org_id", req.user!.orgId)
+    .eq("read", true)
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(204).send();
+});
+
 export default router;

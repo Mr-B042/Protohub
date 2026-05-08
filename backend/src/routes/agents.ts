@@ -45,11 +45,30 @@ router.post("/",
 );
 
 // ── PATCH /api/agents/:id ─────────────────────────────────
+const AgentPatchSchema = z.object({
+  name:           z.string().min(1).max(120).optional(),
+  zone:           z.string().min(1).max(80).optional(),
+  phone:          z.string().max(40).optional(),
+  status:         z.enum(["Active", "Inactive", "Suspended"]).optional(),
+  stock_capacity: z.number().int().min(1).max(100_000).optional()
+}).strict();
+
 router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
-  const allowed = ["name", "zone", "phone", "status", "stock_capacity"];
+  const parsed = AgentPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
   const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  if (parsed.data.name !== undefined)           updates.name           = parsed.data.name;
+  if (parsed.data.zone !== undefined)           updates.zone           = parsed.data.zone;
+  if (parsed.data.phone !== undefined)          updates.phone          = parsed.data.phone;
+  if (parsed.data.status !== undefined)         updates.status         = parsed.data.status;
+  if (parsed.data.stock_capacity !== undefined) updates.stock_capacity = parsed.data.stock_capacity;
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update." });
+    return;
   }
   const { data, error } = await supabase
     .from("agents")

@@ -125,14 +125,32 @@ router.post("/",
 );
 
 // ── PATCH /api/waybills/:id ───────────────────────────────
+const WaybillPatchSchema = z.object({
+  waybill_fee:     z.number().min(0).optional(),
+  carrier:         z.string().max(120).optional(),
+  to_location:     z.string().max(120).optional(),
+  from_location:   z.string().max(120).optional(),
+  agent_id:        z.string().uuid().nullable().optional(),
+  dispatched_date: z.string().optional(),
+  notes:           z.string().max(500).nullable().optional(),
+  tracking_number: z.string().max(120).optional()
+}).strict();
+
 router.patch("/:id",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
-    const allowed = ["waybill_fee", "carrier", "to_location", "from_location",
-                     "agent_id", "dispatched_date", "notes", "tracking_number"];
+    const parsed = WaybillPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
     const updates: Record<string, unknown> = {};
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    for (const [key, val] of Object.entries(parsed.data)) {
+      if (val !== undefined) updates[key] = val;
+    }
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: "No fields to update." });
+      return;
     }
     const { data, error } = await supabase
       .from("waybill_records")
@@ -155,15 +173,21 @@ router.patch("/:id",
   }
 );
 
+const WaybillStatusSchema = z.object({
+  status:       z.enum(["In Transit", "Received", "Returned", "Cancelled", "Defective", "Missing"]),
+  receivedDate: z.string().optional(),
+  notes:        z.string().max(500).optional()
+}).strict();
+
 router.patch("/:id/status",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
-    const { status, receivedDate, notes } = req.body;
-    const valid = ["In Transit", "Received", "Returned", "Cancelled", "Defective", "Missing"];
-    if (!valid.includes(status)) {
-      res.status(400).json({ error: `Status must be one of: ${valid.join(", ")}` });
+    const parsed = WaybillStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
       return;
     }
+    const { status, receivedDate, notes } = parsed.data;
     const updates: Record<string, unknown> = { status };
     if (status === "Received" && receivedDate) updates.received_date = receivedDate;
     if (notes !== undefined) updates.notes = notes;

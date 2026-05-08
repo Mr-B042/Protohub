@@ -36,6 +36,11 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+
+  // Validate rep belongs to this org
+  const { data: repCheck } = await supabase.from("users").select("id").eq("id", d.repId).eq("org_id", req.user!.orgId).single();
+  if (!repCheck) { res.status(400).json({ error: "Rep not found in your organization." }); return; }
+
   const { data, error } = await supabase
     .from("rep_penalties")
     .insert({

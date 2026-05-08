@@ -17,7 +17,7 @@ const captureRateLimit = rateLimit({
 });
 
 const CaptureSchema = z.object({
-  id:           z.string().min(1).max(80),
+  id:           z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric"),
   customer:     z.string().max(120).optional(),
   phone:        z.string().min(1).max(40),
   whatsapp:     z.string().max(40).optional(),

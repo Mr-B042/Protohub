@@ -45,13 +45,20 @@ router.post("/generate", async (req, res) => {
     .select("*")
     .eq("org_id", orgId);
 
-  // Count delivered orders per rep for the period
+  // Count delivered orders per rep for the period (e.g. "May 2026")
+  // Parse "Month Year" into a proper date range
+  const periodDate = new Date(`${period} 1`);
+  const periodStart = `${periodDate.getFullYear()}-${String(periodDate.getMonth() + 1).padStart(2, "0")}-01`;
+  const nextMonth = new Date(periodDate.getFullYear(), periodDate.getMonth() + 1, 1);
+  const periodEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
+
   const { data: orders } = await supabase
     .from("orders")
     .select("assigned_rep_id, amount")
     .eq("org_id", orgId)
     .eq("status", "Delivered")
-    .ilike("date", `%${period}%`);     // rough period match
+    .gte("delivered_date", periodStart)
+    .lt("delivered_date", periodEnd);
 
   const entries = (reps ?? []).map((rep) => {
     const repOrders  = (orders ?? []).filter((o) => o.assigned_rep_id === rep.id);
