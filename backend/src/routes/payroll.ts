@@ -31,12 +31,12 @@ router.post("/generate", async (req, res) => {
   const { period } = parsed.data;
   const orgId = req.user!.orgId;
 
-  // Fetch all Sales Reps in the org
+  // Fetch all active users in the org — bonuses apply to anyone with assigned orders,
+  // not just Sales Reps (admins, managers, inventory handlers can also earn bonuses)
   const { data: reps } = await supabase
     .from("users")
-    .select("id, name")
+    .select("id, name, role")
     .eq("org_id", orgId)
-    .eq("role", "Sales Rep")
     .eq("active", true);
 
   // Parse "Month Year" safely — new Date("May 2026 1") is non-standard and

@@ -530,6 +530,7 @@ router.patch("/:id", async (req, res) => {
     manual_bonus_override:     ["manual_bonus_override", "manualBonusOverride"],
     manual_bonus_reason:       ["manual_bonus_reason", "manualBonusReason"],
     bonus_manually_adjusted:   ["bonus_manually_adjusted", "bonusManuallyAdjusted"],
+    bonus_paid:                ["bonus_paid", "bonusPaid"],
     cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
     free_gift_lines:           ["free_gift_lines", "freeGiftLines"]
   };

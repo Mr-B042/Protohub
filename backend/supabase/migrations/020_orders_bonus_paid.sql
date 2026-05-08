@@ -1,0 +1,1 @@
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bonus_paid boolean NOT NULL DEFAULT false;

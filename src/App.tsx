@@ -400,6 +400,7 @@ type TrackedOrder = {
   manualBonusOverride?: number;
   manualBonusReason?: string;
   bonusManuallyAdjusted?: boolean;
+  bonusPaid?: boolean;
   notes?: OrderNote[];
   date: string;
 };
@@ -19483,10 +19484,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          <p className="text-xs text-gray-400">No bonus rules matched — check product bonus settings.</p>
 	                        )}
 	                        {selectedOrder.bonusManuallyAdjusted && (
-	                          <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(selectedOrder.manualBonusOverride ?? 0, selectedOrder.currency)}{selectedOrder.manualBonusReason ? ` — ${selectedOrder.manualBonusReason}` : ""}</p>
+	                          <p className="text-xs text-amber-700">Manual override: {formatProductMoney(selectedOrder.manualBonusOverride ?? 0, selectedOrder.currency)}{selectedOrder.manualBonusReason ? ` — ${selectedOrder.manualBonusReason}` : ""}</p>
 	                        )}
-	                        <div className="flex items-center gap-2 pt-1">
-	                          <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50" onClick={() => openManualBonusModal(selectedOrder)}>{selectedOrder.bonusManuallyAdjusted ? "Edit Manual Bonus" : "Manual Adjust"}</button>
+	                        {selectedOrder.bonusPaid && (
+	                          <p className="text-xs font-semibold text-emerald-700">✓ Bonus marked as paid</p>
+	                        )}
+	                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+	                          <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50" onClick={() => openManualBonusModal(selectedOrder)}>{selectedOrder.bonusManuallyAdjusted ? "Edit Bonus Amount" : "Adjust Bonus"}</button>
+	                          <button
+	                            className={`!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors ${selectedOrder.bonusPaid ? "bg-emerald-100 border-emerald-300 text-emerald-800 hover:bg-emerald-200" : "border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`}
+	                            onClick={() => {
+	                              const newPaid = !selectedOrder.bonusPaid;
+	                              setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, bonusPaid: newPaid } : o));
+	                              ordersApi.update(selectedOrder.id, { bonus_paid: newPaid }).catch(() => {
+	                                setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, bonusPaid: !newPaid } : o));
+	                                showToast("Failed to update bonus paid status.");
+	                              });
+	                            }}
+	                          >{selectedOrder.bonusPaid ? "✓ Bonus Paid" : "Mark Bonus Paid"}</button>
 	                          <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50" onClick={() => openAddPenalty(selectedOrder.assignedRepId, selectedOrder.id)}>Apply Penalty</button>
 	                        </div>
 	                      </div>
