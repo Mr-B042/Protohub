@@ -58,6 +58,9 @@ router.post("/register", async (req, res) => {
     .from("users")
     .insert({ id: authData.user.id, org_id: org.id, name, email, role: "Owner", active: true });
   if (profileError) {
+    // Rollback: remove the auth user and the org so a retry starts clean.
+    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
+    await supabase.from("organizations").delete().eq("id", org.id);
     res.status(500).json({ error: "Failed to create user profile." });
     return;
   }
@@ -271,7 +274,10 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     .eq("org_id", req.user!.orgId)
     .select()
     .single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) {
+    if (error.code === "PGRST116") { res.status(404).json({ error: "User not found." }); return; }
+    res.status(500).json({ error: error.message }); return;
+  }
   res.json(data);
 });
 
@@ -318,13 +324,15 @@ router.delete("/team/:id", requireAuth, async (req, res) => {
   if (!target) { res.status(404).json({ error: "User not found." }); return; }
   if (target.role === "Owner") { res.status(400).json({ error: "The Owner account cannot be deleted." }); return; }
 
-  // Soft-delete: deactivate in DB
+  // Soft-delete: deactivate in DB and remove push subscriptions so the
+  // device can't receive notifications after the account is disabled.
   const { error } = await supabase
     .from("users")
     .update({ active: false })
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
   if (error) { res.status(500).json({ error: error.message }); return; }
+  await supabase.from("push_subscriptions").delete().eq("user_id", req.params.id);
   res.status(204).send();
 });
 
@@ -364,7 +372,9 @@ router.post("/invite", requireAuth, async (req, res) => {
     .from("users")
     .insert({ id: authData.user.id, org_id: req.user!.orgId, name, email, role });
   if (profileError) {
-    res.status(500).json({ error: "User created in auth but profile failed. Contact support." });
+    // Rollback the auth user so the email can be reused on retry.
+    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
+    res.status(500).json({ error: "Failed to create user profile. Please try again." });
     return;
   }
 
