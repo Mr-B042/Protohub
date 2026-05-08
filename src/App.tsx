@@ -181,7 +181,7 @@ type WaybillRecord = {
 };
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
-type CallOutcome = "Confirmed" | "No Answer" | "Wrong Number" | "Refused" | "Scheduled Callback" | "Not Reached";
+type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
@@ -1354,7 +1354,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([]);
   const [flagReasonDraft, setFlagReasonDraft] = useState("");
   const [flagTargetPhone, setFlagTargetPhone] = useState("");
-  const [callOutcomeDraft, setCallOutcomeDraft] = useState<CallOutcome | "">("");
+  const [callOutcomeDraft, setCallOutcomeDraft] = useState<string>("");
+  const [callOutcomeCustom, setCallOutcomeCustom] = useState("");
   const [stockCounts, setStockCounts] = useState<StockCountSession[]>([]);
   const [activeStockCountId, setActiveStockCountId] = useState<string | null>(null);
   const [stockCountEntryId, setStockCountEntryId] = useState<string | null>(null);
@@ -7344,6 +7345,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
     setStatusChangeReason("");
     setCallOutcomeDraft(order.callOutcome ?? "");
+    setCallOutcomeCustom("");
     setModal("changeOrderStatus");
   };
 
@@ -7354,12 +7356,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("A reason is required when cancelling, failing, or postponing an order.");
       return;
     }
+    const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
     updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim());
-    if (callOutcomeDraft) {
-      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: callOutcomeDraft as CallOutcome } : o));
+    if (resolvedOutcome) {
+      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome } : o));
+      ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome }).catch(() => {});
     }
     setStatusChangeReason("");
     setCallOutcomeDraft("");
+    setCallOutcomeCustom("");
     setModal(null);
   };
 
@@ -19669,7 +19674,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
 	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as Exclude<OrderStatus, "All Orders">)}>{repChangeStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-	                <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => setCallOutcomeDraft(e.target.value as CallOutcome | "")}><option value="">— Not recorded —</option>{(["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"] as CallOutcome[]).map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
+	                <div>
+	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"].map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
+	                  {callOutcomeDraft === "__custom__" && (
+	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Not ready, Travelled, Will call back Friday…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+	                  )}
+	                </div>
 	                <label><span>Reason for Status Change *</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder="Customer confirmed after call, no answer, requested later delivery..." /></label>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>Change Status</button></div>
 	              </div>
