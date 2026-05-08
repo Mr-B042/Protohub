@@ -70,8 +70,8 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
       body,
       url: link,
       tag: `order-${order.id}-${toStatus}`,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/badge-72.png"
+      icon: "/icons/icon-192.svg",
+      badge: "/icons/badge-72.svg"
     }).catch((err) => console.warn("[order-notifications] push send error:", err));
   } catch (err) {
     console.error("[order-notifications] unexpected error:", err);

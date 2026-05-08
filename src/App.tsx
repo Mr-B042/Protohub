@@ -1934,6 +1934,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [showPushBanner, setShowPushBanner] = useState(false);
   // PWA install
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -4295,8 +4296,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Check push notification status on mount
   useEffect(() => {
-    setPushPermission(getPermissionState());
-    isCurrentlySubscribed().then(setPushSubscribed);
+    const perm = getPermissionState();
+    setPushPermission(perm);
+    isCurrentlySubscribed().then((subscribed) => {
+      setPushSubscribed(subscribed);
+      if (!subscribed && perm === "default") {
+        const dismissed = sessionStorage.getItem("pushBannerDismissed");
+        if (!dismissed) setShowPushBanner(true);
+      }
+    });
     // Listen for SW navigation messages (notification click)
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "NAVIGATE" && event.data.url) {
@@ -11183,6 +11191,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </button>
           </div>
         </header>
+
+        {/* Push notification prompt banner */}
+        {showPushBanner && !pushSubscribed && pushPermission === "default" && (
+          <div className="shrink-0 flex items-center gap-3 px-4 py-2.5 bg-[#1F8FE0] text-white text-sm">
+            <Bell className="w-4 h-4 shrink-0" />
+            <span className="flex-1">Enable push notifications to get order alerts on this device.</span>
+            <button
+              className="font-semibold underline underline-offset-2 whitespace-nowrap"
+              onClick={async () => {
+                try {
+                  await subscribeToPush();
+                  setPushSubscribed(true);
+                  setPushPermission(getPermissionState());
+                  setShowPushBanner(false);
+                  showToast("Push notifications enabled!");
+                } catch {
+                  setShowPushBanner(false);
+                  setPushPermission(getPermissionState());
+                }
+              }}
+            >Enable</button>
+            <button
+              className="ml-1 opacity-70 hover:opacity-100"
+              onClick={() => { setShowPushBanner(false); sessionStorage.setItem("pushBannerDismissed", "1"); }}
+            >✕</button>
+          </div>
+        )}
 
         {/* Page Content Scrollable Area */}
         <main className="flex-1 min-h-0 overflow-y-auto p-4 pt-2 lg:pt-4 lg:p-8">
