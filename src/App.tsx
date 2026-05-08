@@ -4842,6 +4842,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Notification polling — refresh notifications every 30s ───────────
+  // Without this, the bell badge and dropdown only update on full page
+  // reload. Push pushes the OS notification, but the in-app bell needs to
+  // re-fetch. Merges incoming with existing local state by id so optimistic
+  // local entries (pushSystemNotification) are preserved.
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+    const poll = async () => {
+      try {
+        const fresh = await notificationsApi.list();
+        if (!Array.isArray(fresh)) return;
+        setSystemNotifications((prev) => {
+          const existingIds = new Set(prev.map((n) => n.id));
+          const additions = (fresh as SystemNotification[]).filter((n) => !existingIds.has(n.id));
+          if (additions.length === 0) {
+            // Update read flags for existing rows in case they changed server-side
+            const freshById = new Map((fresh as SystemNotification[]).map((n) => [n.id, n]));
+            let changed = false;
+            const merged = prev.map((n) => {
+              const f = freshById.get(n.id);
+              if (f && f.read !== n.read) { changed = true; return { ...n, read: f.read }; }
+              return n;
+            });
+            return changed ? merged : prev;
+          }
+          // New notifications — prepend
+          return [...additions, ...prev];
+        });
+      } catch { /* silent */ }
+    };
+    const id = setInterval(poll, 30_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Fetch audit log when order details modal opens
   useEffect(() => {
     if (modal === "orderDetails" && selectedOrderId) {
