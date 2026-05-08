@@ -8837,7 +8837,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     setModal(null);
     showToast(`Password reset for ${selectedUser.name}.`);
-    authApi.setPassword(_rpId, _rpPw).catch(() => showToast("Password reset saved locally — sync failed."));
+    authApi.setPassword(_rpId, _rpPw).catch((err: any) => {
+      // No local state to roll back — passwords are never stored client-side.
+      // But the toast must reflect reality: the server did NOT change the
+      // password. The previous "saved locally" message was misleading.
+      showToast(`Password reset failed: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const deleteSelectedUser = () => {
