@@ -1443,6 +1443,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       apple.href = "/icons/icon-192.svg";
     }
   }, [companyLogo]);
+
+  // Keep the PWA manifest icon in sync with the company logo so installed app
+  // home-screen icon matches the logo set in admin settings.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const iconSrc = companyLogo || "/icons/icon-192.svg";
+    const manifest = {
+      name: "Protohub — Order & Inventory Management",
+      short_name: companyName || "Protohub",
+      description: "Nigerian POD CRM for managing orders, agents, inventory, and deliveries",
+      start_url: "/",
+      display: "standalone",
+      background_color: "#ffffff",
+      theme_color: "#1F8FE0",
+      orientation: "portrait-primary",
+      icons: [
+        { src: iconSrc, sizes: "192x192", type: companyLogo ? "image/png" : "image/svg+xml", purpose: "any maskable" },
+        { src: iconSrc, sizes: "512x512", type: companyLogo ? "image/png" : "image/svg+xml", purpose: "any maskable" },
+      ],
+    };
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+    const blobUrl = URL.createObjectURL(blob);
+    let link = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "manifest";
+      document.head.appendChild(link);
+    }
+    link.href = blobUrl;
+    return () => URL.revokeObjectURL(blobUrl);
+  }, [companyLogo, companyName]);
+
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.title = companyName ? `${companyName} — Order & Inventory Management` : "Protohub — Order & Inventory Management";
