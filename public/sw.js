@@ -1,5 +1,5 @@
-// ProtoHub Service Worker — Push Notifications
-const CACHE_NAME = "protohub-v2";
+// ProtoHub Service Worker — Push Notifications + WebAPK install criteria
+const CACHE_NAME = "protohub-v3";
 
 // ── Install ──────────────────────────────────────────────
 self.addEventListener("install", (event) => {
@@ -11,6 +11,16 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   // Claim all clients so the SW takes effect immediately
   event.waitUntil(self.clients.claim());
+});
+
+// ── Fetch ────────────────────────────────────────────────
+// REQUIRED for Chrome WebAPK install criteria. Without this listener
+// Chrome won't offer "Install app" — it falls back to the inferior
+// "Add to Home Screen" shortcut. Network-first pass-through; we don't
+// cache anything to keep API responses fresh.
+self.addEventListener("fetch", (event) => {
+  // Pass through — let the browser handle it normally.
+  event.respondWith(fetch(event.request).catch(() => Response.error()));
 });
 
 // ── Push ─────────────────────────────────────────────────
