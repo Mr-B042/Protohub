@@ -6039,6 +6039,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then((saved: any) => {
         setProducts((prev) => prev.map((p) => p.id === id ? { ...p, id: saved.id } : p));
         setSelectedProductId(saved.id);
+        // Persist the initial pricing the admin entered on the create form.
+        // Pre-fix this never reached the DB — productsApi.create only
+        // creates the product row, and product_pricings stayed empty until
+        // someone manually used "Add Currency" later (which itself was
+        // also broken due to a snake_case → camelCase mismatch).
+        const initial = product.pricings[0];
+        if (initial) {
+          productsApi.createPricing(saved.id, {
+            currency:     initial.currency,
+            sellingPrice: initial.sellingPrice,
+            unitCost:     initial.unitCost,
+            isPrimary:    true
+          }).catch((err: any) => {
+            showToast(`Initial pricing for ${product.name} not synced: ${err?.message ?? "open Pricing to retry."}`);
+          });
+        }
         if (stock > 0) {
           // Opening stock failure leaves the product created with 0 in DB
           // and the right number locally — surface that so the admin can retry.
@@ -6358,12 +6374,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setModal(null);
     showToast(`${productCurrencies[nextPricing.currency].label} pricing saved.`);
-    if (modal === "addPricing") {
-      productsApi.createPricing(_spProdId, { currency: nextPricing.currency, selling_price: nextPricing.sellingPrice, unit_cost: nextPricing.unitCost, primary: false }).catch((err: any) => {
-        setProducts((prev) => prev.map((p) => p.id === _spProdId ? productSnapshot : p));
-        showToast(`Failed to add ${productCurrencies[nextPricing.currency].label} pricing: ${err?.message ?? "please retry"}.`);
-      });
-    }
+    // Backend zod schema expects camelCase: { currency, sellingPrice, unitCost, isPrimary }.
+    // Pre-fix this call sent snake_case keys, the schema rejected them with 400,
+    // and the silent rollback meant pricing never persisted — which is why
+    // product_pricings was empty in production despite admins using the UI.
+    // Both add and edit paths now persist; the upsert on the backend handles
+    // the (product_id, currency) unique key and clears other primaries when
+    // isPrimary=true.
+    productsApi.createPricing(_spProdId, {
+      currency:     nextPricing.currency,
+      sellingPrice: nextPricing.sellingPrice,
+      unitCost:     nextPricing.unitCost,
+      isPrimary:    Boolean((nextPricing as any).primary ?? (nextPricing as any).isPrimary)
+    }).catch((err: any) => {
+      setProducts((prev) => prev.map((p) => p.id === _spProdId ? productSnapshot : p));
+      showToast(`Failed to save ${productCurrencies[nextPricing.currency].label} pricing: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const deletePricing = (code: ProductCurrencyCode) => {
