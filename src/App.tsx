@@ -1239,6 +1239,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [productName, setProductName] = useState("");
   const [productDescription, setProductDescription] = useState("");
   const [productSku, setProductSku] = useState("");
+  const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
+  const [skuSuffix, setSkuSuffix] = useState(() => String(Math.floor(100 + Math.random() * 900)));
+
+  // Live SKU auto-fill from Product Name. Mirrors typing live; clears when name
+  // is wiped. Stops mirroring once the user types in the SKU field directly.
+  useEffect(() => {
+    if (skuManuallyEdited) return;
+    const trimmed = productName.trim();
+    if (!trimmed) { setProductSku(""); return; }
+    const prefix = trimmed
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((part) => part.slice(0, 3).toUpperCase())
+      .join("-") || "PRD";
+    setProductSku(`${prefix}-${skuSuffix}`);
+  }, [productName, skuManuallyEdited, skuSuffix]);
   const [productActive, setProductActive] = useState(true);
   const [unitCost, setUnitCost] = useState("0");
   const [sellingPrice, setSellingPrice] = useState("0");
@@ -5480,6 +5497,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setProductName("");
     setProductDescription("");
     setProductSku("");
+    setSkuManuallyEdited(false);
+    setSkuSuffix(String(Math.floor(100 + Math.random() * 900)));
     setProductActive(true);
     setUnitCost("0");
     setSellingPrice("0");
@@ -5746,6 +5765,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setProductName(product.name);
     setProductDescription(product.description);
     setProductSku(product.sku);
+    setSkuManuallyEdited(true);
     setProductActive(product.active);
     setReorderPoint(String(product.reorderPoint));
     setModal("editProduct");
@@ -18442,7 +18462,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <span className="text-xs font-semibold text-gray-700">SKU <span className="text-gray-400 font-normal">(auto if blank)</span></span>
                         <input
                           value={productSku}
-                          onChange={(e) => setProductSku(e.target.value)}
+                          onChange={(e) => { setSkuManuallyEdited(true); setProductSku(e.target.value); }}
                           className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${skuClash ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
                           placeholder="HANGER-001"
                         />
