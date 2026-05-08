@@ -1444,51 +1444,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   }, [companyLogo]);
 
-  // Keep the PWA manifest icon in sync with the company logo so installed app
-  // home-screen icon matches the logo set in admin settings.
-  // Uses PNG icons for proper Android WebAPK / iOS PWA install behaviour —
-  // SVG icons trigger the inferior "shortcut" install on Android Chrome.
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const has = Boolean(companyLogo);
-    const icon192 = has ? companyLogo : "/icons/icon-192.png";
-    const icon512 = has ? companyLogo : "/icons/icon-512.png";
-    const mime = has
-      ? (companyLogo.startsWith("data:image/svg") ? "image/svg+xml"
-        : companyLogo.startsWith("data:image/jpeg") ? "image/jpeg"
-        : companyLogo.startsWith("data:image/webp") ? "image/webp"
-        : "image/png")
-      : "image/png";
-    const manifest = {
-      name: companyName || "Protohub — Order & Inventory Management",
-      short_name: companyName || "Protohub",
-      description: "Nigerian POD CRM for managing orders, agents, inventory, and deliveries",
-      start_url: "/",
-      scope: "/",
-      display: "standalone",
-      background_color: "#ffffff",
-      theme_color: "#1F8FE0",
-      orientation: "portrait-primary",
-      categories: ["business", "productivity"],
-      prefer_related_applications: false,
-      icons: [
-        { src: icon192, sizes: "192x192", type: mime, purpose: "any" },
-        { src: icon192, sizes: "192x192", type: mime, purpose: "maskable" },
-        { src: icon512, sizes: "512x512", type: mime, purpose: "any" },
-        { src: icon512, sizes: "512x512", type: mime, purpose: "maskable" },
-      ],
-    };
-    const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
-    const blobUrl = URL.createObjectURL(blob);
-    let link = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
-    if (!link) {
-      link = document.createElement("link");
-      link.rel = "manifest";
-      document.head.appendChild(link);
-    }
-    link.href = blobUrl;
-    return () => URL.revokeObjectURL(blobUrl);
-  }, [companyLogo, companyName]);
+  // NOTE: We intentionally do NOT override the static <link rel="manifest">
+  // with a blob: URL here. Chrome's WebAPK installer requires a stable,
+  // re-fetchable manifest URL — blob URLs are per-session and disqualify the
+  // app from "Install app" (proper WebAPK), silently downgrading to the
+  // inferior "Add to Home Screen" shortcut. The static /manifest.json with
+  // the default Protohub PNG icons is what gets installed. The company logo
+  // still updates the in-tab favicon via the effect above.
 
   useEffect(() => {
     if (typeof document === "undefined") return;
