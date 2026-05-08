@@ -11082,7 +11082,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {/* Click-outside overlay */}
                   <div className="fixed inset-0 z-40" onClick={() => setShowNotifPanel(false)} />
                   {/* Panel */}
-                  <div className="absolute right-0 top-8 z-50 w-[380px] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden" style={{ maxHeight: "480px" }}>
+                  <div className="fixed left-2 right-2 top-[60px] z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden sm:absolute sm:left-auto sm:right-0 sm:top-8 sm:w-[380px]" style={{ maxHeight: "480px" }}>
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                       <div>
