@@ -3518,12 +3518,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (base > 0) components.push({ label: `Base ${qty}pcs`, amount: base });
     }
 
-    // Upgrade bonus (only if delivery rate gate met)
+    // Upgrade bonus — full if rate ≥ threshold, half if below
     let upgrade = 0;
-    if (order.upsellFromQty && order.upsellToQty && order.upsellToQty > order.upsellFromQty && repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate) {
+    if (order.upsellFromQty && order.upsellToQty && order.upsellToQty > order.upsellFromQty) {
       const rule = cfg.upgradeBonuses.find((r) => r.fromQty === order.upsellFromQty && r.toQty === order.upsellToQty);
-      upgrade = rule?.amount ?? 0;
-      if (upgrade > 0) components.push({ label: `Upgrade ${order.upsellFromQty}→${order.upsellToQty}`, amount: upgrade });
+      const full = rule?.amount ?? 0;
+      if (full > 0) {
+        const meetsGate = repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
+        upgrade = meetsGate ? full : Math.round(full / 2);
+        components.push({ label: meetsGate ? `Upgrade ${order.upsellFromQty}→${order.upsellToQty}` : `Upgrade ${order.upsellFromQty}→${order.upsellToQty} (½ rate)`, amount: upgrade });
+      }
     }
 
     // Cross-sell bonus
@@ -6357,13 +6361,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const existingRow = selectedProduct.pricings.find((p) => p.currency === selectedPricingCurrency);
+    const existingIsPrimary = Boolean((existingRow as any)?.primary || (existingRow as any)?.isPrimary);
     const nextPricing = {
       currency: modal === "addPricing" ? pricingCurrency : selectedPricingCurrency,
       sellingPrice: Math.max(0, Number(pricingSellingPrice) || 0),
       unitCost: Math.max(0, Number(pricingCost) || 0),
-      primary: modal === "editPricing"
-        ? (selectedProduct.pricings.find((p) => p.currency === selectedPricingCurrency)?.primary ?? false)
-        : false
+      primary: modal === "editPricing" ? existingIsPrimary : false
     };
 
     if (modal === "addPricing" && selectedProduct.pricings.some((item) => item.currency === nextPricing.currency)) {
@@ -6412,7 +6416,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const pricing = selectedProduct.pricings.find((p) => p.currency === code);
-    if (pricing?.primary) {
+    if (Boolean((pricing as any)?.primary || (pricing as any)?.isPrimary)) {
       showToast("Primary pricing cannot be deleted. Set another currency as primary first.");
       return;
     }
@@ -15182,9 +15186,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const cashDelivery  = expenses.filter((e) => (e.type === "Delivery" || e.type === "Failed Delivery") && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
                 const cashOther     = expenses.filter((e) => !["Ad Spend", "Waybill", "Delivery", "Failed Delivery"].includes(e.type) && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
                 const cashCogs      = deliveredCash.reduce((s, o) => s + costForOrder(o), 0);
-                const cashBonuses   = deliveredCash.reduce((s, o) => s + (computeOrderBonus(o, 100, 0, 0).total ?? 0), 0);
-                const cashExpenses  = cashAdSpend + cashWaybill + cashDelivery + cashOther + cashCogs + cashBonuses;
-                const cashProfit    = cashRevenue - cashExpenses;
                 // Cash delivery rate = delivered / orders that REACHED a terminal state in the week
                 const finalizedCashDenom = trackedOrders.filter((o) => {
                   const s = o.status ?? "New";
@@ -15205,8 +15206,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const cohortAdSpend   = cashAdSpend; // ads spent this week match the cohort by definition
                 const cohortRoi       = cohortAdSpend === 0 ? null : Math.round((cohortRevenue / cohortAdSpend) * 100);
                 const cohortCogs      = cohortDelivered.reduce((s, o) => s + costForOrder(o), 0);
-                const cohortBonuses   = cohortDelivered.reduce((s, o) => s + (computeOrderBonus(o, 100, 0, 0).total ?? 0), 0);
-                const cohortProfit    = cohortRevenue - (cohortAdSpend + cohortCogs + cohortBonuses);
+
+                // Per-rep cohort delivery rate: of orders this rep received this week,
+                // what fraction delivered? Bonuses count at delivery time, but the rate
+                // is measured against the cohort (orders placed this week, some of which
+                // may still deliver later). Reps with low cohort rates lose upgrade bonuses.
+                const repCohortGroups = new Map<string, { placed: number; delivered: number }>();
+                for (const o of cohort) {
+                  const id = o.assignedRepId ?? "__none__";
+                  const g = repCohortGroups.get(id) ?? { placed: 0, delivered: 0 };
+                  g.placed++;
+                  if ((o.status ?? "New") === "Delivered") g.delivered++;
+                  repCohortGroups.set(id, g);
+                }
+                const getRepCohortStats = (repId: string | undefined | null) => {
+                  const g = repCohortGroups.get(repId ?? "__none__");
+                  if (!g || g.placed === 0) return { rate: 100, count: 0 };
+                  return { rate: Math.round((g.delivered / g.placed) * 100), count: g.placed };
+                };
+
+                const cashBonuses   = deliveredCash.reduce((s, o) => { const rs = getRepCohortStats(o.assignedRepId); return s + (computeOrderBonus(o, rs.rate, 0, rs.count).total ?? 0); }, 0);
+                const cashExpenses  = cashAdSpend + cashWaybill + cashDelivery + cashOther + cashCogs + cashBonuses;
+                const cashProfit    = cashRevenue - cashExpenses;
+                const cohortBonuses = cohortDelivered.reduce((s, o) => { const rs = getRepCohortStats(o.assignedRepId); return s + (computeOrderBonus(o, rs.rate, 0, rs.count).total ?? 0); }, 0);
+                const cohortProfit  = cohortRevenue - (cohortAdSpend + cohortCogs + cohortBonuses);
 
                 // Per-day breakdown
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -15314,7 +15337,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         const cohortDeliveredOrders = cohortOrders.filter((o) => (o.status ?? "New") === "Delivered");
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
-                        const bonus   = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, 100, 0, 0).total ?? 0), 0);
+                        const repRs   = getRepCohortStats(u.id);
+                        const bonus   = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
