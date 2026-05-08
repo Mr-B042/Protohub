@@ -2122,11 +2122,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const rawPublicCurrency = publicEmbedParams?.get("currency") ?? "NGN";
   const publicCurrency: ProductCurrencyCode =
     rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" ? rawPublicCurrency : "NGN";
-  const publicUtmSource = publicEmbedParams?.get("utm_source") ?? "direct";
-  const publicUtmCampaign = publicEmbedParams?.get("utm_campaign") ?? "embed";
-  const publicUtmMedium = publicEmbedParams?.get("utm_medium") ?? "";
-  const publicUtmContent = publicEmbedParams?.get("utm_content") ?? "";
-  const publicUtmTerm = publicEmbedParams?.get("utm_term") ?? "";
+  const publicUtmSource   = (publicEmbedParams?.get("utm_source")   ?? "direct").slice(0, 100);
+  const publicUtmCampaign = (publicEmbedParams?.get("utm_campaign") ?? "embed").slice(0, 100);
+  const publicUtmMedium   = (publicEmbedParams?.get("utm_medium")   ?? "").slice(0, 100);
+  const publicUtmContent  = (publicEmbedParams?.get("utm_content")  ?? "").slice(0, 100);
+  const publicUtmTerm     = (publicEmbedParams?.get("utm_term")     ?? "").slice(0, 100);
   // Only http(s) redirect targets are honored — defends against `javascript:` /
   // `data:` smuggling that would execute in the parent window after submit.
   const rawPublicRedirect = publicEmbedParams?.get("redirect_url") ?? "";
@@ -3460,7 +3460,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       reason: record.reason,
       byName: record.by
     }).then((saved: any) => {
-      if (saved?.id) setRepPenalties((prev) => prev.map((p) => p.id === record.id ? { ...p, id: saved.id } : p));
+      if (saved?.id) {
+        setRepPenalties((prev) => prev.map((p) => p.id === record.id ? { ...p, id: saved.id } : p));
+      } else {
+        setRepPenalties((prev) => prev.filter((p) => p.id !== record.id));
+        showToast("Penalty saved but server returned no ID — please reload.");
+      }
     }).catch((err: any) => {
       setRepPenalties((prev) => prev.filter((p) => p.id !== record.id));
       showToast(`Failed to save penalty: ${err.message}`);
@@ -8192,9 +8197,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         })
       );
       setStockMovements((prev) => [...newMovements, ...prev]);
-      for (const [productId, qty] of productUpdates) {
-        stockApi.update({ productId, change: qty, note: `Stock returned: agent "${selectedAgent.name}" deleted` }).catch(() => {});
-      }
+      Promise.allSettled(
+        [...productUpdates].map(([productId, qty]) =>
+          stockApi.update({ productId, change: qty, note: `Stock returned: agent "${selectedAgent.name}" deleted` })
+        )
+      ).then((results) => {
+        if (results.some((r) => r.status === "rejected")) {
+          showToast("Warehouse stock sync failed for some products — please reload to verify counts.");
+        }
+      });
     }
 
     // Unassign this agent from historical (non-active) orders so they don't show a ghost agent name
