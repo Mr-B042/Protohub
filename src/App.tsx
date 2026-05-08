@@ -1251,11 +1251,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setScheduleRange("Custom");
     setShowSchedulePicker(false);
   };
-  const [deliveriesPeriod, setDeliveriesPeriod] = useState<Period>("This Month");
+  const [deliveriesPeriod, setDeliveriesPeriod] = useState<Period>(() =>
+    readPref<Period>("protohub.deliveries.period", "This Month", (raw) => raw as Period)
+  );
   const [showDeliveriesDateRange, setShowDeliveriesDateRange] = useState(false);
   const [deliveriesDateRange, setDeliveriesDateRange] = useState<DateRange>({ start: "", end: "" });
   const [deliverySearch, setDeliverySearch] = useState("");
-  const [deliveryAgent, setDeliveryAgent] = useState<DeliveryAgent>("All Agents");
+  const [deliveryAgent, setDeliveryAgent] = useState<DeliveryAgent>(() =>
+    readPref<DeliveryAgent>("protohub.deliveries.agent", "All Agents", (raw) => raw as DeliveryAgent)
+  );
   const [deliveriesPage, setDeliveriesPage] = useState(1);
   const [inventorySearch, setInventorySearch] = useState("");
   const [productName, setProductName] = useState("");
@@ -1550,7 +1554,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.schedule.productIds", JSON.stringify(Array.from(scheduleProductIds))); }, [scheduleProductIds]);
   const [showScheduleProductFilter, setShowScheduleProductFilter] = useState(false);
   // Deliveries product filter
-  const [deliveriesProductIds, setDeliveriesProductIds] = useState<Set<string>>(new Set());
+  const [deliveriesProductIds, setDeliveriesProductIds] = useState<Set<string>>(() =>
+    readPref<Set<string>>("protohub.deliveries.productIds", new Set<string>(), (raw) => {
+      try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
+    })
+  );
+  useEffect(() => { writePref("protohub.deliveries.period", deliveriesPeriod); }, [deliveriesPeriod]);
+  useEffect(() => { writePref("protohub.deliveries.agent",  deliveryAgent);     }, [deliveryAgent]);
+  useEffect(() => { writePref("protohub.deliveries.productIds", JSON.stringify(Array.from(deliveriesProductIds))); }, [deliveriesProductIds]);
   const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
   // Customer Directory product filter
   const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(new Set());
