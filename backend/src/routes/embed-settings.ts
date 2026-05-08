@@ -24,7 +24,9 @@ const DEFAULTS = {
   confirmation_text:            "I hereby confirm that I am financially prepared and available to receive this product within the next 1 to 3 days",
   show_commitment:              false,
   commitment_text:              "Please note that orders outside Lagos and Abuja attract a commitment fee of ₦1500 before dispatch",
-  allow_disagree:               true
+  allow_disagree:               true,
+  form_order_summary_enabled:   true,
+  form_order_summary_title:     "Your Order Summary"
 };
 
 // Reads either the org row or returns defaults — used by both auth + public GET.
@@ -67,7 +69,9 @@ const SettingsSchema = z.object({
   confirmation_text:            z.string().min(1).max(500).optional(),
   show_commitment:              z.boolean().optional(),
   commitment_text:              z.string().min(1).max(500).optional(),
-  allow_disagree:               z.boolean().optional()
+  allow_disagree:               z.boolean().optional(),
+  form_order_summary_enabled:   z.boolean().optional(),
+  form_order_summary_title:     z.string().min(1).max(120).optional()
 });
 
 router.patch("/", requireRole("Owner", "Admin"), async (req, res) => {

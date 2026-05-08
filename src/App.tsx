@@ -1363,6 +1363,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [companyName, setCompanyName] = useState<string>(() => readStored<string>(storageKeys.companyName, "Protohub"));
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
+  const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
@@ -1596,6 +1597,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setCompanyLogo(srvLogo);
         brandingSyncedRef.current = { name: srvName, logoUrl: srvLogo };
       }
+      if (res?.payroll) {
+        const en = !!res.payroll.topPerformerBonusEnabled;
+        const amt = Number(res.payroll.topPerformerBonusAmount ?? 0);
+        setTopPerformerBonusEnabled(en);
+        setTopPerformerBonusAmount(String(amt));
+        payrollSyncedRef.current = { enabled: en, amount: amt };
+      }
       brandingHydratedRef.current = true;
       const serverVersion = Number(res?.cacheVersion ?? 0);
       const localKey = "protohub.cacheVersion";
@@ -1617,28 +1625,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).catch(() => { /* fail-quiet; not critical */ });
   }, []);
 
-  // Sync branding changes back to the server (debounced) so other devices
-  // see the same logo and company name. Only Owner/Admin can write — the
-  // backend will 403 silently for other roles.
+  // Sync org-level settings (branding + payroll bonus) back to the server,
+  // debounced, so other devices see the same values. Only Owner/Admin can
+  // write — backend 403s silently for other roles.
   useEffect(() => {
     if (!brandingHydratedRef.current) return;
     if (!auth.getAccessToken()) return;
-    if (
-      brandingSyncedRef.current.name === companyName &&
-      brandingSyncedRef.current.logoUrl === companyLogo
-    ) return;
+    const bonusAmtNum = Math.max(0, Number(topPerformerBonusAmount) || 0);
+    const brandingChanged =
+      brandingSyncedRef.current.name !== companyName ||
+      brandingSyncedRef.current.logoUrl !== companyLogo;
+    const payrollChanged =
+      payrollSyncedRef.current.enabled !== topPerformerBonusEnabled ||
+      payrollSyncedRef.current.amount !== bonusAmtNum;
+    if (!brandingChanged && !payrollChanged) return;
+    const body: Record<string, unknown> = {};
+    if (brandingChanged) { body.name = companyName; body.logoUrl = companyLogo; }
+    if (payrollChanged)  { body.topPerformerBonusEnabled = topPerformerBonusEnabled; body.topPerformerBonusAmount = bonusAmtNum; }
     const handle = setTimeout(() => {
-      authApi.updateBranding({ name: companyName, logoUrl: companyLogo })
+      authApi.updateBranding(body as any)
         .then((saved: any) => {
           brandingSyncedRef.current = {
             name: saved?.name ?? companyName,
             logoUrl: saved?.logoUrl ?? companyLogo
           };
+          payrollSyncedRef.current = {
+            enabled: !!saved?.topPerformerBonusEnabled,
+            amount:  Number(saved?.topPerformerBonusAmount ?? bonusAmtNum)
+          };
         })
         .catch(() => { /* role-gated; safe to ignore */ });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo]);
+  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {
@@ -1664,6 +1683,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (typeof s.showCommitment      === "boolean") setShowCommitmentNotice(s.showCommitment);
       if (typeof s.commitmentText      === "string")  setCommitmentText(s.commitmentText);
       if (typeof s.allowDisagree       === "boolean") setAllowDisagree(s.allowDisagree);
+      if (typeof s.formOrderSummaryEnabled === "boolean") setFormOrderSummaryEnabled(s.formOrderSummaryEnabled);
+      if (typeof s.formOrderSummaryTitle   === "string")  setFormOrderSummaryTitle(s.formOrderSummaryTitle);
     }).catch(() => { /* defaults stay */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1690,7 +1711,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         confirmation_text:            confirmationText,
         show_commitment:              showCommitmentNotice,
         commitment_text:              commitmentText,
-        allow_disagree:               allowDisagree
+        allow_disagree:               allowDisagree,
+        form_order_summary_enabled:   formOrderSummaryEnabled,
+        form_order_summary_title:     formOrderSummaryTitle
       });
       showToast("Embed form settings saved.");
     } catch (e: any) {

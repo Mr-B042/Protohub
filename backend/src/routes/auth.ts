@@ -142,13 +142,17 @@ router.post("/refresh", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const { data: org } = await supabase
     .from("organizations")
-    .select("cache_version, name, logo_url")
+    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount")
     .eq("id", req.user!.orgId)
     .single();
   res.json({
     user: req.user,
     cacheVersion: org?.cache_version ?? 0,
-    branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" }
+    branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" },
+    payroll: {
+      topPerformerBonusEnabled: !!org?.top_performer_bonus_enabled,
+      topPerformerBonusAmount:  Number(org?.top_performer_bonus_amount ?? 0)
+    }
   });
 });
 
@@ -158,21 +162,28 @@ router.get("/me", requireAuth, async (req, res) => {
 // (base64) or external URL — both stored as TEXT.
 router.patch("/org-branding", requireAuth, async (req, res) => {
   if (!["Owner", "Admin"].includes(req.user!.role)) {
-    res.status(403).json({ error: "Only Owner or Admin can edit branding." });
+    res.status(403).json({ error: "Only Owner or Admin can edit org settings." });
     return;
   }
   const updates: Record<string, unknown> = {};
   if (typeof req.body.name === "string") updates.name = req.body.name.trim();
   if (typeof req.body.logoUrl === "string") updates.logo_url = req.body.logoUrl;
+  if (typeof req.body.topPerformerBonusEnabled === "boolean") updates.top_performer_bonus_enabled = req.body.topPerformerBonusEnabled;
+  if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
   const { data, error } = await supabase
     .from("organizations")
     .update(updates)
     .eq("id", req.user!.orgId)
-    .select("name, logo_url")
+    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount")
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ name: data?.name ?? "", logoUrl: data?.logo_url ?? "" });
+  res.json({
+    name: data?.name ?? "",
+    logoUrl: data?.logo_url ?? "",
+    topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
+    topPerformerBonusAmount:  Number(data?.top_performer_bonus_amount ?? 0)
+  });
 });
 
 // ── POST /api/auth/bump-cache-version ─────────────────────
