@@ -40,6 +40,18 @@ const PORT = process.env.PORT ?? 4000;
 // and per-IP rate limiting.
 app.set("trust proxy", 1);
 
+// Disable ETag generation for /api responses — Express's auto-ETag was
+// triggering 304 Not Modified for orders/notifications polling, which made
+// the browser keep using stale cached payloads after order edits (e.g. agent
+// assignments not visible after refresh even though DB had the change).
+app.set("etag", false);
+
+// Belt-and-suspenders: every /api response must be revalidated, never cached.
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  next();
+});
+
 // ── Security ──────────────────────────────────────────────
 app.use(helmet());
 
