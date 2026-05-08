@@ -7236,11 +7236,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (modal !== "orderWorkflow") {
       setModal(null);
     }
-    showToast(`${selectedOrder.id} delivery agent updated.`);
-    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null }).catch((err: any) => {
-      setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
-      showToast(`Failed to update agent for ${_soaId}: ${err?.message ?? "please retry"}.`);
-    });
+    // Use the server's response as the authoritative state so the next
+    // background poll can't revert this with a stale row. Show the success
+    // toast only on confirmed save, error toast on failure with revert.
+    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null })
+      .then((updated: any) => {
+        if (updated && updated.id === _soaId) {
+          setTrackedOrders((value) => value.map((o) => o.id === _soaId ? { ...o, ...updated } : o));
+        }
+        showToast(`${_soaId} delivery agent updated.`);
+      })
+      .catch((err: any) => {
+        setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
+        showToast(`Failed to update agent for ${_soaId}: ${err?.message ?? "please retry"}.`);
+      });
   };
 
   const openEditSelectedOrder = () => {
