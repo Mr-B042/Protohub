@@ -11209,9 +11209,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   setPushPermission(getPermissionState());
                   setShowPushBanner(false);
                   showToast("Push notifications enabled!");
-                } catch {
+                } catch (e: any) {
                   setShowPushBanner(false);
                   setPushPermission(getPermissionState());
+                  showToast(`Couldn't enable push: ${e?.message ?? "unknown error"}`);
                 }
               }}
             >Enable</button>
