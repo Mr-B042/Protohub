@@ -1289,11 +1289,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reorderPoint, setReorderPoint] = useState("0");
   const [stockChange, setStockChange] = useState("0");
   const [products, setProducts] = useState<Product[]>([]);
-  const [inventoryView, setInventoryView] = useState<InventoryView>(() =>
-    readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
+  const [inventoryView, setInventoryView] = useState<InventoryView>(() => {
+    // pricing / packages need a selectedProduct to render. selectedProductId
+    // isn't persisted across reloads (it's an ephemeral row pointer), so
+    // hydrating into those views would silently fall through to dashboard
+    // and look like "I clicked pricing, got nothing." Coerce to dashboard
+    // when there's no product to show.
+    const stored = readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
       raw === "dashboard" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" ? raw : null
-    )
-  );
+    );
+    return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
+  });
   const [selectedProductId, setSelectedProductId] = useState("");
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
@@ -18084,29 +18090,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {selectedProduct.pricings.map((pricing) => {
-                          const margin = pricing.sellingPrice === 0 ? 0 : Math.round(((pricing.sellingPrice - pricing.unitCost) / pricing.sellingPrice) * 100);
-                          return (
-                            <tr key={pricing.currency} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-4">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-gray-900">{productCurrencies[pricing.currency].symbol} {productCurrencies[pricing.currency].label}</span>
-                                  {pricing.primary && <span className="role-pill owner-pill">Primary</span>}
-                                </div>
-                              </td>
-                              <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.sellingPrice, pricing.currency)}</td>
-                              <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.unitCost, pricing.currency)}</td>
-                              <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.unitCost, pricing.currency)}</td>
-                              <td className={`px-4 py-4 font-bold ${margin >= 0 ? "text-green-600" : "text-red-600"}`}>{margin}%</td>
-                              <td className="px-4 py-4">
-                                <div className="flex items-center gap-1">
-                                  <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Edit pricing" onClick={() => openEditPricing(pricing)}><Pencil className="w-4 h-4" /></button>
-                                  <button className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-30" title="Delete pricing" disabled={pricing.primary} onClick={() => deletePricing(pricing.currency)}><Trash2 className="w-4 h-4" /></button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {(() => {
+                          const list = Array.isArray(selectedProduct.pricings) ? selectedProduct.pricings : [];
+                          if (list.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={6} className="px-4 py-12 text-center">
+                                  <div className="flex flex-col items-center gap-3 text-gray-500">
+                                    <CircleDollarSign className="w-8 h-8 text-gray-300" />
+                                    <p className="text-sm font-semibold text-gray-700 m-0">No pricing configured yet</p>
+                                    <p className="text-xs text-gray-400 m-0 max-w-xs">Click "Add Currency" to set the first selling price + unit cost. The first one becomes the primary currency for orders and dashboards.</p>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          }
+                          return list.map((pricing) => {
+                            // DB column is is_primary; snake→camel produces isPrimary; older
+                            // local-only entries use `primary`. Treat either as truth.
+                            const isPrimary = Boolean((pricing as any).primary ?? (pricing as any).isPrimary);
+                            const margin = pricing.sellingPrice === 0 ? 0 : Math.round(((pricing.sellingPrice - pricing.unitCost) / pricing.sellingPrice) * 100);
+                            return (
+                              <tr key={pricing.currency} className="hover:bg-gray-50 transition-colors">
+                                <td className="px-4 py-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-gray-900">{productCurrencies[pricing.currency].symbol} {productCurrencies[pricing.currency].label}</span>
+                                    {isPrimary && <span className="role-pill owner-pill">Primary</span>}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.sellingPrice, pricing.currency)}</td>
+                                <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.unitCost, pricing.currency)}</td>
+                                <td className="px-4 py-4 text-gray-700">{formatProductMoney(pricing.unitCost, pricing.currency)}</td>
+                                <td className={`px-4 py-4 font-bold ${margin >= 0 ? "text-green-600" : "text-red-600"}`}>{margin}%</td>
+                                <td className="px-4 py-4">
+                                  <div className="flex items-center gap-1">
+                                    <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Edit pricing" onClick={() => openEditPricing(pricing)}><Pencil className="w-4 h-4" /></button>
+                                    <button className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-30" title="Delete pricing" disabled={isPrimary} onClick={() => deletePricing(pricing.currency)}><Trash2 className="w-4 h-4" /></button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
                       </tbody>
                     </table>
                   </div>
