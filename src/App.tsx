@@ -11096,7 +11096,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Bar */}
-        <header className="h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0">
+        <header className="h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
           <div className="flex items-center lg:hidden">
             <button
               className="p-2 -ml-2 text-gray-600 hover:text-gray-900"
