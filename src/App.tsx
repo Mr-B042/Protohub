@@ -1361,6 +1361,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Branding: company logo (data URL or remote URL) + display name
   const [companyLogo, setCompanyLogo] = useState<string>(() => readStored<string>(storageKeys.companyLogo, ""));
   const [companyName, setCompanyName] = useState<string>(() => readStored<string>(storageKeys.companyName, "Protohub"));
+  const brandingHydratedRef = useRef(false);
+  const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
@@ -1586,6 +1588,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     authApi.me().then((res: any) => {
+      // Hydrate branding from server so all team devices see the same logo/name.
+      if (res?.branding) {
+        const srvName = typeof res.branding.name === "string" ? res.branding.name : "";
+        const srvLogo = typeof res.branding.logoUrl === "string" ? res.branding.logoUrl : "";
+        if (srvName) setCompanyName(srvName);
+        setCompanyLogo(srvLogo);
+        brandingSyncedRef.current = { name: srvName, logoUrl: srvLogo };
+      }
+      brandingHydratedRef.current = true;
       const serverVersion = Number(res?.cacheVersion ?? 0);
       const localKey = "protohub.cacheVersion";
       const localVersion = Number(localStorage.getItem(localKey) ?? "");
@@ -1605,6 +1616,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     }).catch(() => { /* fail-quiet; not critical */ });
   }, []);
+
+  // Sync branding changes back to the server (debounced) so other devices
+  // see the same logo and company name. Only Owner/Admin can write — the
+  // backend will 403 silently for other roles.
+  useEffect(() => {
+    if (!brandingHydratedRef.current) return;
+    if (!auth.getAccessToken()) return;
+    if (
+      brandingSyncedRef.current.name === companyName &&
+      brandingSyncedRef.current.logoUrl === companyLogo
+    ) return;
+    const handle = setTimeout(() => {
+      authApi.updateBranding({ name: companyName, logoUrl: companyLogo })
+        .then((saved: any) => {
+          brandingSyncedRef.current = {
+            name: saved?.name ?? companyName,
+            logoUrl: saved?.logoUrl ?? companyLogo
+          };
+        })
+        .catch(() => { /* role-gated; safe to ignore */ });
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [companyName, companyLogo]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {

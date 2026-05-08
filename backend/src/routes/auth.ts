@@ -142,10 +142,37 @@ router.post("/refresh", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const { data: org } = await supabase
     .from("organizations")
-    .select("cache_version")
+    .select("cache_version, name, logo_url")
     .eq("id", req.user!.orgId)
     .single();
-  res.json({ user: req.user, cacheVersion: org?.cache_version ?? 0 });
+  res.json({
+    user: req.user,
+    cacheVersion: org?.cache_version ?? 0,
+    branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" }
+  });
+});
+
+// ── PATCH /api/auth/org-branding ──────────────────────────
+// Owner/Admin only. Persists company name + logo so all team members
+// see the same branding regardless of device. Logo can be a data URL
+// (base64) or external URL — both stored as TEXT.
+router.patch("/org-branding", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin"].includes(req.user!.role)) {
+    res.status(403).json({ error: "Only Owner or Admin can edit branding." });
+    return;
+  }
+  const updates: Record<string, unknown> = {};
+  if (typeof req.body.name === "string") updates.name = req.body.name.trim();
+  if (typeof req.body.logoUrl === "string") updates.logo_url = req.body.logoUrl;
+  if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
+  const { data, error } = await supabase
+    .from("organizations")
+    .update(updates)
+    .eq("id", req.user!.orgId)
+    .select("name, logo_url")
+    .single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ name: data?.name ?? "", logoUrl: data?.logo_url ?? "" });
 });
 
 // ── POST /api/auth/bump-cache-version ─────────────────────

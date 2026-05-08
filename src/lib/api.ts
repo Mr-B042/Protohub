@@ -81,8 +81,10 @@ export const authApi = {
       "/api/auth/login", { email, password }
     ),
 
-  me: () => get<{ user: { id: string; orgId: string; name: string; role: string; email: string }; cacheVersion?: number }>("/api/auth/me"),
+  me: () => get<{ user: { id: string; orgId: string; name: string; role: string; email: string }; cacheVersion?: number; branding?: { name: string; logoUrl: string } }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
+  updateBranding: (body: { name?: string; logoUrl?: string }) =>
+    patch<{ name: string; logoUrl: string }>("/api/auth/org-branding", body),
 
   invite: (body: { name: string; email: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),
