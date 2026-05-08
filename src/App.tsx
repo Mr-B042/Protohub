@@ -7839,6 +7839,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    // Snapshot the three slices we mutate so a rejected assignStock can
+    // restore them coherently (warehouse + agent stock + audit movement).
+    const productSnapshot = product;
+    const existingAgentRow = agentStock.find((s) => s.agentId === selectedAgent.id && s.productId === product.id);
+    const movementId = makeMovementId();
     setProducts((value) =>
       value.map((item) =>
         item.id === product.id
@@ -7854,7 +7859,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return [...value, { agentId: selectedAgent.id, productId: product.id, quantity, defective: 0, missing: 0 }];
     });
     setStockMovements((value) => [
-      { id: makeMovementId(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Distributed to Agent", qty: -quantity, balanceAfter: product.warehouseStock - quantity, agent: selectedAgent.name, by: ownerName, note: "Assigned from agent directory" },
+      { id: movementId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Distributed to Agent", qty: -quantity, balanceAfter: product.warehouseStock - quantity, agent: selectedAgent.name, by: ownerName, note: "Assigned from agent directory" },
       ...value
     ]);
     const _assAgId = selectedAgent.id;
@@ -7863,7 +7868,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAssignStockQty("1");
     setModal(null);
     showToast(`${quantity} ${product.name} assigned to ${selectedAgent.name}.`);
-    agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity }).catch(() => {});
+    agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity }).catch((err: any) => {
+      // Restore product warehouse/agent counts; restore (or remove) the agent_stock row;
+      // remove the audit movement we synthesized.
+      setProducts((value) => value.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
+      setAgentStock((value) => {
+        if (existingAgentRow) {
+          return value.map((s) => s.agentId === _assAgId && s.productId === _assProdId ? existingAgentRow : s);
+        }
+        return value.filter((s) => !(s.agentId === _assAgId && s.productId === _assProdId));
+      });
+      setStockMovements((value) => value.filter((m) => m.id !== movementId));
+      showToast(`Failed to assign stock to ${_assAgentName}: ${err?.message ?? "please retry"}.`);
+    });
     pushSystemNotification({
       type: "info",
       title: "Stock assigned to agent",
@@ -8028,6 +8045,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    // Snapshots covering every state slice we mutate so the agent + their
+    // stock + the historical order assignments + warehouse balance all
+    // restore atomically if the server rejects the delete.
+    const agentSnapshot = selectedAgent;
+    const agentStockSnapshot = agentStock.filter((s) => s.agentId === selectedAgent.id);
+    const productsSnapshot = [...products];
+    const orderAssignmentsSnapshot = trackedOrders.filter((o) => o.agentId === selectedAgent.id).map((o) => o.id);
+
     // Return each product's stock to the warehouse and log a movement
     const now = new Date().toISOString();
     const newMovements: StockMovement[] = [];
@@ -8072,11 +8097,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     // Remove agent and their stock records
     const _daId = selectedAgent.id;
+    const synthesizedMovementIds = newMovements.map((m) => m.id);
     setAgents((prev) => prev.filter((a) => a.id !== selectedAgent.id));
     setAgentStock((prev) => prev.filter((s) => s.agentId !== selectedAgent.id));
     setModal(null);
     showToast(`${selectedAgent.name} deleted. ${productUpdates.size > 0 ? "Stock returned to warehouse." : ""}`);
-    agentsApi.delete(_daId).catch(() => {});
+    agentsApi.delete(_daId).catch((err: any) => {
+      // Restore agent + their stock + the historical-order agent_id refs +
+      // the warehouse counts + remove the audit movements we synthesized.
+      setAgents((prev) => [agentSnapshot, ...prev]);
+      setAgentStock((prev) => [...agentStockSnapshot, ...prev]);
+      setProducts(productsSnapshot);
+      setTrackedOrders((prev) => prev.map((o) => orderAssignmentsSnapshot.includes(o.id) ? { ...o, agentId: _daId } : o));
+      if (synthesizedMovementIds.length > 0) {
+        setStockMovements((prev) => prev.filter((m) => !synthesizedMovementIds.includes(m.id)));
+      }
+      showToast(`Failed to delete ${agentSnapshot.name}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openCreateWaybill = () => {
@@ -8226,6 +8263,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const diff       = dispatched - received;
     const variance   = options?.variance ?? "return";
 
+    // Snapshots for the rollback at the bottom — the function below mutates
+    // products + agentStock + stockMovements + waybillRecords. If the API
+    // rejects the status flip, restore all of them.
+    const productsSnapshotPre   = [...products];
+    const agentStockSnapshotPre = [...agentStock];
+    const movementIdsBefore     = new Set(stockMovements.map((m) => m.id));
+    const waybillSnapshotPre    = waybillRecords.find((w) => w.id === waybillId);
+
     // 1) Add `received` qty to the destination
     if (received > 0) {
       if (record.toAgentId) {
@@ -8325,7 +8370,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? `${w.note ? w.note + " · " : ""}Variance: ${diff}/${dispatched} ${variance === "return" ? "returned" : "written off"}${options?.reason ? ` (${options.reason})` : ""}`
         : w.note
     } : w));
-    waybillsApi.updateStatus(waybillId, { status: "Received" }).catch(() => {});
+    waybillsApi.updateStatus(waybillId, { status: "Received" }).catch((err: any) => {
+      // Restore every slice this handler touched.
+      setProducts(productsSnapshotPre);
+      setAgentStock(agentStockSnapshotPre);
+      setStockMovements((prev) => prev.filter((m) => movementIdsBefore.has(m.id)));
+      if (waybillSnapshotPre) {
+        setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? waybillSnapshotPre : w));
+      }
+      showToast(`Failed to mark ${waybillId} received: ${err?.message ?? "please retry"}.`);
+    });
     showToast(diff > 0
       ? `Waybill received with ${diff} short — variance ${variance === "return" ? "returned to sender" : "written off"}.`
       : `Waybill marked received.`);
@@ -18510,8 +18564,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <button key={u.id} type="button" className={`!min-h-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${isMember ? "bg-blue-50 border-[#1F8FE0] text-[#1F8FE0] font-semibold" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
                           onClick={() => {
                             const next = isMember ? team.memberIds.filter((id) => id !== u.id) : [...team.memberIds, u.id];
+                            const prevMembers = team.memberIds;
                             setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, memberIds: next } : t));
-                            salesTeamsApi.update(team.id, { member_ids: next }).catch(() => showToast("Failed to update members on server."));
+                            salesTeamsApi.update(team.id, { member_ids: next }).catch((err: any) => {
+                              setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, memberIds: prevMembers } : t));
+                              showToast(`Failed to update members: ${err?.message ?? "please retry"}.`);
+                            });
                           }}>
                           {u.name}
                         </button>
@@ -18525,10 +18583,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       if (editTeamName.trim() !== team.name) updates.name = editTeamName.trim();
                       const nextLead = editTeamLeadId || null;
                       if (nextLead !== (team.leadId ?? null)) updates.lead_id = nextLead;
+                      const teamSnapshot = team;
                       setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, name: editTeamName.trim(), leadId: editTeamLeadId || undefined } : t));
                       setModal(null);
                       showToast(`Team "${editTeamName.trim()}" updated.`);
-                      salesTeamsApi.update(team.id, updates).catch(() => showToast("Saved locally — sync to server failed."));
+                      salesTeamsApi.update(team.id, updates).catch((err: any) => {
+                        setExtraTeams((prev) => prev.map((t) => t.id === teamSnapshot.id ? teamSnapshot : t));
+                        showToast(`Failed to save team changes: ${err?.message ?? "please retry"}.`);
+                      });
                     }}>Save changes</button>
                   </div>
                 </div>
@@ -21026,10 +21088,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           if (!salesRepName.trim() || !salesRepEmail.trim()) { showToast("Name and email are required."); return; }
                           if (emailTaken) { showToast("Another user already uses this email."); return; }
                           const updates = { name: salesRepName.trim(), email: salesRepEmail.trim(), active: salesRepActive };
+                          const repSnapshot = selectedSalesRep;
                           setUsers((value) => value.map((user) => user.id === selectedSalesRep.id ? { ...user, ...updates } : user));
                           setModal(null);
                           showToast(`${salesRepName.trim()} updated.`);
-                          usersApi.update(selectedSalesRep.id, updates).catch(() => showToast("Saved locally — sync to server failed."));
+                          usersApi.update(selectedSalesRep.id, updates).catch((err: any) => {
+                            setUsers((value) => value.map((user) => user.id === repSnapshot.id ? repSnapshot : user));
+                            showToast(`Failed to save changes for ${repSnapshot.name}: ${err?.message ?? "please retry"}.`);
+                          });
                         }}
                       >Save changes</button>
                     </div>
