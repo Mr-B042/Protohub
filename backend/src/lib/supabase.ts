@@ -29,8 +29,10 @@ export const supabaseAnon = anonKey
   : null;
 
 // Create a client scoped to a specific user (respects RLS)
-export const supabaseAs = (accessToken: string) =>
-  createClient(url, process.env.SUPABASE_ANON_KEY!, {
+export const supabaseAs = (accessToken: string) => {
+  if (!anonKey) throw new Error("SUPABASE_ANON_KEY is required for user-scoped clients.");
+  return createClient(url, anonKey, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
     auth: { persistSession: false }
   });
+};

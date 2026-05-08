@@ -77,6 +77,12 @@ const authRateLimit = rateLimit({
 // ── Body parsing ──────────────────────────────────────────
 app.use(express.json({ limit: "1mb" }));
 
+// ── Request logger (before routes so every request is captured) ───
+app.use((req, _res, next) => {
+  logger.info("request", { method: req.method, path: req.path });
+  next();
+});
+
 // ── Health check ──────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -109,12 +115,6 @@ app.use("/api/sales-teams",     salesTeamRoutes);
 app.use("/api/penalties",       penaltyRoutes);
 app.use("/api/push",            pushRoutes);
 app.use("/api/users",           userRoutes);
-
-// ── Request logger ────────────────────────────────────────
-app.use((req, _res, next) => {
-  logger.info("request", { method: req.method, path: req.path });
-  next();
-});
 
 // ── Global error handler ──────────────────────────────────
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

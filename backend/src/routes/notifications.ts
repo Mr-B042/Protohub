@@ -22,7 +22,7 @@ router.get("/", async (req, res) => {
 // Create notification
 router.post("/", async (req, res) => {
   const Schema = z.object({
-    type:      z.enum(["low_stock", "remittance_overdue", "info", "order_new", "order_confirmed", "order_delivered", "order_cancelled"]),
+    type:      z.enum(["low_stock", "remittance_overdue", "info", "order_new", "order_confirmed", "order_delivered", "order_cancelled", "order_failed", "order_rescheduled", "order_assigned"]),
     message:   z.string().min(1),
     productId: z.string().uuid().optional()
   });
