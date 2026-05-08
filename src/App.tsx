@@ -11094,7 +11094,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
         <header className="h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
           <div className="flex items-center lg:hidden">
