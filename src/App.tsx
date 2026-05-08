@@ -1446,21 +1446,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Keep the PWA manifest icon in sync with the company logo so installed app
   // home-screen icon matches the logo set in admin settings.
+  // Uses PNG icons for proper Android WebAPK / iOS PWA install behaviour —
+  // SVG icons trigger the inferior "shortcut" install on Android Chrome.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const iconSrc = companyLogo || "/icons/icon-192.svg";
+    const has = Boolean(companyLogo);
+    const icon192 = has ? companyLogo : "/icons/icon-192.png";
+    const icon512 = has ? companyLogo : "/icons/icon-512.png";
+    const mime = has
+      ? (companyLogo.startsWith("data:image/svg") ? "image/svg+xml"
+        : companyLogo.startsWith("data:image/jpeg") ? "image/jpeg"
+        : companyLogo.startsWith("data:image/webp") ? "image/webp"
+        : "image/png")
+      : "image/png";
     const manifest = {
-      name: "Protohub — Order & Inventory Management",
+      name: companyName || "Protohub — Order & Inventory Management",
       short_name: companyName || "Protohub",
       description: "Nigerian POD CRM for managing orders, agents, inventory, and deliveries",
       start_url: "/",
+      scope: "/",
       display: "standalone",
       background_color: "#ffffff",
       theme_color: "#1F8FE0",
       orientation: "portrait-primary",
+      categories: ["business", "productivity"],
+      prefer_related_applications: false,
       icons: [
-        { src: iconSrc, sizes: "192x192", type: companyLogo ? "image/png" : "image/svg+xml", purpose: "any maskable" },
-        { src: iconSrc, sizes: "512x512", type: companyLogo ? "image/png" : "image/svg+xml", purpose: "any maskable" },
+        { src: icon192, sizes: "192x192", type: mime, purpose: "any" },
+        { src: icon192, sizes: "192x192", type: mime, purpose: "maskable" },
+        { src: icon512, sizes: "512x512", type: mime, purpose: "any" },
+        { src: icon512, sizes: "512x512", type: mime, purpose: "maskable" },
       ],
     };
     const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
