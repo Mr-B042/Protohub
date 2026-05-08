@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Archive,
   Bell,
+  Check,
   ChevronRight,
   CalendarDays,
   CalendarClock,
@@ -1978,6 +1979,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repWorkspaceNavSpan, setRepWorkspaceNavSpan] = useState<NavSpan>("1W");
   const [repWorkspaceProductIds, setRepWorkspaceProductIds] = useState<Set<string>>(new Set());
   const [showRepWorkspaceProductFilter, setShowRepWorkspaceProductFilter] = useState(false);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
   // Notifications filters + per-row expansion
   const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null);
   const [notificationsPeriod, setNotificationsPeriod] = useState<Period>("This Month");
@@ -11024,14 +11026,79 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
           
           <div className="ml-auto flex items-center gap-4">
-            <button className="text-gray-600 hover:text-gray-900 relative" onClick={() => setModal("notifications")}>
-              <Bell className="w-5 h-5" />
-              {unreadNotificationCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
-                  {unreadNotificationCount}
-                </span>
+            {/* Notification bell + dropdown */}
+            <div className="relative">
+              <button className="text-gray-600 hover:text-gray-900 relative" onClick={() => setShowNotifPanel((v) => !v)}>
+                <Bell className="w-5 h-5" />
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+                    {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                  </span>
+                )}
+              </button>
+              {showNotifPanel && (
+                <>
+                  {/* Click-outside overlay */}
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifPanel(false)} />
+                  {/* Panel */}
+                  <div className="absolute right-0 top-8 z-50 w-[380px] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden" style={{ maxHeight: "480px" }}>
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 m-0">Notifications</p>
+                        {unreadNotificationCount > 0 && <p className="text-xs text-gray-400 m-0">{unreadNotificationCount} unread</p>}
+                      </div>
+                      {unreadNotificationCount > 0 && (
+                        <button className="!min-h-0 flex items-center gap-1 text-xs font-semibold text-[#1F8FE0] hover:underline" onClick={() => { markAllNotificationsRead(); }}>
+                          <Check className="w-3.5 h-3.5" /> Mark all read
+                        </button>
+                      )}
+                    </div>
+                    {/* List */}
+                    <div className="overflow-y-auto flex-1">
+                      {systemNotifications.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 gap-2 text-gray-400">
+                          <BellOff className="w-8 h-8" />
+                          <p className="text-sm">No notifications yet</p>
+                        </div>
+                      ) : (
+                        systemNotifications.slice(0, 20).map((n) => {
+                          const isOrderType = n.type.startsWith("order_");
+                          const iconBg = n.type === "order_delivered" ? "bg-emerald-100" : n.type === "order_cancelled" || n.type === "order_failed" ? "bg-red-100" : n.type === "low_stock" ? "bg-amber-100" : n.type === "remittance_overdue" ? "bg-red-100" : "bg-blue-100";
+                          const iconColor = n.type === "order_delivered" ? "text-emerald-600" : n.type === "order_cancelled" || n.type === "order_failed" ? "text-red-600" : n.type === "low_stock" ? "text-amber-600" : n.type === "remittance_overdue" ? "text-red-600" : "text-[#1F8FE0]";
+                          const title = n.title ?? (n.type === "order_delivered" ? "Order Delivered" : n.type === "order_new" ? "New Order" : n.type === "order_confirmed" ? "Order Confirmed" : n.type === "order_cancelled" ? "Order Cancelled" : n.type === "order_failed" ? "Order Failed" : n.type === "order_rescheduled" ? "Order Rescheduled" : n.type === "order_assigned" ? "Order Assigned" : n.type === "low_stock" ? "Low Stock Alert" : n.type === "remittance_overdue" ? "Remittance Overdue" : "Info");
+                          const diffMs = Date.now() - new Date(n.createdAt).getTime();
+                          const mins = Math.floor(diffMs / 60000);
+                          const relTime = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : mins < 1440 ? `about ${Math.floor(mins / 60)} hour${Math.floor(mins / 60) === 1 ? "" : "s"} ago` : `${Math.floor(mins / 1440)} day${Math.floor(mins / 1440) === 1 ? "" : "s"} ago`;
+                          return (
+                            <div
+                              key={n.id}
+                              className={`flex items-start gap-3 px-4 py-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${!n.read ? "bg-blue-50/30" : ""}`}
+                              onClick={() => { markOneNotificationRead(n.id); if (n.link) { setShowNotifPanel(false); } }}
+                            >
+                              <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${iconBg}`}>
+                                {isOrderType ? <Package className={`w-4 h-4 ${iconColor}`} /> : n.type === "low_stock" ? <AlertTriangle className={`w-4 h-4 ${iconColor}`} /> : <Bell className={`w-4 h-4 ${iconColor}`} />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 m-0 leading-snug">{title}</p>
+                                <p className="text-xs text-gray-500 m-0 mt-0.5 leading-snug">{n.message}</p>
+                                <p className="text-[11px] text-gray-400 m-0 mt-1">{relTime}</p>
+                              </div>
+                              {!n.read && <span className="shrink-0 mt-1.5 w-2 h-2 rounded-full bg-[#1F8FE0]" />}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    {/* Footer */}
+                    <button
+                      className="!min-h-0 w-full py-3 text-xs font-semibold text-[#1F8FE0] hover:bg-gray-50 border-t border-gray-100 transition-colors"
+                      onClick={() => { setShowNotifPanel(false); setActivePage("Notifications"); }}
+                    >View all notifications</button>
+                  </div>
+                </>
               )}
-            </button>
+            </div>
             <button className="text-gray-600 hover:text-gray-900" onClick={() => setModal("help")}>
               <HelpCircle className="w-5 h-5" />
             </button>
