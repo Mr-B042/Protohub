@@ -1562,7 +1562,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [commitmentText, setCommitmentText]     = useState(DEFAULT_COMMITMENT_TEXT);
   const [allowDisagree, setAllowDisagree]       = useState(true);
   const [embedSettingsSaving, setEmbedSettingsSaving] = useState(false);
-  const [cacheBumpSaving, setCacheBumpSaving] = useState(false);
 
   // Cache-version auto-purge: compare org's cacheVersion to localStorage.
   // If mismatch (or missing), wipe every protohub.* key and reload so the UI
@@ -16209,39 +16208,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="text-xs text-gray-500">
                     <strong>Now in this timezone:</strong> {formatDateTime(new Date())}
                   </div>
-                </div>
-              </section>
-              )}
-
-              {(currentRole === "Owner" || currentRole === "Admin") && (
-              <section className="space-y-3">
-                <h2 className="text-base font-bold text-gray-800">Force refresh all clients</h2>
-                <p className="text-sm text-gray-500">After a tenant reset or major change, bump the cache version. Every team member's browser will auto-purge its local cache and reload to pull fresh state. Use sparingly — it interrupts everyone.</p>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                  <button
-                    disabled={cacheBumpSaving}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-300 text-amber-800 bg-amber-50 text-sm font-bold hover:bg-amber-100 transition-colors disabled:opacity-50"
-                    onClick={async () => {
-                      if (!window.confirm("Force-refresh every team member's browser?\n\nThey will see a brief reload on next page-load. Their unsaved local changes will be lost.")) return;
-                      setCacheBumpSaving(true);
-                      try {
-                        const res = await authApi.bumpCacheVersion();
-                        // Sync our own localStorage so we don't trigger our own purge effect
-                        localStorage.setItem("protohub.cacheVersion", String(res.cacheVersion));
-                        // But still wipe ourselves locally — operator wants a clean slate too
-                        Object.keys(localStorage)
-                          .filter((k) => k.startsWith("protohub.") && k !== "protohub.cacheVersion")
-                          .forEach((k) => localStorage.removeItem(k));
-                        showToast(`Cache version bumped to ${res.cacheVersion}. Reloading…`);
-                        setTimeout(() => window.location.reload(), 600);
-                      } catch (e: any) {
-                        showToast(`Failed: ${e?.message ?? "unknown error"}`);
-                        setCacheBumpSaving(false);
-                      }
-                    }}
-                  >
-                    <RefreshCw className="w-4 h-4" /> {cacheBumpSaving ? "Bumping…" : "Force refresh all clients"}
-                  </button>
                 </div>
               </section>
               )}

@@ -18,7 +18,7 @@ const readRateLimit = rateLimit({
 // customer-facing public embed form to know which fields to render.
 router.get("/:orgId", readRateLimit, async (req, res) => {
   try {
-    const settings = await readSettings(req.params.orgId);
+    const settings = await readSettings(req.params.orgId as string);
     res.json(settings);
   } catch (e: any) {
     res.status(500).json({ error: e.message ?? "Failed to load embed settings." });
