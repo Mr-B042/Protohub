@@ -11109,10 +11109,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="ml-auto flex items-center gap-4">
             {/* Notification bell + dropdown */}
             <div className="relative">
-              <button className="text-gray-600 hover:text-gray-900 relative" onClick={() => setShowNotifPanel((v) => !v)}>
+              <button className="text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
                 <Bell className="w-5 h-5" />
                 {unreadNotificationCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+                  <span className="absolute top-0 right-0 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
                     {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
                   </span>
                 )}
