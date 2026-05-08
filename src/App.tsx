@@ -7385,6 +7385,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreateOrderAddress(order.address ?? "");
     setCreateOrderCity(order.city ?? "");
     setCreateOrderState(order.state ?? "");
+    setCreateOrderQuantity(String(order.quantity ?? 1));
+    setCreateOrderAmount(String(order.amount ?? ""));
     setModal("editOrderCustomer");
   };
 
@@ -7393,6 +7395,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Customer name and phone are required.");
       return;
     }
+
+    const newQty    = Math.max(1, Number(createOrderQuantity) || 1);
+    const newAmount = Number(createOrderAmount) || selectedOrder.amount;
+    const qtyChanged    = newQty    !== (selectedOrder.quantity ?? 1);
+    const amountChanged = newAmount !== selectedOrder.amount;
 
     const orderSnapshot = selectedOrder;
     setTrackedOrders((value) =>
@@ -7408,20 +7415,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               city: createOrderCity.trim(),
               state: createOrderState.trim(),
               location: orderLocationFromFields(createOrderCity, createOrderState),
+              quantity: newQty,
+              amount: newAmount,
               notes: [
-                orderTimelineNote("Customer and delivery details edited from call rep console.", undefined, repScopeName),
+                orderTimelineNote(
+                  `Customer/delivery details edited by ${repScopeName}.${qtyChanged ? ` Qty: ${order.quantity ?? 1}→${newQty}.` : ""}${amountChanged ? ` Amount: ${formatProductMoney(order.amount, order.currency)}→${formatProductMoney(newAmount, order.currency)}.` : ""}`,
+                  undefined, repScopeName
+                ),
                 ...(order.notes ?? [])
               ]
             }
           : order
       )
     );
+
+    // Notify owner/admin if quantity or amount was changed by the rep
+    if (qtyChanged || amountChanged) {
+      const changes: string[] = [];
+      if (qtyChanged)    changes.push(`qty ${selectedOrder.quantity ?? 1}→${newQty}`);
+      if (amountChanged) changes.push(`amount ${formatProductMoney(selectedOrder.amount, selectedOrder.currency)}→${formatProductMoney(newAmount, selectedOrder.currency)}`);
+      pushSystemNotification({
+        type: "info",
+        title: "Order edited by rep",
+        message: `${repScopeName} updated ${selectedOrder.id} (${selectedOrder.customer}): ${changes.join(", ")}`,
+        orderId: selectedOrder.id,
+        link: `/dashboard/admin/orders/${selectedOrder.id}`
+      });
+    }
+
     const _soceId = selectedOrder.id;
     setModal(null);
-    showToast(`${selectedOrder.id} customer details saved.`);
-    ordersApi.update(_soceId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim() || createOrderPhone.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim() }).catch((err: any) => {
+    showToast(`${selectedOrder.id} saved.`);
+    ordersApi.update(_soceId, {
+      customer: createOrderCustomer.trim(),
+      phone: createOrderPhone.trim(),
+      whatsapp: createOrderWhatsapp.trim() || createOrderPhone.trim(),
+      address: createOrderAddress.trim(),
+      city: createOrderCity.trim(),
+      state: createOrderState.trim(),
+      quantity: newQty,
+      amount: newAmount
+    }).catch((err: any) => {
       setTrackedOrders((value) => value.map((o) => o.id === _soceId ? orderSnapshot : o));
-      showToast(`Failed to save customer details for ${_soceId}: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to save ${_soceId}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -19781,6 +19817,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <label><span>Email (Optional)</span><input value={createOrderEmail} onChange={(event) => setCreateOrderEmail(event.target.value)} type="email" placeholder="customer@example.com" /></label>
 	                  <label><span>City</span><input value={createOrderCity} onChange={(event) => setCreateOrderCity(event.target.value)} /></label>
 	                  <label><span>State</span><input value={createOrderState} onChange={(event) => setCreateOrderState(event.target.value)} /></label>
+	                  <label>
+	                    <span>Quantity{selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
+	                    <input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((p) => p.id === selectedOrder.productId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
+	                  </label>
+	                  <label>
+	                    <span>Order Amount{selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
+	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial" />
+	                  </label>
 	                </div>
 	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderCustomerEdit}>Save Changes</button></div>
