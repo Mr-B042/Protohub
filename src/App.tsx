@@ -3653,6 +3653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const expected = Math.max(0, order.amount - fee);
     const status: "Pending" | "Partial" | "Paid" = remit <= 0 ? "Pending" : remit >= expected ? "Paid" : "Partial";
     const validExtras = repExtraExpenses.filter((e) => Number(e.amount) > 0);
+    const orderSnapshot = order;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: fee,
@@ -3675,7 +3676,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setExpenses((prev) => [...newExpenses, ...prev]);
     }
     setRepExtraExpenses([]);
-    ordersApi.update(order.id, { logistics_cost: fee, amount_remitted: remit, remittance_status: status }).catch(() => showToast("Delivery details saved locally — sync failed."));
+    ordersApi.update(order.id, { logistics_cost: fee, amount_remitted: remit, remittance_status: status }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
+      showToast(`Delivery details for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
+    });
     showToast(`${order.id} delivery details saved${validExtras.length > 0 ? ` · ${validExtras.length} expense${validExtras.length === 1 ? "" : "s"} added` : ""}.`);
   };
   const productProfitabilityRows = products.map((product) => {
@@ -7038,7 +7042,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     setCreateOrderContext("admin");
     showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
-    ordersApi.create(order).catch(() => showToast(`${order.id} saved locally — sync failed.`));
+    ordersApi.create(order).catch((err: any) => {
+      // Roll back so the table doesn't claim a phantom order that doesn't exist
+      // server-side. Previously the misleading "saved locally" toast left admins
+      // believing the order was queued for retry — there is no retry queue.
+      setTrackedOrders((value) => value.filter((o) => o.id !== order.id));
+      showToast(`Failed to create ${order.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openOrderModal = (order: TrackedOrder, nextModal: ModalType) => {
@@ -7077,6 +7087,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const agentName = agents.find((agent) => agent.id === createOrderAgentId)?.name ?? "Unassigned";
+    const orderSnapshot = selectedOrder;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -7097,7 +7108,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setModal(null);
     }
     showToast(`${selectedOrder.id} delivery agent updated.`);
-    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null }).catch(() => {});
+    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
+      showToast(`Failed to update agent for ${_soaId}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openEditSelectedOrder = () => {
@@ -7137,6 +7151,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const pricing = primaryPricing(product);
     const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
     const _soeId = selectedOrder.id;
+    const orderSnapshot = selectedOrder;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -7169,7 +7184,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : order
       )
     );
-    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id, product_name: product.name, package_name: packageRecord?.name ?? "Manual package", quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null }).catch(() => {});
+    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id, product_name: product.name, package_name: packageRecord?.name ?? "Manual package", quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((o) => o.id === _soeId ? orderSnapshot : o));
+      showToast(`Failed to save edits to ${_soeId}: ${err?.message ?? "please retry"}.`);
+    });
     setModal(null);
     showToast(`${selectedOrder.id} updated.`);
   };
@@ -7289,6 +7307,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const orderSnapshot = selectedOrder;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -7313,7 +7332,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _soceId = selectedOrder.id;
     setModal(null);
     showToast(`${selectedOrder.id} customer details saved.`);
-    ordersApi.update(_soceId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim() || createOrderPhone.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim() }).catch(() => {});
+    ordersApi.update(_soceId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim() || createOrderPhone.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim() }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((o) => o.id === _soceId ? orderSnapshot : o));
+      showToast(`Failed to save customer details for ${_soceId}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const saveRepScheduleDate = () => {
@@ -7398,13 +7420,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!selectedOrder) {
       return;
     }
+    // Snapshot full state needed to undo if the server rejects the delete:
+    // the order itself, the warehouse-stock restore, the audit movement.
+    const orderSnapshot = selectedOrder;
+    const productSnapshot = selectedOrder.stockDeducted && selectedOrder.productId
+      ? products.find((p) => p.id === selectedOrder.productId)
+      : null;
+    let restoreMovementId: string | null = null;
     if (selectedOrder.stockDeducted && selectedOrder.productId) {
       const product = products.find((p) => p.id === selectedOrder.productId);
       const qty = quantityForOrder(selectedOrder);
       if (product) {
+        const movId = makeMovementId();
+        restoreMovementId = movId;
         setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock + qty, unitsSold: Math.max(0, p.unitsSold - qty) } : p));
-        setStockMovements((prev) => [{ id: makeMovementId(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
-        stockApi.update({ productId: product.id, change: qty, note: `Stock restored: order ${selectedOrder.id} deleted` }).catch(() => {});
+        setStockMovements((prev) => [{ id: movId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Return", qty, balanceAfter: product.warehouseStock + qty, order: selectedOrder.id, by: ownerName, note: `Stock restored: order ${selectedOrder.id} deleted` }, ...prev]);
+        stockApi.update({ productId: product.id, change: qty, note: `Stock restored: order ${selectedOrder.id} deleted` }).catch(() => { /* movement reconciles on next stockApi.movements load */ });
       }
     }
     const _doId = selectedOrder.id;
@@ -7412,7 +7443,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
-    ordersApi.delete(_doId).catch(() => {});
+    ordersApi.delete(_doId).catch((err: any) => {
+      // Restore the order; restore stock + units_sold; remove the audit movement we synthesized.
+      setTrackedOrders((value) => [orderSnapshot, ...value]);
+      if (productSnapshot) setProducts((prev) => prev.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
+      if (restoreMovementId) setStockMovements((prev) => prev.filter((m) => m.id !== restoreMovementId));
+      showToast(`Failed to delete ${_doId}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
 
@@ -8579,6 +8616,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       date: displayDateFromKey(todayKey()),
       notes: [{ id: makeNoteId(), text: `Converted from ${selectedCart.id}.`, by: ownerName, date: new Date().toISOString() }]
     };
+    const cartSnapshot = selectedCart;
     setTrackedOrders((value) => [order, ...value]);
     setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, status: "Converted", lastActivity: new Date().toISOString() } : cart)));
     setModal(null);
@@ -8586,11 +8624,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     // Persist the new order server-side so the backend's notifyOrderEvent
     // fires (creates an "order_new" notification + triggers email/push).
-    ordersApi.create(order).catch(() => showToast(`${order.id} saved locally — sync failed.`));
+    ordersApi.create(order).catch((err: any) => {
+      setTrackedOrders((value) => value.filter((o) => o.id !== order.id));
+      // Cart-status revert lives in the cartsApi.update catch below — keep
+      // the cart "Converted" optimistically until that call resolves.
+      showToast(`Failed to convert ${cartSnapshot.id}: ${err?.message ?? "please retry"}.`);
+    });
 
     // Mark the cart as Converted on the server too so it doesn't keep
     // showing up as Open Abandoned for other admins.
-    cartsApi.update(selectedCart.id, { status: "Converted" }).catch(() => {});
+    cartsApi.update(selectedCart.id, { status: "Converted" }).catch((err: any) => {
+      setAbandonedCarts((value) => value.map((cart) => cart.id === cartSnapshot.id ? cartSnapshot : cart));
+      showToast(`Cart status not synced: ${err?.message ?? "please retry"}.`);
+    });
 
     // Conversion-specific notification (in addition to the backend's
     // order_new) — captures the cart→order link with the cart ID surfaced.
@@ -18972,9 +19018,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                              onBlur={(e) => {
 	                                const fee = Math.max(0, Number(e.target.value) || 0);
 	                                if (fee === (selectedOrder.logisticsCost ?? 0)) return;
+	                                const orderSnapshot = selectedOrder;
 	                                const updated = { ...selectedOrder, logisticsCost: fee };
 	                                setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? updated : o));
-	                                ordersApi.update(selectedOrder.id, { logistics_cost: fee }).catch(() => {});
+	                                ordersApi.update(selectedOrder.id, { logistics_cost: fee }).catch((err: any) => {
+	                                  setTrackedOrders((prev) => prev.map((o) => o.id === orderSnapshot.id ? orderSnapshot : o));
+	                                  showToast(`Failed to set delivery fee: ${err?.message ?? "please retry"}.`);
+	                                });
 	                                syncOrderDeliveryExpense(updated);
 	                                showToast(`Delivery fee for ${selectedOrder.id} set to ${formatProductMoney(fee, selectedOrder.currency)}.`);
 	                              }}
