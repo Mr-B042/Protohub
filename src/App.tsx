@@ -5400,8 +5400,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // products and the user still needs to filter them.
     const sorted = [...products].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
     return (
-      <div className="relative" onMouseLeave={() => setShow(false)}>
-        <button onClick={() => setShow(!show)} className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
+      <div className="relative w-full sm:w-auto" onMouseLeave={() => setShow(false)}>
+        <button onClick={() => setShow(!show)} className={`!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
           <Package className="w-4 h-4" />
           {ids.size === 0 ? "All Products" : ids.size === 1 ? products.find(p => ids.has(p.id))?.name ?? "1 product" : `${ids.size} products`}
           {ids.size > 0 && (
@@ -9939,27 +9939,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Notifications, Settings). Period + currency + product + week-nav.
   const renderRepWorkspaceFilters = () => (
     <div className="flex flex-col gap-2 mb-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+        {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+        <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
           {periods.map((item) => (
             <button
               key={item}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${repWorkspacePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+              className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${repWorkspacePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
               onClick={() => handleRepWorkspacePeriodChange(item)}
             >{item}</button>
           ))}
         </div>
-        <div className="relative">
+        {/* Date range — full width on mobile */}
+        <div className="relative w-full sm:w-auto">
           <button
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+            className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
             onClick={() => setShowRepWorkspaceDateRange((v) => !v)}
           >
             <CalendarDays className="w-4 h-4" /> {repWorkspacePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
           </button>
           {showRepWorkspaceDateRange && renderDateRangeCalendar("rep-workspace-date-range-panel", repWorkspaceDateRange, setRepWorkspaceDateRange, applyRepWorkspaceDateRange, () => setShowRepWorkspaceDateRange(false))}
         </div>
+        {/* Currency — full width on mobile */}
         <select
-          className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+          className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
           aria-label="Currency"
           value={currency}
           onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
@@ -11233,7 +11236,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
                   <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
                   <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
                     <Download className="w-4 h-4" /> Export Report
                   </button>
@@ -11272,11 +11276,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-3 mb-6">
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 mb-6">
+                {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                   {periods.map((item) => (
                     <button
-                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                      className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                       onClick={() => handlePeriodChange(item)}
                       key={item}
                     >
@@ -11284,14 +11289,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   ))}
                 </div>
-                <div className="relative">
-                  <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowDateRange((value) => !value)}>
+                {/* Date range — full width on mobile */}
+                <div className="relative w-full sm:w-auto">
+                  <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowDateRange((value) => !value)}>
                     <CalendarDays className="w-4 h-4" /> {period === "Custom" ? "Edit date range" : "Pick a date range"}
                   </button>
                   {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
                 </div>
+                {/* Currency — full width on mobile */}
                 <select
-                  className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                  className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                   aria-label="Currency"
                   value={currency}
                   onChange={(event) => {
@@ -11305,6 +11312,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option value="GBP">£ British Pound</option>
                 </select>
                 {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
+                {/* Mobile-only: Export Report stacked full-width */}
+                <div className="flex flex-col gap-2 w-full sm:hidden">
+                  <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
+                    <Download className="w-4 h-4" /> Export Report
+                  </button>
+                </div>
               </div>
               {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange)}
 
@@ -12175,8 +12188,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>
                   <p className="text-sm font-medium text-gray-500">Track captured carts, monitor rep follow-up, and reassign leads when needed.</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportCartsCsv}>
+                {/* Desktop-only action buttons — on mobile these appear below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportCartsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
                 </div>
@@ -12186,24 +12200,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={7} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-col gap-2 mb-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button key={item} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCartsPeriodChange(item)}>{item}</button>
+                      <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCartsPeriodChange(item)}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCartsDateRange(v => !v)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCartsDateRange(v => !v)}>
                       <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showCartsDateRange && renderDateRangeCalendar("carts-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(cartProductIds, setCartProductIds, showCartProductFilter, setShowCartProductFilter)}
+                  {/* Mobile-only: Export CSV stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportCartsCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
               </div>
@@ -12636,8 +12659,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Deliveries</h1>
                   <p className="text-sm font-medium text-gray-500">Orders fulfilled in the selected period, anchored to delivery date</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportDeliveriesCsv}>
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportDeliveriesCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
                 </div>
@@ -12647,24 +12671,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6"}>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${deliveriesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleDeliveriesPeriodChange(item)} key={item}>{item}</button>
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${deliveriesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleDeliveriesPeriodChange(item)} key={item}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowDeliveriesDateRange((value) => !value)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowDeliveriesDateRange((value) => !value)}>
                       <CalendarDays className="w-4 h-4" /> {deliveriesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showDeliveriesDateRange && renderDateRangeCalendar("deliveries-date-range-panel", deliveriesDateRange, setDeliveriesDateRange, applyDeliveriesDateRange, () => setShowDeliveriesDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(deliveriesProductIds, setDeliveriesProductIds, showDeliveriesProductFilter, setShowDeliveriesProductFilter)}
+                  {/* Mobile-only: Export CSV stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportDeliveriesCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange)}
               </div>
@@ -12932,19 +12965,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                   {/* Period filter — shares scope with the Sales Reps list page */}
                   <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                      {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                      <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                         {periods.map((item) => (
                           <button
                             key={item}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                            className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                             onClick={() => handleSalesPeriodChange(item)}
                           >{item}</button>
                         ))}
                       </div>
-                      <div className="relative">
+                      {/* Date range — full width on mobile */}
+                      <div className="relative w-full sm:w-auto">
                         <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                          className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                           onClick={() => setShowSalesDateRange((v) => !v)}
                         >
                           <CalendarDays className="w-4 h-4" /> {salesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
@@ -13086,7 +13121,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Sales Representatives</h1>
                   <p className="text-sm font-medium text-gray-500">Manage and monitor your sales team performance</p>
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addSalesRep")}>
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <button className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addSalesRep")}>
                   <Plus className="w-4 h-4" /> Add Sales Rep
                 </button>
               </header>
@@ -13095,19 +13131,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6"}>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleSalesPeriodChange(item)} key={item}>{item}</button>
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleSalesPeriodChange(item)} key={item}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowSalesDateRange((value) => !value)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowSalesDateRange((value) => !value)}>
                       <CalendarDays className="w-4 h-4" /> {salesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showSalesDateRange && renderDateRangeCalendar("sales-date-range-panel", salesDateRange, setSalesDateRange, applySalesDateRange, () => setShowSalesDateRange(false))}
                   </div>
                   {renderProductFilter(salesProductIds, setSalesProductIds, showSalesProductFilter, setShowSalesProductFilter)}
+                  {/* Mobile-only: Add Sales Rep stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addSalesRep")}>
+                      <Plus className="w-4 h-4" /> Add Sales Rep
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
               </div>
@@ -13547,19 +13591,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                   {/* Filters row */}
                   <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                      {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                      <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                         {periods.map((item) => (
                           <button
                             key={item}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${agentsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                            className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${agentsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                             onClick={() => handleAgentsPeriodChange(item)}
                           >{item}</button>
                         ))}
                       </div>
-                      <div className="relative">
+                      {/* Date range — full width on mobile */}
+                      <div className="relative w-full sm:w-auto">
                         <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                          className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                           onClick={() => setShowAgentsDateRange((v) => !v)}
                         >
                           <CalendarDays className="w-4 h-4" /> {agentsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
@@ -14128,11 +14174,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Agent Logistics &amp; Performance</h1>
                   <p className="text-sm font-medium text-gray-500">Manage and monitor external delivery agents and their performance metrics across regions</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex-1 sm:flex-none" onClick={exportAgentsCsv}>
+                {/* Desktop-only action buttons — on mobile these appear below the controls */}
+                <div className="hidden sm:flex flex-wrap items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
-                  <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors flex-1 sm:flex-none" onClick={() => setModal("addAgent")}>
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addAgent")}>
                     <Plus className="w-4 h-4" /> Add Agent
                   </button>
                 </div>
@@ -14142,19 +14189,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
                       <button
                         key={item}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${agentsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${agentsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                         onClick={() => handleAgentsPeriodChange(item)}
                       >{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
                     <button
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                       onClick={() => setShowAgentsDateRange((v) => !v)}
                     >
                       <CalendarDays className="w-4 h-4" /> {agentsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
@@ -14162,8 +14211,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {showAgentsDateRange && renderDateRangeCalendar("agent-list-date-range-panel", agentsDateRange, setAgentsDateRange, applyAgentsDateRange, () => setShowAgentsDateRange(false))}
                   </div>
                   {renderProductFilter(agentProductIds, setAgentProductIds, showAgentProductFilter, setShowAgentProductFilter)}
+                  {/* Currency — full width on mobile */}
                   <select
-                    className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                     aria-label="Currency"
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
@@ -14172,7 +14222,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
-                  <span className="text-xs font-medium text-gray-500">All amounts in {selectedCurrency.label}</span>
+                  <span className="text-xs font-medium text-gray-500 hidden sm:inline">All amounts in {selectedCurrency.label}</span>
+                  {/* Mobile-only: Add Agent + Export CSV stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addAgent")}>
+                      <Plus className="w-4 h-4" /> Add Agent
+                    </button>
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange)}
               </div>
@@ -14312,12 +14371,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ) : activePage === "Waybill" ? (
             <div className="flex flex-col gap-4 sm:gap-6">
               {/* Header */}
-              <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">Waybill / Stock Transfers</h1>
                   <p className="text-sm text-gray-500 mt-0.5">Track stock shipped between warehouse and state agents, or agent-to-agent.</p>
                 </div>
-                <button className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors w-full sm:w-auto" onClick={openCreateWaybill}>+ New Waybill</button>
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <button className="!min-h-0 hidden sm:inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
               </div>
 
               <DataErrorBanner />
@@ -14353,27 +14413,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {/* Filters */}
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
                       <button
                         key={item}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${waybillsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${waybillsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                         onClick={() => handleWaybillsPeriodChange(item)}
                       >{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
                     <button
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                       onClick={() => setShowWaybillsDateRange((v) => !v)}
                     >
                       <CalendarDays className="w-4 h-4" /> {waybillsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showWaybillsDateRange && renderDateRangeCalendar("waybill-date-range-panel", waybillsDateRange, setWaybillsDateRange, applyWaybillsDateRange, () => setShowWaybillsDateRange(false))}
                   </div>
+                  {/* Currency — full width on mobile */}
                   <select
-                    className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
                     aria-label="Currency"
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
@@ -14384,7 +14447,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </select>
                   {renderProductFilter(waybillProductIds, setWaybillProductIds, showWaybillProductFilter, setShowWaybillProductFilter)}
                   <select
-                    className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     aria-label="Waybill status"
                     value={waybillStatusFilter}
                     onChange={(e) => setWaybillStatusFilter(e.target.value as WaybillStatus | "All")}
@@ -14397,6 +14460,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <option value="Defective">Defective</option>
                     <option value="Missing">Missing</option>
                   </select>
+                  {/* Mobile-only: New Waybill stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
+                  </div>
                 </div>
                 {renderWeekNav(waybillsNavStart, setWaybillsNavStart, waybillsNavSpan, setWaybillsNavSpan, setWaybillsPeriod, setWaybillsDateRange)}
               </div>
@@ -14784,7 +14851,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Customer Directory</h1>
                   <p className="text-sm font-medium text-gray-500">Manage your customer relationships and track lifetime value performance</p>
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportCustomersCsv}>
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <button className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportCustomersCsv}>
                   <Download className="w-4 h-4" /> Export Data
                 </button>
               </header>
@@ -14793,23 +14861,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6"}>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${customerPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCustomerPeriodChange(item)} key={item}>{item}</button>
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${customerPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCustomerPeriodChange(item)} key={item}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCustomerDateRange((value) => !value)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCustomerDateRange((value) => !value)}>
                       <CalendarDays className="w-4 h-4" /> {customerPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showCustomerDateRange && renderDateRangeCalendar("customer-date-range-panel", customerDateRange, setCustomerDateRange, applyCustomerDateRange, () => setShowCustomerDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
+                  {/* Mobile-only: Export Data stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportCustomersCsv}>
+                      <Download className="w-4 h-4" /> Export Data
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(customerNavStart, setCustomerNavStart, customerNavSpan, setCustomerNavSpan, setCustomerPeriod, setCustomerDateRange)}
               </div>
@@ -14946,11 +15023,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Expense Management</h1>
                   <p className="text-sm font-medium text-gray-500">Monitor and manage your e-commerce operational costs</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
+                {/* Desktop-only action buttons — on mobile these appear below the controls */}
+                <div className="hidden sm:flex items-center gap-2">
+                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
                     <RefreshCw className="w-4 h-4" /> Refresh
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
+                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
                     <Plus className="w-4 h-4" /> Add Expense
                   </button>
                 </div>
@@ -14960,23 +15038,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${expensePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleExpensePeriodChange(item)} key={item}>{item}</button>
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${expensePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleExpensePeriodChange(item)} key={item}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowExpenseDateRange((value) => !value)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowExpenseDateRange((value) => !value)}>
                       <CalendarDays className="w-4 h-4" /> {expensePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showExpenseDateRange && renderDateRangeCalendar("expense-date-range-panel", expenseDateRange, setExpenseDateRange, applyExpenseDateRange, () => setShowExpenseDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
+                  {/* Mobile-only: Add Expense + Refresh stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
+                      <Plus className="w-4 h-4" /> Add Expense
+                    </button>
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
+                      <RefreshCw className="w-4 h-4" /> Refresh
+                    </button>
+                  </div>
                 </div>
                 {renderWeekNav(expenseNavStart, setExpenseNavStart, expenseNavSpan, setExpenseNavSpan, setExpensePeriod, setExpenseDateRange)}
               </div>
@@ -15168,7 +15258,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Finance &amp; Accounting</h1>
                   <p className="text-sm font-medium text-gray-500">Comprehensive financial analytics and performance tracking</p>
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
+                {/* Desktop-only action button — on mobile this appears below the controls */}
+                <button className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
                   <Download className="w-4 h-4" /> {financeTab === "Profit & Loss" ? "Export PDF" : financeTab === "Sales Rep Finance" ? "Payout Report" : financeTab === "Agent Costs" ? "Export CSV" : "Export Report"}
                 </button>
               </header>
@@ -15178,21 +15269,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className={dataLoading ? "hidden" : ""}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors w-full sm:w-auto" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                    {periods.map((item) => (
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                    </button>
+                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
+                  </div>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
-                  <div className="flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar w-full sm:w-auto">
-                    {periods.map((item) => (
-                      <button className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
-                    ))}
-                  </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors w-full sm:w-auto" onClick={() => setShowFinanceDateRange((value) => !value)}>
-                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                  {/* Mobile-only: Export Report stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
+                      <Download className="w-4 h-4" /> {financeTab === "Profit & Loss" ? "Export PDF" : financeTab === "Sales Rep Finance" ? "Payout Report" : financeTab === "Agent Costs" ? "Export CSV" : "Export Report"}
                     </button>
-                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
                   </div>
                 </div>
                 {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
@@ -16262,19 +16362,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {adTrackingTab === "Campaign Orders" && (<>
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
-                      <button key={item} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
+                      <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange(v => !v)}>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange(v => !v)}>
                       <CalendarDays className="w-4 h-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
                     {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                   </div>
-                  <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
+                  {/* Currency — full width on mobile */}
+                  <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
@@ -17619,19 +17722,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className={dataLoading ? "hidden" : ""}>
               {/* Period + product filter row */}
               <div className="flex flex-col gap-2 mb-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
                     {periods.map((item) => (
                       <button
                         key={item}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${notificationsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${notificationsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                         onClick={() => handleNotificationsPeriodChange(item)}
                       >{item}</button>
                     ))}
                   </div>
-                  <div className="relative">
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
                     <button
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                       onClick={() => setShowNotificationsDateRange((v) => !v)}
                     >
                       <CalendarDays className="w-4 h-4" /> {notificationsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
