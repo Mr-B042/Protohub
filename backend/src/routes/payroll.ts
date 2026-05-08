@@ -82,7 +82,7 @@ router.post("/generate", async (req, res) => {
   // Fetch penalties for this period to deduct from totals
   const { data: penalties } = await supabase
     .from("rep_penalties")
-    .select("user_id, amount")
+    .select("rep_id, amount")
     .eq("org_id", orgId)
     .eq("period", period);
 
@@ -105,7 +105,7 @@ router.post("/generate", async (req, res) => {
     }
 
     const penaltyTotal = (penalties ?? [])
-      .filter((p) => p.user_id === rep.id)
+      .filter((p) => p.rep_id === rep.id)
       .reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
 
     const total = Math.max(0, fixed + commission + tierBonus - penaltyTotal);
@@ -126,7 +126,10 @@ router.patch("/:id/approve", async (req, res) => {
     .update({ status: "Approved", approved_at: new Date().toISOString() })
     .eq("id", req.params.id).eq("org_id", req.user!.orgId)
     .select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) {
+    if (error.code === "PGRST116") { res.status(404).json({ error: "Payroll run not found." }); return; }
+    res.status(500).json({ error: error.message }); return;
+  }
 
   // Fire-and-forget: notify each rep their payroll was approved
   if (data?.entries && Array.isArray(data.entries)) {
@@ -149,7 +152,10 @@ router.patch("/:id/mark-paid", async (req, res) => {
     .update({ status: "Paid" })
     .eq("id", req.params.id).eq("org_id", req.user!.orgId)
     .select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) {
+    if (error.code === "PGRST116") { res.status(404).json({ error: "Payroll run not found." }); return; }
+    res.status(500).json({ error: error.message }); return;
+  }
   res.json(data);
 });
 

@@ -8977,13 +8977,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const createExpense = () => {
-    if (!expenseAmount.trim()) {
-      showToast("Expense amount is required.");
+    const parsedAmount = Number(expenseAmount);
+    if (!expenseAmount.trim() || isNaN(parsedAmount)) {
+      showToast("Expense amount is required and must be a number.");
       return;
     }
 
     const product = products.find((item) => item.id === expenseProduct);
-    const amount = Math.max(0, Number(expenseAmount) || 0);
+    const amount = Math.max(0, parsedAmount);
     const record: ExpenseRecord = {
       id: makeExpenseId(),
       type: expenseType,

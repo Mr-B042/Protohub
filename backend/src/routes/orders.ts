@@ -318,8 +318,13 @@ router.patch("/:id/status", async (req, res) => {
     updates.delivered_date  = watDate.toISOString().split("T")[0];
     updates.stock_deducted  = true;
   } else if (existing?.status === "Delivered") {
-    updates.delivered_date = null;
-    updates.stock_deducted = false;
+    updates.delivered_date    = null;
+    updates.stock_deducted    = false;
+    // Clear remittance so a un-delivered order is not flagged as overdue by
+    // the remittance cron or shown as outstanding in the finance dashboard.
+    updates.amount_remitted   = 0;
+    updates.logistics_cost    = 0;
+    updates.remittance_status = "Pending";
   }
 
   const { data, error } = await supabase
