@@ -8,12 +8,34 @@ interface Props {
 
 type Mode = "login" | "register" | "forgot";
 
+function passwordStrength(pw: string): { label: string; pct: number; color: string } {
+  if (!pw) return { label: "", pct: 0, color: "" };
+  let score = 0;
+  if (pw.length >= 8)  score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  const buckets: Array<{ label: string; color: string }> = [
+    { label: "Too weak",  color: "bg-red-500" },
+    { label: "Weak",      color: "bg-orange-500" },
+    { label: "Fair",      color: "bg-yellow-500" },
+    { label: "Good",      color: "bg-lime-500" },
+    { label: "Strong",    color: "bg-green-500" },
+    { label: "Very strong", color: "bg-emerald-600" }
+  ];
+  const b = buckets[score];
+  return { label: b.label, pct: ((score) / (buckets.length - 1)) * 100, color: b.color };
+}
+
 export function LoginScreen({ onLogin }: Props) {
   const [mode, setMode]       = useState<Mode>("login");
   const [orgName, setOrgName] = useState("");
   const [name, setName]       = useState("");
   const [email, setEmail]     = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError]     = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
@@ -40,12 +62,21 @@ export function LoginScreen({ onLogin }: Props) {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(""); setLoading(true);
+    setError("");
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setLoading(true);
     try {
       await authApi.register({ orgName, name, email, password });
       setSuccess("Account created! You can now sign in.");
       setMode("login");
-      setOrgName(""); setName("");
+      setOrgName(""); setName(""); setPassword(""); setConfirmPassword("");
     } catch (err: any) {
       setError(err.message ?? "Registration failed.");
     } finally {
@@ -58,18 +89,22 @@ export function LoginScreen({ onLogin }: Props) {
     setError(""); setLoading(true);
     try {
       await authApi.resetPassword(email);
+      // Backend deliberately returns 200 regardless of email existence —
+      // we only reach this branch on a successful HTTP response.
       setSuccess("If that email is registered, a reset link has been sent. Check your inbox.");
       setMode("login");
     } catch (err: any) {
-      // Always show success to not leak whether email is registered
-      setSuccess("If that email is registered, a reset link has been sent. Check your inbox.");
-      setMode("login");
+      // Real failure (network, 5xx, rate-limit). Surface the error so the
+      // user knows the request didn't go through — earlier code silently
+      // swallowed this as success and the user would never get an email.
+      setError(err?.message ?? "Could not send reset email. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const switchMode = (m: Mode) => { setMode(m); setError(""); setSuccess(""); };
+  const switchMode = (m: Mode) => { setMode(m); setError(""); setSuccess(""); setConfirmPassword(""); };
+  const strength = passwordStrength(password);
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
@@ -199,16 +234,52 @@ export function LoginScreen({ onLogin }: Props) {
                     </button>
                   )}
                 </div>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === "register" ? "Min. 8 characters" : "••••••••"}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:border-transparent"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={mode === "register" ? "Min. 8 characters" : "••••••••"}
+                    className="w-full px-3 py-2.5 pr-16 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#1F8FE0]"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {mode === "register" && password.length > 0 && (
+                  <div className="mt-1.5">
+                    <div className="h-1 w-full rounded-full bg-gray-100 overflow-hidden">
+                      <div className={`h-full transition-all ${strength.color}`} style={{ width: `${strength.pct}%` }} />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{strength.label}</p>
+                  </div>
+                )}
               </div>
+
+              {mode === "register" && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Confirm Password</label>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:border-transparent"
+                  />
+                  {confirmPassword.length > 0 && confirmPassword !== password && (
+                    <p className="text-xs text-red-600 mt-1">Passwords do not match.</p>
+                  )}
+                </div>
+              )}
 
               <button
                 type="submit"

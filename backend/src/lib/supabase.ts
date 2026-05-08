@@ -20,6 +20,14 @@ export const supabaseAuth = createClient(url, serviceKey, {
   auth: { persistSession: false }
 });
 
+// Anon-key client. Required for flows that go through Supabase's public auth
+// API (e.g. resetPasswordForEmail, which only triggers email delivery from
+// the anon-key endpoint — admin.generateLink does not send mail).
+const anonKey = process.env.SUPABASE_ANON_KEY;
+export const supabaseAnon = anonKey
+  ? createClient(url, anonKey, { auth: { persistSession: false } })
+  : null;
+
 // Create a client scoped to a specific user (respects RLS)
 export const supabaseAs = (accessToken: string) =>
   createClient(url, process.env.SUPABASE_ANON_KEY!, {

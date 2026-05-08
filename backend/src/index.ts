@@ -29,9 +29,15 @@ import payStructureRoutes  from "./routes/pay-structures.js";
 import salesTeamRoutes     from "./routes/sales-teams.js";
 import penaltyRoutes       from "./routes/penalties.js";
 import pushRoutes          from "./routes/push.js";
+import userRoutes          from "./routes/users.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
+
+// Trust the first proxy hop so req.ip reflects the real client IP behind
+// Railway/Vercel/Cloudflare. Required for accurate login_audit IP capture
+// and per-IP rate limiting.
+app.set("trust proxy", 1);
 
 // ── Security ──────────────────────────────────────────────
 app.use(helmet());
@@ -68,6 +74,7 @@ app.get("/health", (_req, res) => {
 // ── Routes ────────────────────────────────────────────────
 app.use("/api/auth/login",    authRateLimit);
 app.use("/api/auth/register", authRateLimit);
+app.use("/api/auth/refresh",  authRateLimit);
 app.use("/api/auth",          authRoutes);
 app.use("/api/products",      productRoutes);
 app.use("/api/orders",        orderRoutes);
@@ -89,6 +96,7 @@ app.use("/api/pay-structures",  payStructureRoutes);
 app.use("/api/sales-teams",     salesTeamRoutes);
 app.use("/api/penalties",       penaltyRoutes);
 app.use("/api/push",            pushRoutes);
+app.use("/api/users",           userRoutes);
 
 // ── Request logger ────────────────────────────────────────
 app.use((req, _res, next) => {
@@ -109,9 +117,22 @@ app.listen(PORT, () => {
 // ── Weekly report cron — every Sunday at 7:00 AM ──────────
 cron.schedule("0 7 * * 0", async () => {
   logger.info("cron: sending weekly reports");
-  const { data: orgs } = await supabase.from("organizations").select("id");
-  for (const org of orgs ?? []) {
-    await sendWeeklyReport(org.id);
+  try {
+    const { data: orgs, error } = await supabase.from("organizations").select("id");
+    if (error) { logger.error("cron: failed to fetch orgs", { error: error.message }); return; }
+    let sent = 0;
+    let failed = 0;
+    for (const org of orgs ?? []) {
+      try {
+        await sendWeeklyReport(org.id);
+        sent++;
+      } catch (e) {
+        failed++;
+        logger.error("cron: weekly report failed for org", { orgId: org.id, error: (e as Error).message });
+      }
+    }
+    logger.info("cron: weekly reports done", { sent, failed, total: orgs?.length ?? 0 });
+  } catch (e) {
+    logger.error("cron: weekly report job crashed", { error: (e as Error).message });
   }
-  logger.info("cron: weekly reports done", { count: orgs?.length ?? 0 });
 });

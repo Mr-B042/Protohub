@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { supabase, supabaseAuth } from "../lib/supabase.js";
+import { supabase, supabaseAuth, supabaseAnon } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 
@@ -9,10 +9,10 @@ const router = Router();
 // ── POST /api/auth/register ───────────────────────────────
 // Creates the first user (Owner) and their organization.
 const RegisterSchema = z.object({
-  orgName:  z.string().min(2),
-  name:     z.string().min(2),
-  email:    z.string().email(),
-  password: z.string().min(8)
+  orgName:  z.string().min(2).max(160),
+  name:     z.string().min(2).max(120),
+  email:    z.string().email().max(254),
+  password: z.string().min(8).max(200)
 });
 
 router.post("/register", async (req, res) => {
@@ -41,6 +41,12 @@ router.post("/register", async (req, res) => {
     .select("id")
     .single();
   if (orgError || !org) {
+    // Rollback: delete the auth user we just created so a retry can reuse the email.
+    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
+    if ((orgError as { code?: string } | null)?.code === "23505") {
+      res.status(409).json({ error: "An organization with this name already exists." });
+      return;
+    }
     res.status(500).json({ error: "Failed to create organization." });
     return;
   }
@@ -81,7 +87,8 @@ router.post("/login", async (req, res) => {
   if (error || !data.session) {
     logger.warn("login failed", { email, reason: error?.message ?? "no session" });
     // Record failed attempt (fire-and-forget, never blocks login flow)
-    void supabase.from("login_audit").insert({ email, success: false, ip: null });
+    supabase.from("login_audit").insert({ email, success: false, ip: req.ip ?? null })
+      .then(({ error: auditErr }) => { if (auditErr) logger.warn("login_audit insert failed", { error: auditErr.message }); });
     res.status(401).json({ error: "Invalid email or password." });
     return;
   }
@@ -102,7 +109,8 @@ router.post("/login", async (req, res) => {
     return;
   }
 
-  void supabase.from("login_audit").insert({ email, success: true, ip: null });
+  supabase.from("login_audit").insert({ email, success: true, ip: req.ip ?? null })
+    .then(({ error: auditErr }) => { if (auditErr) logger.warn("login_audit insert failed", { error: auditErr.message }); });
   logger.info("login success", { userId: profile.id, email, role: profile.role });
 
   res.json({
@@ -142,7 +150,7 @@ router.post("/refresh", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const { data: org } = await supabase
     .from("organizations")
-    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone")
+    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications")
     .eq("id", req.user!.orgId)
     .single();
   res.json({
@@ -153,7 +161,8 @@ router.get("/me", requireAuth, async (req, res) => {
       topPerformerBonusEnabled: !!org?.top_performer_bonus_enabled,
       topPerformerBonusAmount:  Number(org?.top_performer_bonus_amount ?? 0)
     },
-    timezone: org?.timezone ?? "Africa/Lagos"
+    timezone: org?.timezone ?? "Africa/Lagos",
+    adminCartNotifications: !!org?.admin_cart_notifications
   });
 });
 
@@ -172,12 +181,13 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   if (typeof req.body.topPerformerBonusEnabled === "boolean") updates.top_performer_bonus_enabled = req.body.topPerformerBonusEnabled;
   if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
   if (typeof req.body.timezone === "string" && req.body.timezone.trim()) updates.timezone = req.body.timezone.trim();
+  if (typeof req.body.adminCartNotifications === "boolean") updates.admin_cart_notifications = req.body.adminCartNotifications;
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
   const { data, error } = await supabase
     .from("organizations")
     .update(updates)
     .eq("id", req.user!.orgId)
-    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone")
+    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications")
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({
@@ -185,7 +195,8 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
     logoUrl: data?.logo_url ?? "",
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
     topPerformerBonusAmount:  Number(data?.top_performer_bonus_amount ?? 0),
-    timezone: data?.timezone ?? "Africa/Lagos"
+    timezone: data?.timezone ?? "Africa/Lagos",
+    adminCartNotifications: !!data?.admin_cart_notifications
   });
 });
 
@@ -216,7 +227,7 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 router.get("/team", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, active, created_at")
+    .select("id, name, email, role, active, created_at, round_robin_position")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -238,7 +249,9 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     email: "email",
     permissions: "permissions",
     extraPages: "extra_pages",
-    extra_pages: "extra_pages"
+    extra_pages: "extra_pages",
+    roundRobinPosition: "round_robin_position",
+    round_robin_position: "round_robin_position"
   };
   const updates: Record<string, unknown> = {};
   for (const [inKey, dbKey] of Object.entries(allowed)) {
@@ -253,6 +266,29 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
+});
+
+// ── PUT /api/auth/team/round-robin ───────────────────────
+// Accepts { order: string[] } — an ordered array of user IDs.
+// Writes position 0, 1, 2, … to each user's round_robin_position column.
+router.put("/team/round-robin", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin"].includes(req.user!.role)) {
+    res.status(403).json({ error: "Only Owner or Admin can reorder the round-robin." });
+    return;
+  }
+  const order: unknown = req.body.order;
+  if (!Array.isArray(order) || order.some((id) => typeof id !== "string")) {
+    res.status(400).json({ error: "order must be an array of user ID strings." });
+    return;
+  }
+  // Write positions in parallel
+  const updates = (order as string[]).map((id, idx) =>
+    supabase.from("users").update({ round_robin_position: idx }).eq("id", id).eq("org_id", req.user!.orgId)
+  );
+  const results = await Promise.all(updates);
+  const failed = results.find((r) => r.error);
+  if (failed?.error) { res.status(500).json({ error: failed.error.message }); return; }
+  res.json({ ok: true });
 });
 
 // ── DELETE /api/auth/team/:id ─────────────────────────────
@@ -294,9 +330,9 @@ router.post("/invite", requireAuth, async (req, res) => {
   }
 
   const Schema = z.object({
-    name:     z.string().min(2),
-    email:    z.string().email(),
-    password: z.string().min(8),
+    name:     z.string().min(2).max(120),
+    email:    z.string().email().max(254),
+    password: z.string().min(8).max(200),
     role:     z.enum(["Admin", "Sales Rep", "Inventory Manager"])
   });
 
@@ -329,7 +365,10 @@ router.post("/invite", requireAuth, async (req, res) => {
 });
 
 // ── POST /api/auth/reset-password ────────────────────────
-// Sends a Supabase magic link / password-reset email.
+// Sends a Supabase password-reset email via the anon-key auth API.
+// The admin generateLink endpoint returns the link but does NOT email it;
+// resetPasswordForEmail goes through Supabase's built-in mailer using the
+// auth project's email templates and SMTP settings.
 router.post("/reset-password", async (req, res) => {
   const { email } = req.body;
   if (!email || typeof email !== "string") {
@@ -337,10 +376,19 @@ router.post("/reset-password", async (req, res) => {
     return;
   }
   // Always return 200 so we don't leak whether an email is registered.
-  await supabase.auth.admin.generateLink({
-    type: "recovery",
-    email: email.trim().toLowerCase()
-  });
+  if (!supabaseAnon) {
+    logger.error("reset-password: SUPABASE_ANON_KEY not configured — no recovery email sent");
+    res.json({ message: "If that email is registered, a password-reset link has been sent." });
+    return;
+  }
+  const redirectTo = `${process.env.FRONTEND_URL ?? "http://localhost:5173"}/#/reset-password`;
+  const { error } = await supabaseAnon.auth.resetPasswordForEmail(
+    email.trim().toLowerCase(),
+    { redirectTo }
+  );
+  if (error) {
+    logger.warn("reset-password: resetPasswordForEmail failed", { error: error.message });
+  }
   res.json({ message: "If that email is registered, a password-reset link has been sent." });
 });
 
@@ -349,8 +397,8 @@ router.post("/reset-password", async (req, res) => {
 // Otherwise reset the caller's own password.
 router.post("/set-password", requireAuth, async (req, res) => {
   const { password, userId } = req.body;
-  if (!password || typeof password !== "string" || password.length < 6) {
-    res.status(400).json({ error: "Password must be at least 6 characters." });
+  if (!password || typeof password !== "string" || password.length < 8) {
+    res.status(400).json({ error: "Password must be at least 8 characters." });
     return;
   }
   let targetId = req.user!.id;

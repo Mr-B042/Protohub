@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import { App } from "./App";
 import { LoginScreen } from "./components/LoginScreen";
+import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import { auth } from "./lib/auth";
 import "./styles.css";
 
@@ -20,20 +21,36 @@ if (sentryDsn) {
 
 function Root() {
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn());
+  const [hash, setHash]         = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
 
-  // Listen for auth being cleared (e.g. token expired mid-session)
+  // Listen for auth being cleared. The "storage" event covers other tabs;
+  // "protohub:logout" covers same-tab logouts (auth.clear emits it).
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === "protohub.accessToken" && !e.newValue) {
         setLoggedIn(false);
       }
     };
+    const onLogoutEvent = () => setLoggedIn(false);
+    const onHashChange  = () => setHash(window.location.hash);
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener("protohub:logout", onLogoutEvent);
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("protohub:logout", onLogoutEvent);
+      window.removeEventListener("hashchange", onHashChange);
+    };
   }, []);
 
   const handleLogin  = () => setLoggedIn(true);
   const handleLogout = () => { auth.clear(); setLoggedIn(false); };
+
+  // Recovery email lands on /#/reset-password — handle it before the auth gate
+  // so the user can complete the reset even if they aren't "logged in" yet.
+  if (hash.startsWith("#/reset-password")) {
+    return <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />;
+  }
 
   if (!loggedIn) {
     return <LoginScreen onLogin={handleLogin} />;

@@ -60,7 +60,17 @@ async function tryRefresh(): Promise<boolean> {
     });
     if (!res.ok) return false;
     const data = await res.json();
-    const user = auth.getUser();
+    // Fetch fresh profile so role/name stay in sync
+    let user = auth.getUser();
+    try {
+      const meRes = await fetch(`${BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${data.accessToken}` }
+      });
+      if (meRes.ok) {
+        const me = await meRes.json();
+        if (me.user) user = snakeToCamel(me.user);
+      }
+    } catch { /* keep existing user if /me fails */ }
     if (user) auth.save(data.accessToken, data.refreshToken, user);
     return true;
   } catch { return false; }
@@ -98,8 +108,20 @@ export const authApi = {
   resetPassword: (email: string) =>
     post<{ message: string }>("/api/auth/reset-password", { email }),
 
-  setPassword: (userId: string, password: string) =>
-    post<{ message: string }>("/api/auth/set-password", { userId, password })
+  // userId is optional — when omitted, the backend resolves the target from
+  // the Bearer token (used by the recovery flow, where we have no profile yet).
+  setPassword: (passwordOrUserId: string, password?: string) =>
+    post<{ message: string }>(
+      "/api/auth/set-password",
+      password === undefined ? { password: passwordOrUserId } : { userId: passwordOrUserId, password }
+    )
+};
+
+// ── Users ────────────────────────────────────────────────
+export const usersApi = {
+  list: () => get<any[]>("/api/users"),
+  update: (id: string, body: { name?: string; email?: string; active?: boolean }) =>
+    patch<any>(`/api/users/${id}`, body)
 };
 
 // ── Products ──────────────────────────────────────────────
@@ -188,7 +210,8 @@ export const notificationsApi = {
   list: () => get<any[]>("/api/notifications"),
   create: (body: { type: string; message: string; productId?: string }) => post<any>("/api/notifications", body),
   markAllRead: () => patch<{ message: string }>("/api/notifications/read-all", {}),
-  markRead: (id: string) => patch<any>(`/api/notifications/${id}/read`, {})
+  markRead: (id: string) => patch<any>(`/api/notifications/${id}/read`, {}),
+  deleteRead: () => del<void>("/api/notifications/read")
 };
 
 // ── Waybills ──────────────────────────────────────────────
@@ -203,7 +226,8 @@ export const waybillsApi = {
 export const teamApi = {
   list: () => get<any[]>("/api/auth/team"),
   update: (id: string, body: unknown) => patch<any>(`/api/auth/team/${id}`, body),
-  delete: (id: string) => del<void>(`/api/auth/team/${id}`)
+  delete: (id: string) => del<void>(`/api/auth/team/${id}`),
+  updateRoundRobin: (order: string[]) => request<{ ok: boolean }>("PUT", "/api/auth/team/round-robin", { order })
 };
 
 // ── Email Settings ────────────────────────────────────────

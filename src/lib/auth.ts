@@ -34,6 +34,10 @@ export const auth = {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    // Same-tab notification — the "storage" event only fires across tabs.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("protohub:logout"));
+    }
   },
 
   isLoggedIn(): boolean {
