@@ -365,6 +365,7 @@ type TrackedOrder = {
   productName: string;
   packageName: string;
   quantity?: number;
+  originalQuantity?: number;
   amount: number;
   originalAmount?: number;
   currency: ProductCurrencyCode;
@@ -19374,7 +19375,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <tbody>
 	                        <tr>
 	                          <td className="px-4 py-2.5 text-gray-800">{selectedOrder.productName} · {selectedOrder.packageName}</td>
-	                          <td className="px-4 py-2.5 text-center text-gray-700">{quantityForOrder(selectedOrder)}</td>
+	                          <td className="px-4 py-2.5 text-center text-gray-700">
+	                            {selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== quantityForOrder(selectedOrder) && (
+	                              <span className="line-through text-gray-400 text-xs mr-1">{selectedOrder.originalQuantity}</span>
+	                            )}
+	                            {quantityForOrder(selectedOrder)}
+	                          </td>
 	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(selectedOrder.amount / quantityForOrder(selectedOrder)), selectedOrder.currency)}</td>
 	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
 	                        </tr>
@@ -19698,7 +19704,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 	                  <label><span>Product</span><select value={createOrderProductId} onChange={(event) => { const product = products.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
 	                  <label><span>Package</span><select value={createOrderPackageId} onChange={(event) => { const product = products.find((item) => item.id === createOrderProductId); const offer = product?.packages.find((item) => item.id === event.target.value); setCreateOrderPackageId(event.target.value); if (offer) setCreateOrderQuantity(String(offer.quantity)); }}><option value="">Manual quantity</option>{products.find((item) => item.id === createOrderProductId)?.packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatProductMoney(item.price, item.currency)}</option>)}</select></label>
-	                  <label><span>Quantity</span><input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" /></label>
+	                  <label>
+	                    <span>Quantity {selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
+	                    <input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
+	                  </label>
 	                  <label>
 	                    <span>Order Amount {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
 	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
