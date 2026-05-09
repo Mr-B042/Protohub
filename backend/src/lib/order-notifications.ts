@@ -6,8 +6,14 @@ type OrderContext = {
   id: string;
   customer: string;
   productName: string;
+  packageName?: string | null;
   assignedRepId?: string | null;
 };
+
+const orderDisplayName = (order: OrderContext) =>
+  order.packageName?.trim()
+    ? `${order.productName} — ${order.packageName}`
+    : order.productName;
 
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
   New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
@@ -48,7 +54,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
 
     if (recipientIds.size === 0) return;
 
-    const body = `Order ${order.id} — ${order.customer} (${order.productName})`;
+    const body = `Order ${order.id} — ${order.customer} (${orderDisplayName(order)})`;
     const link = `/dashboard/admin/orders/${order.id}`;
     const branding = await getOrgPushBranding(orgId);
 

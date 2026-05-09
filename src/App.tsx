@@ -58,6 +58,7 @@ import {
   Music2,
   Globe,
   AlertTriangle,
+  Clapperboard,
   CircleX,
   ClipboardCheck,
   Phone,
@@ -1384,6 +1385,75 @@ const orderNotesFor = (value: { notes?: unknown; timelineNotes?: unknown; timeli
       ?? (Array.isArray(value?.notes) ? value.notes : legacyMetadata.timelineNotes)
   );
 };
+type PublicFormSubmissionDetails = {
+  customerName?: string;
+  phone?: string;
+  whatsapp?: string;
+  email?: string;
+  address?: string;
+  preferredDelivery?: string;
+  confirmation?: string;
+  selectedPackages?: string;
+  utmSource?: string;
+  utmCampaign?: string;
+  utmMedium?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  referrer?: string;
+};
+const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDetails => {
+  const out: PublicFormSubmissionDetails = {};
+  for (const rawLine of noteText.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || /^public form submission details:?$/i.test(line)) continue;
+    const colonIndex = line.indexOf(":");
+    if (colonIndex < 0) continue;
+    const label = line.slice(0, colonIndex).trim().toLowerCase();
+    const value = line.slice(colonIndex + 1).trim();
+    if (!value) continue;
+    if (label === "customer name") out.customerName = value;
+    else if (label === "phone") out.phone = value;
+    else if (label === "whatsapp") out.whatsapp = value;
+    else if (label === "email") out.email = value;
+    else if (label === "address") out.address = value;
+    else if (label === "preferred delivery") out.preferredDelivery = value;
+    else if (label === "confirmation checkbox") out.confirmation = value;
+    else if (label === "selected package(s)") out.selectedPackages = value;
+    else if (label === "utm source") out.utmSource = value;
+    else if (label === "utm campaign") out.utmCampaign = value;
+    else if (label === "utm medium") out.utmMedium = value;
+    else if (label === "utm content") out.utmContent = value;
+    else if (label === "utm term") out.utmTerm = value;
+    else if (label === "referrer") out.referrer = value;
+  }
+  return out;
+};
+const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissionDetails => {
+  const publicNote = orderNotesFor(order).find((note) => typeof note.text === "string" && note.text.toLowerCase().startsWith("public form submission details:"));
+  const parsed = publicNote ? parsePublicFormSubmissionNote(publicNote.text) : {};
+  const formattedAddress = [order.address, order.city, order.state].filter(Boolean).join(", ");
+  const quantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
+  return {
+    customerName: order.customer || parsed.customerName,
+    phone: order.phone || parsed.phone,
+    whatsapp: order.whatsapp || parsed.whatsapp,
+    email: order.email || parsed.email,
+    address: formattedAddress || parsed.address,
+    preferredDelivery: order.preferredDelivery ?? order.deliveryWindow ?? parsed.preferredDelivery,
+    confirmation: order.confirmationChecked != null ? (order.confirmationChecked ? "Accepted" : "Not accepted") : parsed.confirmation,
+    selectedPackages: parsed.selectedPackages || `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(order.amount, order.currency)})`,
+    utmSource: order.utmSource || parsed.utmSource,
+    utmCampaign: order.utmCampaign || parsed.utmCampaign,
+    utmMedium: order.utmMedium || parsed.utmMedium,
+    utmContent: order.utmContent || parsed.utmContent,
+    utmTerm: order.utmTerm || parsed.utmTerm,
+    referrer: order.referrer || parsed.referrer
+  };
+};
+const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
+  const details = publicFormSubmissionDetailsFor(order);
+  return Object.values(details).some((value) => typeof value === "string" && value.trim().length > 0);
+};
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
   const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
   const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
@@ -1430,6 +1500,7 @@ const emailTriggerSections = [
       "internal_order_rescheduled",
       "internal_order_cancelled",
       "internal_order_failed",
+      "internal_abandoned_cart_new",
       "internal_low_stock",
       "internal_weekly_report",
       "internal_waybill_dispatched",
@@ -1449,6 +1520,7 @@ const emailTriggerMeta: Record<string, { label: string; hint: string }> = {
   internal_order_rescheduled: { label: "Rescheduled order alert", hint: "Sent when a follow-up or delivery date is moved." },
   internal_order_cancelled: { label: "Cancelled order alert", hint: "Sent when an order is cancelled." },
   internal_order_failed: { label: "Failed order alert", hint: "Sent when an order is marked failed." },
+  internal_abandoned_cart_new: { label: "New abandoned cart alert", hint: "Sent to Owner/Admin when a new abandoned cart is captured and abandoned cart notifications are enabled." },
   internal_low_stock: { label: "Low stock alert", hint: "Warns staff when stock falls near the reorder point." },
   internal_weekly_report: { label: "Weekly report", hint: "Used by the manual and scheduled weekly performance email." },
   internal_waybill_dispatched: { label: "Waybill dispatched", hint: "Sent when a waybill is dispatched." },
@@ -3069,6 +3141,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
+  const canDeleteAbandonedCarts = (() => {
+    const role = auth.getUser()?.role;
+    return role === "Owner" || role === "Admin";
+  })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
   useEffect(() => {
@@ -3633,6 +3709,72 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter(o => isInPeriod(orderCreatedKey(o), campaignPeriod, campaignDateRange))
     .filter(o => matchesProductFilter(o.productId, o.productName, campaignProductIds));
   const filteredCampaignOrders = campaignBaseOrders.filter(o => o.utmSource && o.utmSource !== "direct");
+  const campaignGroupedRows = Object.values(
+    filteredCampaignOrders.reduce<Record<string, {
+      id: string;
+      orders: TrackedOrder[];
+      deliveredCount: number;
+      revenue: number;
+      topSource: string;
+    }>>((acc, order) => {
+      const key = order.utmCampaign?.trim() || "Unlabelled";
+      const bucket = acc[key] ?? {
+        id: key,
+        orders: [],
+        deliveredCount: 0,
+        revenue: 0,
+        topSource: ""
+      };
+      bucket.orders.push(order);
+      if ((order.status ?? "New") === "Delivered") {
+        bucket.deliveredCount += 1;
+        bucket.revenue += order.amount;
+      }
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => {
+    const sourceCounts: Record<string, number> = {};
+    row.orders.forEach((order) => {
+      const src = order.utmSource?.trim() || "unknown";
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+    });
+    return {
+      ...row,
+      orderCount: row.orders.length,
+      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
+    };
+  }).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
+  const creativeGroupedRows = Object.values(
+    filteredCampaignOrders
+      .filter((order) => order.utmContent?.trim())
+      .reduce<Record<string, {
+        id: string;
+        campaignId: string;
+        orders: TrackedOrder[];
+        deliveredCount: number;
+        revenue: number;
+      }>>((acc, order) => {
+        const key = order.utmContent!.trim();
+        const bucket = acc[key] ?? {
+          id: key,
+          campaignId: order.utmCampaign?.trim() || "Unlabelled",
+          orders: [],
+          deliveredCount: 0,
+          revenue: 0
+        };
+        bucket.orders.push(order);
+        if ((order.status ?? "New") === "Delivered") {
+          bucket.deliveredCount += 1;
+          bucket.revenue += order.amount;
+        }
+        acc[key] = bucket;
+        return acc;
+      }, {})
+  ).map((row) => ({
+    ...row,
+    orderCount: row.orders.length
+  })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
 
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
@@ -11581,6 +11723,43 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const deleteCartRecord = (cart: AbandonedCartRecord) => {
+    const canDelete = auth.getUser()?.role === "Owner" || auth.getUser()?.role === "Admin";
+    if (!canDelete) {
+      showToast("Only Owner/Admin can delete abandoned carts.");
+      return;
+    }
+    if (!window.confirm(`Delete abandoned cart ${cart.id} for ${cart.customer || "this customer"}? This cannot be undone.`)) {
+      return;
+    }
+
+    const cartSnapshot = cart;
+    const wasSelected = selectedCartId === cart.id;
+    const wasModalOpen = wasSelected && ["cartDetails", "assignCart", "convertCart"].includes(modal ?? "");
+    const routeWasFocused = hashRoute.startsWith(`#/dashboard/admin/abandoned-carts/${cart.id}`);
+    setAbandonedCarts((value) => value.filter((item) => item.id !== cart.id));
+    setSelectedCartIds((prev) => {
+      const next = new Set(prev);
+      next.delete(cart.id);
+      return next;
+    });
+    if (wasSelected) {
+      setSelectedCartId("");
+    }
+    if (wasModalOpen) {
+      closeModal();
+    }
+    if (routeWasFocused) {
+      syncHashRoute("#/dashboard/admin/abandoned-carts");
+    }
+    showToast(`${cart.id} deleted.`);
+
+    cartsApi.delete(cart.id).catch((err: any) => {
+      setAbandonedCarts((value) => [cartSnapshot, ...value.filter((item) => item.id !== cartSnapshot.id)]);
+      showToast(`Failed to delete ${cartSnapshot.id}: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
   const exportCartsCsv = () => {
     const exportConverted = filteredAbandonedCarts.filter((c) => c.status === "Converted").length;
     const exportLost = filteredAbandonedCarts.filter((c) => ["No response", "Not interested"].includes(c.status)).length;
@@ -16430,6 +16609,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => openAdminCartConvertRoute(cart.id)}>
                               <ArrowRight className="w-4 h-4" /> Convert
                             </button>
+                            {canDeleteAbandonedCarts && (
+                              <button className="!min-h-0 col-span-2 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-red-200 bg-white text-red-600 rounded-lg hover:bg-red-50 transition-colors" onClick={() => deleteCartRecord(cart)}>
+                                <Trash2 className="w-4 h-4" /> Delete
+                              </button>
+                            )}
                           </div>
                         </article>
                       );
@@ -16510,6 +16694,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <button className="px-2 py-1 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "No response")}>No Response</button>
                                 <button className="px-2 py-1 text-xs font-medium border border-red-100 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "Not interested")}>Not Interested</button>
                                 <button className="p-1.5 text-[#1F8FE0] hover:text-blue-700 rounded hover:bg-blue-50 transition-colors disabled:opacity-40" title="Convert" aria-label="Convert" disabled={cart.status === "Converted"} onClick={() => openAdminCartConvertRoute(cart.id)}><ArrowRight className="w-4 h-4" /></button>
+                                {canDeleteAbandonedCarts && (
+                                  <button className="p-1.5 text-red-500 hover:text-red-700 rounded hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => deleteCartRecord(cart)}><Trash2 className="w-4 h-4" /></button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -21392,8 +21579,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
                 {[
                   { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
-                  { title: "Active Campaigns", value: String(new Set(campaignBaseOrders.filter((o) => o.utmCampaign && o.utmCampaign !== "manual").map((o) => o.utmCampaign)).size), helper: "unique campaigns", icon: Zap, tone: "purple" },
-                  { title: "Top Source", value: (() => { const sources = filteredCampaignOrders.map((o) => o.utmSource); if (!sources.length) return "—"; const counts: Record<string, number> = {}; sources.forEach((s) => { counts[s] = (counts[s] || 0) + 1; }); return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; })(), helper: "most orders", icon: Globe, tone: "green" },
+                  { title: "Active Campaigns", value: String(campaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
+                  { title: "Unique Creatives", value: String(creativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
                   { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
@@ -21420,6 +21607,86 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <button className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => { setActivePage("Embed Form"); showToast("Showing embed form with UTM guide."); }}>Read the guide</button>
               </div>
+              <section className="space-y-4" aria-label="Campaign groups">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-800">Campaigns</h2>
+                  <p className="text-xs text-gray-400">Grouped by `utm_campaign` from tracked orders in this period.</p>
+                </div>
+                {campaignGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No campaign-tagged tracked orders in this period yet.</div>
+                ) : (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {campaignGroupedRows.map((row) => (
+                      <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="p-5 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Campaign</div>
+                              <div className="text-lg font-bold text-gray-900 break-all">{row.id}</div>
+                            </div>
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-purple-50 text-purple-700 px-2.5 py-1 text-xs font-semibold">Campaign</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
+                              <div className="font-semibold text-gray-900">{row.orderCount}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
+                              <div className="font-semibold text-gray-900">{row.deliveredCount}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</div>
+                              <div className="font-semibold text-gray-900">{formatMoney(row.revenue)}</div>
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-500">Top source: <span className="font-semibold text-gray-700 break-all">{row.topSource}</span></div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+              <section className="space-y-4" aria-label="Creative groups">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-800">Ad Creatives</h2>
+                  <p className="text-xs text-gray-400">Grouped by `utm_content` from tracked orders in this period.</p>
+                </div>
+                {creativeGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No creative-tagged tracked orders in this period yet.</div>
+                ) : (
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    {creativeGroupedRows.map((row) => (
+                      <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="p-5 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Creative</div>
+                              <div className="text-base font-bold text-gray-900 break-all">{row.id}</div>
+                            </div>
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-green-50 text-green-700 px-2.5 py-1 text-xs font-semibold">Creative</span>
+                          </div>
+                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{row.campaignId}</span></div>
+                          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
+                              <div className="font-semibold text-gray-900">{row.orderCount}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
+                              <div className="font-semibold text-gray-900">{row.deliveredCount}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</div>
+                              <div className="font-semibold text-gray-900">{formatMoney(row.revenue)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
@@ -26044,40 +26311,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                </section>
 
 	                {/* Section 2b: Form Submission Details (public embed form orders) */}
-	                {(selectedOrder.confirmationChecked !== undefined
-	                  || selectedOrder.utmSource
-	                  || selectedOrder.utmCampaign
-	                  || selectedOrder.utmMedium
-	                  || selectedOrder.utmContent
-	                  || selectedOrder.utmTerm
-	                  || selectedOrder.referrer) && (
+	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
-	                    {selectedOrder.confirmationChecked !== undefined && (
-	                      <div className="mb-3">
-	                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Confirmation Checkbox</p>
-	                        <p className="text-sm font-bold text-gray-900 m-0 mt-0.5">{selectedOrder.confirmationChecked ? "Accepted" : "Not accepted"}</p>
-	                      </div>
-	                    )}
-	                    <div className="mb-3">
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Selected Package</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">
-	                        {selectedOrder.packageName} ({quantityForOrder(selectedOrder)} units, {formatProductMoney(selectedOrder.amount, selectedOrder.currency)})
-	                      </p>
-	                    </div>
-	                    {(selectedOrder.utmSource || selectedOrder.utmCampaign || selectedOrder.utmMedium || selectedOrder.utmContent || selectedOrder.utmTerm || selectedOrder.referrer) && (
-	                      <div>
-	                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0 mb-2">Attribution</p>
-	                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-	                          {selectedOrder.utmSource    && <p className="m-0"><span className="font-bold">Source:</span> <span className="text-gray-700 break-all">{selectedOrder.utmSource}</span></p>}
-	                          {selectedOrder.utmCampaign  && <p className="m-0"><span className="font-bold">Campaign:</span> <span className="text-gray-700 break-all">{selectedOrder.utmCampaign}</span></p>}
-	                          {selectedOrder.utmMedium    && <p className="m-0"><span className="font-bold">Medium:</span> <span className="text-gray-700 break-all">{selectedOrder.utmMedium}</span></p>}
-	                          {selectedOrder.utmContent   && <p className="m-0"><span className="font-bold">Content:</span> <span className="text-gray-700 break-all">{selectedOrder.utmContent}</span></p>}
-	                          {selectedOrder.utmTerm      && <p className="m-0"><span className="font-bold">Term:</span> <span className="text-gray-700 break-all">{selectedOrder.utmTerm}</span></p>}
-	                          {selectedOrder.referrer     && <p className="m-0"><span className="font-bold">Referrer:</span> <span className="text-gray-700 break-all">{selectedOrder.referrer}</span></p>}
+	                    {(() => {
+	                      const details = publicFormSubmissionDetailsFor(selectedOrder);
+	                      const rows = [
+	                        { label: "Customer name", value: details.customerName },
+	                        { label: "Phone", value: details.phone },
+	                        { label: "WhatsApp", value: details.whatsapp },
+	                        { label: "Email", value: details.email },
+	                        { label: "Address", value: details.address, wide: true },
+	                        { label: "Preferred delivery", value: details.preferredDelivery },
+	                        { label: "Confirmation checkbox", value: details.confirmation },
+	                        { label: "Selected package(s)", value: details.selectedPackages, wide: true },
+	                        { label: "UTM source", value: details.utmSource },
+	                        { label: "UTM campaign", value: details.utmCampaign },
+	                        { label: "UTM medium", value: details.utmMedium },
+	                        { label: "UTM content", value: details.utmContent },
+	                        { label: "UTM term", value: details.utmTerm },
+	                        { label: "Referrer", value: details.referrer, wide: true }
+	                      ].filter((row) => row.value && row.value.trim().length > 0);
+	                      return (
+	                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+	                          {rows.map((row) => (
+	                            <div key={row.label} className={row.wide ? "sm:col-span-2" : ""}>
+	                              <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">{row.label}</p>
+	                              <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5 break-words whitespace-pre-wrap">{row.value}</p>
+	                            </div>
+	                          ))}
 	                        </div>
-	                      </div>
-	                    )}
+	                      );
+	                    })()}
 	                  </section>
 	                )}
 
@@ -26338,53 +26603,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                )}
 	
 	                {/* Section 7: Form Submission Details */}
-	                {(selectedOrder.utmSource || selectedOrder.referrer || selectedOrder.confirmationChecked != null) && (
+	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
-	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-	                      {selectedOrder.confirmationChecked != null && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">Confirmation</span>
-	                          <span className="text-gray-900 font-medium">{selectedOrder.confirmationChecked ? "Accepted" : "Not accepted"}</span>
+	                    {(() => {
+	                      const details = publicFormSubmissionDetailsFor(selectedOrder);
+	                      const rows = [
+	                        { label: "Customer name", value: details.customerName },
+	                        { label: "Phone", value: details.phone },
+	                        { label: "WhatsApp", value: details.whatsapp },
+	                        { label: "Email", value: details.email },
+	                        { label: "Address", value: details.address, wide: true },
+	                        { label: "Preferred delivery", value: details.preferredDelivery },
+	                        { label: "Confirmation", value: details.confirmation },
+	                        { label: "Selected package(s)", value: details.selectedPackages, wide: true },
+	                        { label: "UTM source", value: details.utmSource },
+	                        { label: "UTM campaign", value: details.utmCampaign },
+	                        { label: "UTM medium", value: details.utmMedium },
+	                        { label: "UTM content", value: details.utmContent },
+	                        { label: "UTM term", value: details.utmTerm },
+	                        { label: "Referrer", value: details.referrer, wide: true }
+	                      ].filter((row) => row.value && row.value.trim().length > 0);
+	                      return (
+	                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+	                          {rows.map((row) => (
+	                            <div key={row.label} className={`flex items-start gap-2 ${row.wide ? "sm:col-span-2" : ""}`}>
+	                              <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">{row.label}</span>
+	                              <span className="text-gray-900 font-medium break-words whitespace-pre-wrap">{row.value}</span>
+	                            </div>
+	                          ))}
 	                        </div>
-	                      )}
-	                      {selectedOrder.utmSource && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Source</span>
-	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmSource}</span>
-	                        </div>
-	                      )}
-	                      {selectedOrder.utmCampaign && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Campaign</span>
-	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmCampaign}</span>
-	                        </div>
-	                      )}
-	                      {selectedOrder.utmMedium && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Medium</span>
-	                          <span className="text-gray-900 font-medium">{selectedOrder.utmMedium}</span>
-	                        </div>
-	                      )}
-	                      {selectedOrder.utmContent && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Content</span>
-	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmContent}</span>
-	                        </div>
-	                      )}
-	                      {selectedOrder.utmTerm && (
-	                        <div className="flex items-start gap-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">UTM Term</span>
-	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.utmTerm}</span>
-	                        </div>
-	                      )}
-	                      {selectedOrder.referrer && (
-	                        <div className="flex items-start gap-2 sm:col-span-2">
-	                          <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">Referrer</span>
-	                          <span className="text-gray-900 font-medium break-all">{selectedOrder.referrer}</span>
-	                        </div>
-	                      )}
-	                    </div>
+	                      );
+	                    })()}
 	                  </section>
 	                )}
 
@@ -26805,6 +27055,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	                  {/* Actions */}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+	                    {canDeleteAbandonedCarts && (
+	                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors" onClick={() => deleteCartRecord(selectedCart)}><Trash2 className="w-4 h-4" /> Delete cart</button>
+	                    )}
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
 	                  </div>

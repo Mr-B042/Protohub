@@ -342,7 +342,8 @@ export const cartsApi = {
   // Public capture endpoint — no auth required, derives org from product_id.
   // Use this from the embed form so it works inside customer-facing iframes.
   capture: (body: unknown) => post<any>("/api/public/carts", body),
-  update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body)
+  update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
+  delete: (id: string) => del<void>(`/api/carts/${id}`)
 };
 
 // ── Public Orders ────────────────────────────────────────

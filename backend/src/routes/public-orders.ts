@@ -335,13 +335,13 @@ router.post("/", submitRateLimit, async (req, res) => {
   });
 
   await notifyOrderEvent(product.org_id, {
-    id: order.id, customer: order.customer, productName: order.product_name,
+    id: order.id, customer: order.customer, productName: order.product_name, packageName: order.package_name,
     assignedRepId: order.assigned_rep_id
   }, "New");
 
   sendNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, email: order.email,
-    phone: order.phone, product_name: order.product_name,
+    phone: order.phone, product_name: order.product_name, package_name: order.package_name,
     amount: order.amount, currency: order.currency, source: order.source
   });
   sendNewOrderSms(product.org_id, {
@@ -350,13 +350,14 @@ router.post("/", submitRateLimit, async (req, res) => {
     phone: order.phone,
     assignedRepId: order.assigned_rep_id,
     product_name: order.product_name,
+    package_name: order.package_name,
     amount: order.amount,
     currency: order.currency
   });
 
   sendInternalNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name, amount: order.amount,
+    product_name: order.product_name, package_name: order.package_name, amount: order.amount,
     currency: order.currency,
     source: order.source,
     rep_name: publicOrderAssignmentMode === "manual_review"
@@ -367,7 +368,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   if (assignedRepId) {
     sendOrderAssignedEmail(product.org_id, assignedRepId, {
       id: order.id, customer: order.customer, phone: order.phone,
-      product_name: order.product_name, amount: order.amount,
+      product_name: order.product_name, package_name: order.package_name, amount: order.amount,
       currency: order.currency, source: order.source
     });
   }

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
@@ -99,6 +100,16 @@ router.post("/", async (req, res) => {
     .select()
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+  void notifyNewAbandonedCart(req.user!.orgId, {
+    id: data.id,
+    customer: data.customer ?? "Partial lead",
+    phone: data.phone,
+    product_name: data.product_name ?? "your requested item",
+    package_name: data.package_name ?? null,
+    amount: Number(data.amount ?? 0),
+    currency: data.currency ?? "NGN",
+    source: data.source ?? "Website"
+  });
   res.status(201).json(data);
 });
 
@@ -128,7 +139,7 @@ router.patch("/:id",
     const updates: Record<string, unknown> = {};
     const { data: existing, error: existingError } = await supabase
       .from("abandoned_carts")
-      .select("id, customer, phone, product_name, amount, currency, assigned_rep_id, status")
+      .select("id, customer, phone, product_name, package_name, amount, currency, assigned_rep_id, status")
       .eq("id", req.params.id)
       .eq("org_id", req.user!.orgId)
       .single();
@@ -170,6 +181,7 @@ router.patch("/:id",
         customer: data.customer ?? "Customer",
         phone: data.phone,
         product_name: data.product_name ?? "your requested item",
+        package_name: data.package_name ?? null,
         amount: Number(data.amount ?? 0),
         currency: data.currency ?? "NGN",
         assignedRepId: data.assigned_rep_id ?? null
@@ -177,6 +189,27 @@ router.patch("/:id",
     }
 
     res.json(data);
+  }
+);
+
+// ── DELETE /api/carts/:id ────────────────────────────────
+// Permanent cleanup for abandoned carts. Owner/Admin only so reps cannot
+// erase lead history from the pipeline.
+router.delete("/:id",
+  requireRole("Owner", "Admin"),
+  async (req, res) => {
+    const { error } = await supabase
+      .from("abandoned_carts")
+      .delete()
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId);
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    res.status(204).send();
   }
 );
 

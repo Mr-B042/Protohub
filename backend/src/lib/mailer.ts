@@ -17,6 +17,7 @@ export type EmailTrigger =
   | "internal_order_rescheduled"
   | "internal_order_cancelled"
   | "internal_order_failed"
+  | "internal_abandoned_cart_new"
   | "internal_low_stock"
   | "internal_weekly_report"
   | "internal_waybill_dispatched"
@@ -88,6 +89,7 @@ const DEFAULT_EMAIL_TRIGGER_MAP: Record<EmailTrigger, boolean> = {
   internal_order_rescheduled: true,
   internal_order_cancelled: true,
   internal_order_failed: true,
+  internal_abandoned_cart_new: true,
   internal_low_stock: true,
   internal_weekly_report: true,
   internal_waybill_dispatched: false,
@@ -106,6 +108,7 @@ const DEFAULT_EMAIL_TEMPLATE_MAP: Record<string, { subject: string; body: string
   internal_order_rescheduled:   { subject: "Protohub rescheduled order {{order_id}}", body: "An order has been postponed and needs follow-up.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease return to the workspace at the scheduled time." },
   internal_order_cancelled:     { subject: "Protohub cancelled order {{order_id}}", body: "An order has been cancelled.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for full context." },
   internal_order_failed:        { subject: "Protohub failed order {{order_id}}", body: "An order has been marked as failed.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review the case and decide the next step." },
+  internal_abandoned_cart_new:  { subject: "Protohub abandoned cart captured — {{cart_id}}", body: "A new abandoned cart has been captured.\n\nCart ID: {{cart_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nOpen Protohub to review and follow up quickly." },
   internal_low_stock:           { subject: "Protohub low stock alert — {{product_name}}", body: "A product has reached its low stock threshold.\n\nProduct: {{product_name}}\nCurrent Stock: {{current_stock}}\nReorder Point: {{reorder_point}}\n\nPlease restock as soon as possible." },
   internal_weekly_report:       { subject: "Protohub weekly report — w/e {{week_end}}", body: "Weekly Performance Report\n{{org_name}}\nPeriod: {{week_start}} to {{week_end}}\n\n── ORDERS ──────────────────────────\nTotal Orders:    {{total_orders}}\nDelivered:       {{delivered}}\nCancelled:       {{cancelled}}\nFailed:          {{failed}}\nDelivery Rate:   {{delivery_rate}}%\n\n── REVENUE & FINANCIALS ────────────\nRevenue:         {{currency}} {{revenue}}\nAds Spent:       {{currency}} {{ads_spent}}\nOther Expenses:  {{currency}} {{other_expenses}}\nTotal Expenses:  {{currency}} {{total_expenses}}\nNet Profit:      {{currency}} {{net_profit}}\n\n── TOP PRODUCTS ────────────────────\n{{top_products}}\n\nHere is the latest snapshot from your Protohub workspace." },
   internal_waybill_dispatched:  { subject: "Protohub waybill dispatched — {{waybill_id}}", body: "A waybill has been dispatched.\n\nWaybill ID: {{waybill_id}}\nDestination: {{destination}}\nItems: {{items}}\nDispatched by: {{rep_name}}\n\nLog in to track progress." },
@@ -675,11 +678,16 @@ export async function sendToUser(
 // ══════════════════════════════════════════════════════════
 
 // ── Customer: order status change ────────────────────────
+const orderDisplayName = (order: { product_name: string; package_name?: string | null }) =>
+  order.package_name?.trim()
+    ? `${order.product_name} — ${order.package_name}`
+    : order.product_name;
+
 export async function sendOrderStatusEmail(
   orgId: string,
   order: {
     id: string; customer: string; email?: string | null;
-    product_name: string; amount: number; currency: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string;
   },
   fromStatus: string | null,
   toStatus: string
@@ -687,7 +695,7 @@ export async function sendOrderStatusEmail(
   if (!order.email) return;
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, from_status: fromStatus ?? "—", status: toStatus
   };
   const trigger: EmailTrigger = toStatus === "Delivered" ? "order_delivered" : "order_status_change";
@@ -699,13 +707,13 @@ export async function sendNewOrderEmail(
   orgId: string,
   order: {
     id: string; customer: string; email?: string | null; phone: string;
-    product_name: string; amount: number; currency: string; source?: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string; source?: string;
   }
 ): Promise<void> {
   if (!order.email) return;
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—"
   };
   await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer });
@@ -716,13 +724,13 @@ export async function sendInternalNewOrderEmail(
   orgId: string,
   order: {
     id: string; customer: string; phone: string;
-    product_name: string; amount: number; currency: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string;
     source?: string; rep_name: string;
   }
 ): Promise<void> {
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—", rep_name: order.rep_name
   };
   await sendToStaff(orgId, "internal_order_new", vars, ["Owner", "Admin"]);
@@ -734,12 +742,12 @@ export async function sendOrderAssignedEmail(
   repId: string,
   order: {
     id: string; customer: string; phone: string;
-    product_name: string; amount: number; currency: string; source?: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string; source?: string;
   }
 ): Promise<void> {
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—"
   };
   await sendToUser(orgId, repId, "internal_order_assigned", vars);
@@ -750,13 +758,13 @@ export async function sendInternalDeliveredEmail(
   orgId: string,
   order: {
     id: string; customer: string;
-    product_name: string; amount: number; currency: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string;
   },
   repName: string
 ): Promise<void> {
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, rep_name: repName
   };
   await sendToStaff(orgId, "internal_order_delivered", vars, ["Owner", "Admin"]);
@@ -767,14 +775,14 @@ export async function sendOrderRescheduledEmail(
   orgId: string,
   order: {
     id: string; customer: string; phone: string;
-    product_name: string; scheduled_date?: string | null;
+    product_name: string; package_name?: string | null; scheduled_date?: string | null;
     call_outcome?: string | null; response?: string | null;
     assigned_rep_id?: string | null;
   }
 ): Promise<void> {
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name,
+    product_name: orderDisplayName(order),
     scheduled_date: order.scheduled_date ?? "Not set",
     call_outcome: order.call_outcome ?? "—",
     response: order.response ?? "—"
@@ -790,7 +798,7 @@ export async function sendOrderTerminalEmail(
   orgId: string,
   order: {
     id: string; customer: string; phone: string;
-    product_name: string; amount: number; currency: string;
+    product_name: string; package_name?: string | null; amount: number; currency: string;
     response?: string | null;
   },
   status: "Cancelled" | "Failed"
@@ -798,10 +806,35 @@ export async function sendOrderTerminalEmail(
   const trigger: EmailTrigger = status === "Cancelled" ? "internal_order_cancelled" : "internal_order_failed";
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
-    product_name: order.product_name, amount: String(order.amount),
+    product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, status, response: order.response ?? "—"
   };
   await sendToStaff(orgId, trigger, vars, ["Owner", "Admin"]);
+}
+
+export async function sendInternalAbandonedCartEmail(
+  orgId: string,
+  cart: {
+    id: string;
+    customer: string;
+    phone: string;
+    product_name: string;
+    package_name?: string | null;
+    amount: number;
+    currency: string;
+    source?: string | null;
+  }
+): Promise<void> {
+  const vars: Record<string, string> = {
+    cart_id: cart.id,
+    customer: cart.customer,
+    phone: cart.phone,
+    product_name: orderDisplayName({ product_name: cart.product_name, package_name: cart.package_name }),
+    amount: String(cart.amount),
+    currency: cart.currency,
+    source: cart.source ?? "Website"
+  };
+  await sendToStaff(orgId, "internal_abandoned_cart_new", vars, ["Owner", "Admin"]);
 }
 
 // ── Staff: low stock alert → owner + admins + inventory ───

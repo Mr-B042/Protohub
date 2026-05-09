@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
+import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
 
 const router = Router();
@@ -110,6 +111,16 @@ router.post("/", captureRateLimit, async (req, res) => {
     .select()
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+  void notifyNewAbandonedCart(product.org_id, {
+    id: data.id,
+    customer: data.customer ?? "Partial lead",
+    phone: data.phone,
+    product_name: data.product_name ?? "your requested item",
+    package_name: data.package_name ?? null,
+    amount: Number(data.amount ?? 0),
+    currency: data.currency ?? "NGN",
+    source: data.source ?? "Website"
+  });
   res.status(201).json(data);
 });
 

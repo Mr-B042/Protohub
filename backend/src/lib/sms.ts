@@ -784,6 +784,7 @@ type DueReminderOrder = {
   phone: string;
   assigned_rep_id?: string | null;
   product_name: string;
+  package_name?: string | null;
   amount: number;
   currency: string;
   status: string;
@@ -794,6 +795,16 @@ type DueReminderOrder = {
   notes?: unknown;
   timeline_notes?: unknown;
 };
+
+const orderDisplayName = (value: { product_name: string; package_name?: string | null }) =>
+  value.package_name?.trim()
+    ? `${value.product_name} — ${value.package_name}`
+    : value.product_name;
+
+const cartDisplayName = (value: { product_name: string; package_name?: string | null }) =>
+  value.package_name?.trim()
+    ? `${value.product_name} — ${value.package_name}`
+    : value.product_name;
 
 type TimelineReminderNote = {
   id: string;
@@ -893,7 +904,7 @@ async function sendFollowUpReminderSms(
     {
       order_id: order.id,
       customer: order.customer,
-      product_name: order.product_name,
+      product_name: orderDisplayName(order),
       amount: String(order.amount),
       currency: order.currency,
       from_status: order.status ?? "—",
@@ -1008,6 +1019,7 @@ export async function sendNewOrderSms(
     phone: string;
     assignedRepId?: string | null;
     product_name: string;
+    package_name?: string | null;
     amount: number;
     currency: string;
   }
@@ -1019,7 +1031,7 @@ export async function sendNewOrderSms(
     {
       order_id: order.id,
       customer: order.customer,
-      product_name: order.product_name,
+      product_name: orderDisplayName(order),
       amount: String(order.amount),
       currency: order.currency,
       rep_name: assignedRep?.name ?? "",
@@ -1050,6 +1062,7 @@ export async function sendOrderStatusSms(
     phone: string;
     assignedRepId?: string | null;
     product_name: string;
+    package_name?: string | null;
     amount: number;
     currency: string;
     scheduled_date?: string | null;
@@ -1074,7 +1087,7 @@ export async function sendOrderStatusSms(
     {
       order_id: order.id,
       customer: order.customer,
-      product_name: order.product_name,
+      product_name: orderDisplayName(order),
       amount: String(order.amount),
       currency: order.currency,
       from_status: fromStatus ?? "—",
@@ -1110,6 +1123,7 @@ type CartSmsContext = {
   customer: string;
   phone: string;
   product_name: string;
+  package_name?: string | null;
   amount: number;
   currency: string;
   assignedRepId?: string | null;
@@ -1240,7 +1254,7 @@ export async function sendCartAssignedSms(orgId: string, cart: CartSmsContext) {
     {
       cart_id: cart.id,
       customer: cart.customer,
-      product_name: cart.product_name,
+      product_name: cartDisplayName(cart),
       amount: String(cart.amount),
       currency: cart.currency,
       rep_name: assignedRep?.name ?? "",
@@ -1271,7 +1285,7 @@ async function sendCartFollowUpSms(orgId: string, cart: CartSmsContext, dedupeKe
     {
       cart_id: cart.id,
       customer: cart.customer,
-      product_name: cart.product_name,
+      product_name: cartDisplayName(cart),
       amount: String(cart.amount),
       currency: cart.currency,
       rep_name: assignedRep?.name ?? "",
@@ -1552,7 +1566,7 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
   for (const orgId of eligibleOrgIds) {
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, assigned_rep_id, product_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
       .eq("org_id", orgId)
       .in("status", ["Confirmed", "In Process", "Dispatched", "Postponed"])
       .limit(limitPerOrg);
@@ -1630,7 +1644,7 @@ export async function syncDueAbandonedCartSms(limitPerOrg = 300) {
   for (const orgId of eligibleOrgIds) {
     const { data: carts, error: cartsError } = await supabase
       .from("abandoned_carts")
-      .select("id, customer, phone, product_name, amount, currency, assigned_rep_id, status, last_activity")
+      .select("id, customer, phone, product_name, package_name, amount, currency, assigned_rep_id, status, last_activity")
       .eq("org_id", orgId)
       .in("status", ["Open abandoned", "Assigned", "Contacted"])
       .lt("last_activity", cutoff)
@@ -1651,6 +1665,7 @@ export async function syncDueAbandonedCartSms(limitPerOrg = 300) {
         customer: cart.customer ?? "Customer",
         phone: cart.phone,
         product_name: cart.product_name ?? "your requested item",
+        package_name: cart.package_name ?? null,
         amount: Number(cart.amount ?? 0),
         currency: cart.currency ?? "NGN",
         assignedRepId: cart.assigned_rep_id ?? null

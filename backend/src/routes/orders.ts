@@ -284,7 +284,7 @@ router.post("/", async (req, res) => {
 
   // In-app notifications
   await notifyOrderEvent(req.user!.orgId, {
-    id: data.id, customer: data.customer, productName: data.product_name,
+    id: data.id, customer: data.customer, productName: data.product_name, packageName: data.package_name,
     assignedRepId: data.assigned_rep_id
   }, "New");
 
@@ -292,7 +292,7 @@ router.post("/", async (req, res) => {
   // Customer confirmation (only if email in order form)
   sendNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
-    phone: data.phone, product_name: data.product_name,
+    phone: data.phone, product_name: data.product_name, package_name: data.package_name,
     amount: data.amount, currency: data.currency, source: data.source
   });
   sendNewOrderSms(req.user!.orgId, {
@@ -301,6 +301,7 @@ router.post("/", async (req, res) => {
     phone: data.phone,
     assignedRepId: data.assigned_rep_id,
     product_name: data.product_name,
+    package_name: data.package_name,
     amount: data.amount,
     currency: data.currency
   });
@@ -308,7 +309,7 @@ router.post("/", async (req, res) => {
   // Internal: notify owner + admins
   sendInternalNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, phone: data.phone,
-    product_name: data.product_name, amount: data.amount,
+    product_name: data.product_name, package_name: data.package_name, amount: data.amount,
     currency: data.currency, source: data.source, rep_name: req.user!.name
   });
 
@@ -316,7 +317,7 @@ router.post("/", async (req, res) => {
   if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
     sendOrderAssignedEmail(req.user!.orgId, data.assigned_rep_id, {
       id: data.id, customer: data.customer, phone: data.phone,
-      product_name: data.product_name, amount: data.amount,
+      product_name: data.product_name, package_name: data.package_name, amount: data.amount,
       currency: data.currency, source: data.source
     });
   }
@@ -556,14 +557,14 @@ router.patch("/:id/status", async (req, res) => {
 
   // In-app notifications
   await notifyOrderEvent(req.user!.orgId, {
-    id: data.id, customer: data.customer, productName: data.product_name,
+    id: data.id, customer: data.customer, productName: data.product_name, packageName: data.package_name,
     assignedRepId: data.assigned_rep_id
   }, status);
 
   // Customer: status change email
   sendOrderStatusEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
-    product_name: data.product_name, amount: data.amount, currency: data.currency
+    product_name: data.product_name, package_name: data.package_name, amount: data.amount, currency: data.currency
   }, existing?.status ?? null, status);
   sendOrderStatusSms(req.user!.orgId, {
     id: data.id,
@@ -571,6 +572,7 @@ router.patch("/:id/status", async (req, res) => {
     phone: data.phone,
     assignedRepId: data.assigned_rep_id,
     product_name: data.product_name,
+    package_name: data.package_name,
     amount: data.amount,
     currency: data.currency,
     scheduled_date: data.scheduled_date,
@@ -582,7 +584,7 @@ router.patch("/:id/status", async (req, res) => {
   if (status === "Delivered") {
     sendInternalDeliveredEmail(req.user!.orgId, {
       id: data.id, customer: data.customer,
-      product_name: data.product_name, amount: data.amount, currency: data.currency
+      product_name: data.product_name, package_name: data.package_name, amount: data.amount, currency: data.currency
     }, req.user!.name);
   }
 
