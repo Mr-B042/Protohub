@@ -7,6 +7,7 @@ const router = Router();
 
 const DEFAULTS = {
   state_field_mode:             "freetext" as "freetext" | "dropdown",
+  public_order_assignment_mode: "auto_assign" as "auto_assign" | "manual_review",
   show_email:                   false,
   show_whatsapp:                true,
   require_whatsapp:             true,
@@ -52,6 +53,7 @@ router.get("/", async (req, res) => {
 
 const SettingsSchema = z.object({
   state_field_mode:             z.enum(["freetext", "dropdown"]).optional(),
+  public_order_assignment_mode: z.enum(["auto_assign", "manual_review"]).optional(),
   show_email:                   z.boolean().optional(),
   show_whatsapp:                z.boolean().optional(),
   require_whatsapp:             z.boolean().optional(),

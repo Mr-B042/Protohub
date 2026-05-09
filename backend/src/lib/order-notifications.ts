@@ -10,7 +10,7 @@ type OrderContext = {
 };
 
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
-  New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner"], includeRep: true },
+  New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
   Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner"], includeRep: false },
   Delivered:    { type: "order_delivered",    title: "Order Delivered",    recipientRoles: ["Owner"], includeRep: true },
   Cancelled:    { type: "order_cancelled",    title: "Order Cancelled",    recipientRoles: ["Owner"], includeRep: false },

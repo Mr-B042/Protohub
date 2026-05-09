@@ -16,6 +16,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
+import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
   sendInternalNewOrderEmail,
@@ -131,6 +132,12 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
 
+  const embedSettings = await readSettings(product.org_id);
+  const publicOrderAssignmentMode =
+    embedSettings.public_order_assignment_mode === "manual_review"
+      ? "manual_review"
+      : "auto_assign";
+
   // 2. Recompute amount server-side. Never trust client amount.
   let amount = Number(pkg.price ?? 0);
 
@@ -232,25 +239,29 @@ router.post("/", submitRateLimit, async (req, res) => {
     resolved.push({ productId: c.productId, productName: autoProduct.name, quantity: c.quantity, amount: lineTotal });
   }
 
-  // 3. Round-robin assign to the sales rep with the lowest position, then
-  //    advance that rep to max+1 so the next order goes to the next rep.
-  const { data: reps } = await supabase
-    .from("users")
-    .select("id, round_robin_position")
-    .eq("org_id", product.org_id)
-    .eq("active", true)
-    .eq("role", "Sales Rep")
-    .order("round_robin_position", { ascending: true, nullsFirst: false });
+  let assignedRepId: string | null = null;
 
-  const rep = (reps ?? [])[0] ?? null;
-  const assignedRepId = rep?.id ?? null;
+  if (publicOrderAssignmentMode === "auto_assign") {
+    // Round-robin assign to the sales rep with the lowest position, then
+    // advance that rep to max+1 so the next order goes to the next rep.
+    const { data: reps } = await supabase
+      .from("users")
+      .select("id, round_robin_position")
+      .eq("org_id", product.org_id)
+      .eq("active", true)
+      .eq("role", "Sales Rep")
+      .order("round_robin_position", { ascending: true, nullsFirst: false });
 
-  if (rep) {
-    const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
-    supabase.from("users")
-      .update({ round_robin_position: maxPos + 1 })
-      .eq("id", rep.id)
-      .then(() => {});  // fire-and-forget
+    const rep = (reps ?? [])[0] ?? null;
+    assignedRepId = rep?.id ?? null;
+
+    if (rep) {
+      const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
+      supabase.from("users")
+        .update({ round_robin_position: maxPos + 1 })
+        .eq("id", rep.id)
+        .then(() => {});  // fire-and-forget
+    }
   }
 
   const source = sourceFromUtm(d.utmSource);
@@ -318,7 +329,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     changed_by:  null,
     from_status: null,
     to_status:   "New",
-    note:        "Order created from public embed form"
+    note:        publicOrderAssignmentMode === "manual_review"
+      ? "Order created from public embed form and is awaiting owner/admin assignment"
+      : "Order created from public embed form and auto-assigned by round-robin"
   });
 
   await notifyOrderEvent(product.org_id, {
@@ -344,7 +357,11 @@ router.post("/", submitRateLimit, async (req, res) => {
   sendInternalNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, phone: order.phone,
     product_name: order.product_name, amount: order.amount,
-    currency: order.currency, source: order.source, rep_name: "Public form"
+    currency: order.currency,
+    source: order.source,
+    rep_name: publicOrderAssignmentMode === "manual_review"
+      ? "Awaiting owner/admin assignment"
+      : "Auto-assigned from public form"
   });
 
   if (assignedRepId) {

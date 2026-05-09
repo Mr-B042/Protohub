@@ -329,6 +329,7 @@ const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
   callOutcome: z.string().optional(),
   response:    z.string().optional(),
+  deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   agentId:     z.string().uuid().optional().nullable()
 });
 
@@ -338,12 +339,12 @@ router.patch("/:id/status", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { status, callOutcome, response, agentId } = parsed.data;
+  const { status, callOutcome, response, deliveredDate, agentId } = parsed.data;
 
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted")
+    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -362,6 +363,8 @@ router.patch("/:id/status", async (req, res) => {
     return;
   }
 
+  const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered";
+
   // Validate agentId belongs to this org
   if (agentId) {
     const { data: agentCheck } = await supabase
@@ -377,7 +380,7 @@ router.patch("/:id/status", async (req, res) => {
   const orderQty = existing?.quantity ?? 1;
 
   // Pre-check: if marking Delivered and an agent is assigned, verify stock
-  if (status === "Delivered" && effectiveAgentId && existing?.product_id) {
+  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
     const { data: agentStockRow } = await supabase
       .from("agent_stock")
       .select("quantity")
@@ -404,10 +407,18 @@ router.patch("/:id/status", async (req, res) => {
   if (agentId !== undefined) updates.agent_id = agentId;
 
   if (status === "Delivered") {
-    // Use WAT (UTC+1) so the date is correct for Nigeria even near midnight UTC
-    const watDate = new Date(Date.now() + 60 * 60 * 1000);
-    updates.delivered_date  = watDate.toISOString().split("T")[0];
-    updates.stock_deducted  = true;
+    if (deliveredDate) {
+      updates.delivered_date = deliveredDate;
+    } else if (isDeliveredDateCorrection) {
+      updates.delivered_date = existing.delivered_date ?? new Date(Date.now() + 60 * 60 * 1000).toISOString().split("T")[0];
+    } else {
+      // Use WAT (UTC+1) so the date is correct for Nigeria even near midnight UTC
+      const watDate = new Date(Date.now() + 60 * 60 * 1000);
+      updates.delivered_date = watDate.toISOString().split("T")[0];
+    }
+    if (!isDeliveredDateCorrection) {
+      updates.stock_deducted = true;
+    }
   } else if (existing?.status === "Delivered") {
     updates.delivered_date    = null;
     updates.stock_deducted    = false;
@@ -430,7 +441,7 @@ router.patch("/:id/status", async (req, res) => {
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
 
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
-  if (status === "Delivered" && effectiveAgentId && existing?.product_id) {
+  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
     const today = new Date().toISOString().split("T")[0];
 
     // 1. Deduct agent stock
@@ -532,9 +543,16 @@ router.patch("/:id/status", async (req, res) => {
     changed_by:  req.user!.id,
     from_status: existing?.status ?? null,
     to_status:   status,
-    note:        req.body.reason ?? null
+    note:        isDeliveredDateCorrection
+      ? (req.body.reason ?? `Delivered date corrected to ${updates.delivered_date}`)
+      : (req.body.reason ?? null)
   });
   if (auditErr) console.error("Audit insert failed:", auditErr.message);
+
+  if (isDeliveredDateCorrection) {
+    res.json(data);
+    return;
+  }
 
   // In-app notifications
   await notifyOrderEvent(req.user!.orgId, {
@@ -593,6 +611,7 @@ const POST_TERMINAL_FIELDS = new Set([
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
   "call_outcome", "callOutcome",
+  "delivered_date", "deliveredDate",
 ]);
 
 const MANUAL_BONUS_FIELDS = new Set([
@@ -614,6 +633,22 @@ router.patch("/:id", async (req, res) => {
   if (req.user!.role === "Sales Rep" && touchesManualBonus) {
     res.status(403).json({ error: "Sales reps cannot manually adjust bonuses." });
     return;
+  }
+
+  if (req.body.delivered_date !== undefined || req.body.deliveredDate !== undefined) {
+    const requestedDeliveredDate = req.body.delivered_date ?? req.body.deliveredDate;
+    if (req.user!.role === "Sales Rep") {
+      res.status(403).json({ error: "Sales reps cannot directly edit delivered dates." });
+      return;
+    }
+    if (current.status !== "Delivered") {
+      res.status(400).json({ error: "Delivered date can only be edited after the order is marked Delivered." });
+      return;
+    }
+    if (typeof requestedDeliveredDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(requestedDeliveredDate)) {
+      res.status(400).json({ error: "Delivered date must be in YYYY-MM-DD format." });
+      return;
+    }
   }
 
   if (isTerminal && hasNonTerminalField) {
@@ -638,6 +673,7 @@ router.patch("/:id", async (req, res) => {
     assigned_rep_id:           ["assigned_rep_id", "assignedRepId"],
     agent_id:                  ["agent_id", "agentId"],
     call_outcome:              ["call_outcome", "callOutcome"],
+    delivered_date:            ["delivered_date", "deliveredDate"],
     scheduled_date:            ["scheduled_date", "scheduledDate"],
     scheduled_at:              ["scheduled_at", "scheduledAt"],
     amount:                    ["amount"],
@@ -713,6 +749,16 @@ router.patch("/:id", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+  if (updates.delivered_date !== undefined) {
+    await supabase.from("order_audit").insert({
+      order_id:    req.params.id,
+      org_id:      req.user!.orgId,
+      changed_by:  req.user!.id,
+      from_status: current.status,
+      to_status:   current.status,
+      note:        `Delivered date corrected to ${updates.delivered_date}`
+    });
+  }
   res.json(data);
 });
 

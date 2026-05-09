@@ -701,6 +701,18 @@ const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "S
 const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
+const repCallOutcomeOptions = [
+  "Confirmed",
+  "No Answer",
+  "Wrong Number",
+  "Refused",
+  "Not Picking",
+  "Not Ready",
+  "Will Call Back",
+  "Scheduled Callback",
+  "Not Reached",
+  "Travelled"
+] as const;
 const allOrderStatuses: Exclude<OrderStatus, "All Orders">[] = ["New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const permissionDefs: { key: UserPermission; label: string; group: string }[] = [
   { key: "create_orders",       label: "Create Orders",       group: "Orders" },
@@ -1735,6 +1747,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [flagTargetPhone, setFlagTargetPhone] = useState("");
   const [callOutcomeDraft, setCallOutcomeDraft] = useState<string>("");
   const [callOutcomeCustom, setCallOutcomeCustom] = useState("");
+  const [deliveryDateDraft, setDeliveryDateDraft] = useState(todayKey());
   const [stockCounts, setStockCounts] = useState<StockCountSession[]>([]);
   const [activeStockCountId, setActiveStockCountId] = useState<string | null>(null);
   const [stockCountEntryId, setStockCountEntryId] = useState<string | null>(null);
@@ -2149,6 +2162,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [roundRobinSearch, setRoundRobinSearch] = useState("");
   const [embedTab, setEmbedTab] = useState<EmbedTab>("Create Order Form");
   const [embedStateField, setEmbedStateField] = useState("Free-text input");
+  const [publicOrderAssignmentMode, setPublicOrderAssignmentMode] = useState<"auto_assign" | "manual_review">("auto_assign");
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
   const [showEmailField, setShowEmailField] = useState(false);
@@ -2288,6 +2302,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     embedSettingsApi.get().then((s: any) => {
       if (!s) return;
       if (typeof s.stateFieldMode      === "string")  setEmbedStateField(s.stateFieldMode === "dropdown" ? "Dropdown" : "Free-text input");
+      if (typeof s.publicOrderAssignmentMode === "string") setPublicOrderAssignmentMode(s.publicOrderAssignmentMode === "manual_review" ? "manual_review" : "auto_assign");
       if (typeof s.showEmail           === "boolean") setShowEmailField(s.showEmail);
       if (typeof s.showWhatsapp        === "boolean") setShowWhatsappField(s.showWhatsapp);
       if (typeof s.requireWhatsapp     === "boolean") setRequireWhatsapp(s.requireWhatsapp);
@@ -2478,6 +2493,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try {
       await embedSettingsApi.patch({
         state_field_mode:             embedStateField === "Dropdown" ? "dropdown" : "freetext",
+        public_order_assignment_mode: publicOrderAssignmentMode,
         show_email:                   showEmailField,
         show_whatsapp:                showWhatsappField,
         require_whatsapp:             requireWhatsapp,
@@ -2523,6 +2539,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<{ productId: string; quantity: number }[]>([]);
   const toggleOrderFormCrossSell = (productId: string) => setOrderFormCrossSells((prev) => prev.some((c) => c.productId === productId) ? prev.filter((c) => c.productId !== productId) : [...prev, { productId, quantity: 1 }]);
+  const hydrateCallOutcomeDraft = (outcome?: string | null) => {
+    const normalized = (outcome ?? "").trim();
+    if (!normalized) {
+      setCallOutcomeDraft("");
+      setCallOutcomeCustom("");
+      return;
+    }
+    if (repCallOutcomeOptions.includes(normalized as typeof repCallOutcomeOptions[number])) {
+      setCallOutcomeDraft(normalized);
+      setCallOutcomeCustom("");
+      return;
+    }
+    setCallOutcomeDraft("__custom__");
+    setCallOutcomeCustom(normalized);
+  };
+  const hydrateDeliveryDateDraft = (order?: TrackedOrder | null, fallback = todayKey()) => {
+    setDeliveryDateDraft(order?.deliveredDate ? normalizeDateKey(order.deliveredDate) : fallback);
+  };
   const [orderFormConfirmed, setOrderFormConfirmed] = useState(false);
   const [orderFormCommitmentAccepted, setOrderFormCommitmentAccepted] = useState(false);
   const [orderFormDeliveryWindow, setOrderFormDeliveryWindow] = useState("");
@@ -3149,8 +3183,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const currentStatus = selectedOrder.status ?? "New";
     setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
     setStatusChangeReason("");
-    setCallOutcomeDraft(selectedOrder.callOutcome ?? "");
-    setCallOutcomeCustom("");
+    hydrateCallOutcomeDraft(selectedOrder.callOutcome);
+    hydrateDeliveryDateDraft(selectedOrder);
   }, [modal, selectedOrder]);
   useEffect(() => {
     if (modal !== "editOrderCustomer" || !selectedOrder) {
@@ -9331,25 +9365,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ]);
   };
 
-  const updateOrderStatus = (orderId: string, nextStatus: Exclude<OrderStatus, "All Orders">, reason?: string, skipApi = false) => {
+  const updateOrderStatus = (
+    orderId: string,
+    nextStatus: Exclude<OrderStatus, "All Orders">,
+    reason?: string,
+    skipApi = false,
+    deliveredDate?: string
+  ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     if (!order) {
       return;
     }
+    const isDeliveryDateOnly = order.status === "Delivered" && nextStatus === "Delivered";
+    const effectiveDeliveredDate = deliveredDate || order.deliveredDate || todayKey();
 
     // Guards: an order needs both a Sales Rep and an Agent before delivery.
     // Applies to every role (including Owner/Admin) to keep accounting,
     // payroll/bonus, and waybill audit trails clean.
-    if (nextStatus === "Delivered" && !order.assignedRepId) {
+    if (!isDeliveryDateOnly && nextStatus === "Delivered" && !order.assignedRepId) {
       showToast(`Cannot mark ${orderId} delivered — no Sales Rep assigned. Use "Reassign Sales Rep" first.`);
       return;
     }
-    if (nextStatus === "Delivered" && !order.agentId) {
+    if (!isDeliveryDateOnly && nextStatus === "Delivered" && !order.agentId) {
       showToast(`Cannot mark ${orderId} delivered — no agent assigned. Use "Send to Agent" first.`);
       return;
     }
 
-    if (nextStatus === "Delivered") {
+    if (!isDeliveryDateOnly && nextStatus === "Delivered") {
       deductProductStockForOrder(order);
       // Auto-create waybill record (agent → customer) for audit trail
       if (order.agentId) {
@@ -9379,7 +9421,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const response =
-      nextStatus === "Delivered"
+      isDeliveryDateOnly
+        ? (order.response ?? "Delivered successfully")
+        : nextStatus === "Delivered"
           ? "Delivered successfully"
           : nextStatus === "Cancelled"
           ? "Cancelled"
@@ -9401,17 +9445,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ...item,
               status: nextStatus,
               response,
-              deliveredDate: nextStatus === "Delivered" ? todayKey() : order.status === "Delivered" ? undefined : item.deliveredDate,
-              stockDeducted: nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
+              deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.status === "Delivered" ? undefined : item.deliveredDate,
+              stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
               notes: [
-                orderTimelineNote(`Status changed from ${item.status ?? "New"} to ${nextStatus}.${reason ? ` Reason: ${reason}` : ""}`),
+                orderTimelineNote(
+                  isDeliveryDateOnly
+                    ? `Delivered date corrected to ${displayDateFromKey(effectiveDeliveredDate)}.`
+                    : `Status changed from ${item.status ?? "New"} to ${nextStatus}.${reason ? ` Reason: ${reason}` : ""}`
+                ),
                 ...orderNotesFor(item)
               ]
             }
           : item
       )
     );
-    showToast(`${orderId} moved to ${nextStatus}.`);
+    showToast(isDeliveryDateOnly ? `${orderId} delivery date updated.` : `${orderId} moved to ${nextStatus}.`);
     // Snapshot pre-update state so we can roll back if the API rejects the
     // change (network blip, rep no longer authorized, RLS denial). Without
     // this the optimistic UI lies to the user and the change disappears on
@@ -9419,7 +9467,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // own batched ordersApi.updateStatus and rolls back from its own snapshot.
     if (!skipApi) {
       const orderSnapshot = order;
-      ordersApi.updateStatus(orderId, { status: nextStatus, reason }).catch((err: any) => {
+      const statusRequest = isDeliveryDateOnly
+        ? ordersApi.update(orderId, { delivered_date: effectiveDeliveredDate })
+        : ordersApi.updateStatus(orderId, { status: nextStatus, reason, deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined });
+      statusRequest.catch((err: any) => {
         setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
         showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
       });
@@ -9430,7 +9481,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Backend already inserts notifications for New / Confirmed / Delivered /
     // Cancelled. Surface the other meaningful transitions client-side so the
     // bell still updates for Postponed / Failed.
-    if (nextStatus === "Postponed" || nextStatus === "Failed") {
+    if (!isDeliveryDateOnly && (nextStatus === "Postponed" || nextStatus === "Failed")) {
       pushSystemNotification({
         type: "info",
         title: nextStatus === "Postponed" ? "Order postponed" : "Order failed",
@@ -9887,8 +9938,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedOrderId(order.id);
     setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
     setStatusChangeReason("");
-    setCallOutcomeDraft(order.callOutcome ?? "");
-    setCallOutcomeCustom("");
+    hydrateCallOutcomeDraft(order.callOutcome);
+    hydrateDeliveryDateDraft(order);
     setModal("changeOrderStatus");
     syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
   };
@@ -9900,8 +9951,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("A reason is required when cancelling, failing, or postponing an order.");
       return;
     }
+    if (statusChangeDraft === "Delivered" && !deliveryDateDraft) {
+      showToast("Choose the actual delivery date before saving.");
+      return;
+    }
     const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
-    updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim());
+    updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim(), false, statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined);
     if (resolvedOutcome) {
       setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome } : o));
       ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome }).catch(() => {});
@@ -9909,6 +9964,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setStatusChangeReason("");
     setCallOutcomeDraft("");
     setCallOutcomeCustom("");
+    setDeliveryDateDraft(todayKey());
     closeModal();
   };
 
@@ -12032,16 +12088,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     syncHashRoute(`#/dashboard/admin/orders/${orderId}/delete`);
   };
 
-  const openAdminOrderStatusRoute = (orderId: string) => {
+  const openAdminOrderStatusRoute = (
+    orderId: string,
+    presetStatus?: Exclude<OrderStatus, "All Orders">,
+    options?: { callOutcome?: string; reason?: string }
+  ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     setActivePage("Orders");
     setSelectedOrderId(orderId);
-    setStatusChangeDraft((order?.status ?? "New") === "New" ? "Confirmed" : (order?.status ?? "New"));
-    setStatusChangeReason("");
-    setCallOutcomeDraft(order?.callOutcome ?? "");
-    setCallOutcomeCustom("");
+    setStatusChangeDraft(presetStatus ?? ((order?.status ?? "New") === "New" ? "Confirmed" : (order?.status ?? "New")));
+    setStatusChangeReason(options?.reason ?? "");
+    hydrateCallOutcomeDraft(options?.callOutcome ?? order?.callOutcome);
+    hydrateDeliveryDateDraft(order);
     setModal("changeOrderStatus");
     syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
+  };
+
+  const openAdminOrderOutcomeShortcut = (
+    orderId: string,
+    nextStatus: Exclude<OrderStatus, "All Orders">,
+    callOutcome: string,
+    reason: string
+  ) => {
+    openAdminOrderStatusRoute(orderId, nextStatus, { callOutcome, reason });
   };
 
   const openAdminSalesRepDetail = (userId: string) => {
@@ -22251,6 +22320,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </>
                       )}
                     </div>
+
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 pt-3.5 pb-1.5">
+                        <p className="text-sm font-semibold text-gray-800">Incoming order assignment</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Choose whether public form orders go straight to the next Sales Rep or first land with Owner/Admin for review before manual assignment.</p>
+                      </div>
+                      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicOrderAssignmentMode === "auto_assign" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-order-assignment-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicOrderAssignmentMode === "auto_assign"}
+                            onChange={() => setPublicOrderAssignmentMode("auto_assign")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Auto-assign to Sales Rep</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">Each public order is assigned immediately using your round-robin sequence. Owner and Admin still receive the internal new-order alert.</span>
+                          </span>
+                        </label>
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicOrderAssignmentMode === "manual_review" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-order-assignment-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicOrderAssignmentMode === "manual_review"}
+                            onChange={() => setPublicOrderAssignmentMode("manual_review")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Owner/Admin review first</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">New public orders arrive unassigned so Owner or Admin can review and manually assign the right Sales Rep afterward.</span>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="pt-3 border-t border-gray-100">
@@ -25512,18 +25616,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          }`}
 	                          onClick={() => {
 	                            if (isBlockedDelivery) return;
-	                            updateOrderStatus(selectedOrder.id, s);
-	                            showToast(`Status changed to ${s}.${isReverting ? " Note: stock was not auto-restored." : ""}`);
-	                            closeModal();
+                              openAdminOrderStatusRoute(selectedOrder.id, s);
 	                          }}
 	                        >→ {s}{isBlockedDelivery ? " 🔒" : ""}</button>
 	                      );
 	                    })}
 	                  </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+	                  {selectedOrder.status === "Delivered" && (
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-600 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
+                          onClick={() => {
+                            openAdminOrderStatusRoute(selectedOrder.id, "Delivered");
+                          }}
+                        >
+                          <CalendarDays className="w-4 h-4" /> Adjust Delivery Date
+                        </button>
+                      )}
 	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
+                    </div>
 	                </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50 text-orange-700 text-sm font-semibold border border-orange-200 hover:bg-orange-100 transition-colors"
+                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Failed", "Not Picking", "Customer is not picking calls.")}
+                    >
+                      <PhoneOff className="w-4 h-4" /> Not Picking
+                    </button>
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-50 text-yellow-700 text-sm font-semibold border border-yellow-200 hover:bg-yellow-100 transition-colors"
+                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Not Ready", "Customer is not ready yet and asked for later follow-up.")}
+                    >
+                      <Clock className="w-4 h-4" /> Not Ready
+                    </button>
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold border border-blue-200 hover:bg-blue-100 transition-colors"
+                      onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Will Call Back", "Customer asked to call back later.")}
+                    >
+                      <Phone className="w-4 h-4" /> Will Call Back
+                    </button>
+                  </div>
 	
 	                {/* Cleanup banner: delivered without an agent (legacy data) */}
 	                {(selectedOrder.status === "Delivered" && !selectedOrder.agentId) && (
@@ -25594,6 +25729,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Order Date</p>
 	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{formatOrderCreatedAt(selectedOrder)}</p>
 	                    </div>
+                      {selectedOrder.status === "Delivered" && (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Delivered Date</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <p className="text-sm font-semibold text-gray-900 m-0">{formatDateTime(selectedOrder.deliveredDate)}</p>
+	                            <button
+	                              type="button"
+	                              className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
+	                              onClick={() => {
+	                                openAdminOrderStatusRoute(selectedOrder.id, "Delivered");
+	                              }}
+	                            >
+	                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      )}
 	                    <div>
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Assigned To</p>
 	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
@@ -26047,9 +26199,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <div><h3 className="text-sm font-semibold text-gray-900">Status Workflow</h3><p>{selectedOrder.response ?? "Awaiting confirmation"}</p></div>
 	                  <div className="flex flex-wrap gap-2">
 	                    {(["New", "Confirmed", "In Process", "Dispatched", "Delivered", "Postponed", "Failed", "Cancelled"] as Exclude<OrderStatus, "All Orders">[]).map((status) => (
-	                      <button key={status} className={`!min-h-0 px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedOrder.status === status ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-100"}`} onClick={() => updateOrderStatus(selectedOrder.id, status)}>{status}</button>
+	                      <button
+                          key={status}
+                          className={`!min-h-0 px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedOrder.status === status ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-100"}`}
+                          onClick={() => {
+                            openAdminOrderStatusRoute(selectedOrder.id, status);
+                          }}
+                        >
+                          {status}
+	                      </button>
 	                    ))}
 	                  </div>
+                    <div className="pt-2 border-t border-gray-200">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick Outcomes</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50 text-orange-700 text-sm font-semibold border border-orange-200 hover:bg-orange-100 transition-colors"
+                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Failed", "Not Picking", "Customer is not picking calls.")}
+                        >
+                          <PhoneOff className="w-4 h-4" /> Not Picking
+                        </button>
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-50 text-yellow-700 text-sm font-semibold border border-yellow-200 hover:bg-yellow-100 transition-colors"
+                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Not Ready", "Customer is not ready yet and asked for later follow-up.")}
+                        >
+                          <Clock className="w-4 h-4" /> Not Ready
+                        </button>
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold border border-blue-200 hover:bg-blue-100 transition-colors"
+                          onClick={() => openAdminOrderOutcomeShortcut(selectedOrder.id, "Postponed", "Will Call Back", "Customer asked to call back later.")}
+                        >
+                          <Phone className="w-4 h-4" /> Will Call Back
+                        </button>
+                      </div>
+                    </div>
 	                </section>
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
@@ -26087,9 +26270,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                </section>
 
 	                <section className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-gray-100">
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => updateOrderStatus(selectedOrder.id, "Postponed")}>Postpone Order</button>
-	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")}>Cancel Order</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => updateOrderStatus(selectedOrder.id, "Confirmed")}>Confirm Order</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Postponed")}>Postpone Order</button>
+	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Cancelled")}>Cancel Order</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Confirmed")}>Confirm Order</button>
 	                </section>
 	              </div>
 	            )}
@@ -26098,10 +26281,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
 	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as Exclude<OrderStatus, "All Orders">)}>{repChangeStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+                  {statusChangeDraft === "Delivered" && (
+                    <label>
+                      <span>{selectedOrder.status === "Delivered" ? "Recorded Delivery Date" : "Actual Delivery Date"}</span>
+                      <input type="date" value={deliveryDateDraft} onChange={(event) => setDeliveryDateDraft(event.target.value)} />
+                    </label>
+                  )}
 	                <div>
-	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"].map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
+	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{repCallOutcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
+                    <div className="mt-2">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick actions</p>
+                      <div className="flex flex-wrap gap-2">
+                        {repCallOutcomeOptions.map((outcome) => (
+                          <button
+                            key={outcome}
+                            type="button"
+                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                            onClick={() => {
+                              setCallOutcomeDraft(outcome);
+                              setCallOutcomeCustom("");
+                            }}
+                          >
+                            {outcome}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 	                  {callOutcomeDraft === "__custom__" && (
-	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Not ready, Travelled, Will call back Friday…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
 	                  )}
 	                </div>
 	                <label><span>Reason for Status Change *</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder="Customer confirmed after call, no answer, requested later delivery..." /></label>
