@@ -10941,9 +10941,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? { ...u, id: saved.id, phone: saved.phone ?? rep.phone } : u));
         }).catch(() => {});
       })
-      .catch(() => {
+      .catch((err: any) => {
         setUsers((prev) => prev.filter((u) => u.id !== _repLocalId));
-        showToast("Failed to create user on server. Please try again.");
+        showToast(`Failed to create user: ${err?.message ?? "please try again"}.`);
       });
   };
 

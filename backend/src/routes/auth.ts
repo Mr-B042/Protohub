@@ -33,7 +33,15 @@ router.post("/register", async (req, res) => {
     email_confirm: true
   });
   if (authError || !authData.user) {
-    res.status(400).json({ error: authError?.message ?? "Failed to create user." });
+    const message = authError?.message ?? "Failed to create user.";
+    const lower = message.toLowerCase();
+    if (lower.includes("already") && (lower.includes("registered") || lower.includes("exists"))) {
+      res.status(409).json({
+        error: "This email is already registered in authentication. If it was used before, reset or reuse that account instead of creating a new one."
+      });
+      return;
+    }
+    res.status(400).json({ error: message });
     return;
   }
 
@@ -396,7 +404,11 @@ router.post("/invite", requireAuth, async (req, res) => {
   if (profileError) {
     // Rollback the auth user so the email can be reused on retry.
     await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
-    res.status(500).json({ error: "Failed to create user profile. Please try again." });
+    if (profileError.code === "23505") {
+      res.status(409).json({ error: "A team member with this email already exists in your workspace." });
+      return;
+    }
+    res.status(500).json({ error: `Failed to create user profile. ${profileError.message}` });
     return;
   }
 
