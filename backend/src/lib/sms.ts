@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { sendLowSmsBalanceEmail } from "./mailer.js";
 
 export type SmsProvider = "multitexter";
 export type SmsTrigger =
@@ -342,6 +343,81 @@ async function notifyLowBalance(orgId: string, balance: number, threshold: numbe
   });
   if (error) {
     logger.warn("sms low-balance alert insert failed", { orgId, error: error.message });
+  }
+
+  const settings = await loadSettings(orgId);
+  if (settings) {
+    await Promise.allSettled([
+      sendLowSmsBalanceEmail(orgId, { balance, threshold }),
+      sendLowBalanceStaffSms(orgId, settings, balance, threshold)
+    ]);
+  }
+}
+
+async function sendLowBalanceStaffSms(
+  orgId: string,
+  settings: SmsSettings,
+  balance: number,
+  threshold: number
+) {
+  if (!hasValidSettings(settings)) return;
+  if (balance < 4) return;
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("name, phone")
+    .eq("org_id", orgId)
+    .eq("active", true)
+    .in("role", ["Owner", "Admin"])
+    .not("phone", "is", null);
+
+  if (error) {
+    logger.warn("low-balance sms recipient lookup failed", { orgId, error: error.message });
+    return;
+  }
+
+  const unitLabel = balance === 1 ? "unit" : "units";
+  const thresholdLabel = threshold === 1 ? "unit" : "units";
+  const body = `Protohub alert: Multitexter SMS balance is low (${balance} ${unitLabel} left, threshold ${threshold} ${thresholdLabel}). Top up soon to avoid failed customer updates.`;
+
+  for (const recipient of data ?? []) {
+    if (!recipient?.phone) continue;
+    const normalizedPhone = normalizePhoneForSms(recipient.phone);
+    if (!normalizedPhone) continue;
+
+    const logId = await insertSmsLog({
+      org_id: orgId,
+      order_id: null,
+      cart_id: null,
+      trigger: "internal_low_balance",
+      audience: "staff",
+      recipient_name: recipient.name ?? null,
+      recipient_phone: recipient.phone,
+      normalized_phone: normalizedPhone,
+      body,
+      sender_name: settings.sender_name,
+      provider: settings.provider,
+      segments: estimateSmsSegments(body),
+      metadata: { alertType: "low_sms_balance", balance, threshold },
+      status: "queued"
+    });
+
+    try {
+      await deliverLoggedSms(orgId, settings, logId, normalizedPhone, body, null);
+    } catch (err) {
+      const normalized = normalizeSmsError(err);
+      await updateSmsLog(logId, {
+        status: "failed",
+        error_code: normalized.code ?? null,
+        error_message: normalized.message,
+        provider_status: normalized.message
+      });
+      logger.warn("low-balance sms send failed", {
+        orgId,
+        to: normalizedPhone,
+        error: normalized.message
+      });
+    }
   }
 }
 

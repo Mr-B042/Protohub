@@ -6,7 +6,7 @@ import { sendTestEmail } from "../lib/mailer.js";
 
 const router = Router();
 router.use(requireAuth);
-router.use(requireRole("Owner", "Admin"));
+router.use(requireRole("Owner"));
 
 const SECRET_MASK = "••••••••";
 
@@ -184,6 +184,31 @@ router.post("/test", async (req, res) => {
     ? `${result.provider} (fallback from ${result.fallbackFrom})`
     : result.provider;
   res.json({ message: `Test email sent to ${to}${via ? ` via ${via}` : ""}.`, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null });
+});
+
+router.get("/messages", async (req, res) => {
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.limit ?? 10) || 10));
+  const offset = (page - 1) * pageSize;
+
+  const { data, error, count } = await supabase
+    .from("email_messages")
+    .select("*", { count: "exact" })
+    .eq("org_id", req.user!.orgId)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + pageSize - 1);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({
+    data: data ?? [],
+    total: count ?? 0,
+    page,
+    pageSize
+  });
 });
 
 export default router;

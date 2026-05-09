@@ -257,7 +257,8 @@ export const embedSettingsApi = {
 export const emailSettingsApi = {
   get:  ()            => get<any>("/api/email-settings"),
   save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),
-  test: (to: string)  => post<{ message: string; provider?: string; fallbackFrom?: string | null }>("/api/email-settings/test", { to })
+  test: (to: string)  => post<{ message: string; provider?: string; fallbackFrom?: string | null }>("/api/email-settings/test", { to }),
+  messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/email-settings/messages?page=${page}&limit=${limit}`)
 };
 
 export const smsSettingsApi = {
@@ -269,7 +270,7 @@ export const smsSettingsApi = {
       { phone }
     ),
   balance: () => get<{ balance: number | null; raw?: unknown }>("/api/sms-settings/balance"),
-  messages: (limit = 100) => get<any[]>(`/api/sms-settings/messages?limit=${limit}`),
+  messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/sms-settings/messages?page=${page}&limit=${limit}`),
   resend: (id: string) => post<{ message: string; deferred?: boolean; logId?: string | null }>(`/api/sms-settings/messages/${id}/resend`, {}),
   optOuts: () => get<any[]>("/api/sms-settings/opt-outs"),
   addOptOut: (body: { phone: string; note?: string }) => post<any>("/api/sms-settings/opt-outs", body),

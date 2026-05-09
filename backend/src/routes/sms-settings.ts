@@ -17,7 +17,8 @@ import {
 
 const router = Router();
 router.use(requireAuth);
-router.use(requireRole("Owner", "Admin"));
+const requireOwner = requireRole("Owner");
+const requireSmsHealthViewer = requireRole("Owner", "Admin");
 
 const SECRET_MASK = "••••••••";
 
@@ -96,7 +97,7 @@ function inboundWebhookUrl(req: any, orgId: string, secret: string) {
   return secret ? `${protocol}://${req.get("host")}/api/public/sms/inbound/${orgId}/${secret}` : "";
 }
 
-router.get("/", async (req, res) => {
+router.get("/", requireOwner, async (req, res) => {
   const { data, error } = await supabase
     .from("sms_settings")
     .select("*")
@@ -123,7 +124,7 @@ router.get("/", async (req, res) => {
   });
 });
 
-router.put("/", async (req, res) => {
+router.put("/", requireOwner, async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -185,7 +186,7 @@ router.put("/", async (req, res) => {
   });
 });
 
-router.post("/test", async (req, res) => {
+router.post("/test", requireOwner, async (req, res) => {
   const phone = typeof req.body?.phone === "string" ? req.body.phone.trim() : "";
   if (!phone) {
     res.status(400).json({ error: "Provide a recipient phone in { phone }." });
@@ -207,7 +208,7 @@ router.post("/test", async (req, res) => {
   });
 });
 
-router.get("/balance", async (req, res) => {
+router.get("/balance", requireSmsHealthViewer, async (req, res) => {
   try {
     const result = await getSmsBalance(req.user!.orgId);
     res.json(result);
@@ -218,26 +219,33 @@ router.get("/balance", async (req, res) => {
   }
 });
 
-router.get("/messages", async (req, res) => {
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100) || 100));
-  const { data, error } = await supabase
+router.get("/messages", requireOwner, async (req, res) => {
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.limit ?? 10) || 10));
+  const offset = (page - 1) * pageSize;
+  const { data, error, count } = await supabase
     .from("sms_messages")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .range(offset, offset + pageSize - 1);
 
   if (error) {
     res.status(500).json({ error: error.message });
     return;
   }
 
-  res.json(data ?? []);
+  res.json({
+    data: data ?? [],
+    total: count ?? 0,
+    page,
+    pageSize
+  });
 });
 
-router.post("/messages/:id/resend", async (req, res) => {
+router.post("/messages/:id/resend", requireOwner, async (req, res) => {
   try {
-    const result = await resendSmsMessage(req.user!.orgId, req.params.id);
+    const result = await resendSmsMessage(req.user!.orgId, String(req.params.id));
     res.json({
       message: result.deferred
         ? "SMS queued until quiet hours end."
@@ -252,7 +260,7 @@ router.post("/messages/:id/resend", async (req, res) => {
   }
 });
 
-router.get("/opt-outs", async (req, res) => {
+router.get("/opt-outs", requireOwner, async (req, res) => {
   try {
     res.json(await listSmsOptOuts(req.user!.orgId));
   } catch (err) {
@@ -262,7 +270,7 @@ router.get("/opt-outs", async (req, res) => {
   }
 });
 
-router.post("/opt-outs", async (req, res) => {
+router.post("/opt-outs", requireOwner, async (req, res) => {
   const parsed = OptOutSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -279,9 +287,9 @@ router.post("/opt-outs", async (req, res) => {
   }
 });
 
-router.delete("/opt-outs/:phone", async (req, res) => {
+router.delete("/opt-outs/:phone", requireOwner, async (req, res) => {
   try {
-    const normalizedPhone = await removeSmsOptOut(req.user!.orgId, req.params.phone);
+    const normalizedPhone = await removeSmsOptOut(req.user!.orgId, String(req.params.phone));
     res.json({ normalizedPhone });
   } catch (err) {
     res.status(400).json({
@@ -290,7 +298,7 @@ router.delete("/opt-outs/:phone", async (req, res) => {
   }
 });
 
-router.get("/inbound", async (req, res) => {
+router.get("/inbound", requireOwner, async (req, res) => {
   const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50) || 50));
   try {
     res.json(await listSmsInboundMessages(req.user!.orgId, limit));
@@ -301,7 +309,7 @@ router.get("/inbound", async (req, res) => {
   }
 });
 
-router.post("/webhook-secret/rotate", async (req, res) => {
+router.post("/webhook-secret/rotate", requireOwner, async (req, res) => {
   try {
     const secret = await rotateSmsInboundWebhookSecret(req.user!.orgId);
     res.json({

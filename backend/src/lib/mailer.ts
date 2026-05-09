@@ -20,7 +20,8 @@ export type EmailTrigger =
   | "internal_low_stock"
   | "internal_weekly_report"
   | "internal_waybill_dispatched"
-  | "internal_new_team_member";
+  | "internal_new_team_member"
+  | "test_email";
 
 export type EmailProvider = "mailjet" | "resend";
 
@@ -46,6 +47,8 @@ type ProviderDispatchResult = {
   provider: EmailProvider;
   fallbackFrom?: EmailProvider;
 };
+
+type EmailLogAudience = "customer" | "staff";
 
 class EmailDispatchError extends Error {
   provider: EmailProvider;
@@ -449,6 +452,70 @@ async function getStaffRecipients(
   return (data ?? []).filter((u: any) => !!u.email);
 }
 
+async function insertEmailLog(payload: Record<string, unknown>) {
+  const { error } = await supabase.from("email_messages").insert(payload);
+  if (error) {
+    logger.warn("email log insert failed", { error: error.message });
+  }
+}
+
+async function deliverAndLogEmail(
+  orgId: string,
+  settings: EmailSettings,
+  trigger: EmailTrigger,
+  audience: EmailLogAudience,
+  vars: Record<string, string>,
+  to: { email: string; name?: string },
+  subject: string,
+  body: string
+) {
+  const basePayload = {
+    org_id: orgId,
+    trigger,
+    audience,
+    recipient_name: to.name ?? null,
+    recipient_email: to.email,
+    subject,
+    body,
+    metadata: vars
+  };
+
+  try {
+    const result = await dispatch(orgId, settings, to, subject, body);
+    await insertEmailLog({
+      ...basePayload,
+      provider: result.provider,
+      fallback_from: result.fallbackFrom ?? null,
+      status: "sent",
+      sent_at: new Date().toISOString()
+    });
+    logger.info("email sent", {
+      orgId,
+      trigger,
+      provider: result.provider,
+      fallbackFrom: result.fallbackFrom ?? null,
+      to: to.email
+    });
+    return result;
+  } catch (err: any) {
+    const normalized = normalizeDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, err);
+    await insertEmailLog({
+      ...basePayload,
+      provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+      fallback_from: null,
+      status: "failed",
+      error_message: normalized.message
+    });
+    logger.error("email send failed", {
+      orgId,
+      trigger,
+      to: to.email,
+      error: normalized.message
+    });
+    throw normalized;
+  }
+}
+
 // ── Core: send to a single customer/address ───────────────
 export async function sendEmail(
   orgId: string,
@@ -469,10 +536,9 @@ export async function sendEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    const result = await dispatch(orgId, settings, to, subject, body);
-    logger.info("email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: to.email });
-  } catch (err: any) {
-    logger.error("email send failed", { orgId, trigger, to: to.email, error: err?.message });
+    await deliverAndLogEmail(orgId, settings, trigger, "customer", vars, to, subject, body);
+  } catch {
+    // already logged
   }
 }
 
@@ -497,10 +563,9 @@ export async function sendToStaff(
     const subject = interpolate(tpl.subject, vars);
     const body    = interpolate(tpl.body, { ...vars, recipient_name: r.name });
     try {
-      const result = await dispatch(orgId, settings, r, subject, body);
-      logger.info("staff email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: r.email });
-    } catch (err: any) {
-      logger.error("staff email failed", { orgId, trigger, to: r.email, error: err?.message });
+      await deliverAndLogEmail(orgId, settings, trigger, "staff", { ...vars, recipient_name: r.name }, r, subject, body);
+    } catch {
+      // already logged
     }
   }
 }
@@ -534,10 +599,9 @@ export async function sendToUser(
   const body    = interpolate(tpl.body, { ...vars, recipient_name: user.name });
 
   try {
-    const result = await dispatch(orgId, settings, user, subject, body);
-    logger.info("user email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: user.email });
-  } catch (err: any) {
-    logger.error("user email failed", { orgId, trigger, to: user.email, error: err?.message });
+    await deliverAndLogEmail(orgId, settings, trigger, "staff", { ...vars, recipient_name: user.name }, user, subject, body);
+  } catch {
+    // already logged
   }
 }
 
@@ -688,6 +752,52 @@ export async function sendLowStockEmail(
   await sendToStaff(orgId, "internal_low_stock", vars, ["Owner", "Admin", "Inventory Manager"]);
 }
 
+export async function sendLowSmsBalanceEmail(
+  orgId: string,
+  details: { balance: number; threshold: number }
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!settings || !settings.enabled) return;
+  if (!hasValidKeys(settings)) return;
+  if (!settings.from_email) return;
+
+  const recipients = await getStaffRecipients(orgId, ["Owner", "Admin"]);
+  if (!recipients.length) return;
+
+  const unitLabel = details.balance === 1 ? "unit" : "units";
+  const thresholdLabel = details.threshold === 1 ? "unit" : "units";
+  const subject = `Protohub low SMS balance — ${details.balance} ${unitLabel} left`;
+
+  for (const recipient of recipients) {
+    const body = [
+      `Hello ${recipient.name},`,
+      "",
+      `Protohub has detected that your Multitexter SMS balance is low.`,
+      "",
+      `Current Balance: ${details.balance} ${unitLabel}`,
+      `Alert Threshold: ${details.threshold} ${thresholdLabel}`,
+      "",
+      "Please top up your SMS credits soon so customer order updates and reminders keep sending without interruption."
+    ].join("\n");
+
+    try {
+      const result = await dispatch(orgId, settings, recipient, subject, body);
+      logger.info("low sms balance email sent", {
+        orgId,
+        provider: result.provider,
+        fallbackFrom: result.fallbackFrom ?? null,
+        to: recipient.email
+      });
+    } catch (err: any) {
+      logger.error("low sms balance email failed", {
+        orgId,
+        to: recipient.email,
+        error: err?.message
+      });
+    }
+  }
+}
+
 // ── Staff: weekly report → owner ──────────────────────────
 export async function sendWeeklyReport(orgId: string): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -780,10 +890,18 @@ export async function sendWelcomeEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    const result = await dispatch(orgId, settings, { email: member.email, name: member.name }, subject, body);
-    logger.info("welcome email sent", { orgId, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: member.email });
-  } catch (err: any) {
-    logger.error("welcome email failed", { orgId, to: member.email, error: err?.message });
+    await deliverAndLogEmail(
+      orgId,
+      settings,
+      "internal_new_team_member",
+      "staff",
+      vars,
+      { email: member.email, name: member.name },
+      subject,
+      body
+    );
+  } catch {
+    // already logged
   }
 }
 
@@ -803,11 +921,18 @@ export async function sendTestEmail(
   const body    = `This is a live test email from your Protohub workspace.\nProvider: ${settings.provider ?? DEFAULT_EMAIL_PROVIDER}\nSender: ${brandName(settings)}\n\nIf you received this, your email integration is ready for customer and internal workflows.`;
 
   try {
-    const result = await dispatch(orgId, settings, { email: toEmail }, subject, body);
-    logger.info("test email sent", { orgId, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: toEmail });
+    const result = await deliverAndLogEmail(
+      orgId,
+      settings,
+      "test_email",
+      "staff",
+      { recipient_name: "Test recipient", email_test: "true" },
+      { email: toEmail },
+      subject,
+      body
+    );
     return { ok: true, provider: result.provider, fallbackFrom: result.fallbackFrom };
   } catch (err: any) {
-    logger.error("test email failed", { orgId, to: toEmail, error: err?.message });
     return { ok: false, error: err?.message ?? "Unknown error" };
   }
 }

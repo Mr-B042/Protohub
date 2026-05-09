@@ -211,6 +211,7 @@ type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
 type EmailProviderName = "resend" | "mailjet";
+type SettingsPanel = "workspace" | "email" | "sms";
 type EmailTemplateConfig = { subject: string; body: string };
 type EmailSettingsState = {
   enabled: boolean;
@@ -270,6 +271,22 @@ type SmsMessageLog = {
   scheduledFor?: string;
   sentAt?: string;
   deliveredAt?: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+type EmailMessageLog = {
+  id: string;
+  trigger: string;
+  audience?: string;
+  recipientName?: string;
+  recipientEmail: string;
+  subject: string;
+  body: string;
+  provider?: string | null;
+  fallbackFrom?: string | null;
+  status: string;
+  errorMessage?: string | null;
+  sentAt?: string | null;
   createdAt: string;
   metadata?: Record<string, unknown>;
 };
@@ -1760,6 +1777,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [emailTestLoading, setEmailTestLoading] = useState(false);
   const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
   const [emailTemplateKey, setEmailTemplateKey] = useState<string>(defaultEmailTemplateKey);
+  const [emailMessages, setEmailMessages] = useState<EmailMessageLog[]>([]);
+  const [emailMessagesLoading, setEmailMessagesLoading] = useState(false);
+  const [emailActivityPage, setEmailActivityPage] = useState(1);
+  const [emailActivityTotal, setEmailActivityTotal] = useState(0);
   const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
   const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
   const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
@@ -1770,6 +1791,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [smsBalanceError, setSmsBalanceError] = useState("");
   const [smsMessages, setSmsMessages] = useState<SmsMessageLog[]>([]);
   const [smsMessagesLoading, setSmsMessagesLoading] = useState(false);
+  const [smsActivityPage, setSmsActivityPage] = useState(1);
+  const [smsActivityTotal, setSmsActivityTotal] = useState(0);
   const [smsResendLoadingId, setSmsResendLoadingId] = useState<string | null>(null);
   const [smsOptOuts, setSmsOptOuts] = useState<SmsOptOutRecord[]>([]);
   const [smsOptOutsLoading, setSmsOptOutsLoading] = useState(false);
@@ -1779,6 +1802,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [smsInboundLoading, setSmsInboundLoading] = useState(false);
   const [smsWebhookRotateLoading, setSmsWebhookRotateLoading] = useState(false);
   const [smsTemplateKey, setSmsTemplateKey] = useState<string>(defaultSmsTemplateKey);
+  const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
@@ -2068,6 +2092,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const currentRole: EditableUserRole = isSpying ? (spiedUser!.role) : realRole;
   const currentAllowedPages = allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []);
   const isPageAllowed = (page: ActivePage) => currentAllowedPages.includes(page);
+  const canManageMessagingSettings = currentRole === "Owner";
+  const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
+  const emailActivityPageSize = 10;
+  const smsActivityPageSize = 10;
   // Owner / Admin / Manager see org-wide data; everyone else is pinned to
   // their own assignments wherever a page filter checks viewerScopeRepId.
   const viewerScopeRepId: string | null =
@@ -2075,6 +2103,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ? null
       : (currentManagedUser?.id ?? authUser?.id ?? null);
   const canMutate = currentRole !== "Viewer";
+
+  useEffect(() => {
+    if (settingsPanel === "email" && !canManageMessagingSettings) {
+      setSettingsPanel(canViewSmsHealth ? "sms" : "workspace");
+      return;
+    }
+    if (settingsPanel === "sms" && !canViewSmsHealth) {
+      setSettingsPanel("workspace");
+    }
+  }, [settingsPanel, canManageMessagingSettings, canViewSmsHealth]);
 
   const enterSpy = (user: ManagedUser) => {
     setSpyAsUserId(user.id);
@@ -2257,7 +2295,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
-    if (!authUser || !["Owner", "Admin"].includes(authUser.role)) return;
+    if (!authUser || !canManageMessagingSettings) {
+      setEmailSettings(null);
+      setEmailSettingsLoading(false);
+      setEmailMessages([]);
+      setEmailActivityTotal(0);
+      return;
+    }
     let cancelled = false;
     setEmailSettingsLoading(true);
     emailSettingsApi.get()
@@ -2275,39 +2319,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!cancelled) setEmailSettingsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [authUser?.id, authUser?.role]);
+  }, [authUser?.id, canManageMessagingSettings]);
 
-  const hydrateSmsSupportData = async (settingsOverride?: SmsSettingsState | null, options: { quiet?: boolean } = {}) => {
-    const settings = settingsOverride ?? smsSettings;
-    setSmsMessagesLoading(true);
-    setSmsOptOutsLoading(true);
-    setSmsInboundLoading(true);
+  const loadEmailMessages = async (page = emailActivityPage, options: { quiet?: boolean } = {}) => {
+    setEmailMessagesLoading(true);
     try {
-      const [messages, optOuts, inbound] = await Promise.all([
-        smsSettingsApi.messages(40),
-        smsSettingsApi.optOuts(),
-        smsSettingsApi.inbound(40)
-      ]);
-      setSmsMessages(messages);
-      setSmsOptOuts(optOuts);
-      setSmsInboundMessages(inbound);
+      const result = await emailSettingsApi.messages(page, emailActivityPageSize);
+      setEmailMessages(result.data ?? []);
+      setEmailActivityTotal(result.total ?? 0);
+      setEmailActivityPage(result.page ?? page);
+    } catch (err: any) {
+      setEmailMessages([]);
+      setEmailActivityTotal(0);
+      if (!options.quiet) showToast(`Failed to load email activity: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setEmailMessagesLoading(false);
+    }
+  };
+
+  const loadSmsMessages = async (page = smsActivityPage, options: { quiet?: boolean } = {}) => {
+    setSmsMessagesLoading(true);
+    try {
+      const result = await smsSettingsApi.messages(page, smsActivityPageSize);
+      setSmsMessages(result.data ?? []);
+      setSmsActivityTotal(result.total ?? 0);
+      setSmsActivityPage(result.page ?? page);
     } catch (err: any) {
       setSmsMessages([]);
-      setSmsOptOuts([]);
-      setSmsInboundMessages([]);
+      setSmsActivityTotal(0);
       if (!options.quiet) showToast(`Failed to load SMS activity: ${err?.message ?? "please retry"}.`);
     } finally {
       setSmsMessagesLoading(false);
-      setSmsOptOutsLoading(false);
-      setSmsInboundLoading(false);
     }
+  };
 
-    if (!settings?.apiKey) {
-      setSmsBalance(null);
-      setSmsBalanceError("");
-      return;
-    }
-
+  const loadSmsBalance = async (options: { quiet?: boolean } = {}) => {
     setSmsBalanceLoading(true);
     try {
       const balance = await smsSettingsApi.balance();
@@ -2322,9 +2368,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const hydrateSmsSupportData = async (settingsOverride?: SmsSettingsState | null, options: { quiet?: boolean } = {}) => {
+    const settings = settingsOverride ?? smsSettings;
+    setSmsOptOutsLoading(true);
+    setSmsInboundLoading(true);
+    try {
+      const [optOuts, inbound] = await Promise.all([
+        smsSettingsApi.optOuts(),
+        smsSettingsApi.inbound(40)
+      ]);
+      setSmsOptOuts(optOuts);
+      setSmsInboundMessages(inbound);
+    } catch (err: any) {
+      setSmsOptOuts([]);
+      setSmsInboundMessages([]);
+      if (!options.quiet) showToast(`Failed to load SMS activity: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setSmsOptOutsLoading(false);
+      setSmsInboundLoading(false);
+    }
+
+    await loadSmsMessages(smsActivityPage, options);
+
+    if (!settings?.apiKey) {
+      setSmsBalance(null);
+      setSmsBalanceError("");
+      return;
+    }
+
+    await loadSmsBalance(options);
+  };
+
   useEffect(() => {
     if (!auth.getAccessToken()) return;
-    if (!authUser || !["Owner", "Admin"].includes(authUser.role)) return;
+    if (!authUser || !canViewSmsHealth) {
+      setSmsSettings(null);
+      setSmsSettingsLoading(false);
+      setSmsMessages([]);
+      setSmsOptOuts([]);
+      setSmsInboundMessages([]);
+      setSmsBalance(null);
+      setSmsBalanceError("");
+      return;
+    }
+    if (!canManageMessagingSettings) {
+      setSmsSettings(null);
+      setSmsSettingsLoading(false);
+      setSmsMessages([]);
+      setSmsOptOuts([]);
+      setSmsInboundMessages([]);
+      void loadSmsBalance({ quiet: true });
+      return;
+    }
     let cancelled = false;
     setSmsSettingsLoading(true);
     smsSettingsApi.get()
@@ -2343,7 +2438,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!cancelled) setSmsSettingsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [authUser?.id, authUser?.role]);
+  }, [authUser?.id, canManageMessagingSettings, canViewSmsHealth]);
+
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (!canManageMessagingSettings) return;
+    if (!emailSettings) return;
+    void loadEmailMessages(emailActivityPage, { quiet: true });
+  }, [authUser?.id, canManageMessagingSettings, emailSettings, emailActivityPage]);
+
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (!canManageMessagingSettings) return;
+    if (!smsSettings) return;
+    void loadSmsMessages(smsActivityPage, { quiet: true });
+  }, [authUser?.id, canManageMessagingSettings, smsSettings, smsActivityPage]);
 
   const saveEmbedSettings = async () => {
     setEmbedSettingsSaving(true);
@@ -20996,6 +21105,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </header>
 
               <section className="space-y-3">
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { id: "workspace", label: "Workspace", hint: "Push, branding, app install, timezone, account" },
+                      ...(canManageMessagingSettings ? [{ id: "email", label: "Email Delivery", hint: "Provider setup, templates, activity" }] : []),
+                      ...(canViewSmsHealth ? [{ id: "sms", label: "SMS Delivery", hint: canManageMessagingSettings ? "Balance, provider setup, templates, activity" : "Balance and SMS health only" }] : [])
+                    ].map((tab) => {
+                      const active = settingsPanel === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setSettingsPanel(tab.id as SettingsPanel)}
+                          className={`text-left rounded-xl border px-4 py-3 transition-colors min-w-[220px] ${active ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
+                        >
+                          <span className="block text-sm font-bold">{tab.label}</span>
+                          <span className="block text-[11px] mt-1 text-gray-500">{tab.hint}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              {settingsPanel === "workspace" && (
+              <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
                 <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates, and key operational alerts.</p>
                 {pushNeedsStandaloneInstall ? (
@@ -21158,8 +21293,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               </section>
+              )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {settingsPanel === "email" && currentRole === "Owner" && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Email Delivery</h2>
                 <p className="text-sm text-gray-500">Configure transactional email, internal alerts, and weekly report delivery. Resend works best once your sender address or domain is verified.</p>
@@ -21329,6 +21465,103 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                       </div>
 
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                          <p className="text-sm font-bold text-blue-900 m-0 mb-1">Primary provider</p>
+                          <p className="text-2xl font-black text-[#1F8FE0] m-0 capitalize">{emailSettings.provider}</p>
+                          <p className="text-[11px] text-blue-800 mt-2 mb-0">Protohub will automatically fall back when the backup provider is configured and the primary fails or looks quota-limited.</p>
+                        </div>
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                          <p className="text-sm font-bold text-emerald-900 m-0 mb-1">Sender identity</p>
+                          <p className="text-sm font-extrabold text-emerald-700 m-0">{emailSettings.fromName || "Protohub"}</p>
+                          <p className="text-xs text-emerald-800 mt-1 mb-0 break-all">{emailSettings.fromEmail || "No from-email saved yet"}</p>
+                        </div>
+                        <div className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+                          <p className="text-sm font-bold text-violet-900 m-0 mb-1">Email activity</p>
+                          <p className="text-2xl font-black text-violet-700 m-0">{emailActivityTotal}</p>
+                          <p className="text-[11px] text-violet-800 mt-2 mb-0">Total logged email deliveries and failures available for review in this workspace.</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-900">Recent Email Activity</h3>
+                            <p className="text-xs text-gray-500 mt-1">Customer emails, internal alerts, welcome emails, and tests are logged here with pagination.</p>
+                          </div>
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            disabled={emailMessagesLoading}
+                            onClick={() => { void loadEmailMessages(emailActivityPage); }}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Refresh Activity
+                          </button>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 overflow-hidden">
+                          {emailMessagesLoading ? (
+                            <div className="px-4 py-5 text-sm text-gray-500">Loading email activity…</div>
+                          ) : emailMessages.length === 0 ? (
+                            <div className="px-4 py-5 text-sm text-gray-500">No email activity has been logged yet.</div>
+                          ) : (
+                            <div className="divide-y divide-gray-100">
+                              {emailMessages.map((message) => (
+                                <div key={message.id} className="px-4 py-4 flex flex-col gap-2">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-bold text-gray-900 m-0">{emailTriggerMeta[message.trigger]?.label ?? message.trigger}</p>
+                                      <p className="text-xs text-gray-500 mt-1 mb-0">
+                                        {message.recipientName ? `${message.recipientName} · ` : ""}{message.recipientEmail}
+                                        {" · "}
+                                        {message.sentAt ? `Sent ${formatMoment(message.sentAt)}` : `Created ${formatMoment(message.createdAt)}`}
+                                      </p>
+                                    </div>
+                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                      message.status === "sent" ? "bg-blue-100 text-blue-700" : "bg-rose-100 text-rose-700"
+                                    }`}>
+                                      {message.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm font-semibold text-gray-800 m-0">{message.subject}</p>
+                                  <p className="text-sm text-gray-700 m-0 leading-relaxed whitespace-pre-wrap">{message.body}</p>
+                                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
+                                    {message.provider ? <span>Provider: {message.provider}</span> : null}
+                                    {message.fallbackFrom ? <span>Fallback from: {message.fallbackFrom}</span> : null}
+                                    {message.errorMessage ? <span className="text-rose-500">Error: {message.errorMessage}</span> : null}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {!emailMessagesLoading && emailActivityTotal > emailActivityPageSize && (
+                            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                              <span>
+                                Showing {((emailActivityPage - 1) * emailActivityPageSize) + 1}
+                                –
+                                {Math.min(emailActivityPage * emailActivityPageSize, emailActivityTotal)} of {emailActivityTotal}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                                  disabled={emailActivityPage <= 1}
+                                  onClick={() => setEmailActivityPage((prev) => Math.max(1, prev - 1))}
+                                >
+                                  Prev
+                                </button>
+                                <span>Page {emailActivityPage} of {Math.max(1, Math.ceil(emailActivityTotal / emailActivityPageSize))}</span>
+                                <button
+                                  className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                                  disabled={emailActivityPage >= Math.max(1, Math.ceil(emailActivityTotal / emailActivityPageSize))}
+                                  onClick={() => setEmailActivityPage((prev) => Math.min(Math.max(1, Math.ceil(emailActivityTotal / emailActivityPageSize)), prev + 1))}
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="space-y-4">
                         {emailTriggerSections.map((section) => (
                           <div key={section.title} className="space-y-3">
@@ -21455,12 +21688,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
               )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {settingsPanel === "sms" && canViewSmsHealth && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">SMS Delivery</h2>
-                <p className="text-sm text-gray-500">Configure Multitexter SMS for customer order updates, recovery follow-ups, and scheduled reminder automation.</p>
+                <p className="text-sm text-gray-500">{canManageMessagingSettings ? "Configure Multitexter SMS for customer order updates, recovery follow-ups, and scheduled reminder automation." : "Monitor the live SMS credit balance. Provider keys, templates, webhook controls, and automations stay owner-only."}</p>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
-                  {smsSettingsLoading && !smsSettings ? (
+                  {!canManageMessagingSettings ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-5">
+                          <p className="text-sm font-bold text-emerald-900 m-0 mb-1">SMS balance</p>
+                          <p className="text-3xl font-black text-emerald-700 m-0">
+                            {smsBalanceLoading ? "…" : smsBalance == null ? "—" : smsBalance}
+                          </p>
+                          <p className="text-[11px] text-emerald-800 mt-2 mb-0">
+                            {smsBalanceError || "Live Multitexter balance for your workspace."}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5 space-y-2">
+                          <p className="text-sm font-bold text-blue-900 m-0">Owner-managed controls</p>
+                          <p className="text-xs text-blue-800 leading-relaxed m-0">
+                            API keys, sender configuration, templates, quiet hours, retries, inbound webhooks, and resend controls are hidden from Admin accounts.
+                          </p>
+                          <p className="text-xs text-blue-800 leading-relaxed m-0">
+                            When the SMS balance drops below the configured threshold, Owner/Admin recipients now get an internal alert plus low-balance email and SMS nudges where contact details are available.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-xs text-gray-400">
+                          Only the live balance is visible in Admin view.
+                        </div>
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                          disabled={smsBalanceLoading}
+                          onClick={() => { void loadSmsBalance(); }}
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Refresh Balance
+                        </button>
+                      </div>
+                    </div>
+                  ) : smsSettingsLoading && !smsSettings ? (
                     <div className="text-sm text-gray-500">Loading SMS settings…</div>
                   ) : !smsSettings ? (
                     <div className="text-sm text-red-500">SMS settings could not be loaded right now.</div>
@@ -21921,7 +22191,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="px-4 py-5 text-sm text-gray-500">No SMS activity has been logged yet.</div>
                           ) : (
                             <div className="divide-y divide-gray-100">
-                              {smsMessages.slice(0, 10).map((message) => (
+                              {smsMessages.map((message) => (
                                 <div key={message.id} className="px-4 py-4 flex flex-col gap-2">
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
@@ -21970,6 +22240,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               ))}
                             </div>
                           )}
+                          {!smsMessagesLoading && smsActivityTotal > smsActivityPageSize && (
+                            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                              <span>
+                                Showing {((smsActivityPage - 1) * smsActivityPageSize) + 1}
+                                –
+                                {Math.min(smsActivityPage * smsActivityPageSize, smsActivityTotal)} of {smsActivityTotal}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                                  disabled={smsActivityPage <= 1}
+                                  onClick={() => setSmsActivityPage((prev) => Math.max(1, prev - 1))}
+                                >
+                                  Prev
+                                </button>
+                                <span>Page {smsActivityPage} of {Math.max(1, Math.ceil(smsActivityTotal / smsActivityPageSize))}</span>
+                                <button
+                                  className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                                  disabled={smsActivityPage >= Math.max(1, Math.ceil(smsActivityTotal / smsActivityPageSize))}
+                                  onClick={() => setSmsActivityPage((prev) => Math.min(Math.max(1, Math.ceil(smsActivityTotal / smsActivityPageSize)), prev + 1))}
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -22001,7 +22297,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
               )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Timezone</h2>
                 <p className="text-sm text-gray-500">All dates and times shown across the app are formatted in this timezone.</p>
@@ -22031,7 +22327,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
               )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Branding</h2>
                 <p className="text-sm text-gray-500">Your logo and company name appear in the sidebar, login screen, and on customer-facing pages.</p>
@@ -22125,6 +22421,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
               )}
 
+              {settingsPanel === "workspace" && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Get the app</h2>
                 <p className="text-sm text-gray-500">Install {companyName || "Protohub"} as an app on your device. No app store, no separate download.</p>
@@ -22339,7 +22636,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </p>
                 </div>
               </section>
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              )}
+              {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Abandoned cart notifications</h2>
                 <p className="text-sm text-gray-500">Choose who gets pinged when a new abandoned cart is captured.</p>
@@ -22366,6 +22664,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
               )}
 
+              {settingsPanel === "workspace" && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Account Information</h2>
                 <p className="text-sm text-gray-500">Your account details</p>
@@ -22385,6 +22684,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   ))}
                 </div>
               </section>
+              )}
             </div>
           ) : activePage === "Inventory" ? (
             inventoryView === "history" ? (
