@@ -5,7 +5,8 @@ import { auth } from "./lib/auth";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
 
-const App = lazy(async () => ({ default: (await import("./App")).App }));
+const loadApp = () => import("./App");
+const App = lazy(async () => ({ default: (await loadApp()).App }));
 const LoginScreen = lazy(async () => ({ default: (await import("./components/LoginScreen")).LoginScreen }));
 const ResetPasswordScreen = lazy(async () => ({ default: (await import("./components/ResetPasswordScreen")).ResetPasswordScreen }));
 
@@ -16,6 +17,12 @@ function RouteFallback({ message }: { message: string }) {
         <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>{message}</div>
       </div>
     </div>
+  );
+}
+
+function AppShellFallback() {
+  return (
+    <div style={{ minHeight: "100vh", background: "#ebebeb" }} aria-hidden="true" />
   );
 }
 
@@ -55,6 +62,11 @@ function Root() {
     };
   }, []);
 
+  useEffect(() => {
+    if (hash.startsWith("#/order-form/embed")) return;
+    void loadApp();
+  }, [hash]);
+
   const handleLogin  = () => setLoggedIn(true);
   const handleLogout = () => { auth.clear(); setLoggedIn(false); };
 
@@ -84,7 +96,7 @@ function Root() {
   }
 
   return (
-    <Suspense fallback={<RouteFallback message="Loading workspace..." />}>
+    <Suspense fallback={<AppShellFallback />}>
       <App onLogout={handleLogout} />
     </Suspense>
   );
