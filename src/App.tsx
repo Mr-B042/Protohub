@@ -807,6 +807,7 @@ const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-
 
 const makeProductId = () => `prod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makePackageId = () => `pkg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const isTemporaryPackageId = (id: string) => id.startsWith("pkg-");
 const makeMovementId = () => `mov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makeBonusRuleId = () => `bonus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 const makeCrossSellLineId = () => `xsell-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
@@ -8671,7 +8672,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           displayOrder: pkg.displayOrder,
           active: pkg.active,
           companionProducts: pkg.companionProducts ?? []
-        })
+        }).then((savedPackage: any) => ({ tempId: pkg.id, savedPackage: savedPackage as ProductPackage }))
       );
       const settingsPayload = {
         ...productSalesSettingsPayload(clone),
@@ -8684,6 +8685,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ...packageTasks,
         productsApi.update(savedId, settingsPayload)
       ]);
+      clone.packages.forEach((pkg, index) => {
+        const result = results[pricingTasks.length + index];
+        if (result?.status === "fulfilled") {
+          replaceTemporaryPackageId(savedId, pkg.id, result.value.savedPackage);
+        }
+      });
       const hasFailures = results.some((result) => result.status === "rejected");
       if (hasFailures) {
         showToast(`"${candidateName}" duplicated, but some pricing/package settings did not sync. Open the product to verify.`);
@@ -8927,9 +8934,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openInventoryEditPackageRoute(selectedProduct.id, item.id);
   };
 
+  const replaceTemporaryPackageId = (productId: string, tempId: string, savedPackage: ProductPackage) => {
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id !== productId
+          ? product
+          : {
+              ...product,
+              packages: product.packages.map((pkg) =>
+                pkg.id !== tempId
+                  ? pkg
+                  : {
+                      ...pkg,
+                      ...savedPackage,
+                      companionProducts: savedPackage.companionProducts ?? pkg.companionProducts ?? []
+                    }
+              )
+            }
+      )
+    );
+    setSelectedPackageId((current) => (current === tempId ? savedPackage.id : current));
+  };
+
   const savePackage = () => {
     if (!selectedProduct || !packageName.trim()) {
       showToast("Package name is required.");
+      return;
+    }
+    if (modal === "editPackage" && selectedPackage && isTemporaryPackageId(selectedPackage.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
       return;
     }
 
@@ -8964,10 +8997,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     closeModal();
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, companionProducts: packageCompanions }).catch((err: any) => {
-        setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
-        showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
-      });
+      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, companionProducts: packageCompanions })
+        .then((savedPackage: any) => {
+          replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
+        })
+        .catch((err: any) => {
+          setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
+          showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
+        });
     } else if (modal === "editPackage" && selectedPackage) {
       productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, companionProducts: packageCompanions }).catch((err: any) => {
         setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
@@ -9002,6 +9039,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quantity: clone.quantity, price: clone.price, currency: clone.currency,
       displayOrder: clone.displayOrder, active: clone.active,
       companionProducts: clone.companionProducts
+    }).then((savedPackage: any) => {
+      replaceTemporaryPackageId(_dupProdId, clone.id, savedPackage as ProductPackage);
     }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _dupProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
       showToast(`Failed to duplicate "${item.name}": ${err?.message ?? "please retry"}.`);
@@ -9012,6 +9051,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Toggle active/inactive — quick action from the package row.
   const togglePackageActive = (item: ProductPackage) => {
     if (!selectedProduct) return;
+    if (isTemporaryPackageId(item.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
     const next = !item.active;
     const prev = item.active;
     const _tpProdId = selectedProduct.id;
@@ -9038,6 +9081,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const target = direction === "up" ? idx - 1 : idx + 1;
     if (target < 0 || target >= sorted.length) return;
     const a = sorted[idx], b = sorted[target];
+    if (isTemporaryPackageId(a.id) || isTemporaryPackageId(b.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
     const aOrder = a.displayOrder, bOrder = b.displayOrder;
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id
@@ -9083,6 +9130,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const deleteSelectedPackage = () => {
     if (!selectedProduct || !selectedPackage) {
       showToast("Choose a package first.");
+      return;
+    }
+    if (isTemporaryPackageId(selectedPackage.id)) {
+      showToast("This package is still syncing. Refresh the page if it does not settle.");
       return;
     }
 
