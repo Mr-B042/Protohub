@@ -37,6 +37,11 @@ interface EmailSettings {
   templates: Record<string, { subject: string; body: string }>;
 }
 
+type EmailContent = {
+  text: string;
+  html: string;
+};
+
 type ProviderDispatchResult = {
   provider: EmailProvider;
   fallbackFrom?: EmailProvider;
@@ -68,6 +73,10 @@ const DEFAULT_EMAIL_PROVIDER: EmailProvider =
   process.env.EMAIL_PROVIDER === "mailjet" ? "mailjet" : "resend";
 
 const providerQuotaBackoff = new Map<string, number>();
+
+function brandName(settings: EmailSettings) {
+  return settings.from_name?.trim() || "Protohub";
+}
 
 function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
   return {
@@ -180,6 +189,121 @@ function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function ensureBrandSignature(text: string, settings: EmailSettings): string {
+  const trimmed = text.trim();
+  if (!trimmed) return `Team ${brandName(settings)}`;
+  const normalized = trimmed.toLowerCase();
+  if (normalized.includes(`team ${brandName(settings).toLowerCase()}`)) return trimmed;
+  return `${trimmed}\n\nWarm regards,\nTeam ${brandName(settings)}`;
+}
+
+function renderSectionHtml(section: string): string {
+  const lines = section
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return "";
+
+  const colonLines = lines.filter((line) => line.includes(":"));
+  const shouldRenderAsFacts =
+    colonLines.length >= 2 &&
+    colonLines.length === lines.length &&
+    !lines.some((line) => line.startsWith("http"));
+
+  if (shouldRenderAsFacts) {
+    const rows = lines.map((line) => {
+      const separator = line.indexOf(":");
+      const label = line.slice(0, separator).trim();
+      const value = line.slice(separator + 1).trim();
+      return `
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;font-weight:600;vertical-align:top;width:38%;">${escapeHtml(label)}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;vertical-align:top;">${escapeHtml(value)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;margin:18px 0;">
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  if (section.includes("──")) {
+    return `
+      <pre style="margin:18px 0;padding:16px 18px;background:#0f172a;color:#e2e8f0;border-radius:14px;font-size:13px;line-height:1.6;white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;">${escapeHtml(section)}</pre>
+    `;
+  }
+
+  return lines
+    .map((line) => `<p style="margin:0 0 14px;color:#111827;font-size:15px;line-height:1.7;">${escapeHtml(line)}</p>`)
+    .join("");
+}
+
+function buildEmailContent(settings: EmailSettings, subject: string, body: string): EmailContent {
+  const brandedText = ensureBrandSignature(body, settings);
+  const sections = brandedText.split(/\n\s*\n/).filter((section) => section.trim());
+  const preview = sections.find((section) => section.trim())?.replace(/\s+/g, " ").slice(0, 140) ?? subject;
+  const sectionsHtml = sections.map(renderSectionHtml).join("");
+  const sender = escapeHtml(brandName(settings));
+  const escapedSubject = escapeHtml(subject);
+  const escapedPreview = escapeHtml(preview);
+  const replyTo = settings.reply_to || settings.from_email;
+  const replyToHtml = replyTo
+    ? `<a href="mailto:${escapeHtml(replyTo)}" style="color:#15803d;text-decoration:none;">${escapeHtml(replyTo)}</a>`
+    : sender;
+
+  return {
+    text: brandedText,
+    html: `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${escapedSubject}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f7f5;font-family:Inter,Segoe UI,Arial,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapedPreview}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f7f5;padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;">
+            <tr>
+              <td style="padding-bottom:16px;text-align:left;">
+                <div style="display:inline-block;padding:10px 16px;border-radius:999px;background:#dcfce7;color:#166534;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${sender}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#ffffff;border:1px solid #e5e7eb;border-radius:22px;padding:34px 28px 28px;box-shadow:0 18px 48px rgba(15, 23, 42, 0.08);">
+                <p style="margin:0 0 10px;color:#166534;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Protohub Email Update</p>
+                <h1 style="margin:0 0 18px;color:#111827;font-size:28px;line-height:1.2;">${escapedSubject}</h1>
+                ${sectionsHtml}
+                <div style="margin-top:26px;padding-top:18px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:13px;line-height:1.7;">
+                  Sent by ${sender} via Protohub.<br />
+                  Reply to ${replyToHtml}
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
+  };
+}
+
 // ── Load org email settings from DB ───────────────────────
 async function loadSettings(orgId: string): Promise<EmailSettings | null> {
   const { data, error } = await supabase
@@ -204,6 +328,7 @@ async function sendViaMailjet(
   subject: string,
   body: string
 ): Promise<void> {
+  const content = buildEmailContent(settings, subject, body);
   const client = new Mailjet({
     apiKey:    settings.api_key_public,
     apiSecret: settings.api_key_private
@@ -213,7 +338,8 @@ async function sendViaMailjet(
     From:     { Email: settings.from_email, Name: settings.from_name || settings.from_email },
     To:       [{ Email: to.email, Name: to.name || to.email }],
     Subject:  subject,
-    TextPart: body
+    TextPart: content.text,
+    HTMLPart: content.html
   };
 
   if (settings.reply_to) message.ReplyTo = { Email: settings.reply_to };
@@ -232,6 +358,7 @@ async function sendViaResend(
   subject: string,
   body: string
 ): Promise<void> {
+  const content = buildEmailContent(settings, subject, body);
   const client = new Resend(settings.resend_api_key);
 
   const from = settings.from_name
@@ -242,7 +369,8 @@ async function sendViaResend(
     from,
     to:      [to.email],
     subject,
-    text:    body,
+    text:    content.text,
+    html:    content.html,
     ...(settings.reply_to ? { reply_to: settings.reply_to } : {})
   };
 
@@ -671,8 +799,8 @@ export async function sendTestEmail(
     return { ok: false, error: "Add a Resend API key or Mailjet API keys first." };
   }
 
-  const subject = "Test email from ProtoHub";
-  const body    = `This is a test email from your ProtoHub email integration.\nProvider: ${settings.provider ?? DEFAULT_EMAIL_PROVIDER}\n\nIf you received this, your configuration is working correctly.`;
+  const subject = "Test email from Protohub";
+  const body    = `This is a live test email from your Protohub workspace.\nProvider: ${settings.provider ?? DEFAULT_EMAIL_PROVIDER}\nSender: ${brandName(settings)}\n\nIf you received this, your email integration is ready for customer and internal workflows.`;
 
   try {
     const result = await dispatch(orgId, settings, { email: toEmail }, subject, body);
