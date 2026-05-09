@@ -1,11 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { Suspense, lazy, useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
-import { App } from "./App";
-import { LoginScreen } from "./components/LoginScreen";
-import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import { auth } from "./lib/auth";
+import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
+
+const App = lazy(async () => ({ default: (await import("./App")).App }));
+const LoginScreen = lazy(async () => ({ default: (await import("./components/LoginScreen")).LoginScreen }));
+const ResetPasswordScreen = lazy(async () => ({ default: (await import("./components/ResetPasswordScreen")).ResetPasswordScreen }));
+
+function RouteFallback({ message }: { message: string }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#eef1f4", color: "#374151", fontFamily: "Inter, system-ui, sans-serif" }}>
+      <div style={{ textAlign: "center", padding: "24px 20px" }}>
+        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>{message}</div>
+      </div>
+    </div>
+  );
+}
 
 // Sentry error tracking — set VITE_SENTRY_DSN in Vercel environment variables.
 // If the env var is missing (local dev), Sentry is a no-op.
@@ -49,20 +61,33 @@ function Root() {
   // Recovery email lands on /#/reset-password — handle it before the auth gate
   // so the user can complete the reset even if they aren't "logged in" yet.
   if (hash.startsWith("#/reset-password")) {
-    return <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />;
+    return (
+      <Suspense fallback={<RouteFallback message="Loading reset screen..." />}>
+        <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />
+      </Suspense>
+    );
   }
 
   // Public embed form is hit by unauthenticated customers. App detects the
-  // hash internally and renders the form-only branch — bypass the auth gate.
+  // hash here and renders a lightweight public page — bypass the auth gate
+  // and avoid booting the full admin dashboard bundle.
   if (hash.startsWith("#/order-form/embed")) {
-    return <App onLogout={handleLogout} />;
+    return <PublicOrderFormPage />;
   }
 
   if (!loggedIn) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return (
+      <Suspense fallback={<RouteFallback message="Loading sign-in..." />}>
+        <LoginScreen onLogin={handleLogin} />
+      </Suspense>
+    );
   }
 
-  return <App onLogout={handleLogout} />;
+  return (
+    <Suspense fallback={<RouteFallback message="Loading workspace..." />}>
+      <App onLogout={handleLogout} />
+    </Suspense>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

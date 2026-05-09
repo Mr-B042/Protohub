@@ -13,7 +13,8 @@
     "start": "tsx src/index.ts",
     "db:migrate": "supabase db push",
     "db:reset": "supabase db reset",
-    "db:seed-agents": "tsx src/scripts/seed-agents.ts"
+    "db:seed-agents": "tsx src/scripts/seed-agents.ts",
+    "db:seed-orders": "tsx src/scripts/seed-orders.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",

@@ -6,6 +6,7 @@ import { auth } from "./auth";
 import { snakeToCamel } from "./normalize";
 
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
+let refreshInFlight: Promise<boolean> | null = null;
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -51,30 +52,40 @@ async function request<T>(
 }
 
 async function tryRefresh(): Promise<boolean> {
-  const refreshToken = auth.getRefreshToken();
-  if (!refreshToken) return false;
-  try {
-    const res = await fetch(`${BASE}/api/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken })
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    // Fetch fresh profile so role/name stay in sync
-    let user = auth.getUser();
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refreshToken = auth.getRefreshToken();
+    if (!refreshToken) return false;
     try {
-      const meRes = await fetch(`${BASE}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${data.accessToken}` }
+      const res = await fetch(`${BASE}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken })
       });
-      if (meRes.ok) {
-        const me = await meRes.json();
-        if (me.user) user = snakeToCamel(me.user);
-      }
-    } catch { /* keep existing user if /me fails */ }
-    if (user) auth.save(data.accessToken, data.refreshToken, user);
-    return true;
-  } catch { return false; }
+      if (!res.ok) return false;
+      const data = await res.json();
+      // Fetch fresh profile so role/name stay in sync
+      let user = auth.getUser();
+      try {
+        const meRes = await fetch(`${BASE}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${data.accessToken}` }
+        });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me.user) user = snakeToCamel(me.user);
+        }
+      } catch { /* keep existing user if /me fails */ }
+      if (user) auth.save(data.accessToken, data.refreshToken, user);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
 }
 
 const get  = <T>(path: string)            => request<T>("GET",    path);

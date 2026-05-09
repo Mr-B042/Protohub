@@ -2084,7 +2084,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusAmount, setManualBonusAmount] = useState("");
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>([]);
-  const [dataLoading, setDataLoading] = useState(() => auth.isLoggedIn());
+  const [dataLoading, setDataLoading] = useState(() => {
+    if (auth.isLoggedIn()) return true;
+    if (typeof window === "undefined") return false;
+    return window.location.hash.startsWith("#/order-form/embed");
+  });
   const [dataError, setDataError] = useState<string | null>(null);
   const [ordersCappedWarning, setOrdersCappedWarning] = useState<string | null>(null);
   const [penaltyTargetRepId, setPenaltyTargetRepId] = useState<string>("");
@@ -2156,10 +2160,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })();
   const [publicHoneypot, setPublicHoneypot] = useState("");
   const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
+  const [showPublicEmbedLoading, setShowPublicEmbedLoading] = useState(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => embedStateField === "Dropdown" && currencyCode === "NGN";
+  useEffect(() => {
+    if (!publicEmbedParams || !dataLoading || publicProduct) {
+      setShowPublicEmbedLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowPublicEmbedLoading(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [publicEmbedParams, dataLoading, publicProduct]);
   const visibleProducts = products.filter((product) => {
     const search = inventorySearch.trim().toLowerCase();
     return !search || `${product.name} ${product.sku}`.toLowerCase().includes(search);
@@ -10505,7 +10518,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return (
       <main className="public-order-page" data-theme={theme}>
         <section className="public-order-shell">
-          {!publicProduct ? (
+          {dataLoading && !publicProduct ? (
+            showPublicEmbedLoading ? (
+            <article className="panel public-order-empty" aria-busy="true" aria-live="polite">
+              <Package className="animate-pulse" />
+              <h1>Loading order form…</h1>
+              <p>Fetching the latest product and package details for this embed link.</p>
+            </article>
+            ) : null
+          ) : !publicProduct ? (
             <article className="panel public-order-empty">
               <EmptyProductsIcon />
               <h1>Order form unavailable</h1>

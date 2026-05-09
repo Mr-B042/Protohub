@@ -35,6 +35,10 @@ import userRoutes          from "./routes/users.js";
 const app = express();
 const PORT = process.env.PORT ?? 4000;
 
+function isLoopbackIp(ip: string | undefined) {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 // Trust the first proxy hop so req.ip reflects the real client IP behind
 // Railway/Vercel/Cloudflare. Required for accurate login_audit IP capture
 // and per-IP rate limiting.
@@ -69,7 +73,7 @@ app.use(rateLimit({
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1"
+  skip: (req) => isLoopbackIp(req.ip)
 }));
 
 // Rate limit on auth endpoints — 20 attempts per 15 minutes per IP. Bumped
@@ -83,6 +87,7 @@ const authRateLimit = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => isLoopbackIp(req.ip),
   message: { error: "Too many attempts. Please try again in 15 minutes." }
 });
 
