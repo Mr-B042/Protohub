@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendLowSmsBalanceEmail } from "./mailer.js";
+import { DEFAULT_WORKING_DAYS, isWithinWorkingSchedule, nextWorkingScheduleAt, normalizeWorkingDays } from "./business-schedule.js";
 
 export type SmsProvider = "multitexter";
 export type SmsTrigger =
@@ -82,6 +83,10 @@ interface SmsSettings {
   retry_backoff_minutes: number;
   inbound_webhook_secret: string;
   timezone?: string;
+  working_schedule_enabled?: boolean;
+  working_days?: string[];
+  working_day_start?: string;
+  working_day_end?: string;
 }
 
 type SendSmsOptions = {
@@ -173,6 +178,11 @@ function applyEnvFallbacks(settings: SmsSettings): SmsSettings {
     max_retry_attempts: Math.max(0, Number(settings.max_retry_attempts ?? 2) || 0),
     retry_backoff_minutes: Math.max(5, Number(settings.retry_backoff_minutes ?? 30) || 30),
     inbound_webhook_secret: settings.inbound_webhook_secret || "",
+    timezone: settings.timezone?.trim() || "Africa/Lagos",
+    working_schedule_enabled: !!settings.working_schedule_enabled,
+    working_days: normalizeWorkingDays(settings.working_days ?? DEFAULT_WORKING_DAYS),
+    working_day_start: settings.working_day_start || "08:00",
+    working_day_end: settings.working_day_end || "18:00",
     triggers: normalizeBooleanMap(settings.triggers, DEFAULT_SMS_TRIGGERS),
     templates: normalizeTemplateMap(settings.templates, DEFAULT_SMS_TEMPLATES)
   };
@@ -295,13 +305,21 @@ function isWithinQuietHours(settings: SmsSettings, at = new Date()) {
 }
 
 function nextAllowedSendAt(settings: SmsSettings, from = new Date()) {
-  if (!settings.quiet_hours_enabled) return null;
-  let probe = new Date(from.getTime() + 5 * 60 * 1000);
-  for (let i = 0; i < (24 * 60) / 5 + 2; i += 1) {
-    if (!isWithinQuietHours(settings, probe)) return probe.toISOString();
-    probe = new Date(probe.getTime() + 5 * 60 * 1000);
+  if (!settings.quiet_hours_enabled && !settings.working_schedule_enabled) return null;
+  let probe = new Date(from.getTime() + 60 * 1000);
+  if (settings.working_schedule_enabled && !isWithinWorkingSchedule(settings, from)) {
+    const nextWorkingAt = nextWorkingScheduleAt(settings, from);
+    if (nextWorkingAt) probe = new Date(nextWorkingAt);
   }
-  return new Date(from.getTime() + 12 * 60 * 60 * 1000).toISOString();
+  for (let i = 0; i < 10 * 24 * 60; i += 1) {
+    if (isSmsAllowedNow(settings, probe)) return probe.toISOString();
+    probe = new Date(probe.getTime() + 60 * 1000);
+  }
+  return new Date(from.getTime() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isSmsAllowedNow(settings: SmsSettings, at = new Date()) {
+  return isWithinWorkingSchedule(settings, at) && !isWithinQuietHours(settings, at);
 }
 
 function isRetryableSmsError(error: SmsDispatchError) {
@@ -490,7 +508,7 @@ async function loadSettings(orgId: string): Promise<SmsSettings | null> {
       .single(),
     supabase
       .from("organizations")
-      .select("timezone")
+      .select("timezone, working_schedule_enabled, working_days, working_day_start, working_day_end")
       .eq("id", orgId)
       .single()
   ]);
@@ -498,7 +516,11 @@ async function loadSettings(orgId: string): Promise<SmsSettings | null> {
   if (error || !data) return null;
   return applyEnvFallbacks({
     ...(data as SmsSettings),
-    timezone: typeof org?.timezone === "string" && org.timezone.trim() ? org.timezone.trim() : "Africa/Lagos"
+    timezone: typeof org?.timezone === "string" && org.timezone.trim() ? org.timezone.trim() : "Africa/Lagos",
+    working_schedule_enabled: !!org?.working_schedule_enabled,
+    working_days: normalizeWorkingDays(org?.working_days),
+    working_day_start: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
+    working_day_end: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00"
   });
 }
 
@@ -693,15 +715,23 @@ async function dispatchSms(
       return null;
     }
 
-    if (isWithinQuietHours(settings)) {
+    if (!isSmsAllowedNow(settings)) {
       const scheduledFor = nextAllowedSendAt(settings) ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
       await insertSmsLog({
         ...baseLogPayload,
         status: "deferred",
         scheduled_for: scheduledFor,
-        provider_status: "Deferred for quiet hours"
+        provider_status: settings.working_schedule_enabled && !isWithinWorkingSchedule(settings)
+          ? "Deferred for next working slot"
+          : "Deferred for quiet hours"
       });
-      logger.info("sms deferred: quiet hours", { orgId, trigger, normalizedPhone, scheduledFor });
+      logger.info("sms deferred", {
+        orgId,
+        trigger,
+        normalizedPhone,
+        scheduledFor,
+        reason: settings.working_schedule_enabled && !isWithinWorkingSchedule(settings) ? "working_schedule" : "quiet_hours"
+      });
       return null;
     }
   }
@@ -1706,12 +1736,14 @@ export async function processQueuedSms(limit = 150) {
       continue;
     }
 
-    if (isWithinQuietHours(settings)) {
+    if (!isSmsAllowedNow(settings)) {
       await updateSmsLog(row.id, {
         status: "deferred",
         scheduled_for: nextAllowedSendAt(settings),
         next_retry_at: null,
-        provider_status: "Deferred for quiet hours"
+        provider_status: settings.working_schedule_enabled && !isWithinWorkingSchedule(settings)
+          ? "Deferred for next working slot"
+          : "Deferred for quiet hours"
       });
       continue;
     }

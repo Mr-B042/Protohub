@@ -2,6 +2,7 @@ import Mailjet from "node-mailjet";
 import { Resend } from "resend";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { DEFAULT_WORKING_DAYS, isWithinWorkingSchedule, nextWorkingScheduleAt, normalizeWorkingDays } from "./business-schedule.js";
 
 // ── Types ─────────────────────────────────────────────────
 export type EmailTrigger =
@@ -37,6 +38,11 @@ interface EmailSettings {
   reply_to: string;
   triggers: Record<string, boolean>;
   templates: Record<string, { subject: string; body: string }>;
+  timezone?: string;
+  working_schedule_enabled?: boolean;
+  working_days?: string[];
+  working_day_start?: string;
+  working_day_end?: string;
 }
 
 type EmailContent = {
@@ -60,6 +66,11 @@ type StaffRecipient = {
 type EmailActionOptions = {
   actionLabel?: string;
   actionPathForRole?: (role: string) => string | null | undefined;
+};
+
+type DeliverEmailOptions = {
+  recipientRole?: string | null;
+  ignoreWorkingSchedule?: boolean;
 };
 
 class EmailDispatchError extends Error {
@@ -202,6 +213,11 @@ function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
     from_name: settings.from_name || process.env.EMAIL_FROM_NAME || "",
     from_email: settings.from_email || process.env.EMAIL_FROM_EMAIL || "",
     reply_to: settings.reply_to || process.env.EMAIL_REPLY_TO || "",
+    timezone: settings.timezone?.trim() || "Africa/Lagos",
+    working_schedule_enabled: !!settings.working_schedule_enabled,
+    working_days: normalizeWorkingDays(settings.working_days ?? DEFAULT_WORKING_DAYS),
+    working_day_start: settings.working_day_start || "08:00",
+    working_day_end: settings.working_day_end || "18:00",
     triggers: normalizeBooleanMap(settings.triggers, DEFAULT_EMAIL_TRIGGER_MAP),
     templates: normalizeTemplateMap(settings.templates, DEFAULT_EMAIL_TEMPLATE_MAP)
   };
@@ -441,14 +457,28 @@ function buildEmailContent(
 
 // ── Load org email settings from DB ───────────────────────
 async function loadSettings(orgId: string): Promise<EmailSettings | null> {
-  const { data, error } = await supabase
-    .from("email_settings")
-    .select("*")
-    .eq("org_id", orgId)
-    .single();
+  const [{ data, error }, { data: org }] = await Promise.all([
+    supabase
+      .from("email_settings")
+      .select("*")
+      .eq("org_id", orgId)
+      .single(),
+    supabase
+      .from("organizations")
+      .select("timezone, working_schedule_enabled, working_days, working_day_start, working_day_end")
+      .eq("id", orgId)
+      .single()
+  ]);
 
   if (error || !data) return null;
-  return applyEnvFallbacks(data as EmailSettings);
+  return applyEnvFallbacks({
+    ...(data as EmailSettings),
+    timezone: typeof org?.timezone === "string" && org.timezone.trim() ? org.timezone.trim() : "Africa/Lagos",
+    working_schedule_enabled: !!org?.working_schedule_enabled,
+    working_days: normalizeWorkingDays(org?.working_days),
+    working_day_start: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
+    working_day_end: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00"
+  });
 }
 
 // ── Check provider keys are configured ────────────────────
@@ -588,10 +618,35 @@ async function getStaffRecipients(
   return (data ?? []).filter((u: any) => !!u.email);
 }
 
+function shouldRespectWorkingSchedule(
+  trigger: EmailTrigger,
+  audience: EmailLogAudience,
+  recipientRole?: string | null
+) {
+  if (trigger === "test_email") return false;
+  if (audience === "customer") return true;
+  if (!recipientRole) return false;
+  return !["Owner", "Admin", "Manager"].includes(recipientRole);
+}
+
 async function insertEmailLog(payload: Record<string, unknown>) {
-  const { error } = await supabase.from("email_messages").insert(payload);
+  const { data, error } = await supabase
+    .from("email_messages")
+    .insert(payload)
+    .select("id")
+    .single();
   if (error) {
     logger.warn("email log insert failed", { error: error.message });
+    return null;
+  }
+  return data?.id as string | null;
+}
+
+async function updateEmailLog(id: string | null, payload: Record<string, unknown>) {
+  if (!id) return;
+  const { error } = await supabase.from("email_messages").update(payload).eq("id", id);
+  if (error) {
+    logger.warn("email log update failed", { id, error: error.message });
   }
 }
 
@@ -603,7 +658,8 @@ async function deliverAndLogEmail(
   vars: Record<string, string>,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  options: DeliverEmailOptions = {}
 ) {
   const basePayload = {
     org_id: orgId,
@@ -613,8 +669,34 @@ async function deliverAndLogEmail(
     recipient_email: to.email,
     subject,
     body,
-    metadata: vars
+    metadata: {
+      ...vars,
+      recipient_role: options.recipientRole ?? null
+    }
   };
+
+  if (!options.ignoreWorkingSchedule && shouldRespectWorkingSchedule(trigger, audience, options.recipientRole)) {
+    if (!isWithinWorkingSchedule(settings)) {
+      const scheduledFor = nextWorkingScheduleAt(settings) ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await insertEmailLog({
+        ...basePayload,
+        provider: settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+        fallback_from: null,
+        status: "deferred",
+        scheduled_for: scheduledFor
+      });
+      logger.info("email deferred: outside working schedule", {
+        orgId,
+        trigger,
+        to: to.email,
+        recipientRole: options.recipientRole ?? null,
+        scheduledFor
+      });
+      return {
+        provider: settings.provider ?? DEFAULT_EMAIL_PROVIDER
+      };
+    }
+  }
 
   try {
     const result = await dispatch(orgId, settings, to, subject, body, vars);
@@ -631,7 +713,7 @@ async function deliverAndLogEmail(
       provider: result.provider,
       fallbackFrom: result.fallbackFrom ?? null,
       to: to.email
-    });
+      });
     return result;
   } catch (err: any) {
     const normalized = normalizeDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, err);
@@ -657,7 +739,8 @@ export async function sendEmail(
   orgId: string,
   trigger: EmailTrigger,
   vars: Record<string, string>,
-  to: { email: string; name?: string }
+  to: { email: string; name?: string },
+  options?: DeliverEmailOptions
 ): Promise<void> {
   const settings = await loadSettings(orgId);
   if (!settings || !settings.enabled) return;
@@ -672,7 +755,7 @@ export async function sendEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    await deliverAndLogEmail(orgId, settings, trigger, "customer", vars, to, subject, body);
+    await deliverAndLogEmail(orgId, settings, trigger, "customer", vars, to, subject, body, options);
   } catch {
     // already logged
   }
@@ -711,7 +794,9 @@ export async function sendToStaff(
     const subject = interpolate(tpl.subject, scopedVars);
     const body    = interpolate(tpl.body, scopedVars);
     try {
-      await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, r, subject, body);
+      await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, r, subject, body, {
+        recipientRole: r.role
+      });
     } catch {
       // already logged
     }
@@ -759,7 +844,9 @@ export async function sendToUser(
   const body    = interpolate(tpl.body, scopedVars);
 
   try {
-    await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, user, subject, body);
+    await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, user, subject, body, {
+      recipientRole: user.role ?? null
+    });
   } catch {
     // already logged
   }
@@ -1079,6 +1166,83 @@ export async function sendWeeklyReport(orgId: string): Promise<{ ok: boolean; er
   }
 }
 
+export async function processQueuedEmails(limit = 100) {
+  const nowIso = new Date().toISOString();
+  const { data: rows, error } = await supabase
+    .from("email_messages")
+    .select("id, org_id, trigger, audience, recipient_name, recipient_email, subject, body, provider, status, metadata, scheduled_for")
+    .eq("status", "deferred")
+    .lte("scheduled_for", nowIso)
+    .order("scheduled_for", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    logger.error("email queue query failed", { error: error.message });
+    return;
+  }
+
+  for (const row of rows ?? []) {
+    const settings = await loadSettings(row.org_id);
+    if (!settings || !settings.enabled || !settings.from_email || !hasValidKeys(settings)) continue;
+
+    const vars =
+      row.metadata && typeof row.metadata === "object"
+        ? (row.metadata as Record<string, string>)
+        : {};
+    const recipientRole = typeof vars.recipient_role === "string" ? vars.recipient_role : null;
+
+    if (shouldRespectWorkingSchedule(row.trigger as EmailTrigger, row.audience as EmailLogAudience, recipientRole)) {
+      if (!isWithinWorkingSchedule(settings)) {
+        await updateEmailLog(row.id, {
+          scheduled_for: nextWorkingScheduleAt(settings) ?? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+        });
+        continue;
+      }
+    }
+
+    try {
+      const result = await dispatch(
+        row.org_id,
+        settings,
+        { email: row.recipient_email, name: row.recipient_name ?? undefined },
+        row.subject,
+        row.body,
+        vars
+      );
+      await updateEmailLog(row.id, {
+        provider: result.provider,
+        fallback_from: result.fallbackFrom ?? null,
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        scheduled_for: null,
+        error_message: null
+      });
+      logger.info("queued email sent", {
+        orgId: row.org_id,
+        trigger: row.trigger,
+        to: row.recipient_email,
+        provider: result.provider,
+        fallbackFrom: result.fallbackFrom ?? null
+      });
+    } catch (err: any) {
+      const normalized = normalizeDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, err);
+      await updateEmailLog(row.id, {
+        provider: normalized.provider ?? settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+        fallback_from: null,
+        status: "failed",
+        scheduled_for: null,
+        error_message: normalized.message
+      });
+      logger.error("queued email send failed", {
+        orgId: row.org_id,
+        trigger: row.trigger,
+        to: row.recipient_email,
+        error: normalized.message
+      });
+    }
+  }
+}
+
 // ── Staff: new team member welcome ────────────────────────
 export async function sendWelcomeEmail(
   orgId: string,
@@ -1109,7 +1273,10 @@ export async function sendWelcomeEmail(
       vars,
       { email: member.email, name: member.name },
       subject,
-      body
+      body,
+      {
+        recipientRole: member.role
+      }
     );
   } catch {
     // already logged
@@ -1140,7 +1307,8 @@ export async function sendTestEmail(
       { recipient_name: "Test recipient", email_test: "true" },
       { email: toEmail },
       subject,
-      body
+      body,
+      { ignoreWorkingSchedule: true }
     );
     return { ok: true, provider: result.provider, fallbackFrom: result.fallbackFrom };
   } catch (err: any) {

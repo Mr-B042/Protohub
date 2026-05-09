@@ -8,7 +8,7 @@ import { logger } from "./lib/logger.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { supabase } from "./lib/supabase.js";
-import { sendWeeklyReport } from "./lib/mailer.js";
+import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
 
 import authRoutes     from "./routes/auth.js";
@@ -184,6 +184,16 @@ cron.schedule("*/10 * * * *", async () => {
     await processQueuedSms();
   } catch (e) {
     logger.error("cron: sms queue processor crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Deferred email queue — every 10 minutes ──────────────
+cron.schedule("*/10 * * * *", async () => {
+  logger.info("cron: processing queued emails");
+  try {
+    await processQueuedEmails();
+  } catch (e) {
+    logger.error("cron: email queue processor crashed", { error: (e as Error).message });
   }
 });
 

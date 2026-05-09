@@ -215,6 +215,7 @@ type EmailProviderName = "resend" | "mailjet";
 type SettingsPanel = "workspace" | "email" | "sms";
 type DisplayDensity = "compact" | "comfortable";
 type RevenueCompareMode = "periods" | "statuses";
+type WorkingDayName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
 type EmailTemplateConfig = { subject: string; body: string };
 type EmailSettingsState = {
   enabled: boolean;
@@ -289,6 +290,7 @@ type EmailMessageLog = {
   fallbackFrom?: string | null;
   status: string;
   errorMessage?: string | null;
+  scheduledFor?: string | null;
   sentAt?: string | null;
   createdAt: string;
   metadata?: Record<string, unknown>;
@@ -1004,6 +1006,8 @@ const displayDateFromKey = (value?: string) =>
 // helpers can read it without React context.
 const TIMEZONE_STORAGE_KEY = "protohub.timezone";
 const DEFAULT_TIMEZONE = "Africa/Lagos";
+const WORKING_DAY_OPTIONS: WorkingDayName[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DEFAULT_WORKING_DAYS: WorkingDayName[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 let _currentTimezone: string = (() => {
   try {
     return (typeof localStorage !== "undefined" && localStorage.getItem(TIMEZONE_STORAGE_KEY)) || DEFAULT_TIMEZONE;
@@ -1896,6 +1900,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentActive, setAgentActive] = useState(true);
   const [agentStockCapacity, setAgentStockCapacity] = useState<number | "">(1000);
   const [timezoneSetting, setTimezoneSetting] = useState<string>(getStoredTimezone);
+  const [workingScheduleEnabled, setWorkingScheduleEnabled] = useState(false);
+  const [workingDaysSetting, setWorkingDaysSetting] = useState<WorkingDayName[]>([...DEFAULT_WORKING_DAYS]);
+  const [workingDayStart, setWorkingDayStart] = useState("08:00");
+  const [workingDayEnd, setWorkingDayEnd] = useState("18:00");
   // Send-to-Agent: by default only show agents whose zone matches the order's
   // delivery state. Operator can flip this on for cross-state deliveries.
   const [sendToAgentShowAllStates, setSendToAgentShowAllStates] = useState(false);
@@ -1995,6 +2003,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
   const adminCartSyncedRef = useRef(false);
+  const workingScheduleSyncedRef = useRef({
+    enabled: false,
+    days: [...DEFAULT_WORKING_DAYS] as WorkingDayName[],
+    start: "08:00",
+    end: "18:00"
+  });
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
@@ -2379,6 +2393,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setAdminCartNotifications(res.adminCartNotifications);
         adminCartSyncedRef.current = res.adminCartNotifications;
       }
+      if (typeof res?.workingScheduleEnabled === "boolean") {
+        setWorkingScheduleEnabled(res.workingScheduleEnabled);
+      }
+      if (Array.isArray(res?.workingDays) && res.workingDays.length) {
+        const nextDays = WORKING_DAY_OPTIONS.filter((day) => res.workingDays.includes(day));
+        if (nextDays.length) setWorkingDaysSetting(nextDays);
+      }
+      if (typeof res?.workingDayStart === "string" && res.workingDayStart) {
+        setWorkingDayStart(res.workingDayStart);
+      }
+      if (typeof res?.workingDayEnd === "string" && res.workingDayEnd) {
+        setWorkingDayEnd(res.workingDayEnd);
+      }
+      workingScheduleSyncedRef.current = {
+        enabled: !!res?.workingScheduleEnabled,
+        days: Array.isArray(res?.workingDays) && res.workingDays.length
+          ? WORKING_DAY_OPTIONS.filter((day) => res.workingDays.includes(day))
+          : [...DEFAULT_WORKING_DAYS],
+        start: typeof res?.workingDayStart === "string" && res.workingDayStart ? res.workingDayStart : "08:00",
+        end: typeof res?.workingDayEnd === "string" && res.workingDayEnd ? res.workingDayEnd : "18:00"
+      };
       brandingHydratedRef.current = true;
       const serverVersion = Number(res?.cacheVersion ?? 0);
       const localKey = "protohub.cacheVersion";
@@ -2432,12 +2467,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const timezoneChanged =
       !!timezoneSetting && timezoneSyncedRef.current !== timezoneSetting;
     const cartNotifChanged = adminCartSyncedRef.current !== adminCartNotifications;
-    if (!brandingChanged && !payrollChanged && !timezoneChanged && !cartNotifChanged) return;
+    const workingScheduleChanged =
+      workingScheduleSyncedRef.current.enabled !== workingScheduleEnabled ||
+      workingScheduleSyncedRef.current.start !== workingDayStart ||
+      workingScheduleSyncedRef.current.end !== workingDayEnd ||
+      JSON.stringify(workingScheduleSyncedRef.current.days) !== JSON.stringify(workingDaysSetting);
+    if (!brandingChanged && !payrollChanged && !timezoneChanged && !cartNotifChanged && !workingScheduleChanged) return;
     const body: Record<string, unknown> = {};
     if (brandingChanged) { body.name = companyName; body.logoUrl = companyLogo; }
     if (payrollChanged)  { body.topPerformerBonusEnabled = topPerformerBonusEnabled; body.topPerformerBonusAmount = bonusAmtNum; }
     if (timezoneChanged) { body.timezone = timezoneSetting; }
     if (cartNotifChanged) { body.adminCartNotifications = adminCartNotifications; }
+    if (workingScheduleChanged) {
+      body.workingScheduleEnabled = workingScheduleEnabled;
+      body.workingDays = workingDaysSetting;
+      body.workingDayStart = workingDayStart;
+      body.workingDayEnd = workingDayEnd;
+    }
     const handle = setTimeout(() => {
       authApi.updateBranding(body as any)
         .then((saved: any) => {
@@ -2451,11 +2497,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           };
           timezoneSyncedRef.current = saved?.timezone ?? timezoneSetting;
           adminCartSyncedRef.current = saved?.adminCartNotifications ?? adminCartNotifications;
+          workingScheduleSyncedRef.current = {
+            enabled: !!saved?.workingScheduleEnabled,
+            days: Array.isArray(saved?.workingDays) && saved.workingDays.length
+              ? WORKING_DAY_OPTIONS.filter((day) => saved.workingDays.includes(day))
+              : [...workingDaysSetting],
+            start: saved?.workingDayStart ?? workingDayStart,
+            end: saved?.workingDayEnd ?? workingDayEnd
+          };
         })
         .catch((err: any) => { showToast(`Settings sync failed: ${err.message}`); });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications]);
+  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {
@@ -24686,6 +24740,93 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </label>
                   <div className="text-xs text-gray-500">
                     <strong>Now in this timezone:</strong> {formatDateTime(new Date())}
+                  </div>
+                </div>
+              </section>
+              )}
+
+              {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
+              <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">Working Days & Hours</h2>
+                <p className="text-sm text-gray-500">Orders still enter the workspace anytime, but customer messages and rep-facing follow-up can wait until your next working slot.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
+                  <div className="flex flex-col sm:flex-row items-start gap-4">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">Respect business schedule</h3>
+                      <p className="text-sm text-gray-500">Turn this on if you do not want Sunday or after-hours customer/reps messaging to send immediately.</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={workingScheduleEnabled}
+                      className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${workingScheduleEnabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                      onClick={() => {
+                        setWorkingScheduleEnabled((value) => !value);
+                        showToast(`Working schedule ${workingScheduleEnabled ? "disabled" : "enabled"}.`);
+                      }}
+                    >
+                      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${workingScheduleEnabled ? "left-5" : "left-0.5"}`} />
+                    </button>
+                  </div>
+
+                  <div className={`${workingScheduleEnabled ? "opacity-100" : "opacity-60"} space-y-5 transition-opacity`}>
+                    <div className="space-y-2">
+                      <span className="block text-sm font-semibold text-gray-700">Working days</span>
+                      <div className="flex flex-wrap gap-2">
+                        {WORKING_DAY_OPTIONS.map((day) => {
+                          const active = workingDaysSetting.includes(day);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              disabled={!workingScheduleEnabled}
+                              onClick={() => {
+                                setWorkingDaysSetting((current) => {
+                                  const next = current.includes(day)
+                                    ? current.filter((entry) => entry !== day)
+                                    : WORKING_DAY_OPTIONS.filter((entry) => [...current, day].includes(entry));
+                                  if (!next.length) {
+                                    showToast("Keep at least one working day selected.");
+                                    return current;
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className={`!min-h-0 px-3 py-2 rounded-full border text-sm font-semibold transition-colors ${active ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"} disabled:cursor-not-allowed disabled:hover:bg-white`}
+                            >
+                              {day}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-gray-700">Work starts</span>
+                        <input
+                          type="time"
+                          value={workingDayStart}
+                          disabled={!workingScheduleEnabled}
+                          onChange={(e) => setWorkingDayStart(e.target.value)}
+                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-[#1F8FE0] disabled:bg-gray-50"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-gray-700">Work ends</span>
+                        <input
+                          type="time"
+                          value={workingDayEnd}
+                          disabled={!workingScheduleEnabled}
+                          onChange={(e) => setWorkingDayEnd(e.target.value)}
+                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-[#1F8FE0] disabled:bg-gray-50"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+                      Orders are still captured instantly on off-days. What changes is delivery of customer-facing SMS/email and rep follow-up: if a message lands on Sunday or outside your working hours, Protohub defers it to the next allowed slot in <strong>{timezoneSetting || DEFAULT_TIMEZONE}</strong>.
+                    </div>
                   </div>
                 </div>
               </section>

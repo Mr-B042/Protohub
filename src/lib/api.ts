@@ -144,10 +144,37 @@ export const authApi = {
     branding?: { name: string; logoUrl: string };
     payroll?: { topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number };
     timezone?: string;
+    adminCartNotifications?: boolean;
+    workingScheduleEnabled?: boolean;
+    workingDays?: string[];
+    workingDayStart?: string;
+    workingDayEnd?: string;
   }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
-  updateBranding: (body: { name?: string; logoUrl?: string; topPerformerBonusEnabled?: boolean; topPerformerBonusAmount?: number; timezone?: string }) =>
-    patch<{ name: string; logoUrl: string; topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number; timezone: string }>("/api/auth/org-branding", body),
+  updateBranding: (body: {
+    name?: string;
+    logoUrl?: string;
+    topPerformerBonusEnabled?: boolean;
+    topPerformerBonusAmount?: number;
+    timezone?: string;
+    adminCartNotifications?: boolean;
+    workingScheduleEnabled?: boolean;
+    workingDays?: string[];
+    workingDayStart?: string;
+    workingDayEnd?: string;
+  }) =>
+    patch<{
+      name: string;
+      logoUrl: string;
+      topPerformerBonusEnabled: boolean;
+      topPerformerBonusAmount: number;
+      timezone: string;
+      adminCartNotifications: boolean;
+      workingScheduleEnabled: boolean;
+      workingDays: string[];
+      workingDayStart: string;
+      workingDayEnd: string;
+    }>("/api/auth/org-branding", body),
 
   invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),

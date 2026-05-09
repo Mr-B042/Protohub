@@ -5,6 +5,7 @@ import { z } from "zod";
 import { supabase, supabaseAuth, supabaseAnon } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { normalizeWorkingDays } from "../lib/business-schedule.js";
 
 const router = Router();
 
@@ -155,7 +156,7 @@ router.post("/refresh", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const { data: org } = await supabase
     .from("organizations")
-    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications")
+    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end")
     .eq("id", req.user!.orgId)
     .single();
   res.json({
@@ -167,7 +168,11 @@ router.get("/me", requireAuth, async (req, res) => {
       topPerformerBonusAmount: Number(org?.top_performer_bonus_amount ?? 0)
     },
     timezone: org?.timezone ?? "Africa/Lagos",
-    adminCartNotifications: !!org?.admin_cart_notifications
+    adminCartNotifications: !!org?.admin_cart_notifications,
+    workingScheduleEnabled: !!org?.working_schedule_enabled,
+    workingDays: normalizeWorkingDays(org?.working_days),
+    workingDayStart: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
+    workingDayEnd: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00"
   });
 });
 
@@ -187,12 +192,16 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
   if (typeof req.body.timezone === "string" && req.body.timezone.trim()) updates.timezone = req.body.timezone.trim();
   if (typeof req.body.adminCartNotifications === "boolean") updates.admin_cart_notifications = req.body.adminCartNotifications;
+  if (typeof req.body.workingScheduleEnabled === "boolean") updates.working_schedule_enabled = req.body.workingScheduleEnabled;
+  if (Array.isArray(req.body.workingDays)) updates.working_days = normalizeWorkingDays(req.body.workingDays);
+  if (typeof req.body.workingDayStart === "string" && req.body.workingDayStart.trim()) updates.working_day_start = req.body.workingDayStart.trim();
+  if (typeof req.body.workingDayEnd === "string" && req.body.workingDayEnd.trim()) updates.working_day_end = req.body.workingDayEnd.trim();
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
   const { data, error } = await supabase
     .from("organizations")
     .update(updates)
     .eq("id", req.user!.orgId)
-    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications")
+    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end")
     .single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({
@@ -201,7 +210,11 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
     topPerformerBonusAmount: Number(data?.top_performer_bonus_amount ?? 0),
     timezone: data?.timezone ?? "Africa/Lagos",
-    adminCartNotifications: !!data?.admin_cart_notifications
+    adminCartNotifications: !!data?.admin_cart_notifications,
+    workingScheduleEnabled: !!data?.working_schedule_enabled,
+    workingDays: normalizeWorkingDays(data?.working_days),
+    workingDayStart: typeof data?.working_day_start === "string" && data.working_day_start.trim() ? data.working_day_start.trim() : "08:00",
+    workingDayEnd: typeof data?.working_day_end === "string" && data.working_day_end.trim() ? data.working_day_end.trim() : "18:00"
   });
 });
 
