@@ -51,6 +51,17 @@ type ProviderDispatchResult = {
 
 type EmailLogAudience = "customer" | "staff";
 
+type StaffRecipient = {
+  email: string;
+  name: string;
+  role: string;
+};
+
+type EmailActionOptions = {
+  actionLabel?: string;
+  actionPathForRole?: (role: string) => string | null | undefined;
+};
+
 class EmailDispatchError extends Error {
   provider: EmailProvider;
   statusCode?: number;
@@ -145,6 +156,27 @@ function normalizeTemplateMap(value: unknown, defaults: Record<string, { subject
 
 function brandName(settings: EmailSettings) {
   return settings.from_name?.trim() || "Protohub";
+}
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL?.trim() || "http://localhost:5173").replace(/\/+$/, "");
+}
+
+function absoluteAppUrl(hashPath: string) {
+  const normalized = hashPath.startsWith("#") ? hashPath : `#${hashPath}`;
+  return `${frontendBaseUrl()}/${normalized}`;
+}
+
+function internalOrderHashForRole(role: string, orderId: string) {
+  return role === "Sales Rep"
+    ? `#/dashboard/sales-rep/orders/${orderId}`
+    : `#/dashboard/admin/orders/${orderId}`;
+}
+
+function internalCartHashForRole(role: string, cartId: string) {
+  return role === "Sales Rep"
+    ? `#/dashboard/sales-rep/abandoned-carts/${cartId}`
+    : `#/dashboard/admin/abandoned-carts/${cartId}`;
 }
 
 function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
@@ -322,7 +354,12 @@ function renderSectionHtml(section: string): string {
     .join("");
 }
 
-function buildEmailContent(settings: EmailSettings, subject: string, body: string): EmailContent {
+function buildEmailContent(
+  settings: EmailSettings,
+  subject: string,
+  body: string,
+  vars?: Record<string, string>
+): EmailContent {
   const brandedText = ensureBrandSignature(body, settings);
   const sections = brandedText.split(/\n\s*\n/).filter((section) => section.trim());
   const preview = sections.find((section) => section.trim())?.replace(/\s+/g, " ").slice(0, 140) ?? subject;
@@ -331,12 +368,25 @@ function buildEmailContent(settings: EmailSettings, subject: string, body: strin
   const escapedSubject = escapeHtml(subject);
   const escapedPreview = escapeHtml(preview);
   const replyTo = settings.reply_to || settings.from_email;
+  const actionUrl = vars?.action_url?.trim();
+  const actionLabel = vars?.action_label?.trim() || "Open in Protohub";
   const replyToHtml = replyTo
     ? `<a href="mailto:${escapeHtml(replyTo)}" style="color:#15803d;text-decoration:none;">${escapeHtml(replyTo)}</a>`
     : sender;
+  const actionHtml = actionUrl
+    ? `
+                <div style="margin:28px 0 8px;">
+                  <a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:14px;background:#15803d;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;">${escapeHtml(actionLabel)}</a>
+                </div>
+                <p style="margin:14px 0 0;color:#6b7280;font-size:13px;line-height:1.6;">If the button does not open, copy this link into your browser:<br /><a href="${escapeHtml(actionUrl)}" style="color:#15803d;text-decoration:none;word-break:break-all;">${escapeHtml(actionUrl)}</a></p>
+    `
+    : "";
+  const textWithAction = actionUrl
+    ? `${brandedText}\n\n${actionLabel}: ${actionUrl}`
+    : brandedText;
 
   return {
-    text: brandedText,
+    text: textWithAction,
     html: `<!doctype html>
 <html lang="en">
   <head>
@@ -360,6 +410,7 @@ function buildEmailContent(settings: EmailSettings, subject: string, body: strin
                 <p style="margin:0 0 10px;color:#166534;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Protohub Email Update</p>
                 <h1 style="margin:0 0 18px;color:#111827;font-size:28px;line-height:1.2;">${escapedSubject}</h1>
                 ${sectionsHtml}
+                ${actionHtml}
                 <div style="margin-top:26px;padding-top:18px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:13px;line-height:1.7;">
                   Sent by ${sender} via Protohub.<br />
                   Reply to ${replyToHtml}
@@ -397,9 +448,10 @@ async function sendViaMailjet(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  vars?: Record<string, string>
 ): Promise<void> {
-  const content = buildEmailContent(settings, subject, body);
+  const content = buildEmailContent(settings, subject, body, vars);
   const client = new Mailjet({
     apiKey:    settings.api_key_public,
     apiSecret: settings.api_key_private
@@ -427,9 +479,10 @@ async function sendViaResend(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  vars?: Record<string, string>
 ): Promise<void> {
-  const content = buildEmailContent(settings, subject, body);
+  const content = buildEmailContent(settings, subject, body, vars);
   const client = new Resend(settings.resend_api_key);
 
   const from = settings.from_name
@@ -454,13 +507,14 @@ async function sendViaProvider(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  vars?: Record<string, string>
 ): Promise<void> {
   if (provider === "resend") {
-    await sendViaResend(settings, to, subject, body);
+    await sendViaResend(settings, to, subject, body, vars);
     return;
   }
-  await sendViaMailjet(settings, to, subject, body);
+  await sendViaMailjet(settings, to, subject, body, vars);
 }
 
 // ── Dispatch to correct provider with fallback ────────────
@@ -469,7 +523,8 @@ async function dispatch(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  vars?: Record<string, string>
 ): Promise<ProviderDispatchResult> {
   const providers = sendOrder(settings, orgId);
   if (!providers.length) {
@@ -480,7 +535,7 @@ async function dispatch(
   for (let index = 0; index < providers.length; index += 1) {
     const provider = providers[index];
     try {
-      await sendViaProvider(provider, settings, to, subject, body);
+      await sendViaProvider(provider, settings, to, subject, body, vars);
       clearProviderQuotaBackoff(orgId, provider);
       return {
         provider,
@@ -509,10 +564,10 @@ async function dispatch(
 async function getStaffRecipients(
   orgId: string,
   roles: string[]
-): Promise<{ email: string; name: string }[]> {
+): Promise<StaffRecipient[]> {
   const { data } = await supabase
     .from("users")
-    .select("email, name")
+    .select("email, name, role")
     .eq("org_id", orgId)
     .eq("active", true)
     .in("role", roles);
@@ -549,7 +604,7 @@ async function deliverAndLogEmail(
   };
 
   try {
-    const result = await dispatch(orgId, settings, to, subject, body);
+    const result = await dispatch(orgId, settings, to, subject, body, vars);
     await insertEmailLog({
       ...basePayload,
       provider: result.provider,
@@ -615,7 +670,8 @@ export async function sendToStaff(
   orgId: string,
   trigger: EmailTrigger,
   vars: Record<string, string>,
-  roles: string[]
+  roles: string[],
+  options?: EmailActionOptions
 ): Promise<void> {
   const settings = await loadSettings(orgId);
   if (!settings || !settings.enabled) return;
@@ -628,10 +684,21 @@ export async function sendToStaff(
 
   const recipients = await getStaffRecipients(orgId, roles);
   for (const r of recipients) {
-    const subject = interpolate(tpl.subject, vars);
-    const body    = interpolate(tpl.body, { ...vars, recipient_name: r.name });
+    const actionPath = options?.actionPathForRole?.(r.role);
+    const scopedVars: Record<string, string> = {
+      ...vars,
+      recipient_name: r.name,
+      ...(actionPath
+        ? {
+            action_url: absoluteAppUrl(actionPath),
+            action_label: options?.actionLabel ?? "Open in Protohub"
+          }
+        : {})
+    };
+    const subject = interpolate(tpl.subject, scopedVars);
+    const body    = interpolate(tpl.body, scopedVars);
     try {
-      await deliverAndLogEmail(orgId, settings, trigger, "staff", { ...vars, recipient_name: r.name }, r, subject, body);
+      await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, r, subject, body);
     } catch {
       // already logged
     }
@@ -643,7 +710,8 @@ export async function sendToUser(
   orgId: string,
   userId: string,
   trigger: EmailTrigger,
-  vars: Record<string, string>
+  vars: Record<string, string>,
+  options?: EmailActionOptions
 ): Promise<void> {
   const settings = await loadSettings(orgId);
   if (!settings || !settings.enabled) return;
@@ -656,18 +724,29 @@ export async function sendToUser(
 
   const { data: user } = await supabase
     .from("users")
-    .select("email, name")
+    .select("email, name, role")
     .eq("id", userId)
     .eq("org_id", orgId)
     .single();
 
   if (!user?.email) return;
 
-  const subject = interpolate(tpl.subject, vars);
-  const body    = interpolate(tpl.body, { ...vars, recipient_name: user.name });
+  const actionPath = options?.actionPathForRole?.(user.role ?? "");
+  const scopedVars: Record<string, string> = {
+    ...vars,
+    recipient_name: user.name,
+    ...(actionPath
+      ? {
+          action_url: absoluteAppUrl(actionPath),
+          action_label: options?.actionLabel ?? "Open in Protohub"
+        }
+      : {})
+  };
+  const subject = interpolate(tpl.subject, scopedVars);
+  const body    = interpolate(tpl.body, scopedVars);
 
   try {
-    await deliverAndLogEmail(orgId, settings, trigger, "staff", { ...vars, recipient_name: user.name }, user, subject, body);
+    await deliverAndLogEmail(orgId, settings, trigger, "staff", scopedVars, user, subject, body);
   } catch {
     // already logged
   }
@@ -733,7 +812,10 @@ export async function sendInternalNewOrderEmail(
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—", rep_name: order.rep_name
   };
-  await sendToStaff(orgId, "internal_order_new", vars, ["Owner", "Admin"]);
+  await sendToStaff(orgId, "internal_order_new", vars, ["Owner", "Admin"], {
+    actionLabel: "Open Order",
+    actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+  });
 }
 
 // ── Staff: order assigned → assigned rep ──────────────────
@@ -750,7 +832,10 @@ export async function sendOrderAssignedEmail(
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, source: order.source ?? "—"
   };
-  await sendToUser(orgId, repId, "internal_order_assigned", vars);
+  await sendToUser(orgId, repId, "internal_order_assigned", vars, {
+    actionLabel: "Open Order",
+    actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+  });
 }
 
 // ── Staff: order delivered → owner + admins ───────────────
@@ -767,7 +852,10 @@ export async function sendInternalDeliveredEmail(
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, rep_name: repName
   };
-  await sendToStaff(orgId, "internal_order_delivered", vars, ["Owner", "Admin"]);
+  await sendToStaff(orgId, "internal_order_delivered", vars, ["Owner", "Admin"], {
+    actionLabel: "Open Order",
+    actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+  });
 }
 
 // ── Staff: order rescheduled → owner + admins + rep ───────
@@ -787,9 +875,15 @@ export async function sendOrderRescheduledEmail(
     call_outcome: order.call_outcome ?? "—",
     response: order.response ?? "—"
   };
-  await sendToStaff(orgId, "internal_order_rescheduled", vars, ["Owner", "Admin"]);
+  await sendToStaff(orgId, "internal_order_rescheduled", vars, ["Owner", "Admin"], {
+    actionLabel: "Open Order",
+    actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+  });
   if (order.assigned_rep_id) {
-    await sendToUser(orgId, order.assigned_rep_id, "internal_order_rescheduled", vars);
+    await sendToUser(orgId, order.assigned_rep_id, "internal_order_rescheduled", vars, {
+      actionLabel: "Open Order",
+      actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+    });
   }
 }
 
@@ -809,7 +903,10 @@ export async function sendOrderTerminalEmail(
     product_name: orderDisplayName(order), amount: String(order.amount),
     currency: order.currency, status, response: order.response ?? "—"
   };
-  await sendToStaff(orgId, trigger, vars, ["Owner", "Admin"]);
+  await sendToStaff(orgId, trigger, vars, ["Owner", "Admin"], {
+    actionLabel: "Open Order",
+    actionPathForRole: (role) => internalOrderHashForRole(role, order.id)
+  });
 }
 
 export async function sendInternalAbandonedCartEmail(
@@ -834,7 +931,10 @@ export async function sendInternalAbandonedCartEmail(
     currency: cart.currency,
     source: cart.source ?? "Website"
   };
-  await sendToStaff(orgId, "internal_abandoned_cart_new", vars, ["Owner", "Admin"]);
+  await sendToStaff(orgId, "internal_abandoned_cart_new", vars, ["Owner", "Admin"], {
+    actionLabel: "Open Cart",
+    actionPathForRole: (role) => internalCartHashForRole(role, cart.id)
+  });
 }
 
 // ── Staff: low stock alert → owner + admins + inventory ───

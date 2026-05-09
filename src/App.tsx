@@ -1401,6 +1401,16 @@ type PublicFormSubmissionDetails = {
   utmTerm?: string;
   referrer?: string;
 };
+type PublicFormSubmissionField = {
+  label: string;
+  value: string;
+  wide?: boolean;
+};
+type PublicFormSubmissionSection = {
+  title: string;
+  rows: PublicFormSubmissionField[];
+  fullWidth?: boolean;
+};
 const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDetails => {
   const out: PublicFormSubmissionDetails = {};
   for (const rawLine of noteText.split("\n")) {
@@ -1449,6 +1459,79 @@ const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissi
     utmTerm: order.utmTerm || parsed.utmTerm,
     referrer: order.referrer || parsed.referrer
   };
+};
+const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmissionSection[] => {
+  const details = publicFormSubmissionDetailsFor(order);
+  const maybeField = (label: string, value?: string, options?: { wide?: boolean }) =>
+    value && value.trim().length > 0
+      ? { label, value: value.trim(), wide: options?.wide }
+      : null;
+
+  return [
+    {
+      title: "Customer Details",
+      rows: [
+        maybeField("Customer Name", details.customerName),
+        maybeField("Phone", details.phone),
+        maybeField("WhatsApp", details.whatsapp),
+        maybeField("Email", details.email),
+        maybeField("Address", details.address, { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    },
+    {
+      title: "Order Intent",
+      rows: [
+        maybeField("Preferred Delivery", details.preferredDelivery),
+        maybeField("Confirmation", details.confirmation),
+        maybeField("Selected Package(s)", details.selectedPackages, { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    },
+    {
+      title: "Attribution",
+      fullWidth: true,
+      rows: [
+        maybeField("UTM Source", details.utmSource),
+        maybeField("UTM Campaign", details.utmCampaign),
+        maybeField("UTM Medium", details.utmMedium),
+        maybeField("UTM Content", details.utmContent),
+        maybeField("UTM Term", details.utmTerm),
+        maybeField("Referrer", details.referrer, { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    }
+  ].filter((section) => section.rows.length > 0);
+};
+const renderPublicFormSubmissionDetails = (order: TrackedOrder) => {
+  const sections = publicFormSubmissionSectionsFor(order);
+  if (!sections.length) return null;
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      {sections.map((section) => (
+        <div
+          key={section.title}
+          className={`rounded-2xl border border-gray-200 bg-gray-50/70 p-4 sm:p-5 ${
+            section.fullWidth ? "xl:col-span-2" : ""
+          }`}
+        >
+          <p className="m-0 mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">
+            {section.title}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-3">
+            {section.rows.map((row) => (
+              <div key={`${section.title}-${row.label}`} className={row.wide ? "md:col-span-2" : ""}>
+                <p className="m-0 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">
+                  {row.label}
+                </p>
+                <p className="m-0 mt-1 text-sm sm:text-[15px] font-semibold leading-6 text-gray-900 break-words whitespace-pre-wrap">
+                  {row.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 };
 const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
   const details = publicFormSubmissionDetailsFor(order);
@@ -26314,35 +26397,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
-	                    {(() => {
-	                      const details = publicFormSubmissionDetailsFor(selectedOrder);
-	                      const rows = [
-	                        { label: "Customer name", value: details.customerName },
-	                        { label: "Phone", value: details.phone },
-	                        { label: "WhatsApp", value: details.whatsapp },
-	                        { label: "Email", value: details.email },
-	                        { label: "Address", value: details.address, wide: true },
-	                        { label: "Preferred delivery", value: details.preferredDelivery },
-	                        { label: "Confirmation checkbox", value: details.confirmation },
-	                        { label: "Selected package(s)", value: details.selectedPackages, wide: true },
-	                        { label: "UTM source", value: details.utmSource },
-	                        { label: "UTM campaign", value: details.utmCampaign },
-	                        { label: "UTM medium", value: details.utmMedium },
-	                        { label: "UTM content", value: details.utmContent },
-	                        { label: "UTM term", value: details.utmTerm },
-	                        { label: "Referrer", value: details.referrer, wide: true }
-	                      ].filter((row) => row.value && row.value.trim().length > 0);
-	                      return (
-	                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-	                          {rows.map((row) => (
-	                            <div key={row.label} className={row.wide ? "sm:col-span-2" : ""}>
-	                              <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">{row.label}</p>
-	                              <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5 break-words whitespace-pre-wrap">{row.value}</p>
-	                            </div>
-	                          ))}
-	                        </div>
-	                      );
-	                    })()}
+	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
 
@@ -26606,35 +26661,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
-	                    {(() => {
-	                      const details = publicFormSubmissionDetailsFor(selectedOrder);
-	                      const rows = [
-	                        { label: "Customer name", value: details.customerName },
-	                        { label: "Phone", value: details.phone },
-	                        { label: "WhatsApp", value: details.whatsapp },
-	                        { label: "Email", value: details.email },
-	                        { label: "Address", value: details.address, wide: true },
-	                        { label: "Preferred delivery", value: details.preferredDelivery },
-	                        { label: "Confirmation", value: details.confirmation },
-	                        { label: "Selected package(s)", value: details.selectedPackages, wide: true },
-	                        { label: "UTM source", value: details.utmSource },
-	                        { label: "UTM campaign", value: details.utmCampaign },
-	                        { label: "UTM medium", value: details.utmMedium },
-	                        { label: "UTM content", value: details.utmContent },
-	                        { label: "UTM term", value: details.utmTerm },
-	                        { label: "Referrer", value: details.referrer, wide: true }
-	                      ].filter((row) => row.value && row.value.trim().length > 0);
-	                      return (
-	                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-	                          {rows.map((row) => (
-	                            <div key={row.label} className={`flex items-start gap-2 ${row.wide ? "sm:col-span-2" : ""}`}>
-	                              <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide min-w-[130px]">{row.label}</span>
-	                              <span className="text-gray-900 font-medium break-words whitespace-pre-wrap">{row.value}</span>
-	                            </div>
-	                          ))}
-	                        </div>
-	                      );
-	                    })()}
+	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
 
