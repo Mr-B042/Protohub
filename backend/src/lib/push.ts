@@ -30,6 +30,17 @@ type PushPayload = {
   tag?: string;
 };
 
+async function getActiveUserIdsByRoles(orgId: string, roles: string[]): Promise<string[]> {
+  if (roles.length === 0) return [];
+  const { data: users } = await supabase
+    .from("users")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("active", true)
+    .in("role", roles);
+  return [...new Set((users ?? []).map((user) => user.id))];
+}
+
 /**
  * Send push notification to a specific user (all their subscriptions).
  * Silently removes stale/expired subscriptions (410 Gone).
@@ -84,4 +95,14 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
 export async function sendPushToUsers(orgId: string, userIds: string[], payload: PushPayload): Promise<void> {
   if (!isPushConfigured() || userIds.length === 0) return;
   await Promise.allSettled(userIds.map((uid) => sendPushToUser(orgId, uid, payload)));
+}
+
+/**
+ * Send push notifications to all active users in the given roles.
+ */
+export async function sendPushToRoles(orgId: string, roles: string[], payload: PushPayload): Promise<void> {
+  if (!isPushConfigured() || roles.length === 0) return;
+  const userIds = await getActiveUserIdsByRoles(orgId, roles);
+  if (userIds.length === 0) return;
+  await sendPushToUsers(orgId, userIds, payload);
 }

@@ -4,9 +4,9 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
-router.use(requireAuth, requireRole("Owner", "Admin"));
+router.use(requireAuth);
 
-router.get("/", async (req, res) => {
+router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
   const { from, to } = req.query;
   let query = supabase
     .from("expenses")
@@ -31,7 +31,7 @@ const ExpenseSchema = z.object({
   productId:   z.string().optional()
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
   const parsed = ExpenseSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -61,7 +61,7 @@ router.post("/", async (req, res) => {
   res.status(201).json(data);
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   const { error } = await supabase
     .from("expenses").delete()
     .eq("id", req.params.id).eq("org_id", req.user!.orgId);

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendLowStockEmail } from "../lib/mailer.js";
+import { sendPushToRoles } from "../lib/push.js";
 
 const movementId = () => `MOV-${randomUUID()}`;
 
@@ -98,11 +99,20 @@ router.post("/update",
     const wasAbove = product.warehouse_stock > product.reorder_point;
     const nowBelow = newStock <= product.reorder_point;
     if (change < 0 && wasAbove && nowBelow) {
+      const message = `Low stock: ${product.name} — warehouse down to ${newStock} unit${newStock === 1 ? "" : "s"} (reorder point: ${product.reorder_point})`;
       await supabase.from("system_notifications").insert({
         org_id:     req.user!.orgId,
         type:       "low_stock",
-        message:    `Low stock: ${product.name} — warehouse down to ${newStock} unit${newStock === 1 ? "" : "s"} (reorder point: ${product.reorder_point})`,
+        message,
         product_id: productId
+      });
+      await sendPushToRoles(req.user!.orgId, ["Owner", "Admin", "Inventory Manager"], {
+        title: "Low Stock Alert",
+        body: message,
+        url: "/dashboard/admin/inventory",
+        tag: `low-stock-${productId}`,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-72.png"
       });
       sendLowStockEmail(req.user!.orgId, {
         name:         product.name,

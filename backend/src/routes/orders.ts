@@ -13,6 +13,60 @@ import { notifyOrderEvent } from "../lib/order-notifications.js";
 const router = Router();
 router.use(requireAuth);
 
+const TimelineNoteSchema = z.object({
+  id: z.string().min(1).max(120),
+  text: z.string().min(1),
+  by: z.string().min(1).max(120),
+  date: z.string().min(1).max(80),
+  followUpDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  followUpAt: z.string().min(1).max(80).optional()
+});
+const parsePlannedOrderMetadata = (value: unknown) => {
+  if (!value) {
+    return {} as { scheduledAt?: string; timelineNotes?: unknown[]; legacyText?: string };
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return {
+      scheduledAt: typeof record.scheduledAt === "string" ? record.scheduledAt : undefined,
+      timelineNotes: Array.isArray(record.timelineNotes) ? record.timelineNotes : undefined,
+      legacyText: typeof record.legacyText === "string" ? record.legacyText : undefined
+    };
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return {} as { scheduledAt?: string; timelineNotes?: unknown[]; legacyText?: string };
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { legacyText: value } as { scheduledAt?: string; timelineNotes?: unknown[]; legacyText?: string };
+    }
+    const record = parsed as Record<string, unknown>;
+    return {
+      scheduledAt: typeof record.scheduledAt === "string" ? record.scheduledAt : undefined,
+      timelineNotes: Array.isArray(record.timelineNotes) ? record.timelineNotes : undefined,
+      legacyText: typeof record.legacyText === "string" ? record.legacyText : undefined
+    };
+  } catch {
+    return { legacyText: value } as { scheduledAt?: string; timelineNotes?: unknown[]; legacyText?: string };
+  }
+};
+const serializePlannedOrderMetadata = (
+  currentNotes: unknown,
+  next: { scheduledAt?: string | null; timelineNotes?: unknown[] | null }
+) => {
+  const existing = parsePlannedOrderMetadata(currentNotes);
+  const payload: Record<string, unknown> = {};
+  const scheduledAt = next.scheduledAt !== undefined ? next.scheduledAt ?? undefined : existing.scheduledAt;
+  const timelineNotes = next.timelineNotes !== undefined ? next.timelineNotes ?? [] : existing.timelineNotes;
+  if (scheduledAt) payload.scheduledAt = scheduledAt;
+  if (Array.isArray(timelineNotes) && timelineNotes.length > 0) payload.timelineNotes = timelineNotes;
+  if (existing.legacyText) payload.legacyText = existing.legacyText;
+  return Object.keys(payload).length > 0 ? JSON.stringify(payload) : null;
+};
+const isMissingPlannedColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "42703" || /scheduled_at|timeline_notes/i.test(error?.message ?? "");
+
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
 router.get("/", async (req, res) => {
@@ -92,8 +146,12 @@ const OrderSchema = z.object({
   referrer:       z.string().optional(),
   confirmationChecked: z.boolean().optional(),
   preferredDelivery:   z.string().optional(),
+  scheduledDate:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  scheduledAt:    z.string().min(1).max(80).optional(),
   date:           z.string().optional(),
-  response:       z.string().optional()
+  response:       z.string().optional(),
+  notes:          z.array(TimelineNoteSchema).max(200).optional(),
+  timelineNotes:  z.array(TimelineNoteSchema).max(200).optional()
 });
 
 router.post("/", async (req, res) => {
@@ -144,44 +202,65 @@ router.post("/", async (req, res) => {
     }
   }
 
-  const { data, error } = await supabase
+  const timelineNotes = d.timelineNotes ?? d.notes ?? [];
+  const legacyNotes = serializePlannedOrderMetadata(null, {
+    scheduledAt: d.scheduledAt ?? null,
+    timelineNotes
+  });
+  const baseInsert = {
+    id:              d.id,
+    org_id:          req.user!.orgId,
+    customer:        d.customer,
+    phone:           d.phone,
+    whatsapp:        d.whatsapp,
+    email:           d.email || null,
+    address:         d.address,
+    city:            d.city,
+    state:           d.state,
+    product_id:      d.productId,
+    package_id:      d.packageId,
+    product_name:    d.productName,
+    package_name:    d.packageName,
+    quantity:          d.quantity,
+    original_quantity: d.quantity,
+    amount:          d.amount,
+    original_amount: d.amount,
+    currency:        d.currency,
+    source:          d.source,
+    location:        d.location,
+    assigned_rep_id: d.assignedRepId ?? req.user!.id,
+    utm_source:      d.utmSource,
+    utm_campaign:    d.utmCampaign,
+    utm_medium:      d.utmMedium,
+    utm_content:     d.utmContent,
+    utm_term:        d.utmTerm,
+    referrer:        d.referrer,
+    confirmation_checked: d.confirmationChecked ?? null,
+    preferred_delivery:   d.preferredDelivery ?? null,
+    scheduled_date:  d.scheduledDate ?? null,
+    notes:           legacyNotes,
+    date:            d.date,
+    response:        d.response,
+    status:          "New"
+  };
+
+  let { data, error } = await supabase
     .from("orders")
     .insert({
-      id:              d.id,
-      org_id:          req.user!.orgId,
-      customer:        d.customer,
-      phone:           d.phone,
-      whatsapp:        d.whatsapp,
-      email:           d.email || null,
-      address:         d.address,
-      city:            d.city,
-      state:           d.state,
-      product_id:      d.productId,
-      package_id:      d.packageId,
-      product_name:    d.productName,
-      package_name:    d.packageName,
-      quantity:          d.quantity,
-      original_quantity: d.quantity,
-      amount:          d.amount,
-      original_amount: d.amount,
-      currency:        d.currency,
-      source:          d.source,
-      location:        d.location,
-      assigned_rep_id: d.assignedRepId ?? req.user!.id,
-      utm_source:      d.utmSource,
-      utm_campaign:    d.utmCampaign,
-      utm_medium:      d.utmMedium,
-      utm_content:     d.utmContent,
-      utm_term:        d.utmTerm,
-      referrer:        d.referrer,
-      confirmation_checked: d.confirmationChecked ?? null,
-      preferred_delivery:   d.preferredDelivery ?? null,
-      date:            d.date,
-      response:        d.response,
-      status:          "New"
+      ...baseInsert,
+      scheduled_at:   d.scheduledAt ?? null,
+      timeline_notes: timelineNotes
     })
     .select()
     .single();
+
+  if (error && isMissingPlannedColumnsError(error)) {
+    ({ data, error } = await supabase
+      .from("orders")
+      .insert(baseInsert)
+      .select()
+      .single());
+  }
 
   if (error) {
     if (error.code === "23505") {
@@ -494,14 +573,26 @@ const POST_TERMINAL_FIELDS = new Set([
   "call_outcome", "callOutcome",
 ]);
 
+const MANUAL_BONUS_FIELDS = new Set([
+  "manual_bonus_override", "manualBonusOverride",
+  "manual_bonus_reason", "manualBonusReason",
+  "bonus_manually_adjusted", "bonusManuallyAdjusted",
+]);
+
 router.patch("/:id", async (req, res) => {
   const { data: current } = await supabase
-    .from("orders").select("status").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+    .from("orders").select("status, notes").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
   if (!current) { res.status(404).json({ error: "Order not found." }); return; }
 
   const isTerminal = current.status === "Delivered" || current.status === "Cancelled";
   const requestedKeys = Object.keys(req.body);
+  const touchesManualBonus = requestedKeys.some((k) => MANUAL_BONUS_FIELDS.has(k));
   const hasNonTerminalField = requestedKeys.some((k) => !POST_TERMINAL_FIELDS.has(k));
+
+  if (req.user!.role === "Sales Rep" && touchesManualBonus) {
+    res.status(403).json({ error: "Sales reps cannot manually adjust bonuses." });
+    return;
+  }
 
   if (isTerminal && hasNonTerminalField) {
     res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
@@ -526,6 +617,7 @@ router.patch("/:id", async (req, res) => {
     agent_id:                  ["agent_id", "agentId"],
     call_outcome:              ["call_outcome", "callOutcome"],
     scheduled_date:            ["scheduled_date", "scheduledDate"],
+    scheduled_at:              ["scheduled_at", "scheduledAt"],
     amount:                    ["amount"],
     quantity:                  ["quantity"],
     product_id:                ["product_id", "productId"],
@@ -545,6 +637,7 @@ router.patch("/:id", async (req, res) => {
     manual_bonus_reason:       ["manual_bonus_reason", "manualBonusReason"],
     bonus_manually_adjusted:   ["bonus_manually_adjusted", "bonusManuallyAdjusted"],
     bonus_paid:                ["bonus_paid", "bonusPaid"],
+    timeline_notes:            ["timeline_notes", "timelineNotes"],
     cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
     free_gift_lines:           ["free_gift_lines", "freeGiftLines"]
   };
@@ -553,6 +646,12 @@ router.patch("/:id", async (req, res) => {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
     }
+  }
+  if (updates.scheduled_at !== undefined || updates.timeline_notes !== undefined) {
+    updates.notes = serializePlannedOrderMetadata(current.notes, {
+      scheduledAt: updates.scheduled_at as string | null | undefined,
+      timelineNotes: updates.timeline_notes as unknown[] | null | undefined
+    });
   }
 
   // Validate cross-org references
@@ -569,13 +668,26 @@ router.patch("/:id", async (req, res) => {
     if (!productCheck) { res.status(400).json({ error: "Product not found in your organization." }); return; }
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("orders")
     .update(updates)
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .select()
     .single();
+
+  if (error && isMissingPlannedColumnsError(error)) {
+    const legacyUpdates = { ...updates };
+    delete legacyUpdates.scheduled_at;
+    delete legacyUpdates.timeline_notes;
+    ({ data, error } = await supabase
+      .from("orders")
+      .update(legacyUpdates)
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single());
+  }
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }

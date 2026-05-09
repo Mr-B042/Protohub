@@ -30,15 +30,15 @@ export async function getVapidPublicKey(): Promise<string | null> {
 /**
  * Check if the user currently has push subscriptions on the server.
  */
-export async function getPushStatus(): Promise<{ subscribed: boolean; count: number }> {
+export async function getPushStatus(): Promise<{ subscribed: boolean; count: number; configured: boolean }> {
   try {
     const res = await fetch(`${BASE}/api/push/status`, {
       headers: getAuthHeaders()
     });
-    if (!res.ok) return { subscribed: false, count: 0 };
+    if (!res.ok) return { subscribed: false, count: 0, configured: false };
     return await res.json();
   } catch {
-    return { subscribed: false, count: 0 };
+    return { subscribed: false, count: 0, configured: false };
   }
 }
 
@@ -131,6 +131,22 @@ export async function unsubscribeFromPush(): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Send a real push notification to the current user for diagnostics.
+ */
+export async function sendTestPush(body?: { title?: string; body?: string }): Promise<{ message: string }> {
+  const res = await fetch(`${BASE}/api/push/test`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body ?? {})
+  });
+  const data = await res.json().catch(() => ({ error: "Failed to send test push." }));
+  if (!res.ok) {
+    throw new Error(data.error ?? "Failed to send test push.");
+  }
+  return data;
 }
 
 /**

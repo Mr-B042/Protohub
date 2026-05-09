@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { notifyWaybillEvent } from "../lib/waybill-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -121,6 +122,15 @@ router.post("/",
       });
     }
 
+    await notifyWaybillEvent(req.user!.orgId, {
+      id: data.id,
+      productName: data.product_name,
+      quantity: data.quantity,
+      fromLocation: data.from_location,
+      toLocation: data.to_location,
+      carrier: data.carrier
+    }, "dispatched");
+
     res.status(201).json(data);
   }
 );
@@ -169,6 +179,16 @@ router.patch("/:id",
         dispatched_date: data.dispatched_date
       });
     }
+
+    await notifyWaybillEvent(req.user!.orgId, {
+      id: data.id,
+      productName: data.product_name,
+      quantity: data.quantity,
+      fromLocation: data.from_location,
+      toLocation: data.to_location,
+      carrier: data.carrier,
+      status: data.status
+    }, "updated");
 
     res.json(data);
   }
@@ -227,6 +247,18 @@ router.patch("/:id/status",
         to_location:   data.to_location ?? null,
         note:          `Waybill ${data.id} marked ${status}${notes ? ` — ${notes}` : ""}`
       });
+    }
+
+    if (data) {
+      await notifyWaybillEvent(req.user!.orgId, {
+        id: data.id,
+        productName: data.product_name,
+        quantity: data.quantity,
+        fromLocation: data.from_location,
+        toLocation: data.to_location,
+        carrier: data.carrier,
+        status: data.status
+      }, "status_changed");
     }
 
     res.json(data);

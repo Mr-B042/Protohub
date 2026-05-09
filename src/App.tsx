@@ -84,7 +84,9 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
   isCurrentlySubscribed,
-  getPermissionState
+  getPermissionState,
+  getPushStatus,
+  sendTestPush
 } from "./lib/push-client";
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
@@ -385,6 +387,7 @@ type TrackedOrder = {
   deliveryWindow?: string;
   createdAt?: string;
   scheduledDate?: string;
+  scheduledAt?: string;
   deliveredDate?: string;
   assignedRepId?: string;
   agentId?: string;
@@ -411,6 +414,7 @@ type OrderNote = {
   by: string;
   date: string;
   followUpDate?: string;
+  followUpAt?: string;
 };
 type AbandonedCartRecord = {
   id: string;
@@ -654,6 +658,7 @@ const userGrowthData = [
 
 const isDateValue = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+const isTimeValue = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 
 const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
@@ -890,6 +895,53 @@ const formatMoment = (value?: string | Date | null) => {
   }
   return formatDateTime(value);
 };
+const padTimePart = (value: number) => String(value).padStart(2, "0");
+const nextTimeValue = () => {
+  const value = new Date();
+  value.setSeconds(0, 0);
+  const roundedMinutes = Math.ceil(value.getMinutes() / 5) * 5;
+  if (roundedMinutes >= 60) {
+    value.setHours(value.getHours() + 1, 0, 0, 0);
+  } else {
+    value.setMinutes(roundedMinutes, 0, 0);
+  }
+  return `${padTimePart(value.getHours())}:${padTimePart(value.getMinutes())}`;
+};
+const splitMomentForInput = (value?: string | null) => {
+  if (!value) {
+    return { date: "", time: "" };
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return { date: "", time: "" };
+  }
+  return {
+    date: formatDateKey(parsed),
+    time: `${padTimePart(parsed.getHours())}:${padTimePart(parsed.getMinutes())}`
+  };
+};
+const combinePlannedMoment = (dateValue?: string, timeValue?: string) => {
+  if (!dateValue || !isDateValue(dateValue)) {
+    return { date: undefined, iso: undefined };
+  }
+  if (!timeValue || !isTimeValue(timeValue)) {
+    return { date: dateValue, iso: undefined };
+  }
+  const parsed = new Date(`${dateValue}T${timeValue}:00`);
+  return Number.isNaN(parsed.getTime())
+    ? { date: dateValue, iso: undefined }
+    : { date: dateValue, iso: parsed.toISOString() };
+};
+const scheduledMomentForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
+  order.scheduledAt ?? order.scheduledDate;
+const scheduledKeyForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
+  order.scheduledAt ? normalizeDateKey(order.scheduledAt) : order.scheduledDate ? normalizeDateKey(order.scheduledDate) : "";
+const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
+  note.followUpAt ?? note.followUpDate;
+const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
+  note.followUpAt ? normalizeDateKey(note.followUpAt) : note.followUpDate ? normalizeDateKey(note.followUpDate) : "";
+const formatPlannedMoment = (plannedAt?: string, plannedDate?: string) =>
+  plannedAt ? formatMoment(plannedAt) : plannedDate ? displayDateFromKey(plannedDate) : "";
 const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement[]) => {
   if (waybill.status === "In Transit") {
     return waybill.createdAt;
@@ -1106,6 +1158,94 @@ const makeAgentId = () => `agent-${Date.now()}-${Math.random().toString(36).slic
 const makeExpenseId = () => `EXP-${Math.floor(100000 + Math.random() * 900000)}`;
 const makePayrollRunId = () => `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 const makeNoteId = () => `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+const normalizeOrderNote = (value: unknown): OrderNote | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const text = typeof record.text === "string" ? record.text.trim() : "";
+  if (!text) {
+    return null;
+  }
+  const followUpDate = typeof record.followUpDate === "string" && isDateValue(record.followUpDate)
+    ? record.followUpDate
+    : undefined;
+  const followUpAt = typeof record.followUpAt === "string" && record.followUpAt
+    ? record.followUpAt
+    : undefined;
+  return {
+    id: typeof record.id === "string" && record.id ? record.id : makeNoteId(),
+    text,
+    by: typeof record.by === "string" && record.by ? record.by : "System",
+    date: typeof record.date === "string" && record.date ? record.date : nowIso(),
+    followUpDate: followUpDate ?? (followUpAt ? normalizeDateKey(followUpAt) : undefined),
+    followUpAt
+  };
+};
+const normalizeOrderNotes = (value: unknown): OrderNote[] =>
+  Array.isArray(value)
+    ? value
+        .map((entry) => normalizeOrderNote(entry))
+        .filter((entry): entry is OrderNote => Boolean(entry))
+    : [];
+const parseLegacyOrderMetadata = (value: unknown) => {
+  if (!value) {
+    return {} as { scheduledAt?: string; timelineNotes?: unknown[] };
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return {
+      scheduledAt: typeof record.scheduledAt === "string" ? record.scheduledAt : undefined,
+      timelineNotes: Array.isArray(record.timelineNotes) ? record.timelineNotes : undefined
+    };
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return {} as { scheduledAt?: string; timelineNotes?: unknown[] };
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as { scheduledAt?: string; timelineNotes?: unknown[] };
+    }
+    const record = parsed as Record<string, unknown>;
+    return {
+      scheduledAt: typeof record.scheduledAt === "string" ? record.scheduledAt : undefined,
+      timelineNotes: Array.isArray(record.timelineNotes) ? record.timelineNotes : undefined
+    };
+  } catch {
+    return {} as { scheduledAt?: string; timelineNotes?: unknown[] };
+  }
+};
+const orderNotesFor = (value: { notes?: unknown; timelineNotes?: unknown; timeline_notes?: unknown } | null | undefined): OrderNote[] => {
+  const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
+  return normalizeOrderNotes(
+    value?.timelineNotes
+      ?? value?.timeline_notes
+      ?? (Array.isArray(value?.notes) ? value.notes : legacyMetadata.timelineNotes)
+  );
+};
+const normalizeTrackedOrder = (value: any): TrackedOrder => {
+  const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
+  const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
+    ? value.scheduledAt
+    : typeof value?.scheduled_at === "string" && value.scheduled_at
+      ? value.scheduled_at
+    : legacyMetadata.scheduledAt;
+  const scheduledDate = typeof value?.scheduledDate === "string" && value.scheduledDate
+    ? normalizeDateKey(value.scheduledDate)
+    : typeof value?.scheduled_date === "string" && value.scheduled_date
+      ? normalizeDateKey(value.scheduled_date)
+    : scheduledAt
+      ? normalizeDateKey(scheduledAt)
+      : undefined;
+  return {
+    ...value,
+    scheduledAt,
+    scheduledDate,
+    notes: orderNotesFor(value)
+  };
+};
 
 const percentText = (value: number, total: number) => `${total === 0 ? 0 : Math.round((value / total) * 100)}%`;
 
@@ -1437,6 +1577,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
   const adminCartSyncedRef = useRef(false);
+  const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
+  const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
+  const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
+  const orderUpsellSaveVersionRef = useRef<Record<string, number>>({});
+  const orderUpsellSaveTimerRef = useRef<Record<string, number>>({});
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
@@ -1937,6 +2082,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [pushServerConfigured, setPushServerConfigured] = useState(false);
+  const [pushSubscriptionCount, setPushSubscriptionCount] = useState(0);
   const [showPushBanner, setShowPushBanner] = useState(false);
   // PWA install
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -1970,7 +2117,60 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       window.removeEventListener("appinstalled", onInstalled);
     };
   }, []);
+  const pushNeedsStandaloneInstall = installGuidePlatform === "ios" && !isInstalled;
+  const refreshPushDiagnostics = async (respectBannerDismissal = true) => {
+    const perm = getPermissionState();
+    setPushPermission(perm);
+    const [{ configured, count }, browserSubscribed] = await Promise.all([
+      getPushStatus(),
+      isCurrentlySubscribed()
+    ]);
+    const isSubscribed = browserSubscribed && count > 0;
+    setPushServerConfigured(configured);
+    setPushSubscriptionCount(count);
+    setPushSubscribed(isSubscribed);
+    const dismissed = respectBannerDismissal ? sessionStorage.getItem("pushBannerDismissed") : null;
+    const shouldShowBanner = configured && !pushNeedsStandaloneInstall && !isSubscribed && perm === "default" && !dismissed;
+    setShowPushBanner(shouldShowBanner);
+  };
   const [pushLoading, setPushLoading] = useState(false);
+  const [pushTestLoading, setPushTestLoading] = useState(false);
+  const browserPushSupported = pushPermission !== "unsupported";
+  const pushBackgroundReady =
+    browserPushSupported &&
+    pushServerConfigured &&
+    pushPermission === "granted" &&
+    pushSubscribed &&
+    !pushNeedsStandaloneInstall;
+  const pushStatusTone =
+    pushBackgroundReady ? "emerald"
+    : !pushServerConfigured ? "amber"
+    : pushNeedsStandaloneInstall ? "amber"
+    : pushPermission === "denied" || pushPermission === "unsupported" ? "red"
+    : "blue";
+  const pushStatusPanelClasses =
+    pushStatusTone === "emerald" ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+    : pushStatusTone === "amber" ? "bg-amber-50 border-amber-200 text-amber-900"
+    : pushStatusTone === "red" ? "bg-red-50 border-red-200 text-red-900"
+    : "bg-blue-50 border-blue-200 text-blue-900";
+  const pushStatusTitle =
+    pushBackgroundReady ? "Background push is ready on this device"
+    : !pushServerConfigured ? "Push server is not configured on this environment"
+    : pushNeedsStandaloneInstall ? "Install to Home Screen is required on this iPhone/iPad"
+    : pushPermission === "denied" ? "Notifications are blocked on this device"
+    : pushPermission === "unsupported" ? "This browser does not support web push"
+    : pushSubscribed ? "Subscription needs attention"
+    : "This device is not subscribed yet";
+  const pushStatusMessage =
+    pushBackgroundReady ? "Lock your screen or close the app and supported push alerts should still arrive."
+    : !pushServerConfigured ? "This local/backend environment is missing VAPID push configuration, so only in-app notifications will show until the server is configured."
+    : pushNeedsStandaloneInstall ? "Open this site in Safari, use Share -> Add to Home Screen, then open it from the home-screen icon before enabling notifications."
+    : pushPermission === "denied" ? "Enable notifications again from your browser or device settings, then re-subscribe."
+    : pushPermission === "unsupported" ? "Use a browser/device combination that supports Service Workers, Push API, and Notifications."
+    : pushSubscribed ? "The browser has permission, but the server is not seeing an active subscription yet. Force re-subscribe to repair it."
+    : installGuidePlatform === "ios"
+      ? "Once installed to the home screen, enable notifications there to receive lock-screen alerts."
+      : "Enable notifications on this device to receive lock-screen/background alerts where the browser supports it.";
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     const stored = window.localStorage.getItem("protohub.theme");
@@ -2057,6 +2257,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [handoverReason, setHandoverReason] = useState("");
   const [orderNoteDraft, setOrderNoteDraft] = useState("");
   const [orderFollowUpDate, setOrderFollowUpDate] = useState("");
+  const [orderFollowUpTime, setOrderFollowUpTime] = useState(() => nextTimeValue());
   const [callQueueIndex, setCallQueueIndex] = useState(0);
   const [callQueueNote, setCallQueueNote] = useState("");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
@@ -2072,6 +2273,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [statusChangeDraft, setStatusChangeDraft] = useState<Exclude<OrderStatus, "All Orders">>("Confirmed");
   const [statusChangeReason, setStatusChangeReason] = useState("");
   const [repScheduleDate, setRepScheduleDate] = useState(todayKey());
+  const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
+  const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
+  const [orderScheduleTime, setOrderScheduleTime] = useState(() => nextTimeValue());
   const [showRepFollowUpField, setShowRepFollowUpField] = useState(false);
   const [assignStockProductId, setAssignStockProductId] = useState("");
   const [assignStockQty, setAssignStockQty] = useState("1");
@@ -2156,6 +2360,309 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
+  useEffect(() => {
+    if (!selectedOrderId) {
+      return;
+    }
+    const plannedParts = splitMomentForInput(selectedOrder?.scheduledAt);
+    setCreateOrderAgentId(selectedOrder?.agentId ?? "");
+    setOrderNoteDraft("");
+    setOrderFollowUpDate("");
+    setOrderFollowUpTime(nextTimeValue());
+    setOrderScheduleDate(plannedParts.date || (selectedOrder ? scheduledKeyForOrder(selectedOrder) : "") || todayKey());
+    setOrderScheduleTime(plannedParts.time || nextTimeValue());
+  }, [selectedOrderId, selectedOrder?.agentId, selectedOrder?.scheduledAt, selectedOrder?.scheduledDate]);
+  useEffect(() => {
+    if (modal !== "setRate" || !payRateUserId) {
+      return;
+    }
+    const structure = payStructures.find((item) => item.userId === payRateUserId);
+    setPayStructureType(structure?.type ?? "Per Delivered Order");
+    setFixedSalary(String(structure?.fixedSalary ?? 0));
+    setCommissionRate(String(structure?.commissionRate ?? 0));
+    setBonusTiers(structure?.bonusTiers?.length ? structure.bonusTiers : [{ threshold: 50, amount: 5000 }, { threshold: 100, amount: 15000 }]);
+  }, [modal, payRateUserId, payStructures]);
+  useEffect(() => {
+    if (modal !== "editWaybill" || !waybillEditId) {
+      return;
+    }
+    const record = waybillRecords.find((item) => item.id === waybillEditId);
+    if (!record) {
+      return;
+    }
+    setWaybillFee(String(record.waybillFee));
+    setWaybillPartner(record.logisticsPartner);
+    setWaybillToAgentId(record.toAgentId ?? "");
+    setWaybillToState(record.receivingState);
+    setWaybillDateSent(record.dateSent);
+    setWaybillNote(record.note ?? "");
+    setWaybillErrors({});
+  }, [modal, waybillEditId, waybillRecords]);
+  useEffect(() => {
+    if (modal !== "receiveWaybill" || !receiveWaybillId) {
+      return;
+    }
+    const record = waybillRecords.find((item) => item.id === receiveWaybillId);
+    if (!record) {
+      return;
+    }
+    setReceiveActualQty(String(record.quantity));
+    setReceiveVarianceReason("");
+    setReceiveVarianceMode("return");
+  }, [modal, receiveWaybillId, waybillRecords]);
+  useEffect(() => {
+    if (modal !== "editSalesRep" || !selectedSalesRepId) {
+      return;
+    }
+    const rep = users.find((user) => user.id === selectedSalesRepId);
+    if (!rep) {
+      return;
+    }
+    setSalesRepName(rep.name);
+    setSalesRepEmail(rep.email);
+    setSalesRepActive(rep.active);
+  }, [modal, selectedSalesRepId, users]);
+  useEffect(() => {
+    if (modal !== "editUser" || !selectedUserId) {
+      return;
+    }
+    const user = users.find((item) => item.id === selectedUserId);
+    if (!user) {
+      return;
+    }
+    setUserFullName(user.name);
+    setUserEmail(user.email);
+    setUserPassword("");
+    setNewUserRole(user.role);
+    setNewUserActive(user.active);
+  }, [modal, selectedUserId, users]);
+  useEffect(() => {
+    if (!modal || !selectedAgentId || !["assignAgentStock", "reconcileAgentStock", "editAgent"].includes(modal)) {
+      return;
+    }
+    const agent = agents.find((item) => item.id === selectedAgentId);
+    if (!agent) {
+      return;
+    }
+    setAssignStockProductId(products[0]?.id ?? "");
+    setAssignStockQty("1");
+    setReconcileProductId(agentStock.find((stock) => stock.agentId === agent.id)?.productId ?? products[0]?.id ?? "");
+    setReconcileReturned("0");
+    setReconcileDefective("0");
+    setReconcileMissing("0");
+    setReconcileNotes("");
+    setAgentName(agent.name);
+    setAgentPhone(agent.phone);
+    setAgentZoneInput(agent.zone);
+    setAgentAddress(agent.address ?? "");
+    setAgentActive(agent.active);
+    setAgentStockCapacity(agent.stockCapacity ?? 1000);
+  }, [modal, selectedAgentId, agents, agentStock, products]);
+  useEffect(() => {
+    if (modal !== "editTeam" || !editTeamId) {
+      return;
+    }
+    const team = extraTeams.find((item) => item.id === editTeamId);
+    if (!team) {
+      return;
+    }
+    setEditTeamName(team.name);
+    setEditTeamLeadId(team.leadId ?? "");
+  }, [modal, editTeamId, extraTeams]);
+  useEffect(() => {
+    if (modal !== "changeOrderStatus" || !selectedOrder) {
+      return;
+    }
+    const currentStatus = selectedOrder.status ?? "New";
+    setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
+    setStatusChangeReason("");
+    setCallOutcomeDraft(selectedOrder.callOutcome ?? "");
+    setCallOutcomeCustom("");
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "editOrderCustomer" || !selectedOrder) {
+      return;
+    }
+    setCreateOrderCustomer(selectedOrder.customer);
+    setCreateOrderPhone(selectedOrder.phone);
+    setCreateOrderWhatsapp(selectedOrder.whatsapp ?? "");
+    setCreateOrderEmail(selectedOrder.email ?? "");
+    setCreateOrderAddress(selectedOrder.address ?? "");
+    setCreateOrderCity(selectedOrder.city ?? "");
+    setCreateOrderState(selectedOrder.state ?? "");
+    setCreateOrderQuantity(String(selectedOrder.quantity ?? 1));
+    setCreateOrderAmount(String(selectedOrder.amount ?? ""));
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "editOrderItems" || !selectedOrder) {
+      return;
+    }
+    setCreateOrderCustomer(selectedOrder.customer);
+    setCreateOrderPhone(selectedOrder.phone);
+    setCreateOrderWhatsapp(selectedOrder.whatsapp ?? "");
+    setCreateOrderEmail(selectedOrder.email ?? "");
+    setCreateOrderAddress(selectedOrder.address ?? "");
+    setCreateOrderCity(selectedOrder.city ?? "");
+    setCreateOrderState(selectedOrder.state ?? "");
+    setCreateOrderProductId(selectedOrder.productId ?? "");
+    setCreateOrderPackageId(selectedOrder.packageId ?? "");
+    setCreateOrderQuantity(String(quantityForOrder(selectedOrder)));
+    setCreateOrderAmount(String(selectedOrder.amount ?? ""));
+    setCreateOrderSource(selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource));
+    setCreateOrderRepId(selectedOrder.assignedRepId ?? "auto");
+    setCreateOrderAgentId(selectedOrder.agentId ?? "");
+  }, [modal, selectedOrder, products]);
+  useEffect(() => {
+    if (modal !== "reassignOrder" || !selectedOrder) {
+      return;
+    }
+    const fallbackRepId = users.find((user) => user.active && user.role === "Sales Rep")?.id ?? "";
+    setReassignRepId(selectedOrder.assignedRepId ?? fallbackRepId);
+    setHandoverReason("");
+  }, [modal, selectedOrder, users]);
+  useEffect(() => {
+    if (modal !== "sendToAgent" || !selectedOrder) {
+      return;
+    }
+    setCreateOrderAgentId(selectedOrder.agentId ?? "");
+    setSendToAgentShowAllStates(false);
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "assignCart" || !selectedCart) {
+      return;
+    }
+    const fallbackRepId = users.find((user) => user.active && user.role === "Sales Rep")?.id ?? "";
+    setReassignRepId(selectedCart.assignedRepId ?? fallbackRepId);
+  }, [modal, selectedCart, users]);
+  useEffect(() => {
+    if (modal !== "addCrossSell" || !selectedOrder) {
+      return;
+    }
+    setCrossSellTargetOrderId(selectedOrder.id);
+    setCrossSellProductId("");
+    setCrossSellQuantity("1");
+    setCrossSellAmount("");
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "addFreeGift" || !selectedOrder) {
+      return;
+    }
+    setFreeGiftTargetOrderId(selectedOrder.id);
+    setFreeGiftProductId("");
+    setFreeGiftQuantity("1");
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "manualBonus" || !selectedOrder) {
+      return;
+    }
+    setManualBonusTargetOrderId(selectedOrder.id);
+    setManualBonusAmount(String(selectedOrder.manualBonusOverride ?? ""));
+    setManualBonusReasonText(selectedOrder.manualBonusReason ?? "");
+  }, [modal, selectedOrder]);
+  useEffect(() => {
+    if (modal !== "editProduct" || !selectedProductId) {
+      return;
+    }
+    const product = products.find((item) => item.id === selectedProductId);
+    if (!product) {
+      return;
+    }
+    setProductName(product.name);
+    setProductDescription(product.description);
+    setProductSku(product.sku);
+    setSkuManuallyEdited(true);
+    setProductActive(product.active);
+    setReorderPoint(String(product.reorderPoint));
+  }, [modal, selectedProductId, products]);
+  useEffect(() => {
+    if (modal !== "updateStock" || stockProductId || products.length === 0) {
+      return;
+    }
+    setStockProductId(products[0].id);
+    setStockChange("0");
+  }, [modal, stockProductId, products]);
+  useEffect(() => {
+    if (modal !== "addPricing" || !selectedProduct) {
+      return;
+    }
+    const existingCodes = new Set(selectedProduct.pricings.map((pricing) => pricing.currency));
+    const nextCurrency = (Object.keys(productCurrencies) as ProductCurrencyCode[]).find((code) => !existingCodes.has(code)) ?? "USD";
+    setPricingCurrency(nextCurrency);
+    setPricingSellingPrice("0");
+    setPricingCost("0");
+  }, [modal, selectedProduct]);
+  useEffect(() => {
+    if (modal !== "editPricing" || !selectedPricing) {
+      return;
+    }
+    setPricingCurrency(selectedPricing.currency);
+    setPricingSellingPrice(String(selectedPricing.sellingPrice));
+    setPricingCost(String(selectedPricing.unitCost));
+  }, [modal, selectedPricing]);
+  useEffect(() => {
+    if (modal !== "addPackage") {
+      return;
+    }
+    resetPackageForm();
+  }, [modal]);
+  useEffect(() => {
+    if (modal !== "editPackage" || !selectedPackage) {
+      return;
+    }
+    setPackageName(selectedPackage.name);
+    setPackageDescription(selectedPackage.description);
+    setPackageQuantity(String(selectedPackage.quantity));
+    setPackagePrice(String(selectedPackage.price));
+    setPackageCurrency(selectedPackage.currency);
+    setPackageDisplayOrder(String(selectedPackage.displayOrder));
+    setPackageCompanions(selectedPackage.companionProducts ?? []);
+  }, [modal, selectedPackage]);
+  useEffect(() => {
+    if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
+      return;
+    }
+    const order = trackedOrders.find((item) => item.id === remittanceTargetOrderId);
+    if (!order) {
+      return;
+    }
+    setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
+    setRemittanceAmount(String(order.amountRemitted ?? ""));
+  }, [modal, remittanceTargetOrderId, trackedOrders]);
+  useEffect(() => {
+    if (modal !== "flagCustomer" || !flagTargetPhone) {
+      return;
+    }
+    const existing = customerFlags[normalizePhone(flagTargetPhone)];
+    setFlagReasonDraft(existing?.reason ?? "");
+  }, [modal, flagTargetPhone, customerFlags]);
+  useEffect(() => {
+    if (modal !== "newStockCount") {
+      return;
+    }
+    const dateLabel = new Date().toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" });
+    setStockCountTitleDraft((current) => current || `Stock Count — ${dateLabel}`);
+    setStockCountAgentIdsDraft((current) => current.length > 0 ? current : agents.map((agent) => agent.id));
+  }, [modal, agents]);
+  useEffect(() => {
+    if (modal !== "stockCountEntry" || !stockCountEntryId) {
+      return;
+    }
+    const currentSession = activeStockCountId ? stockCounts.find((session) => session.id === activeStockCountId) : null;
+    const entry = currentSession?.entries.find((item) => item.id === stockCountEntryId) ?? stockCounts.flatMap((session) => session.entries).find((item) => item.id === stockCountEntryId);
+    if (!entry) {
+      return;
+    }
+    setAgentCountDraft(entry.agentCount !== undefined ? String(entry.agentCount) : "");
+    setAdminCountDraft(entry.adminCount !== undefined ? String(entry.adminCount) : "");
+    setStockCountNotesDraft(entry.notes ?? "");
+  }, [modal, stockCountEntryId, activeStockCountId, stockCounts]);
+  useEffect(() => {
+    if (modal !== "adjustStockCount" || !adjustStockEntryId) {
+      return;
+    }
+    setWriteOffReason("");
+    setWriteOffCustomReason("");
+  }, [modal, adjustStockEntryId]);
   const readyEmbedProducts = products.filter((product) => product.active && activeProductPackages(product).length > 0);
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
@@ -2334,6 +2841,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const salesRepUsers = users.filter((user) => user.role === "Sales Rep");
   const activeSalesRepUsers = salesRepUsers.filter((user) => user.active);
+  useEffect(() => {
+    if (!selectedCartId) {
+      return;
+    }
+    setReassignRepId(selectedCart?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
+  }, [selectedCartId, selectedCart?.assignedRepId, activeSalesRepUsers]);
+  useEffect(() => () => {
+    Object.values(orderUpsellSaveTimerRef.current).forEach((timerId) => window.clearTimeout(timerId));
+  }, []);
   // All active users available for order assignment — Sales Reps first, then other roles
   const assignableUsers = users.filter((u) => u.active).sort((a, b) => {
     const rank = (r: string) => r === "Sales Rep" ? 0 : 1;
@@ -2768,7 +3284,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const scheduledDeliveryRows = trackedOrders.filter((order) => {
     const status = order.status ?? "New";
-    const matchesSchedule = ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(scheduleRange, scheduleCustomDate);
+    const matchesSchedule = ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && scheduledKeyForOrder(order) === scheduleDateForRange(scheduleRange, scheduleCustomDate);
     const matchesProduct = matchesProductFilter(order.productId, order.productName, scheduleProductIds);
     const matchesViewer = viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
     return matchesSchedule && matchesProduct && matchesViewer;
@@ -3093,10 +3609,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...(o.notes ?? [])]
+      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
-    setModal(null);
+    closeModal();
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     showToast(`${order.id} remittance saved (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
@@ -3110,7 +3626,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceTargetOrderId(order.id);
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
-    setModal("recordRemittance");
+    openFinanceRemittanceRoute(order.id);
   };
 
   const remittanceTargetOrder = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
@@ -3125,13 +3641,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const existing = customerFlags[normalizePhone(phone)];
     setFlagTargetPhone(phone);
     setFlagReasonDraft(existing?.reason ?? "");
-    setModal("flagCustomer" as ModalType);
+    openCustomerFlagRoute(phone);
   };
   const saveFlagCustomer = () => {
     const key = normalizePhone(flagTargetPhone);
     const reason = flagReasonDraft.trim();
     setCustomerFlags((prev) => ({ ...prev, [key]: { flagged: true, reason, flaggedAt: new Date().toISOString() } }));
-    setModal(null);
+    closeModal();
     showToast("Customer flagged.");
     customersApi.flag({ phone: flagTargetPhone, reason }).catch((err: any) => {
       setCustomerFlags((prev) => { const next = { ...prev }; delete next[key]; return next; });
@@ -3201,10 +3717,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const dateLabel = new Date().toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" });
     setStockCountTitleDraft(`Stock Count — ${dateLabel}`);
     setStockCountAgentIdsDraft(agents.map((a) => a.id));
-    setModal("newStockCount");
+    openInventoryNewStockCountRoute();
   };
 
   const createStockCountSession = () => {
+    if (stockCountAgentIdsDraft.length === 0) {
+      showToast("Choose at least one agent.");
+      return;
+    }
     const entries: StockCountEntry[] = [];
     for (const agentId of stockCountAgentIdsDraft) {
       const agent = agents.find((a) => a.id === agentId);
@@ -3224,32 +3744,54 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       }
     }
+    const tempId = `sc-${Date.now()}`;
     const session: StockCountSession = {
-      id: `sc-${Date.now()}`,
+      id: tempId,
       title: stockCountTitleDraft.trim() || `Stock Count ${new Date().toLocaleDateString()}`,
       createdAt: new Date().toISOString(),
       createdBy: ownerName,
       status: "Open",
       entries
     };
+    const previousActiveId = activeStockCountId;
     setStockCounts((prev) => [session, ...prev]);
     setActiveStockCountId(session.id);
     setModal(null);
     setInventoryView("stockcount");
-    showToast("Stock count session created.");
+    syncHashRoute(`#/dashboard/admin/inventory/stock-count/${session.id}`);
+    stockApi.createSession({
+      title: session.title,
+      agentIds: stockCountAgentIdsDraft
+    }).then((saved: any) => {
+      setStockCounts((prev) => prev.map((item) => item.id === tempId ? saved : item));
+      setActiveStockCountId((current) => current === tempId ? saved.id : current);
+      if (hashRoute === `#/dashboard/admin/inventory/stock-count/${tempId}`) {
+        syncHashRoute(`#/dashboard/admin/inventory/stock-count/${saved.id}`);
+      }
+      showToast("Stock count session created.");
+    }).catch((err: any) => {
+      setStockCounts((prev) => prev.filter((item) => item.id !== tempId));
+      setActiveStockCountId((current) => current === tempId ? previousActiveId : current);
+      if (hashRoute === `#/dashboard/admin/inventory/stock-count/${tempId}`) {
+        syncHashRoute(previousActiveId ? `#/dashboard/admin/inventory/stock-count/${previousActiveId}` : "#/dashboard/admin/inventory/stock-count");
+      }
+      showToast(`Failed to create stock count session: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openStockCountEntry = (entryId: string) => {
-    const entry = stockCounts.flatMap((s) => s.entries).find((e) => e.id === entryId);
+    const session = stockCounts.find((item) => item.entries.some((entry) => entry.id === entryId));
+    const entry = session?.entries.find((item) => item.id === entryId);
     if (!entry) return;
     setStockCountEntryId(entryId);
     setAgentCountDraft(entry.agentCount !== undefined ? String(entry.agentCount) : "");
     setAdminCountDraft(entry.adminCount !== undefined ? String(entry.adminCount) : "");
     setStockCountNotesDraft(entry.notes ?? "");
-    setModal("stockCountEntry");
+    openInventoryStockCountEntryRoute(session?.id ?? activeStockCountId ?? "", entryId);
   };
 
   const saveStockCountEntry = () => {
+    if (!stockCountEntryId) return;
     const agentCount = agentCountDraft !== "" ? parseInt(agentCountDraft, 10) : undefined;
     const adminCount = adminCountDraft !== "" ? parseInt(adminCountDraft, 10) : undefined;
     let status: StockCountStatus = "Pending";
@@ -3263,31 +3805,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const variance = agentCount !== undefined && adminCount !== undefined ? agentCount - adminCount : undefined;
     const verifiedAt = status === "Verified" ? new Date().toISOString() : undefined;
     const now = new Date().toISOString();
+    const previousSessions = stockCounts;
+    const entryId = stockCountEntryId;
     setStockCounts((prev) => prev.map((session) => ({
       ...session,
       entries: session.entries.map((entry) =>
-        entry.id === stockCountEntryId
+        entry.id === entryId
           ? { ...entry, agentCount, adminCount, status, variance, verifiedAt, agentSubmittedAt: agentCount !== undefined ? now : entry.agentSubmittedAt, adminConfirmedAt: adminCount !== undefined ? now : entry.adminConfirmedAt, notes: stockCountNotesDraft.trim() || undefined }
           : entry
       )
     })));
-    setModal(null);
-    showToast(status === "Verified" ? "Verified — counts match." : status === "Discrepancy" ? "Discrepancy recorded." : "Count saved.");
+    closeModal();
+    stockApi.updateEntry(entryId, {
+      agentCount,
+      adminCount,
+      notes: stockCountNotesDraft.trim() || undefined
+    }).then((saved: any) => {
+      setStockCounts((prev) => prev.map((session) => ({
+        ...session,
+        entries: session.entries.map((entry) => entry.id === entryId ? { ...entry, ...saved } : entry)
+      })));
+      showToast(status === "Verified" ? "Verified — counts match." : status === "Discrepancy" ? "Discrepancy recorded." : "Count saved.");
+    }).catch((err: any) => {
+      setStockCounts(previousSessions);
+      showToast(`Failed to save stock count entry: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openAdjustStockFromCount = (entry: StockCountEntry) => {
     if (entry.agentCount === undefined) return;
+    const sessionId = stockCounts.find((session) => session.entries.some((item) => item.id === entry.id))?.id ?? activeStockCountId;
+    if (!sessionId) return;
     setAdjustStockEntryId(entry.id);
     setWriteOffReason("");
     setWriteOffCustomReason("");
-    setModal("adjustStockCount");
+    openInventoryAdjustStockCountRoute(sessionId, entry.id);
   };
 
   const confirmAdjustStockFromCount = () => {
     const entry = stockCounts.flatMap((s) => s.entries).find((e) => e.id === adjustStockEntryId);
     if (!entry || entry.agentCount === undefined) return;
+    if (!writeOffReason) {
+      showToast("Choose a write-off reason.");
+      return;
+    }
     const delta = entry.agentCount - entry.systemQty;
     const reasonLabel = writeOffReason === "Other" && writeOffCustomReason.trim() ? writeOffCustomReason.trim() : writeOffReason || "Unspecified";
+    const previousAgentStock = agentStock;
+    const previousMovements = stockMovements;
+    const previousCounts = stockCounts;
+    const previousProducts = products;
     setAgentStock((prev) => prev.map((s) =>
       s.agentId === entry.agentId && s.productId === entry.productId ? { ...s, quantity: entry.agentCount! } : s
     ));
@@ -3297,20 +3864,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productId: entry.productId,
       productName: entry.productName,
       type: "Correction" as StockMovementType,
-      qty: Math.abs(delta),
+      qty: delta,
       balanceAfter: entry.agentCount!,
       agent: entry.agentName,
       by: ownerName,
       note: `Write-off: ${delta >= 0 ? "+" : ""}${delta} units — ${reasonLabel}. (Stock count reconciliation)`
     }, ...prev]);
+    setProducts((prev) => prev.map((product) =>
+      product.id === entry.productId
+        ? { ...product, agentStock: Math.max(0, product.agentStock + delta) }
+        : product
+    ));
     setStockCounts((prev) => prev.map((session) => ({
       ...session,
       entries: session.entries.map((e) =>
         e.id === entry.id ? { ...e, status: "Verified", systemQty: entry.agentCount!, variance: 0, verifiedAt: new Date().toISOString() } : e
       )
     })));
-    setModal(null);
-    showToast("Stock adjusted to match agent count.");
+    closeModal();
+    stockApi.adjustEntry(entry.id, {
+      writeoffReason: writeOffReason,
+      writeoffCustom: writeOffReason === "Other" ? writeOffCustomReason.trim() || undefined : undefined
+    }).then((saved: any) => {
+      setStockCounts((prev) => prev.map((session) => ({
+        ...session,
+        entries: session.entries.map((sessionEntry) => sessionEntry.id === entry.id ? { ...sessionEntry, ...saved } : sessionEntry)
+      })));
+      showToast("Stock adjusted to match agent count.");
+    }).catch((err: any) => {
+      setAgentStock(previousAgentStock);
+      setStockMovements(previousMovements);
+      setStockCounts(previousCounts);
+      setProducts(previousProducts);
+      showToast(`Failed to adjust stock count: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const closeStockCountSession = (sessionId: string) => {
@@ -3337,23 +3924,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal("stateAvailability");
   };
   const openCrossSellModal = (order: TrackedOrder) => {
+    setSelectedOrderId(order.id);
     setCrossSellTargetOrderId(order.id);
     setCrossSellProductId("");
     setCrossSellQuantity("1");
     setCrossSellAmount("");
     setModal("addCrossSell");
+    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-cross-sell`));
+    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-cross-sell`);
+    }
   };
   const openFreeGiftModal = (order: TrackedOrder) => {
+    setSelectedOrderId(order.id);
     setFreeGiftTargetOrderId(order.id);
     setFreeGiftProductId("");
     setFreeGiftQuantity("1");
     setModal("addFreeGift");
+    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-free-gift`));
+    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-free-gift`);
+    }
   };
   const openManualBonusModal = (order: TrackedOrder) => {
+    setSelectedOrderId(order.id);
     setManualBonusTargetOrderId(order.id);
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
     setManualBonusReasonText(order.manualBonusReason ?? "");
     setModal("manualBonus");
+    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/manual-bonus`);
+    }
   };
   const openAddPenalty = (repId?: string, orderId?: string) => {
     setPenaltyTargetRepId(repId ?? "");
@@ -3365,8 +3968,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal("addPenalty");
   };
 
+  const productSalesSettingsPayload = (product: Product) => ({
+    bonus_config: product.bonusConfig ?? defaultBonusConfig(),
+    role: product.role ?? "Main",
+    can_be_cross_sell: Boolean(product.canBeCrossSell),
+    can_be_free_gift: Boolean(product.canBeFreeGift),
+    cross_sell_product_ids: product.crossSellProductIds ?? [],
+    cross_sell_price_overrides: product.crossSellPriceOverrides ?? {},
+    cross_sell_state_restrictions: product.crossSellStateRestrictions ?? {},
+    free_gift_product_ids: product.freeGiftProductIds ?? [],
+    free_gift_state_restrictions: product.freeGiftStateRestrictions ?? {}
+  });
+
+  const saveProductSalesSettings = (
+    productId: string,
+    updater: (product: Product) => Product,
+    failureMessage: string
+  ) => {
+    const previousProduct = products.find((product) => product.id === productId);
+    if (!previousProduct) return;
+    const nextProduct = updater(previousProduct);
+    const version = (productSettingsSaveVersionRef.current[productId] ?? 0) + 1;
+    productSettingsSaveVersionRef.current[productId] = version;
+    setProducts((prev) => prev.map((product) => product.id === productId ? nextProduct : product));
+
+    const request = (productSettingsSaveQueueRef.current[productId] ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        await productsApi.update(productId, productSalesSettingsPayload(nextProduct));
+      });
+
+    productSettingsSaveQueueRef.current[productId] = request.then(() => undefined, () => undefined);
+    request.catch((err: any) => {
+      if ((productSettingsSaveVersionRef.current[productId] ?? 0) !== version) return;
+      setProducts((prev) => prev.map((product) => product.id === productId ? previousProduct : product));
+      showToast(`${failureMessage}: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
   const updateProductBonusConfig = (productId: string, mutator: (cfg: ProductBonusConfig) => ProductBonusConfig) => {
-    setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, bonusConfig: mutator(p.bonusConfig ?? defaultBonusConfig()) } : p));
+    saveProductSalesSettings(productId, (product) => ({
+      ...product,
+      bonusConfig: mutator(product.bonusConfig ?? defaultBonusConfig())
+    }), "Failed to save bonus settings");
   };
 
   const updateProductStates = (productId: string, states: string[]) => {
@@ -3379,7 +4023,109 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const updateProductRole = (productId: string, role: ProductRole) => {
-    setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, role } : p));
+    saveProductSalesSettings(productId, (product) => ({ ...product, role }), "Failed to save product role");
+  };
+
+  const updateProductCrossSellAvailability = (productId: string, enabled: boolean) => {
+    saveProductSalesSettings(productId, (product) => ({ ...product, canBeCrossSell: enabled }), "Failed to save cross-sell availability");
+  };
+
+  const updateProductFreeGiftAvailability = (productId: string, enabled: boolean) => {
+    saveProductSalesSettings(productId, (product) => ({ ...product, canBeFreeGift: enabled }), "Failed to save free-gift availability");
+  };
+
+  const toggleProductCrossSellTarget = (productId: string, targetProductId: string, enabled: boolean) => {
+    saveProductSalesSettings(productId, (product) => {
+      const selected = product.crossSellProductIds ?? [];
+      return {
+        ...product,
+        crossSellProductIds: enabled ? [...selected, targetProductId] : selected.filter((id) => id !== targetProductId)
+      };
+    }, "Failed to save cross-sell settings");
+  };
+
+  const setProductCrossSellPriceOverride = (productId: string, targetProductId: string, amount?: number) => {
+    saveProductSalesSettings(productId, (product) => {
+      const next = { ...(product.crossSellPriceOverrides ?? {}) };
+      if (typeof amount === "number") {
+        next[targetProductId] = amount;
+      } else {
+        delete next[targetProductId];
+      }
+      return { ...product, crossSellPriceOverrides: next };
+    }, "Failed to save cross-sell pricing");
+  };
+
+  const setProductCrossSellStates = (productId: string, targetProductId: string, states?: string[]) => {
+    saveProductSalesSettings(productId, (product) => {
+      const next = { ...(product.crossSellStateRestrictions ?? {}) };
+      if (states === undefined) {
+        delete next[targetProductId];
+      } else {
+        next[targetProductId] = states;
+      }
+      return { ...product, crossSellStateRestrictions: next };
+    }, "Failed to save cross-sell state restrictions");
+  };
+
+  const toggleProductCrossSellState = (productId: string, targetProductId: string, state: string) => {
+    saveProductSalesSettings(productId, (product) => {
+      const currentStates = product.crossSellStateRestrictions?.[targetProductId] ?? [];
+      const isAllMode = currentStates.length === 0;
+      let nextStates: string[];
+      if (isAllMode) {
+        nextStates = nigeriaStates.filter((item) => item !== state);
+      } else if (currentStates.includes(state)) {
+        nextStates = currentStates.filter((item) => item !== state);
+      } else {
+        nextStates = [...currentStates, state];
+      }
+      return {
+        ...product,
+        crossSellStateRestrictions: { ...(product.crossSellStateRestrictions ?? {}), [targetProductId]: nextStates }
+      };
+    }, "Failed to save cross-sell state restrictions");
+  };
+
+  const toggleProductFreeGiftTarget = (productId: string, targetProductId: string, enabled: boolean) => {
+    saveProductSalesSettings(productId, (product) => {
+      const selected = product.freeGiftProductIds ?? [];
+      return {
+        ...product,
+        freeGiftProductIds: enabled ? [...selected, targetProductId] : selected.filter((id) => id !== targetProductId)
+      };
+    }, "Failed to save free-gift settings");
+  };
+
+  const setProductFreeGiftStates = (productId: string, targetProductId: string, states?: string[]) => {
+    saveProductSalesSettings(productId, (product) => {
+      const next = { ...(product.freeGiftStateRestrictions ?? {}) };
+      if (states === undefined) {
+        delete next[targetProductId];
+      } else {
+        next[targetProductId] = states;
+      }
+      return { ...product, freeGiftStateRestrictions: next };
+    }, "Failed to save free-gift state restrictions");
+  };
+
+  const toggleProductFreeGiftState = (productId: string, targetProductId: string, state: string) => {
+    saveProductSalesSettings(productId, (product) => {
+      const currentStates = product.freeGiftStateRestrictions?.[targetProductId] ?? [];
+      const isAllMode = currentStates.length === 0;
+      let nextStates: string[];
+      if (isAllMode) {
+        nextStates = nigeriaStates.filter((item) => item !== state);
+      } else if (currentStates.includes(state)) {
+        nextStates = currentStates.filter((item) => item !== state);
+      } else {
+        nextStates = [...currentStates, state];
+      }
+      return {
+        ...product,
+        freeGiftStateRestrictions: { ...(product.freeGiftStateRestrictions ?? {}), [targetProductId]: nextStates }
+      };
+    }, "Failed to save free-gift state restrictions");
   };
 
   const saveCrossSell = () => {
@@ -3399,27 +4145,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quantity: qty,
       amount: price
     };
+    const orderSnapshot = order;
+    const nextCrossSellLines = [...(order.crossSellLines ?? []), line];
+    const nextAmount = order.amount + price;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
-      crossSellLines: [...(o.crossSellLines ?? []), line],
-      amount: o.amount + price
+      crossSellLines: nextCrossSellLines,
+      amount: nextAmount
     } : o));
     closeModal();
     showToast(`Cross-sell ${product.name} added to ${order.id}`);
+    ordersApi.update(order.id, {
+      amount: nextAmount,
+      cross_sell_lines: nextCrossSellLines
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
+      showToast(`Failed to save cross-sell on ${order.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const removeCrossSell = (orderId: string, lineId: string) => {
+    const orderSnapshot = trackedOrders.find((order) => order.id === orderId);
+    if (!orderSnapshot) return;
+    const removed = (orderSnapshot.crossSellLines ?? []).find((line) => line.id === lineId);
+    const refund = removed?.amount ?? 0;
+    const nextCrossSellLines = (orderSnapshot.crossSellLines ?? []).filter((line) => line.id !== lineId);
+    const nextAmount = Math.max(0, orderSnapshot.amount - refund);
     setTrackedOrders((prev) => prev.map((o) => {
       if (o.id !== orderId) return o;
-      const removed = (o.crossSellLines ?? []).find((line) => line.id === lineId);
-      const refund = removed?.amount ?? 0;
       return {
         ...o,
-        crossSellLines: (o.crossSellLines ?? []).filter((line) => line.id !== lineId),
-        amount: Math.max(0, o.amount - refund)
+        crossSellLines: nextCrossSellLines,
+        amount: nextAmount
       };
     }));
     showToast("Cross-sell removed");
+    ordersApi.update(orderId, {
+      amount: nextAmount,
+      cross_sell_lines: nextCrossSellLines
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((order) => order.id === orderId ? orderSnapshot : order));
+      showToast(`Failed to remove cross-sell: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const saveFreeGift = () => {
@@ -3437,20 +4204,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productName: product.name,
       quantity: qty
     };
+    const orderSnapshot = order;
+    const nextFreeGiftLines = [...(order.freeGiftLines ?? []), line];
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
-      freeGiftLines: [...(o.freeGiftLines ?? []), line]
+      freeGiftLines: nextFreeGiftLines
     } : o));
     closeModal();
     showToast(`Free gift ${product.name} added`);
+    ordersApi.update(order.id, {
+      free_gift_lines: nextFreeGiftLines
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
+      showToast(`Failed to save free gift on ${order.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const removeFreeGift = (orderId: string, lineId: string) => {
+    const orderSnapshot = trackedOrders.find((order) => order.id === orderId);
+    if (!orderSnapshot) return;
+    const nextFreeGiftLines = (orderSnapshot.freeGiftLines ?? []).filter((line) => line.id !== lineId);
     setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? {
       ...o,
-      freeGiftLines: (o.freeGiftLines ?? []).filter((line) => line.id !== lineId)
+      freeGiftLines: nextFreeGiftLines
     } : o));
     showToast("Free gift removed");
+    ordersApi.update(orderId, {
+      free_gift_lines: nextFreeGiftLines
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((order) => order.id === orderId ? orderSnapshot : order));
+      showToast(`Failed to remove free gift: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const saveManualBonus = () => {
@@ -3461,6 +4245,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Enter a valid amount");
       return;
     }
+    const orderSnapshot = order;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       manualBonusOverride: amount,
@@ -3469,9 +4254,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } : o));
     closeModal();
     showToast(`Bonus override set on ${order.id}`);
+    ordersApi.update(order.id, {
+      manual_bonus_override: amount,
+      manual_bonus_reason: manualBonusReasonText.trim(),
+      bonus_manually_adjusted: true
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
+      showToast(`Failed to save bonus override on ${order.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const clearManualBonus = (orderId: string) => {
+    const orderSnapshot = trackedOrders.find((order) => order.id === orderId);
+    if (!orderSnapshot) return;
     setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? {
       ...o,
       manualBonusOverride: undefined,
@@ -3479,6 +4274,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonusManuallyAdjusted: false
     } : o));
     showToast("Manual bonus cleared");
+    ordersApi.update(orderId, {
+      manual_bonus_override: null,
+      manual_bonus_reason: null,
+      bonus_manually_adjusted: false
+    }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((order) => order.id === orderId ? orderSnapshot : order));
+      showToast(`Failed to clear manual bonus: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
+  const queueOrderUpsellSave = (nextOrder: TrackedOrder, previousOrder: TrackedOrder) => {
+    const version = (orderUpsellSaveVersionRef.current[nextOrder.id] ?? 0) + 1;
+    orderUpsellSaveVersionRef.current[nextOrder.id] = version;
+    const activeTimer = orderUpsellSaveTimerRef.current[nextOrder.id];
+    if (activeTimer) {
+      window.clearTimeout(activeTimer);
+    }
+    orderUpsellSaveTimerRef.current[nextOrder.id] = window.setTimeout(() => {
+      const payload = {
+        upsell_from_qty: nextOrder.upsellFromQty ?? null,
+        upsell_to_qty: nextOrder.upsellToQty ?? null,
+        upsell_note: nextOrder.upsellNote?.trim() ? nextOrder.upsellNote.trim() : null
+      };
+      const request = (orderUpsellSaveQueueRef.current[nextOrder.id] ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          if ((orderUpsellSaveVersionRef.current[nextOrder.id] ?? 0) !== version) {
+            return;
+          }
+          await ordersApi.update(nextOrder.id, payload);
+        });
+      orderUpsellSaveQueueRef.current[nextOrder.id] = request.then(() => undefined, () => undefined);
+      request.catch((err: any) => {
+        if ((orderUpsellSaveVersionRef.current[nextOrder.id] ?? 0) !== version) {
+          return;
+        }
+        setTrackedOrders((prev) => prev.map((order) => order.id === previousOrder.id ? previousOrder : order));
+        showToast(`Failed to save upsell tracking for ${previousOrder.id}: ${err?.message ?? "please retry"}.`);
+      });
+    }, 450);
+  };
+
+  const updateOrderUpsellFields = (
+    order: TrackedOrder,
+    patch: Pick<TrackedOrder, "upsellFromQty" | "upsellToQty" | "upsellNote">
+  ) => {
+    const nextOrder = { ...order, ...patch };
+    setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? nextOrder : item));
+    queueOrderUpsellSave(nextOrder, order);
   };
 
   const savePenalty = () => {
@@ -3729,34 +4573,74 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const expected = Math.max(0, order.amount - fee);
     const status: "Pending" | "Partial" | "Paid" = remit <= 0 ? "Pending" : remit >= expected ? "Paid" : "Partial";
     const validExtras = repExtraExpenses.filter((e) => Number(e.amount) > 0);
+    const nextNotes = [
+      orderTimelineNote(`Delivery fee ${formatProductMoney(fee, order.currency)} · remitted ${formatProductMoney(remit, order.currency)} (${status}).`, { by: repScopeName }),
+      ...orderNotesFor(order)
+    ];
     const orderSnapshot = order;
+    const expensesSnapshot = expenses;
+    const extraExpenseDrafts = repExtraExpenses;
+    const today = todayKey();
+    const newExpenses: ExpenseRecord[] = validExtras.map((e) => ({
+      id: makeExpenseId(),
+      type: e.type,
+      amount: Number(e.amount) || 0,
+      currency,
+      date: today,
+      productId: order.productId,
+      productName: order.productName,
+      description: `${e.description.trim() || `${e.type} for order ${order.id}`} (auto-logged from rep console)`
+    }));
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: fee,
       amountRemitted: remit,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Delivery fee ${formatProductMoney(fee, o.currency)} · remitted ${formatProductMoney(remit, o.currency)} (${status})${validExtras.length > 0 ? ` · ${validExtras.length} extra expense${validExtras.length === 1 ? "" : "s"} logged` : ""}.`, undefined, repScopeName), ...(o.notes ?? [])]
+      notes: nextNotes
     } : o));
-    if (validExtras.length > 0) {
-      const today = todayKey();
-      const newExpenses: ExpenseRecord[] = validExtras.map((e) => ({
-        id: makeExpenseId(),
-        type: e.type,
-        amount: Number(e.amount) || 0,
-        currency,
-        date: today,
-        productId: order.productId,
-        productName: order.productName,
-        description: `${e.description.trim() || `${e.type} for order ${order.id}`} (auto-logged from rep console)`
-      }));
+    if (newExpenses.length > 0) {
       setExpenses((prev) => [...newExpenses, ...prev]);
     }
     setRepExtraExpenses([]);
-    ordersApi.update(order.id, { logistics_cost: fee, amount_remitted: remit, remittance_status: status }).catch((err: any) => {
+    ordersApi.update(order.id, {
+      logistics_cost: fee,
+      amount_remitted: remit,
+      remittance_status: status,
+      timeline_notes: nextNotes
+    }).then(async () => {
+      if (newExpenses.length === 0) {
+        showToast(`${order.id} delivery details saved.`);
+        return;
+      }
+
+      const persistedExpenseIds = new Set<string>();
+      for (const expense of newExpenses) {
+        try {
+          await expensesApi.create({
+            id: expense.id,
+            date: expense.date,
+            category: expense.type,
+            description: expense.description,
+            amount: expense.amount,
+            currency: expense.currency,
+            productId: expense.productId
+          });
+          persistedExpenseIds.add(expense.id);
+        } catch (err: any) {
+          const stagedIds = new Set(newExpenses.map((item) => item.id));
+          setExpenses((prev) => prev.filter((item) => !stagedIds.has(item.id) || persistedExpenseIds.has(item.id)));
+          showToast(`Delivery details saved, but ${order.id} has unsynced extra expenses: ${err?.message ?? "please retry"}.`);
+          return;
+        }
+      }
+
+      showToast(`${order.id} delivery details saved · ${newExpenses.length} expense${newExpenses.length === 1 ? "" : "s"} added.`);
+    }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
+      setExpenses(expensesSnapshot);
+      setRepExtraExpenses(extraExpenseDrafts);
       showToast(`Delivery details for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
     });
-    showToast(`${order.id} delivery details saved${validExtras.length > 0 ? ` · ${validExtras.length} expense${validExtras.length === 1 ? "" : "s"} added` : ""}.`);
   };
   const productProfitabilityRows = products.map((product) => {
     const allOrders = financePeriodOrders.filter((order) => order.productId === product.id);
@@ -4109,7 +4993,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return "Pending";
     }
     const created = new Date(`${orderCreatedKey(order)}T00:00:00`);
-    const firstAction = (order.notes ?? [])
+    const firstAction = orderNotesFor(order)
       .map((note) => new Date(note.date))
       .filter((date) => !Number.isNaN(date.getTime()))
       .sort((a, b) => a.getTime() - b.getTime())[0];
@@ -4146,13 +5030,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return ["Confirmed", "In Process", "Dispatched"].includes(status);
     }
     if (repOrderStatusTab === "Follow-up") {
-      return status === "Postponed" || (order.notes ?? []).some((note) => Boolean(note.followUpDate));
+      return status === "Postponed" || orderNotesFor(order).some((note) => Boolean(followUpMomentForNote(note)));
     }
     return true;
   });
   const repScheduledOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
-    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && normalizeDateKey(order.scheduledDate) === scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
+    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && scheduledKeyForOrder(order) === scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
   });
   const repProducts = [...products]
     .filter((product) => {
@@ -4184,12 +5068,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const seen = new Set<string>();
     const all = [
       ...repOrders.filter((order) => (order.status ?? "New") === "New").slice(0, 4).map((order) => ({ key: `new-${order.id}`, msg: `New order assigned: ${order.id} for ${order.customer}` })),
-      ...repOrders.filter((order) => (order.notes ?? []).some((note) => note.followUpDate && normalizeDateKey(note.followUpDate) <= todayKey())).slice(0, 4).map((order) => ({ key: `fu-${order.id}`, msg: `Follow-up due: ${order.id} for ${order.customer}` })),
+      ...repOrders.filter((order) => orderNotesFor(order).some((note) => followUpKeyForNote(note) && followUpKeyForNote(note) <= todayKey())).slice(0, 4).map((order) => ({ key: `fu-${order.id}`, msg: `Follow-up due: ${order.id} for ${order.customer}` })),
       ...repScheduledOrders.slice(0, 4).map((order) => ({ key: `sched-${order.id}`, msg: `Delivery scheduled ${repScheduleRange.toLowerCase()}: ${order.id}` }))
     ];
     return all.filter(({ key }) => { if (seen.has(key)) return false; seen.add(key); return true; }).map(({ msg }) => msg);
   })();
   const repOrderDetail = trackedOrders.find((order) => order.id === repOrderDetailId);
+  useEffect(() => {
+    if (!repOrderDetailId || !repOrderDetail) {
+      return;
+    }
+    const plannedParts = splitMomentForInput(repOrderDetail.scheduledAt);
+    setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(repOrderDetail) || todayKey());
+    setRepScheduleTime(plannedParts.time || nextTimeValue());
+    setRepDeliveryFee(repOrderDetail.logisticsCost != null ? String(repOrderDetail.logisticsCost) : "");
+    setRepAmountToRemit(
+      repOrderDetail.amountRemitted != null
+        ? String(repOrderDetail.amountRemitted)
+        : String(Math.max(0, repOrderDetail.amount - (repOrderDetail.logisticsCost ?? 0)))
+    );
+    setRepExtraExpenses([]);
+  }, [
+    repOrderDetailId,
+    repOrderDetail?.amount,
+    repOrderDetail?.amountRemitted,
+    repOrderDetail?.logisticsCost,
+    repOrderDetail?.scheduledAt,
+    repOrderDetail?.scheduledDate
+  ]);
 
   const selectedPeriodLabel =
     period === "Custom" && dateRange.start && dateRange.end
@@ -4312,15 +5218,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Check push notification status on mount
   useEffect(() => {
-    const perm = getPermissionState();
-    setPushPermission(perm);
-    isCurrentlySubscribed().then((subscribed) => {
-      setPushSubscribed(subscribed);
-      if (!subscribed && perm === "default") {
-        const dismissed = sessionStorage.getItem("pushBannerDismissed");
-        if (!dismissed) setShowPushBanner(true);
-      }
-    });
+    void refreshPushDiagnostics();
     // Listen for SW navigation messages (notification click)
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "NAVIGATE" && event.data.url) {
@@ -4329,7 +5227,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     navigator.serviceWorker?.addEventListener("message", handleSwMessage);
     return () => navigator.serviceWorker?.removeEventListener("message", handleSwMessage);
-  }, []);
+  }, [installGuidePlatform, isInstalled]);
 
   useEffect(() => {
     if (!hashRoute.startsWith("#/dashboard/sales-rep")) {
@@ -4338,9 +5236,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     setActivePage("Sales Rep Workspace");
     const [, rawPath = ""] = hashRoute.split("#");
+    const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
     const section = parts[2];
-    const orderId = section === "orders" ? parts[3] : "";
+    const isRepOrderSection = section === "orders";
+    const isRepCartSection = section === "abandoned-carts";
+    const orderId = isRepOrderSection && parts[3] !== "new" ? parts[3] : "";
+    const cartId = isRepCartSection ? parts[3] ?? "" : "";
+    const repOrderAction = isRepOrderSection ? parts[4] ?? "" : "";
+    const repCartAction = isRepCartSection ? parts[4] ?? "" : "";
     const routeToTab: Record<string, RepConsoleTab> = {
       products: "Products",
       orders: "Orders",
@@ -4351,13 +5255,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       notifications: "Notifications",
       settings: "Settings"
     };
+    const requestedRepId = queryParams.get("rep") ?? "all";
+    const resolvedRepId = requestedRepId === "all" || salesRepUsers.some((user) => user.id === requestedRepId)
+      ? requestedRepId
+      : "all";
 
     setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
+    if (currentRole === "Owner" || currentRole === "Admin") {
+      if (repConsoleRepId !== resolvedRepId) {
+        setRepConsoleRepId(resolvedRepId);
+      }
+    } else if (repConsoleRepId !== "all") {
+      setRepConsoleRepId("all");
+    }
     setRepOrderDetailId(orderId ?? "");
     if (orderId) {
       setSelectedOrderId(orderId);
     }
-  }, [hashRoute]);
+    if (isRepOrderSection && parts[3] === "new") {
+      openRepCreateOrderModal();
+      return;
+    }
+    if (repOrderAction === "status") {
+      setModal("changeOrderStatus");
+      return;
+    }
+    if (repOrderAction === "edit-customer") {
+      setModal("editOrderCustomer");
+      return;
+    }
+    if (repOrderAction === "manual-bonus" && orderId) {
+      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${orderId}`));
+      return;
+    }
+    if (repOrderAction === "add-cross-sell") {
+      setModal("addCrossSell");
+      return;
+    }
+    if (repOrderAction === "add-free-gift") {
+      setModal("addFreeGift");
+      return;
+    }
+    if (repCartAction === "assign" && cartId) {
+      setSelectedCartId(cartId);
+      setModal("assignCart");
+      return;
+    }
+    if (repCartAction === "convert" && cartId) {
+      setSelectedCartId(cartId);
+      setModal("convertCart");
+      return;
+    }
+    if (!isRepOrderSection && modal === "createOrder") {
+      setModal(null);
+      return;
+    }
+    if (isRepOrderSection && parts[3] !== "new" && modal === "createOrder") {
+      setModal(null);
+    }
+    if (!isRepOrderSection && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+      setModal(null);
+      return;
+    }
+    if (isRepOrderSection && !repOrderAction && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+      setModal(null);
+    }
+    if (isRepCartSection && !repCartAction && modal && ["assignCart", "convertCart"].includes(modal)) {
+      setModal(null);
+    }
+    if (!isRepCartSection && modal && ["assignCart", "convertCart"].includes(modal) && hashRoute.startsWith("#/dashboard/sales-rep")) {
+      setModal(null);
+    }
+  }, [hashRoute, currentRole, salesRepUsers]);
 
   useEffect(() => {
     if (hashRoute.startsWith("#/dashboard/sales-rep") || hashRoute.startsWith("#/order-form/embed")) {
@@ -4380,6 +5349,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const section = parts[2] ?? "";
+    const isFinanceSection = section === "reports" || section === "finance-accounting" || section === "finance-and-accounting";
     const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     if (section === "embed") {
       setEmbedTab(queryParams.get("tab") === "generate" ? "Generate" : "Create Order Form");
@@ -4413,12 +5383,153 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       settings: "Settings"
     };
 
+    if (section === "orders" && parts[3] === "new") {
+      setActivePage("Orders");
+      openCreateOrderModal();
+      return;
+    }
+
     if (section === "orders" && parts[3]) {
       // Deep link to a specific admin order — land on the admin Orders page
       // and open the same details modal the Eye-button uses.
       setActivePage("Orders");
       setSelectedOrderId(parts[3]);
+      if (parts[4] === "edit") {
+        setModal("editOrderItems");
+        return;
+      }
+      if (parts[4] === "edit-customer") {
+        setModal("editOrderCustomer");
+        return;
+      }
+      if (parts[4] === "reassign") {
+        setModal("reassignOrder");
+        return;
+      }
+      if (parts[4] === "send-to-agent") {
+        setModal("sendToAgent");
+        return;
+      }
+      if (parts[4] === "delete") {
+        setModal("deleteOrder");
+        return;
+      }
+      if (parts[4] === "change-status") {
+        setModal("changeOrderStatus");
+        return;
+      }
+      if (parts[4] === "add-cross-sell") {
+        setModal("addCrossSell");
+        return;
+      }
+      if (parts[4] === "add-free-gift") {
+        setModal("addFreeGift");
+        return;
+      }
+      if (parts[4] === "manual-bonus") {
+        setModal("manualBonus");
+        return;
+      }
       setModal("orderDetails");
+      return;
+    }
+
+    if (section === "abandoned-carts" && parts[3]) {
+      setActivePage("Abandoned Carts");
+      setSelectedCartId(parts[3]);
+      if (parts[4] === "assign") {
+        setModal("assignCart");
+        return;
+      }
+      if (parts[4] === "convert") {
+        setModal("convertCart");
+        return;
+      }
+      setModal("cartDetails");
+      return;
+    }
+
+    if (section === "expenses" && parts[3] === "new") {
+      setActivePage("Expenses");
+      openAddExpenseModal();
+      return;
+    }
+
+    if (section === "expenses" && parts[3]) {
+      setActivePage("Expenses");
+      setSelectedExpenseId(parts[3]);
+      setModal("expenseDetails");
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "new") {
+      setActivePage("Inventory");
+      setInventoryView("dashboard");
+      openAddProductModal();
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "update-stock") {
+      setActivePage("Inventory");
+      setInventoryView("dashboard");
+      setStockProductId(products[0]?.id ?? "");
+      setStockChange("0");
+      setModal("updateStock");
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "products" && parts[4]) {
+      setActivePage("Inventory");
+      setSelectedProductId(parts[4]);
+      setInventoryView("dashboard");
+      if (parts[5] === "edit") {
+        setModal("editProduct");
+        return;
+      }
+      if (parts[5] === "delete") {
+        setModal("deleteProduct");
+        return;
+      }
+      setModal("productDetails");
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "pricing" && parts[4]) {
+      setActivePage("Inventory");
+      setSelectedProductId(parts[4]);
+      setInventoryView("pricing");
+      if (parts[5] === "new") {
+        setModal("addPricing");
+        return;
+      }
+      if (parts[5] && parts[6] === "edit") {
+        setSelectedPricingCurrency(parts[5] as ProductCurrencyCode);
+        setModal("editPricing");
+        return;
+      }
+      setModal(null);
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "packages" && parts[4]) {
+      setActivePage("Inventory");
+      setSelectedProductId(parts[4]);
+      setInventoryView("packages");
+      if (parts[5] === "new") {
+        setModal("addPackage");
+        return;
+      }
+      if (parts[5] && parts[6] === "edit") {
+        setSelectedPackageId(parts[5]);
+        setModal("editPackage");
+        return;
+      }
+      if (parts[5] && parts[6] === "delete") {
+        setSelectedPackageId(parts[5]);
+        setModal("deletePackage");
+        return;
+      }
+      setModal(null);
       return;
     }
 
@@ -4428,10 +5539,213 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    if (section === "inventory" && parts[3] === "stock-count") {
+      setActivePage("Inventory");
+      setInventoryView("stockcount");
+      if (parts[4] === "new") {
+        setModal("newStockCount");
+        return;
+      }
+      if (parts[4]) {
+        setActiveStockCountId(parts[4]);
+        if (parts[5] === "entries" && parts[6] && parts[7] === "adjust") {
+          setAdjustStockEntryId(parts[6]);
+          setModal("adjustStockCount");
+          return;
+        }
+        if (parts[5] === "entries" && parts[6]) {
+          setStockCountEntryId(parts[6]);
+          setModal("stockCountEntry");
+          return;
+        }
+        setModal(null);
+        return;
+      }
+      setActiveStockCountId(stockCounts.find((session) => session.status === "Open")?.id ?? null);
+      setModal(null);
+      return;
+    }
+
+    if (section === "sales-reps" && parts[3] === "new") {
+      setActivePage("Sales Reps");
+      setSalesRepView("list");
+      openAddSalesRepModal();
+      return;
+    }
+
+    if (section === "sales-reps" && parts[3] && parts[4] === "edit") {
+      setActivePage("Sales Reps");
+      setSelectedSalesRepId(parts[3]);
+      setSalesRepView("detail");
+      setRepDetailShowAll(false);
+      setModal("editSalesRep");
+      return;
+    }
+
+    if (section === "sales-reps" && parts[3] && parts[4] === "reset-password") {
+      setActivePage("Sales Reps");
+      setSelectedSalesRepId(parts[3]);
+      setSelectedUserId(parts[3]);
+      setSalesRepView("detail");
+      setRepDetailShowAll(false);
+      setUserPassword("");
+      setModal("resetUserPassword");
+      return;
+    }
+
+    if (section === "sales-reps" && parts[3] && parts[4] === "delete") {
+      setActivePage("Sales Reps");
+      setSelectedSalesRepId(parts[3]);
+      setSelectedUserId(parts[3]);
+      setSalesRepView("detail");
+      setRepDetailShowAll(false);
+      setModal("deleteUser");
+      return;
+    }
+
     if (section === "sales-reps" && parts[3]) {
       setActivePage("Sales Reps");
       setSelectedSalesRepId(parts[3]);
-      setModal("salesRepDetails");
+      setSalesRepView("detail");
+      setRepDetailShowAll(false);
+      setModal(null);
+      return;
+    }
+
+    if (section === "sales-teams" && parts[3] === "new") {
+      setActivePage("Sales Teams");
+      openCreateTeamModal();
+      return;
+    }
+
+    if (section === "sales-teams" && parts[3] && parts[4] === "edit") {
+      setActivePage("Sales Teams");
+      openEditTeamModal(parts[3]);
+      return;
+    }
+
+    if (section === "agents" && parts[3] === "new") {
+      setActivePage("Agents");
+      setAgentView("list");
+      openAddAgentModal();
+      return;
+    }
+
+    if (section === "agents" && parts[3] && parts[4] === "assign-stock") {
+      setActivePage("Agents");
+      setSelectedAgentId(parts[3]);
+      setAgentView("detail");
+      setAgentDetailShowAll(false);
+      setModal("assignAgentStock");
+      return;
+    }
+
+    if (section === "agents" && parts[3] && parts[4] === "reconcile") {
+      setActivePage("Agents");
+      setSelectedAgentId(parts[3]);
+      setAgentView("detail");
+      setAgentDetailShowAll(false);
+      setModal("reconcileAgentStock");
+      return;
+    }
+
+    if (section === "agents" && parts[3] && parts[4] === "edit") {
+      setActivePage("Agents");
+      setSelectedAgentId(parts[3]);
+      setAgentView("detail");
+      setAgentDetailShowAll(false);
+      setModal("editAgent");
+      return;
+    }
+
+    if (section === "agents" && parts[3] && parts[4] === "delete") {
+      setActivePage("Agents");
+      setSelectedAgentId(parts[3]);
+      setAgentView("detail");
+      setAgentDetailShowAll(false);
+      setModal("deleteAgent");
+      return;
+    }
+
+    if (section === "agents" && parts[3]) {
+      setActivePage("Agents");
+      setSelectedAgentId(parts[3]);
+      setAgentView("detail");
+      setAgentDetailShowAll(false);
+      setModal(null);
+      return;
+    }
+
+    if ((section === "users" || section === "user-management") && parts[3] === "new") {
+      setActivePage("User Management");
+      openAddUserModal();
+      return;
+    }
+
+    if ((section === "users" || section === "user-management") && parts[3] && parts[4] === "edit") {
+      setActivePage("User Management");
+      setSelectedUserId(parts[3]);
+      setModal("editUser");
+      return;
+    }
+
+    if ((section === "users" || section === "user-management") && parts[3] && parts[4] === "reset-password") {
+      setActivePage("User Management");
+      setSelectedUserId(parts[3]);
+      setUserPassword("");
+      setModal("resetUserPassword");
+      return;
+    }
+
+    if ((section === "users" || section === "user-management") && parts[3] && parts[4] === "delete") {
+      setActivePage("User Management");
+      setSelectedUserId(parts[3]);
+      setModal("deleteUser");
+      return;
+    }
+
+    if (section === "waybill" && parts[3] === "new") {
+      setActivePage("Waybill");
+      openCreateWaybillModal();
+      return;
+    }
+
+    if (section === "waybill" && parts[3] && parts[4] === "edit") {
+      setActivePage("Waybill");
+      openEditWaybillModal(parts[3], waybillRecords.find((item) => item.id === parts[3]));
+      return;
+    }
+
+    if (section === "waybill" && parts[3] && parts[4] === "receive") {
+      setActivePage("Waybill");
+      openReceiveWaybillModal(parts[3], waybillRecords.find((item) => item.id === parts[3]));
+      return;
+    }
+
+    if (section === "payroll" && parts[3]) {
+      setActivePage("Payroll");
+      setPayrollTab("Pay Rates");
+      setPayRateUserId(parts[3]);
+      setModal("setRate");
+      return;
+    }
+
+    if (isFinanceSection && parts[3] === "remittance") {
+      setActivePage("Finance & Accounting");
+      setFinanceTab("Remittance");
+      if (parts[4]) {
+        setRemittanceTargetOrderId(parts[4]);
+        setModal("recordRemittance");
+        return;
+      }
+      setModal(null);
+      return;
+    }
+
+    if (section === "customers" && parts[3] === "flag" && parts[4]) {
+      setActivePage("Customers");
+      setFlagTargetPhone(decodeURIComponent(parts[4]));
+      setModal("flagCustomer");
       return;
     }
 
@@ -4443,9 +5757,74 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const nextPage = adminRouteToPage[section];
     if (nextPage) {
+      if (section === "orders" && parts[3] !== "new" && (!parts[4] || !["edit", "edit-customer", "reassign", "send-to-agent", "delete", "change-status", "add-cross-sell", "add-free-gift", "manual-bonus"].includes(parts[4])) && modal && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "orders" && !parts[3] && modal && ["orderDetails", "createOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "abandoned-carts" && parts[3] && (!parts[4] || !["assign", "convert"].includes(parts[4])) && modal && ["assignCart", "convertCart"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "abandoned-carts" && !parts[3] && modal && ["cartDetails", "assignCart", "convertCart"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "waybill" && !parts[3] && modal && ["createWaybill", "editWaybill", "receiveWaybill"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "payroll" && !parts[3] && modal === "setRate") {
+        setModal(null);
+      }
+      if (section === "expenses" && !parts[3] && modal === "expenseDetails") {
+        setModal(null);
+      }
+      if (section === "inventory" && parts[3] !== "new" && modal === "addProduct") {
+        setModal(null);
+      }
+      if (section === "inventory" && parts[3] !== "update-stock" && modal === "updateStock") {
+        setModal(null);
+      }
+      if (section === "inventory" && !parts[3] && modal && ["productDetails", "deleteProduct", "editProduct", "addPricing", "editPricing", "addPackage", "editPackage", "deletePackage", "newStockCount", "stockCountEntry", "adjustStockCount"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "sales-reps" && parts[3] !== "new" && (!parts[4] || !["edit", "reset-password", "delete"].includes(parts[4])) && modal && ["addSalesRep", "editSalesRep", "resetUserPassword", "deleteUser"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "sales-teams" && parts[3] !== "new" && (!parts[4] || parts[4] !== "edit") && modal && ["createTeam", "editTeam"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "agents" && parts[3] !== "new" && (!parts[4] || !["assign-stock", "reconcile", "edit", "delete"].includes(parts[4])) && modal && ["addAgent", "assignAgentStock", "reconcileAgentStock", "editAgent", "deleteAgent"].includes(modal)) {
+        setModal(null);
+      }
+      if ((section === "users" || section === "user-management") && parts[3] !== "new" && (!parts[4] || !["edit", "reset-password", "delete"].includes(parts[4])) && modal && ["addUser", "editUser", "resetUserPassword", "deleteUser"].includes(modal)) {
+        setModal(null);
+      }
+      if (section === "expenses" && parts[3] !== "new" && modal === "addExpense") {
+        setModal(null);
+      }
+      if (isFinanceSection && parts[3] !== "remittance" && modal === "recordRemittance") {
+        setModal(null);
+      }
+      if (section === "customers" && parts[3] !== "flag" && modal === "flagCustomer") {
+        setModal(null);
+      }
       setActivePage(nextPage);
       if (nextPage === "Inventory") {
         setInventoryView("dashboard");
+      }
+      if (nextPage === "Sales Reps") {
+        setSalesRepView("list");
+      }
+      if (nextPage === "Agents") {
+        setAgentView("list");
+      }
+      if (nextPage === "Payroll") {
+        setPayrollTab("Pay Rates");
+      }
+      if (nextPage === "Finance & Accounting") {
+        const financeTabSlug = queryParams.get("tab") ?? "";
+        const financeTabFromRoute = financeTabs.find((tab) => slugify(tab) === financeTabSlug);
+        setFinanceTab(financeTabFromRoute ?? "Financial Overview");
       }
       if (nextPage === "Call Rep Console") {
         setCallQueueIndex(0);
@@ -4607,7 +5986,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setProducts(apiProducts.value as any);
         }
         if (apiOrders.status === "fulfilled" && Array.isArray(apiOrders.value?.data)) {
-          setTrackedOrders(apiOrders.value.data as any);
+          setTrackedOrders((apiOrders.value.data as any[]).map((order) => normalizeTrackedOrder(order)));
           // Seed the poll timestamps so the 30s poller only refetches deltas.
           // updatedSince (preferred) catches status changes made on other devices;
           // since is a fallback for the very first poll if updatedAt isn't set.
@@ -4838,7 +6217,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (newestCreated) latestOrderTimestamp.current = newestCreated;
         // Upsert: replace existing orders in place, prepend new ones.
         setTrackedOrders((prev) => {
-          const incoming = result.data as TrackedOrder[];
+          const incoming = (result.data as any[]).map((order) => normalizeTrackedOrder(order));
           if (incoming.length === 0) return prev;
           const incomingById = new Map(incoming.map((o) => [o.id, o]));
           let changed = false;
@@ -6066,8 +7445,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (label === "Sales Rep Workspace") {
         setRepConsoleTab("Dashboard");
         setRepOrderDetailId("");
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/dashboard/sales-rep`);
-        setHashRoute("#/dashboard/sales-rep");
+        const nextHash = repTabRoute("Dashboard");
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+        setHashRoute(nextHash);
       } else {
         syncAdminHash(label);
       }
@@ -6152,7 +7532,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ]);
     }
     resetProductForm();
-    setModal(null);
+    closeModal();
     showToast(`Product "${product.name}" created.`);
     productsApi.create({ name: product.name, sku: product.sku, description: product.description, reorderPoint: product.reorderPoint, active: product.active })
       .then((saved: any) => {
@@ -6246,7 +7626,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _suProdId = product.id;
     const productSnapshot = product;
     setStockChange("0");
-    setModal(null);
+    closeModal();
     showToast(`${product.name} stock updated to ${nextBalance}.`);
     // Roll back the optimistic warehouse-stock mutation if the API rejects it.
     // Without this, two reps could each apply +5 locally on a flaky network and
@@ -6259,12 +7639,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const openProductDetails = (product: Product) => {
     setSelectedProductId(product.id);
-    setModal("productDetails");
+    openInventoryProductDetailRoute(product.id);
   };
 
   const openDeleteProduct = (product: Product) => {
     setSelectedProductId(product.id);
-    setModal("deleteProduct");
+    openInventoryDeleteProductRoute(product.id);
   };
 
   const deleteSelectedProduct = () => {
@@ -6301,6 +7681,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedProductId("");
     setInventoryView("dashboard");
     setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory");
     showToast(`${selectedProduct.name} deleted.`);
     productsApi.delete(_dpId).catch((err: any) => {
       setProducts((prev) => [productSnapshot, ...prev]);
@@ -6343,12 +7724,67 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       freeGiftProductIds: source.freeGiftProductIds ? [...source.freeGiftProductIds] : undefined
     };
     setProducts((prev) => [clone, ...prev]);
-    showToast(`Duplicated as "${candidateName}". Stock reset to 0.`);
+    productsApi.create({
+      name: clone.name,
+      sku: clone.sku,
+      description: clone.description,
+      reorderPoint: clone.reorderPoint,
+      active: clone.active
+    }).then(async (saved: any) => {
+      const savedId = saved?.id ?? newId;
+      setProducts((prev) => prev.map((product) => product.id === newId ? { ...product, id: savedId } : product));
+      const pricingTasks = clone.pricings.map((pricing) =>
+        productsApi.createPricing(savedId, {
+          currency: pricing.currency,
+          sellingPrice: pricing.sellingPrice,
+          unitCost: pricing.unitCost,
+          isPrimary: Boolean((pricing as any).primary ?? (pricing as any).isPrimary)
+        })
+      );
+      const packageTasks = clone.packages.map((pkg) =>
+        productsApi.createPackage(savedId, {
+          name: pkg.name,
+          description: pkg.description,
+          quantity: pkg.quantity,
+          price: pkg.price,
+          currency: pkg.currency,
+          displayOrder: pkg.displayOrder,
+          active: pkg.active,
+          companionProducts: pkg.companionProducts ?? []
+        })
+      );
+      const settingsPayload = {
+        ...productSalesSettingsPayload(clone),
+        available_states: clone.availableStates ?? [],
+        form_custom_text: clone.formCustomText ?? "",
+        package_description: clone.packageDescription ?? ""
+      };
+      const results = await Promise.allSettled([
+        ...pricingTasks,
+        ...packageTasks,
+        productsApi.update(savedId, settingsPayload)
+      ]);
+      const hasFailures = results.some((result) => result.status === "rejected");
+      if (hasFailures) {
+        showToast(`"${candidateName}" duplicated, but some pricing/package settings did not sync. Open the product to verify.`);
+        return;
+      }
+      showToast(`Duplicated as "${candidateName}". Stock reset to 0.`);
+    }).catch((err: any) => {
+      setProducts((prev) => prev.filter((product) => product.id !== newId));
+      showToast(`Failed to duplicate "${source.name}": ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const toggleProductActive = (product: Product) => {
-    setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, active: !p.active } : p));
-    showToast(`${product.name} is now ${!product.active ? "active" : "inactive"}.`);
+    const nextActive = !product.active;
+    const productSnapshot = product;
+    setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, active: nextActive } : p));
+    showToast(`${product.name} is now ${nextActive ? "active" : "inactive"}.`);
+    productsApi.update(product.id, { active: nextActive }).catch((err: any) => {
+      setProducts((prev) => prev.map((p) => p.id === product.id ? productSnapshot : p));
+      showToast(`Failed to update ${product.name}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const previewProductForm = (product: Product) => {
@@ -6398,7 +7834,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSkuManuallyEdited(true);
     setProductActive(product.active);
     setReorderPoint(String(product.reorderPoint));
-    setModal("editProduct");
+    openInventoryEditProductRoute(product.id);
   };
 
   const saveEditProduct = () => {
@@ -6414,7 +7850,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       active: productActive,
       reorderPoint: Number(reorderPoint) || 0
     } : p));
-    setModal(null);
+    closeModal();
     showToast(`${productName.trim()} saved.`);
     productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0 }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _epId ? productSnapshot : p));
@@ -6426,6 +7862,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedProductId(product.id);
     setInventoryView("pricing");
     setActivePage("Inventory");
+    syncHashRoute(`#/dashboard/admin/inventory/pricing/${product.id}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -6434,6 +7871,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageDescriptionDraft(product.packageDescription);
     setInventoryView("packages");
     setActivePage("Inventory");
+    syncHashRoute(`#/dashboard/admin/inventory/packages/${product.id}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -6443,7 +7881,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPricingCurrency(nextCurrency);
     setPricingSellingPrice("0");
     setPricingCost("0");
-    setModal("addPricing");
+    if (!selectedProduct) return;
+    openInventoryAddPricingRoute(selectedProduct.id);
   };
 
   const openEditPricing = (pricing: ProductPricing) => {
@@ -6451,7 +7890,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPricingCurrency(pricing.currency);
     setPricingSellingPrice(String(pricing.sellingPrice));
     setPricingCost(String(pricing.unitCost));
-    setModal("editPricing");
+    if (!selectedProduct) return;
+    openInventoryEditPricingRoute(selectedProduct.id, pricing.currency);
   };
 
   const savePricing = () => {
@@ -6493,7 +7933,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : product
       )
     );
-    setModal(null);
+    closeModal();
     showToast(`${productCurrencies[nextPricing.currency].label} pricing saved.`);
     // Backend zod schema expects camelCase: { currency, sellingPrice, unitCost, isPrimary }.
     // Pre-fix this call sent snake_case keys, the schema rejected them with 400,
@@ -6524,12 +7964,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const productSnapshot = selectedProduct;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id ? { ...product, pricings: product.pricings.filter((pricing) => pricing.currency !== code) } : product
       )
     );
     showToast(`${productCurrencies[code].label} pricing removed.`);
+    productsApi.deletePricing(selectedProduct.id, code).catch((err: any) => {
+      setProducts((prev) => prev.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
+      showToast(`Failed to remove ${productCurrencies[code].label} pricing: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const resetPackageForm = () => {
@@ -6545,7 +7990,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const openAddPackage = () => {
     resetPackageForm();
-    setModal("addPackage");
+    if (!selectedProduct) return;
+    openInventoryAddPackageRoute(selectedProduct.id);
   };
 
   const openEditPackage = (item: ProductPackage) => {
@@ -6557,7 +8003,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageCurrency(item.currency);
     setPackageDisplayOrder(String(item.displayOrder));
     setPackageCompanions(item.companionProducts ?? []);
-    setModal("editPackage");
+    if (!selectedProduct) return;
+    openInventoryEditPackageRoute(selectedProduct.id, item.id);
   };
 
   const savePackage = () => {
@@ -6594,7 +8041,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     );
     resetPackageForm();
-    setModal(null);
+    closeModal();
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
       productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, companionProducts: packageCompanions }).catch((err: any) => {
@@ -6611,7 +8058,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const openDeletePackage = (item: ProductPackage) => {
     setSelectedPackageId(item.id);
-    setModal("deletePackage");
+    if (!selectedProduct) return;
+    openInventoryDeletePackageRoute(selectedProduct.id, item.id);
   };
 
   // Duplicate a package — clones into a new row (same product) with " (Copy)" suffix.
@@ -6718,13 +8166,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const productSnapshot = selectedProduct;
+    const packageId = selectedPackage.id;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id ? { ...product, packages: product.packages.filter((item) => item.id !== selectedPackage.id) } : product
       )
     );
-    setModal(null);
+    closeModal();
     showToast(`Package "${selectedPackage.name}" deleted.`);
+    productsApi.deletePackage(selectedProduct.id, packageId).catch((err: any) => {
+      setProducts((prev) => prev.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
+      showToast(`Failed to delete package: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const savePackageDescription = () => {
@@ -6735,10 +8189,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("No changes to save.");
       return;
     }
+    const productSnapshot = selectedProduct;
     setProducts((value) =>
       value.map((product) => (product.id === selectedProduct.id ? { ...product, packageDescription: packageDescriptionDraft } : product))
     );
     showToast("Package description saved.");
+    productsApi.update(selectedProduct.id, { package_description: packageDescriptionDraft }).catch((err: any) => {
+      setProducts((prev) => prev.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
+      showToast(`Failed to save package description: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const generateEmbedUrl = (productOverride?: Product) => {
@@ -6865,13 +8324,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  const orderTimelineNote = (text: string, followUpDate?: string, by = ownerName): OrderNote => ({
+  const orderTimelineNote = (
+    text: string,
+    options: { by?: string; followUpDate?: string; followUpAt?: string; date?: string } = {}
+  ): OrderNote => ({
     id: makeNoteId(),
     text,
-    by,
-    date: new Date().toISOString(),
-    followUpDate
+    by: options.by ?? ownerName,
+    date: options.date ?? nowIso(),
+    followUpDate: options.followUpDate,
+    followUpAt: options.followUpAt
   });
+
+  const commitOrderSchedule = (
+    order: TrackedOrder,
+    options: {
+      scheduledDate: string;
+      scheduledTime: string;
+      by?: string;
+      noteText?: (label: string) => string;
+    }
+  ) => {
+    if (!isDateValue(options.scheduledDate)) {
+      showToast("Choose a valid delivery date.");
+      return;
+    }
+    if (!isTimeValue(options.scheduledTime)) {
+      showToast("Choose a valid delivery time.");
+      return;
+    }
+
+    const plannedMoment = combinePlannedMoment(options.scheduledDate, options.scheduledTime);
+    const scheduleLabel = formatPlannedMoment(plannedMoment.iso, options.scheduledDate);
+    const nextNotes = [
+      orderTimelineNote(
+        (options.noteText ?? ((label) => `Delivery scheduled for ${label}.`))(scheduleLabel),
+        { by: options.by }
+      ),
+      ...orderNotesFor(order)
+    ];
+    const nextResponse = `Scheduled for ${scheduleLabel}`;
+    const orderSnapshot = order;
+
+    setTrackedOrders((value) =>
+      value.map((item) =>
+        item.id === order.id
+          ? {
+              ...item,
+              status: item.status === "New" || !item.status ? "Confirmed" : item.status,
+              scheduledDate: options.scheduledDate,
+              scheduledAt: plannedMoment.iso,
+              response: nextResponse,
+              notes: nextNotes
+            }
+          : item
+      )
+    );
+    showToast(`${order.id} scheduled for ${scheduleLabel}.`);
+
+    const updates: Record<string, unknown> = {
+      scheduled_date: options.scheduledDate,
+      scheduled_at: plannedMoment.iso ?? null,
+      response: nextResponse,
+      timeline_notes: nextNotes
+    };
+    if (order.status === "New" || !order.status) {
+      updates.status = "Confirmed";
+    }
+    ordersApi.update(order.id, updates).catch((err: any) => {
+      setTrackedOrders((value) => value.map((item) => item.id === order.id ? orderSnapshot : item));
+      showToast(`Failed to save schedule for ${order.id}: ${err?.message ?? "please retry"}.`);
+    });
+  };
 
   const restoreProductStockForOrder = (order: TrackedOrder) => {
     if (!order.productId || !order.stockDeducted) {
@@ -6995,7 +8519,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               stockDeducted: nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
               notes: [
                 orderTimelineNote(`Status changed from ${item.status ?? "New"} to ${nextStatus}.${reason ? ` Reason: ${reason}` : ""}`),
-                ...(item.notes ?? [])
+                ...orderNotesFor(item)
               ]
             }
           : item
@@ -7080,32 +8604,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const scheduledDate = scheduleDateForRange(range);
-    const orderSnapshot = order;
-    setTrackedOrders((value) =>
-      value.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              status: o.status === "New" || !o.status ? "Confirmed" : o.status,
-              scheduledDate,
-              response: `Scheduled for ${displayDateFromKey(scheduledDate)}`,
-              notes: [
-                orderTimelineNote(`Delivery scheduled for ${displayDateFromKey(scheduledDate)}.`),
-                ...(o.notes ?? [])
-              ]
-            }
-          : o
-      )
-    );
-    showToast(`${orderId} scheduled for ${displayDateFromKey(scheduledDate)}.`);
-    // Persist to backend with rollback so a network/RLS reject doesn't strand
-    // the schedule cell in the wrong date until the next reload.
-    const updates: Record<string, unknown> = { scheduled_date: scheduledDate };
-    if (order && (order.status === "New" || !order.status)) updates.status = "Confirmed";
-    ordersApi.update(orderId, updates).catch((err: any) => {
-      if (orderSnapshot) setTrackedOrders((value) => value.map((o) => o.id === orderId ? orderSnapshot : o));
-      showToast(`Failed to save schedule for ${orderId}: ${err?.message ?? "please retry"}.`);
-    });
+    setOrderScheduleDate(scheduledDate);
+    if (!order) {
+      return;
+    }
+    commitOrderSchedule(order, { scheduledDate, scheduledTime: orderScheduleTime, by: ownerName });
   };
 
 
@@ -7207,7 +8710,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       notes: [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }]
     };
     setTrackedOrders((value) => [order, ...value]);
-    setModal(null);
+    closeModal();
     setCreateOrderContext("admin");
     showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
     ordersApi.create(order).catch((err: any) => {
@@ -7224,8 +8727,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setReassignRepId(order.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
     setHandoverReason("");
     setCreateOrderAgentId(order.agentId ?? "");
+    setSendToAgentShowAllStates(false);
     setOrderNoteDraft("");
     setOrderFollowUpDate("");
+    setOrderFollowUpTime(nextTimeValue());
     if (nextModal === "editOrderItems") {
       setCreateOrderCustomer(order.customer);
       setCreateOrderPhone(order.phone);
@@ -7245,53 +8750,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openAdminOrderDetailPage = (order: TrackedOrder) => {
-    setActivePage("Orders");
-    setSelectedOrderId(order.id);
-    setModal("orderDetails");
+    openAdminOrderDetail(order.id);
   };
 
-  const saveOrderAgent = () => {
-    if (!selectedOrder) {
+  const saveOrderAgent = (targetOrder?: TrackedOrder) => {
+    const orderToUpdate = targetOrder ?? selectedOrder;
+    if (!orderToUpdate) {
       return;
     }
 
     const agentName = agents.find((agent) => agent.id === createOrderAgentId)?.name ?? "Unassigned";
-    const orderSnapshot = selectedOrder;
+    const orderSnapshot = orderToUpdate;
+    const nextNotes = [
+      orderTimelineNote(`Fulfillment assignment updated to ${agentName}.`),
+      ...orderNotesFor(orderToUpdate)
+    ];
+    const nextResponse = createOrderAgentId ? "Assigned to delivery agent" : "Delivery agent cleared";
     setTrackedOrders((value) =>
       value.map((order) =>
-        order.id === selectedOrder.id
+        order.id === orderToUpdate.id
           ? {
               ...order,
               agentId: createOrderAgentId || undefined,
-              response: createOrderAgentId ? "Assigned to delivery agent" : "Delivery agent cleared",
-              notes: [
-                orderTimelineNote(`Fulfillment assignment updated to ${agentName}.`),
-                ...(order.notes ?? [])
-              ]
-            }
+              response: nextResponse,
+              notes: nextNotes
+        }
           : order
       )
     );
-    const _soaId = selectedOrder.id;
+    const _soaId = orderToUpdate.id;
     if (modal !== "orderWorkflow") {
-      setModal(null);
+      closeModal();
     }
-    // Use the server's response as the authoritative state so the next
-    // background poll can't revert this with a stale row. Show the success
-    // toast only on confirmed save, error toast on failure with revert.
-    console.log(`[saveOrderAgent] PATCH /api/orders/${_soaId}`, { agent_id: createOrderAgentId || null });
-    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null })
+    ordersApi.update(_soaId, { agent_id: createOrderAgentId || null, response: nextResponse, timeline_notes: nextNotes })
       .then((updated: any) => {
-        console.log(`[saveOrderAgent] PATCH success`, updated);
         if (updated && updated.id === _soaId) {
-          setTrackedOrders((value) => value.map((o) => o.id === _soaId ? { ...o, ...updated } : o));
+          setTrackedOrders((value) => value.map((o) => o.id === _soaId ? { ...o, ...normalizeTrackedOrder(updated) } : o));
         }
         showToast(`${_soaId} delivery agent updated.`);
       })
       .catch((err: any) => {
-        console.error(`[saveOrderAgent] PATCH failed`, err);
         setTrackedOrders((value) => value.map((o) => o.id === _soaId ? orderSnapshot : o));
-        // Use alert so the user CAN'T miss the error — toast vanishes too quickly on mobile
         const msg = `Failed to assign agent for ${_soaId}.\n\nError: ${err?.message ?? "Unknown"}\nStatus: ${err?.status ?? "no status"}\n\nThis means the change was NOT saved to the server. Please screenshot this and report it.`;
         showToast(`Failed to assign: ${err?.message ?? "see alert"}`);
         if (typeof window !== "undefined") window.alert(msg);
@@ -7342,6 +8841,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : autoAmount;
     const _soeId = selectedOrder.id;
     const orderSnapshot = selectedOrder;
+    const nextNotes = [
+      orderTimelineNote("Order details edited."),
+      ...orderNotesFor(selectedOrder)
+    ];
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -7366,19 +8869,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               location: orderLocationFromFields(createOrderCity, createOrderState),
               assignedRepId: createOrderRepId === "auto" ? order.assignedRepId : createOrderRepId,
               agentId: createOrderAgentId || undefined,
-              notes: [
-                { id: makeNoteId(), text: "Order details edited.", by: ownerName, date: new Date().toISOString() },
-                ...(order.notes ?? [])
-              ]
+              notes: nextNotes
             }
           : order
       )
     );
-    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null }).catch((err: any) => {
+    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null, timeline_notes: nextNotes }).catch((err: any) => {
       setTrackedOrders((value) => value.map((o) => o.id === _soeId ? orderSnapshot : o));
       showToast(`Failed to save edits to ${_soeId}: ${err?.message ?? "please retry"}.`);
     });
-    setModal(null);
+    closeModal();
     showToast(`${selectedOrder.id} updated.`);
   };
 
@@ -7388,23 +8888,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const orderSnapshot = selectedOrder;
+    const nextResponse = `Reassigned: ${handoverReason.trim() || "handover noted"}`;
+    const nextNotes = [
+      { id: makeNoteId(), text: `Reassigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "rep"} - ${handoverReason.trim() || "No reason supplied"}`, by: ownerName, date: new Date().toISOString() },
+      ...orderNotesFor(selectedOrder)
+    ];
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
           ? {
               ...order,
               assignedRepId: reassignRepId,
-              response: `Reassigned: ${handoverReason.trim() || "handover noted"}`,
-              notes: [
-                { id: makeNoteId(), text: `Reassigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "rep"} - ${handoverReason.trim() || "No reason supplied"}`, by: ownerName, date: new Date().toISOString() },
-                ...(order.notes ?? [])
-              ]
+              response: nextResponse,
+              notes: nextNotes
             }
           : order
       )
     );
-    setModal(null);
+    closeModal();
     showToast(`${selectedOrder.id} reassigned.`);
+    ordersApi.update(selectedOrder.id, {
+      assigned_rep_id: reassignRepId,
+      response: nextResponse,
+      timeline_notes: nextNotes
+    }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
+      showToast(`Failed to reassign ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const addOrderNote = () => {
@@ -7413,24 +8924,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const followUpDate = orderFollowUpDate && isDateValue(orderFollowUpDate) ? orderFollowUpDate : undefined;
+    if (followUpDate && !isTimeValue(orderFollowUpTime)) {
+      showToast("Choose a valid follow-up time.");
+      return;
+    }
+    const safeFollowUpTime = followUpDate ? orderFollowUpTime : undefined;
+    const followUpMoment = followUpDate ? combinePlannedMoment(followUpDate, safeFollowUpTime) : { date: undefined, iso: undefined };
+    const followUpLabel = followUpDate ? formatPlannedMoment(followUpMoment.iso, followUpDate) : "";
+    const nextNotes = [
+      orderTimelineNote(orderNoteDraft.trim(), {
+        by: ownerName,
+        followUpDate,
+        followUpAt: followUpMoment.iso
+      }),
+      ...orderNotesFor(selectedOrder)
+    ];
+    const nextResponse = followUpLabel ? `Follow-up set for ${followUpLabel}` : selectedOrder.response;
+    const orderSnapshot = selectedOrder;
+
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
           ? {
               ...order,
-              notes: [
-                { id: makeNoteId(), text: orderNoteDraft.trim(), by: ownerName, date: new Date().toISOString(), followUpDate: orderFollowUpDate || undefined },
-                ...(order.notes ?? [])
-              ],
-              response: orderFollowUpDate ? `Follow-up set for ${displayDateFromKey(orderFollowUpDate)}` : order.response
+              notes: nextNotes,
+              response: nextResponse
             }
           : order
       )
     );
     setOrderNoteDraft("");
     setOrderFollowUpDate("");
+    setOrderFollowUpTime(nextTimeValue());
     setShowRepFollowUpField(false);
     showToast(`${selectedOrder.id} timeline updated.`);
+    ordersApi.update(selectedOrder.id, { response: nextResponse, timeline_notes: nextNotes }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
+      showToast(`Failed to save note for ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
+    });
   };
 
   const openRepOrderDetail = (order: TrackedOrder) => {
@@ -7438,18 +8970,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRepOrderDetailId(order.id);
     setRepConsoleTab("Orders");
     setCreateOrderAgentId(order.agentId ?? "");
-    setRepScheduleDate(normalizeDateKey(order.scheduledDate));
+    const plannedParts = splitMomentForInput(order.scheduledAt);
+    setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
+    setRepScheduleTime(plannedParts.time || nextTimeValue());
     setShowRepFollowUpField(false);
+    setOrderFollowUpDate("");
+    setOrderFollowUpTime(nextTimeValue());
     setRepDeliveryFee(order.logisticsCost != null ? String(order.logisticsCost) : "");
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/dashboard/sales-rep/orders/${order.id}`);
-    setHashRoute(`#/dashboard/sales-rep/orders/${order.id}`);
+    const nextHash = repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    setHashRoute(nextHash);
   };
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
-    const nextHash = hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : "#/dashboard/sales-rep/orders";
+    const nextHash = hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders");
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
@@ -7462,6 +8999,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCallOutcomeDraft(order.callOutcome ?? "");
     setCallOutcomeCustom("");
     setModal("changeOrderStatus");
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
   };
 
   const submitRepStatusChange = () => {
@@ -7480,7 +9018,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setStatusChangeReason("");
     setCallOutcomeDraft("");
     setCallOutcomeCustom("");
-    setModal(null);
+    closeModal();
   };
 
   const openRepEditOrderCustomer = (order: TrackedOrder) => {
@@ -7495,6 +9033,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreateOrderQuantity(String(order.quantity ?? 1));
     setCreateOrderAmount(String(order.amount ?? ""));
     setModal("editOrderCustomer");
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`));
   };
 
   const saveOrderCustomerEdit = () => {
@@ -7509,6 +9048,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const amountChanged = newAmount !== selectedOrder.amount;
 
     const orderSnapshot = selectedOrder;
+    const nextNotes = [
+      orderTimelineNote(
+        `Customer/delivery details edited by ${repScopeName}.${qtyChanged ? ` Qty: ${selectedOrder.quantity ?? 1}→${newQty}.` : ""}${amountChanged ? ` Amount: ${formatProductMoney(selectedOrder.amount, selectedOrder.currency)}→${formatProductMoney(newAmount, selectedOrder.currency)}.` : ""}`,
+        { by: repScopeName }
+      ),
+      ...orderNotesFor(selectedOrder)
+    ];
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -7524,13 +9070,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               location: orderLocationFromFields(createOrderCity, createOrderState),
               quantity: newQty,
               amount: newAmount,
-              notes: [
-                orderTimelineNote(
-                  `Customer/delivery details edited by ${repScopeName}.${qtyChanged ? ` Qty: ${order.quantity ?? 1}→${newQty}.` : ""}${amountChanged ? ` Amount: ${formatProductMoney(order.amount, order.currency)}→${formatProductMoney(newAmount, order.currency)}.` : ""}`,
-                  undefined, repScopeName
-                ),
-                ...(order.notes ?? [])
-              ]
+              notes: nextNotes
             }
           : order
       )
@@ -7551,7 +9091,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const _soceId = selectedOrder.id;
-    setModal(null);
+    closeModal();
     showToast(`${selectedOrder.id} saved.`);
     ordersApi.update(_soceId, {
       customer: createOrderCustomer.trim(),
@@ -7561,7 +9101,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       city: createOrderCity.trim(),
       state: createOrderState.trim(),
       quantity: newQty,
-      amount: newAmount
+      amount: newAmount,
+      timeline_notes: nextNotes
     }).catch((err: any) => {
       setTrackedOrders((value) => value.map((o) => o.id === _soceId ? orderSnapshot : o));
       showToast(`Failed to save ${_soceId}: ${err?.message ?? "please retry"}.`);
@@ -7573,24 +9114,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a valid delivery date.");
       return;
     }
-
-    setTrackedOrders((value) =>
-      value.map((order) =>
-        order.id === selectedOrder.id
-          ? {
-              ...order,
-              status: order.status === "New" || !order.status ? "Confirmed" : order.status,
-              scheduledDate: repScheduleDate,
-              response: `Scheduled for ${displayDateFromKey(repScheduleDate)}`,
-              notes: [
-                orderTimelineNote(`Delivery date committed for ${displayDateFromKey(repScheduleDate)}.`, undefined, repScopeName),
-                ...(order.notes ?? [])
-              ]
-            }
-          : order
-      )
-    );
-    showToast(`${selectedOrder.id} scheduled for ${displayDateFromKey(repScheduleDate)}.`);
+    commitOrderSchedule(selectedOrder, {
+      scheduledDate: repScheduleDate,
+      scheduledTime: repScheduleTime,
+      by: repScopeName,
+      noteText: (label) => `Delivery date committed for ${label}.`
+    });
   };
 
   const printInvoiceForOrder = (order: TrackedOrder) => {
@@ -7677,6 +9206,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
+    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      setSelectedOrderId("");
+      syncHashRoute("#/dashboard/admin/orders");
+    }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
       // Restore the order; restore stock + units_sold; remove the audit movement we synthesized.
@@ -7932,6 +9465,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const openCreateTeamModal = () => {
+    setNewTeamName("");
+    setNewTeamLeadId("");
+    setModal("createTeam");
+  };
+
+  const openEditTeamModal = (teamId: string) => {
+    const team = salesTeams.find((item) => item.id === teamId);
+    setEditTeamId(teamId);
+    setEditTeamName(team?.name ?? "");
+    setEditTeamLeadId(team?.leadId ?? "");
+    setModal("editTeam");
+  };
+
   const createTeam = () => {
     if (!newTeamName.trim()) { showToast("Team name is required."); return; }
     if (salesTeams.some((t) => t.name.toLowerCase() === newTeamName.trim().toLowerCase())) { showToast(`A team named "${newTeamName.trim()}" already exists.`); return; }
@@ -7941,7 +9488,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setExtraTeams((prev) => [...prev, { id: localId, name: teamName, leadId: teamLeadId, productIds: [], memberIds: [] }]);
     setNewTeamName("");
     setNewTeamLeadId("");
-    setModal(null);
+    closeModal();
     showToast(`Team "${teamName}" created.`);
     salesTeamsApi.create({ name: teamName, leadId: teamLeadId, productIds: [], memberIds: [] })
       .then((saved: any) => {
@@ -7951,6 +9498,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setExtraTeams((prev) => prev.filter((t) => t.id !== localId));
         showToast("Failed to create team on server. Please try again.");
       });
+  };
+
+  const openAddSalesRepModal = () => {
+    setSelectedSalesRepId("");
+    setSalesRepName("");
+    setSalesRepEmail("");
+    setSalesRepPassword("");
+    setSalesRepRole("Sales Rep");
+    setSalesRepActive(true);
+    setModal("addSalesRep");
+  };
+
+  const openEditSalesRepModal = (user: ManagedUser) => {
+    setSelectedSalesRepId(user.id);
+    setSalesRepName(user.name);
+    setSalesRepEmail(user.email);
+    setSalesRepPassword("");
+    setSalesRepActive(user.active);
+    setModal("editSalesRep");
   };
 
   const createSalesRep = () => {
@@ -7986,7 +9552,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSalesRepPassword("");
     setSalesRepRole("Sales Rep");
     setSalesRepActive(true);
-    setModal(null);
+    closeModal();
     showToast(`Sales rep "${rep.name}" created and added to round-robin.`);
     authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role })
       .then(() => {
@@ -7999,6 +9565,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setUsers((prev) => prev.filter((u) => u.id !== _repLocalId));
         showToast("Failed to create user on server. Please try again.");
       });
+  };
+
+  const openAddAgentModal = () => {
+    setSelectedAgentId("");
+    setAgentName("");
+    setAgentPhone("");
+    setAgentZoneInput("");
+    setAgentAddress("");
+    setAgentActive(true);
+    setAgentStockCapacity(1000);
+    setAssignStockProductId(products[0]?.id ?? "");
+    setAssignStockQty("1");
+    setReconcileProductId(products[0]?.id ?? "");
+    setReconcileReturned("0");
+    setReconcileDefective("0");
+    setReconcileMissing("0");
+    setReconcileNotes("");
+    setModal("addAgent");
   };
 
   const createAgent = () => {
@@ -8027,7 +9611,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgentPhone("");
     setAgentZoneInput("");
     setAgentAddress("");
-    setModal(null);
+    closeModal();
     showToast(`Agent "${agent.name}" created.`);
     agentsApi.create({ name: agent.name, zone: agent.zone, phone: agent.phone, status: agent.active ? "Active" : "Inactive" })
       .then((saved: any) => {
@@ -8109,7 +9693,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _assProdId = product.id;
     const _assAgentName = selectedAgent.name;
     setAssignStockQty("1");
-    setModal(null);
+    closeModal();
     showToast(`${quantity} ${product.name} assigned to ${selectedAgent.name}.`);
     agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity }).catch((err: any) => {
       // Restore product warehouse/agent counts; restore (or remove) the agent_stock row;
@@ -8237,7 +9821,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     }
 
-    setModal(null);
+    closeModal();
     showToast(`${selectedAgent.name} stock reconciled.`);
 
     // Persist server-side. The backend route updates agent_stock, books the
@@ -8391,6 +9975,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgents((prev) => prev.filter((a) => a.id !== selectedAgent.id));
     setAgentStock((prev) => prev.filter((s) => s.agentId !== selectedAgent.id));
     setModal(null);
+    if (hashRoute.startsWith("#/dashboard/admin/agents/")) {
+      setAgentView("list");
+      setSelectedAgentId("");
+      syncHashRoute("#/dashboard/admin/agents");
+    }
     showToast(`${selectedAgent.name} deleted. ${productUpdates.size > 0 ? "Stock returned to warehouse." : ""}`);
     agentsApi.delete(_daId).catch((err: any) => {
       // Restore agent + their stock + the historical-order agent_id refs +
@@ -8406,7 +9995,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const openCreateWaybill = () => {
+  const openCreateWaybillModal = () => {
     setWaybillProductId("");
     setWaybillQty("1");
     setWaybillFee("0");
@@ -8419,6 +10008,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaybillNote("");
     setWaybillErrors({});
     setModal("createWaybill");
+  };
+
+  const openCreateWaybill = () => {
+    setActivePage("Waybill");
+    openCreateWaybillModal();
+    syncHashRoute("#/dashboard/admin/waybill/new");
   };
 
   const createWaybill = () => {
@@ -8515,7 +10110,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         productId: expenseRecord.productId
       } as any).catch(() => {});
     }
-    setModal(null);
+    closeModal();
     showToast(`Waybill created — ${qty} × ${product.name} → ${receivingState}.${fee > 0 ? ` Fee ₦${fee.toLocaleString()} booked to expenses.` : ""}`);
     // Roll back the waybill record (and the auto-booked expense) if the
     // server rejects the create. Stock movement stays as a paper trail of
@@ -8729,16 +10324,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  const openEditWaybill = (record: WaybillRecord) => {
-    setWaybillEditId(record.id);
-    setWaybillFee(String(record.waybillFee));
-    setWaybillPartner(record.logisticsPartner);
-    setWaybillToAgentId(record.toAgentId ?? "");
-    setWaybillToState(record.receivingState);
-    setWaybillDateSent(record.dateSent);
-    setWaybillNote(record.note ?? "");
+  const openEditWaybillModal = (waybillId: string, record?: WaybillRecord) => {
+    setWaybillEditId(waybillId);
+    setWaybillFee(String(record?.waybillFee ?? 0));
+    setWaybillPartner(record?.logisticsPartner ?? "");
+    setWaybillToAgentId(record?.toAgentId ?? "");
+    setWaybillToState(record?.receivingState ?? "");
+    setWaybillDateSent(record?.dateSent ?? new Date().toISOString().slice(0, 10));
+    setWaybillNote(record?.note ?? "");
     setWaybillErrors({});
     setModal("editWaybill");
+  };
+
+  const openEditWaybill = (record: WaybillRecord) => {
+    setActivePage("Waybill");
+    openEditWaybillModal(record.id, record);
+    syncHashRoute(`#/dashboard/admin/waybill/${record.id}/edit`);
+  };
+
+  const openReceiveWaybillModal = (waybillId: string, record?: WaybillRecord) => {
+    setReceiveWaybillId(waybillId);
+    setReceiveActualQty(record ? String(record.quantity) : "");
+    setReceiveVarianceReason("");
+    setReceiveVarianceMode("return");
+    setModal("receiveWaybill");
+  };
+
+  const openReceiveWaybill = (record: WaybillRecord) => {
+    setActivePage("Waybill");
+    openReceiveWaybillModal(record.id, record);
+    syncHashRoute(`#/dashboard/admin/waybill/${record.id}/receive`);
   };
 
   const saveEditWaybill = () => {
@@ -8760,7 +10375,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       dateSent: waybillDateSent,
       note: waybillNote.trim() || undefined,
     } : w));
-    setModal(null);
+    closeModal();
     showToast("Waybill updated.");
     waybillsApi.update(waybillEditId!, {
       waybill_fee: updatedFee,
@@ -8789,7 +10404,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cartSnapshot = selectedCart;
     const targetCartId = selectedCart.id;
     setAbandonedCarts((value) => value.map((cart) => (cart.id === targetCartId ? { ...cart, assignedRepId: reassignRepId, status: "Assigned", lastActivity: new Date().toISOString() } : cart)));
-    setModal(null);
+    closeModal();
     showToast(`${targetCartId} assigned to ${users.find((user) => user.id === reassignRepId)?.name ?? "sales rep"}.`);
     // Persist — the previous version was local-only; reassignments were lost on reload.
     cartsApi.update(targetCartId, { assignedRepId: reassignRepId, status: "Assigned" }).catch((err: any) => {
@@ -8963,7 +10578,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cartSnapshot = selectedCart;
     setTrackedOrders((value) => [order, ...value]);
     setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, status: "Converted", lastActivity: new Date().toISOString() } : cart)));
-    setModal(null);
+    closeModal();
     showToast(`${selectedCart.id} converted to ${order.id}.`);
 
     // Persist the new order server-side so the backend's notifyOrderEvent
@@ -8991,6 +10606,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       orderId: order.id,
       link: `/dashboard/admin/orders/${order.id}`
     });
+  };
+
+  const openAddExpenseModal = () => {
+    setExpenseType("Other");
+    setExpenseAmount("0");
+    setExpenseCurrency("NGN");
+    setExpenseDate(todayKey());
+    setExpenseProduct("General Expense");
+    setExpenseDescription("");
+    setModal("addExpense");
   };
 
   const openAddUserModal = () => {
@@ -9174,7 +10799,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setExpenseDate(todayKey());
     setExpenseProduct("General Expense");
     setExpenseCurrency("NGN");
-    setModal(null);
+    closeModal();
     showToast(`${expenseType} expense for ${new Intl.NumberFormat(currencies[expenseCurrency]?.locale ?? "en-NG", { style: "currency", currency: expenseCurrency, maximumFractionDigits: 0 }).format(amount)} created.`);
     expensesApi.create({ id: record.id, date: record.date, category: record.type, description: record.description, amount: record.amount, currency: record.currency }).catch((err: any) => {
       setExpenses((prev) => prev.filter((e) => e.id !== record.id));
@@ -9217,7 +10842,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ]);
     setUserPassword("");
     setShowPasswordFields({});
-    setModal(null);
+    closeModal();
     showToast(`User "${userFullName.trim()}" created.`);
     authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch((err: any) => {
       setUsers((prev) => prev.filter((u) => u.id !== id));
@@ -9262,9 +10887,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     setUserPassword("");
     setShowPasswordFields({});
-    setModal(null);
+    closeModal();
     showToast(`User "${userFullName.trim()}" updated.`);
-    teamApi.update(_uuId, { name: userFullName.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
+    teamApi.update(_uuId, { name: userFullName.trim(), email: userEmail.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
       setUsers(prevUsers);
       showToast(`Failed to update user: ${err.message}`);
     });
@@ -9292,7 +10917,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _rpPw = userPassword.trim();
     setUserPassword("");
     setShowPasswordFields({});
-    setModal(null);
+    closeModal();
     showToast(`Password reset for ${selectedUser.name}.`);
     authApi.setPassword(_rpId, _rpPw).catch((err: any) => {
       // No local state to roll back — passwords are never stored client-side.
@@ -9329,6 +10954,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const _duId = selectedUser.id;
     setUsers((value) => value.filter((user) => user.id !== selectedUser.id));
     setModal(null);
+    if (hashRoute.startsWith("#/dashboard/admin/sales-reps/")) {
+      setSalesRepView("list");
+      setSelectedSalesRepId("");
+      setSelectedUserId("");
+      syncHashRoute("#/dashboard/admin/sales-reps");
+    } else if (hashRoute.startsWith("#/dashboard/admin/users/")) {
+      setSelectedUserId("");
+      syncHashRoute("#/dashboard/admin/users");
+    }
     showToast(`"${selectedUser.name}" deleted.`);
     teamApi.delete(_duId).catch((err: any) => {
       setUsers(prevUsers);
@@ -9337,15 +10971,562 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const repTabRoute = (tab: RepConsoleTab) =>
-    tab === "Dashboard" ? "#/dashboard/sales-rep" : `#/dashboard/sales-rep/${slugify(tab)}`;
+  const repRouteWithScope = (baseHash: string, repIdOverride = repConsoleRepId) => {
+    if (!(currentRole === "Owner" || currentRole === "Admin")) {
+      return baseHash;
+    }
+    const [path, rawQuery = ""] = baseHash.split("?");
+    const params = new URLSearchParams(rawQuery);
+    if (repIdOverride && repIdOverride !== "all") {
+      params.set("rep", repIdOverride);
+    } else {
+      params.delete("rep");
+    }
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
+  };
+
+  const repTabRoute = (tab: RepConsoleTab, repIdOverride = repConsoleRepId) =>
+    repRouteWithScope(
+      tab === "Dashboard" ? "#/dashboard/sales-rep" : `#/dashboard/sales-rep/${slugify(tab)}`,
+      repIdOverride
+    );
+
+  const syncHashRoute = (nextHash: string) => {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    setHashRoute(nextHash);
+  };
 
   const openRepTab = (tab: RepConsoleTab) => {
     setRepConsoleTab(tab);
     setRepOrderDetailId("");
     const nextRoute = repTabRoute(tab);
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextRoute}`);
-    setHashRoute(nextRoute);
+    syncHashRoute(nextRoute);
+  };
+
+  const handleRepConsoleScopeChange = (nextRepId: string) => {
+    setRepConsoleRepId(nextRepId);
+    syncHashRoute(repTabRoute(repConsoleTab, nextRepId));
+  };
+
+  const openRepCreateOrderRoute = () => {
+    setRepConsoleTab("Orders");
+    setRepOrderDetailId("");
+    openRepCreateOrderModal();
+    syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders/new"));
+  };
+
+  const openRepCartAssignRoute = (cartId: string) => {
+    const cart = abandonedCarts.find((item) => item.id === cartId);
+    setRepConsoleTab("Abandoned Carts");
+    setSelectedCartId(cartId);
+    setReassignRepId(cart?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
+    setModal("assignCart");
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/abandoned-carts/${cartId}/assign`));
+  };
+
+  const openRepCartConvertRoute = (cartId: string) => {
+    setRepConsoleTab("Abandoned Carts");
+    setSelectedCartId(cartId);
+    setModal("convertCart");
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/abandoned-carts/${cartId}/convert`));
+  };
+
+  const openAdminOrderDetail = (orderId: string) => {
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    setModal("orderDetails");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}`);
+  };
+
+  const openAdminCreateOrderRoute = () => {
+    setActivePage("Orders");
+    openCreateOrderModal();
+    syncHashRoute("#/dashboard/admin/orders/new");
+  };
+
+  const openAdminOrderEditRoute = (orderId: string) => {
+    const order = trackedOrders.find((item) => item.id === orderId);
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    if (order) {
+      openOrderModal(order, "editOrderItems");
+    } else {
+      setModal("editOrderItems");
+    }
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit`);
+  };
+
+  const openAdminOrderEditCustomerRoute = (orderId: string) => {
+    const order = trackedOrders.find((item) => item.id === orderId);
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    if (order) {
+      setCreateOrderCustomer(order.customer);
+      setCreateOrderPhone(order.phone);
+      setCreateOrderWhatsapp(order.whatsapp ?? "");
+      setCreateOrderEmail(order.email ?? "");
+      setCreateOrderAddress(order.address ?? "");
+      setCreateOrderCity(order.city ?? "");
+      setCreateOrderState(order.state ?? "");
+      setCreateOrderQuantity(String(order.quantity ?? 1));
+      setCreateOrderAmount(String(order.amount ?? ""));
+    }
+    setModal("editOrderCustomer");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit-customer`);
+  };
+
+  const openAdminOrderReassignRoute = (orderId: string) => {
+    const order = trackedOrders.find((item) => item.id === orderId);
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    setReassignRepId(order?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
+    setHandoverReason("");
+    setModal("reassignOrder");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/reassign`);
+  };
+
+  const openAdminOrderSendToAgentRoute = (orderId: string) => {
+    const order = trackedOrders.find((item) => item.id === orderId);
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    setCreateOrderAgentId(order?.agentId ?? "");
+    setSendToAgentShowAllStates(false);
+    setModal("sendToAgent");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/send-to-agent`);
+  };
+
+  const openAdminOrderDeleteRoute = (orderId: string) => {
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    setModal("deleteOrder");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/delete`);
+  };
+
+  const openAdminOrderStatusRoute = (orderId: string) => {
+    const order = trackedOrders.find((item) => item.id === orderId);
+    setActivePage("Orders");
+    setSelectedOrderId(orderId);
+    setStatusChangeDraft((order?.status ?? "New") === "New" ? "Confirmed" : (order?.status ?? "New"));
+    setStatusChangeReason("");
+    setCallOutcomeDraft(order?.callOutcome ?? "");
+    setCallOutcomeCustom("");
+    setModal("changeOrderStatus");
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
+  };
+
+  const openAdminSalesRepDetail = (userId: string) => {
+    setActivePage("Sales Reps");
+    setSelectedSalesRepId(userId);
+    setSalesRepView("detail");
+    setRepDetailShowAll(false);
+    syncHashRoute(`#/dashboard/admin/sales-reps/${userId}`);
+  };
+
+  const openAdminSalesRepCreateRoute = () => {
+    setActivePage("Sales Reps");
+    setSalesRepView("list");
+    openAddSalesRepModal();
+    syncHashRoute("#/dashboard/admin/sales-reps/new");
+  };
+
+  const openAdminSalesRepEditRoute = (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    setActivePage("Sales Reps");
+    setSelectedSalesRepId(userId);
+    setSalesRepView("detail");
+    setRepDetailShowAll(false);
+    if (user) {
+      openEditSalesRepModal(user);
+    } else {
+      setModal("editSalesRep");
+    }
+    syncHashRoute(`#/dashboard/admin/sales-reps/${userId}/edit`);
+  };
+
+  const openAdminSalesRepResetPasswordRoute = (userId: string) => {
+    setActivePage("Sales Reps");
+    setSelectedSalesRepId(userId);
+    setSelectedUserId(userId);
+    setSalesRepView("detail");
+    setRepDetailShowAll(false);
+    setUserPassword("");
+    setModal("resetUserPassword");
+    syncHashRoute(`#/dashboard/admin/sales-reps/${userId}/reset-password`);
+  };
+
+  const openAdminSalesRepDeleteRoute = (userId: string) => {
+    setActivePage("Sales Reps");
+    setSelectedSalesRepId(userId);
+    setSelectedUserId(userId);
+    setSalesRepView("detail");
+    setRepDetailShowAll(false);
+    setModal("deleteUser");
+    syncHashRoute(`#/dashboard/admin/sales-reps/${userId}/delete`);
+  };
+
+  const closeAdminSalesRepDetail = () => {
+    setSalesRepView("list");
+    syncHashRoute("#/dashboard/admin/sales-reps");
+  };
+
+  const openAdminAgentDetail = (agentId: string) => {
+    setActivePage("Agents");
+    setSelectedAgentId(agentId);
+    setAgentView("detail");
+    setAgentDetailShowAll(false);
+    syncHashRoute(`#/dashboard/admin/agents/${agentId}`);
+  };
+
+  const openAdminAgentCreateRoute = () => {
+    setActivePage("Agents");
+    setAgentView("list");
+    openAddAgentModal();
+    syncHashRoute("#/dashboard/admin/agents/new");
+  };
+
+  const openAdminAgentAssignStockRoute = (agentId: string) => {
+    const agent = agents.find((item) => item.id === agentId);
+    setActivePage("Agents");
+    setSelectedAgentId(agentId);
+    setAgentView("detail");
+    setAgentDetailShowAll(false);
+    if (agent) {
+      openAgentModal(agent, "assignAgentStock");
+    } else {
+      setModal("assignAgentStock");
+    }
+    syncHashRoute(`#/dashboard/admin/agents/${agentId}/assign-stock`);
+  };
+
+  const openAdminAgentReconcileRoute = (agentId: string) => {
+    const agent = agents.find((item) => item.id === agentId);
+    setActivePage("Agents");
+    setSelectedAgentId(agentId);
+    setAgentView("detail");
+    setAgentDetailShowAll(false);
+    if (agent) {
+      openAgentModal(agent, "reconcileAgentStock");
+    } else {
+      setModal("reconcileAgentStock");
+    }
+    syncHashRoute(`#/dashboard/admin/agents/${agentId}/reconcile`);
+  };
+
+  const openAdminAgentEditRoute = (agentId: string) => {
+    const agent = agents.find((item) => item.id === agentId);
+    setActivePage("Agents");
+    setSelectedAgentId(agentId);
+    setAgentView("detail");
+    setAgentDetailShowAll(false);
+    if (agent) {
+      openAgentModal(agent, "editAgent");
+    } else {
+      setModal("editAgent");
+    }
+    syncHashRoute(`#/dashboard/admin/agents/${agentId}/edit`);
+  };
+
+  const openAdminAgentDeleteRoute = (agentId: string) => {
+    const agent = agents.find((item) => item.id === agentId);
+    setActivePage("Agents");
+    setSelectedAgentId(agentId);
+    setAgentView("detail");
+    setAgentDetailShowAll(false);
+    if (agent) {
+      openAgentModal(agent, "deleteAgent");
+    } else {
+      setModal("deleteAgent");
+    }
+    syncHashRoute(`#/dashboard/admin/agents/${agentId}/delete`);
+  };
+
+  const closeAdminAgentDetail = () => {
+    setAgentView("list");
+    syncHashRoute("#/dashboard/admin/agents");
+  };
+
+  const openAdminCartDetail = (cartId: string) => {
+    setActivePage("Abandoned Carts");
+    setSelectedCartId(cartId);
+    setModal("cartDetails");
+    syncHashRoute(`#/dashboard/admin/abandoned-carts/${cartId}`);
+  };
+
+  const openAdminCartAssignRoute = (cartId: string) => {
+    const cart = abandonedCarts.find((item) => item.id === cartId);
+    setActivePage("Abandoned Carts");
+    setSelectedCartId(cartId);
+    setReassignRepId(cart?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
+    setModal("assignCart");
+    syncHashRoute(`#/dashboard/admin/abandoned-carts/${cartId}/assign`);
+  };
+
+  const openAdminCartConvertRoute = (cartId: string) => {
+    setActivePage("Abandoned Carts");
+    setSelectedCartId(cartId);
+    setModal("convertCart");
+    syncHashRoute(`#/dashboard/admin/abandoned-carts/${cartId}/convert`);
+  };
+
+  const openAdminExpenseDetail = (expenseId: string) => {
+    setActivePage("Expenses");
+    setSelectedExpenseId(expenseId);
+    setModal("expenseDetails");
+    syncHashRoute(`#/dashboard/admin/expenses/${expenseId}`);
+  };
+
+  const openAdminExpenseCreateRoute = () => {
+    setActivePage("Expenses");
+    openAddExpenseModal();
+    syncHashRoute("#/dashboard/admin/expenses/new");
+  };
+
+  const openAdminUserCreateRoute = () => {
+    setActivePage("User Management");
+    openAddUserModal();
+    syncHashRoute("#/dashboard/admin/users/new");
+  };
+
+  const openAdminUserEditRoute = (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    setActivePage("User Management");
+    if (user) {
+      openEditUserModal(user);
+    } else {
+      setSelectedUserId(userId);
+      setModal("editUser");
+    }
+    syncHashRoute(`#/dashboard/admin/users/${userId}/edit`);
+  };
+
+  const openAdminUserResetPasswordRoute = (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    setActivePage("User Management");
+    if (user) {
+      openResetPasswordModal(user);
+    } else {
+      setSelectedUserId(userId);
+      setUserPassword("");
+      setModal("resetUserPassword");
+    }
+    syncHashRoute(`#/dashboard/admin/users/${userId}/reset-password`);
+  };
+
+  const openAdminUserDeleteRoute = (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    setActivePage("User Management");
+    if (user) {
+      openDeleteUserModal(user);
+    } else {
+      setSelectedUserId(userId);
+      setModal("deleteUser");
+    }
+    syncHashRoute(`#/dashboard/admin/users/${userId}/delete`);
+  };
+
+  const openSalesTeamCreateRoute = () => {
+    setActivePage("Sales Teams");
+    openCreateTeamModal();
+    syncHashRoute("#/dashboard/admin/sales-teams/new");
+  };
+
+  const openSalesTeamEditRoute = (teamId: string) => {
+    setActivePage("Sales Teams");
+    openEditTeamModal(teamId);
+    syncHashRoute(`#/dashboard/admin/sales-teams/${teamId}/edit`);
+  };
+
+  const openInventoryDashboard = () => {
+    setActivePage("Inventory");
+    setInventoryView("dashboard");
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory");
+  };
+
+  const openInventoryAddProductRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("dashboard");
+    openAddProductModal();
+    syncHashRoute("#/dashboard/admin/inventory/new");
+  };
+
+  const openInventoryUpdateStockRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("dashboard");
+    setStockProductId(products[0]?.id ?? "");
+    setStockChange("0");
+    setModal("updateStock");
+    syncHashRoute("#/dashboard/admin/inventory/update-stock");
+  };
+
+  const openInventoryHistoryRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("history");
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory/history");
+  };
+
+  const openInventoryProductDetailRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("dashboard");
+    setModal("productDetails");
+    syncHashRoute(`#/dashboard/admin/inventory/products/${productId}`);
+  };
+
+  const openInventoryEditProductRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("dashboard");
+    setModal("editProduct");
+    syncHashRoute(`#/dashboard/admin/inventory/products/${productId}/edit`);
+  };
+
+  const openInventoryDeleteProductRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("dashboard");
+    setModal("deleteProduct");
+    syncHashRoute(`#/dashboard/admin/inventory/products/${productId}/delete`);
+  };
+
+  const openInventoryPricingRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("pricing");
+    setModal(null);
+    syncHashRoute(`#/dashboard/admin/inventory/pricing/${productId}`);
+  };
+
+  const openInventoryAddPricingRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("pricing");
+    setModal("addPricing");
+    syncHashRoute(`#/dashboard/admin/inventory/pricing/${productId}/new`);
+  };
+
+  const openInventoryEditPricingRoute = (productId: string, currencyCode: ProductCurrencyCode) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setSelectedPricingCurrency(currencyCode);
+    setInventoryView("pricing");
+    setModal("editPricing");
+    syncHashRoute(`#/dashboard/admin/inventory/pricing/${productId}/${currencyCode}/edit`);
+  };
+
+  const openInventoryPackagesRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("packages");
+    setModal(null);
+    syncHashRoute(`#/dashboard/admin/inventory/packages/${productId}`);
+  };
+
+  const openInventoryAddPackageRoute = (productId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setInventoryView("packages");
+    setModal("addPackage");
+    syncHashRoute(`#/dashboard/admin/inventory/packages/${productId}/new`);
+  };
+
+  const openInventoryEditPackageRoute = (productId: string, packageId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setSelectedPackageId(packageId);
+    setInventoryView("packages");
+    setModal("editPackage");
+    syncHashRoute(`#/dashboard/admin/inventory/packages/${productId}/${packageId}/edit`);
+  };
+
+  const openInventoryDeletePackageRoute = (productId: string, packageId: string) => {
+    setActivePage("Inventory");
+    setSelectedProductId(productId);
+    setSelectedPackageId(packageId);
+    setInventoryView("packages");
+    setModal("deletePackage");
+    syncHashRoute(`#/dashboard/admin/inventory/packages/${productId}/${packageId}/delete`);
+  };
+
+  const openInventoryStockCountRoute = (sessionId?: string | null) => {
+    setActivePage("Inventory");
+    setInventoryView("stockcount");
+    setActiveStockCountId(sessionId ?? null);
+    setModal(null);
+    syncHashRoute(sessionId ? `#/dashboard/admin/inventory/stock-count/${sessionId}` : "#/dashboard/admin/inventory/stock-count");
+  };
+
+  const openInventoryNewStockCountRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("stockcount");
+    setModal("newStockCount");
+    syncHashRoute("#/dashboard/admin/inventory/stock-count/new");
+  };
+
+  const openInventoryStockCountEntryRoute = (sessionId: string, entryId: string) => {
+    setActivePage("Inventory");
+    setInventoryView("stockcount");
+    setActiveStockCountId(sessionId);
+    setStockCountEntryId(entryId);
+    setModal("stockCountEntry");
+    syncHashRoute(`#/dashboard/admin/inventory/stock-count/${sessionId}/entries/${entryId}`);
+  };
+
+  const openInventoryAdjustStockCountRoute = (sessionId: string, entryId: string) => {
+    setActivePage("Inventory");
+    setInventoryView("stockcount");
+    setActiveStockCountId(sessionId);
+    setAdjustStockEntryId(entryId);
+    setModal("adjustStockCount");
+    syncHashRoute(`#/dashboard/admin/inventory/stock-count/${sessionId}/entries/${entryId}/adjust`);
+  };
+
+  const financeTabRoute = (tab: FinanceTab) => {
+    if (tab === "Remittance") {
+      return "#/dashboard/admin/finance-accounting/remittance";
+    }
+    if (tab === "Financial Overview") {
+      return "#/dashboard/admin/finance-accounting";
+    }
+    return `#/dashboard/admin/finance-accounting?tab=${slugify(tab)}`;
+  };
+
+  const openFinanceTab = (tab: FinanceTab) => {
+    setActivePage("Finance & Accounting");
+    setFinanceTab(tab);
+    if (tab !== "Remittance" && modal === "recordRemittance") {
+      setModal(null);
+    }
+    syncHashRoute(financeTabRoute(tab));
+  };
+
+  const openFinanceRemittanceRoute = (orderId?: string) => {
+    setActivePage("Finance & Accounting");
+    setFinanceTab("Remittance");
+    if (orderId) {
+      setRemittanceTargetOrderId(orderId);
+      setModal("recordRemittance");
+      syncHashRoute(`#/dashboard/admin/finance-accounting/remittance/${orderId}`);
+      return;
+    }
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/finance-accounting/remittance");
+  };
+
+  const openCustomerFlagRoute = (phone: string) => {
+    setActivePage("Customers");
+    setFlagTargetPhone(phone);
+    setModal("flagCustomer");
+    syncHashRoute(`#/dashboard/admin/customers/flag/${encodeURIComponent(phone)}`);
+  };
+
+  const openPayrollRateRoute = (userId: string) => {
+    setActivePage("Payroll");
+    setPayrollTab("Pay Rates");
+    openPayRateModal(userId);
+    syncHashRoute(`#/dashboard/admin/payroll/${userId}`);
   };
 
   const agentsForOrder = (order: TrackedOrder) => {
@@ -9358,9 +11539,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (status === "Delivered" && order.deliveredDate) {
       return formatDateTime(order.deliveredDate);
     }
-    const note = (order.notes ?? []).find((item) => item.text.includes(`to ${status}`));
+    const note = orderNotesFor(order).find((item) => item.text.includes(`to ${status}`));
     if (note) {
-      return new Date(note.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      return formatMoment(note.date);
     }
     if ((order.status ?? "New") === status) {
       return "Current";
@@ -9567,21 +11748,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell from (qty)</span>
             <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
-              setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, upsellFromQty: v } : o));
+              updateOrderUpsellFields(order, { upsellFromQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell to (qty)</span>
             <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
-              setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, upsellToQty: v } : o));
+              updateOrderUpsellFields(order, { upsellToQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</span>
             <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
-              const v = e.target.value;
-              setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, upsellNote: v } : o));
+              updateOrderUpsellFields(order, { upsellNote: e.target.value });
             }} />
           </label>
         </div>
@@ -9613,9 +11793,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {order.bonusManuallyAdjusted && (
                 <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` — ${order.manualBonusReason}` : ""}</p>
               )}
-              <div className="flex items-center gap-2 pt-1">
-                <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50" onClick={() => openManualBonusModal(order)}>{order.bonusManuallyAdjusted ? "Edit Manual Bonus" : "Manual Adjust"}</button>
-              </div>
             </div>
           );
         })()}
@@ -9675,18 +11852,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option value="">Unassigned</option>
                   {agentsForOrder(order).map((agent) => { const rec = order.productId ? agentStock.find((s) => s.agentId === agent.id && s.productId === order.productId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = quantityForOrder(order); const stockTag = !order.productId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
                 </select>
-                <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={saveOrderAgent}>Assign Agent</button>
+                <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={() => saveOrderAgent(order)}>Assign Agent</button>
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Schedule Date</label>
-              <div className="flex gap-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Schedule Date &amp; Time</label>
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input 
                   type="date" 
                   className="flex-1 h-10 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                   value={repScheduleDate} 
                   onChange={(event) => setRepScheduleDate(event.target.value)} 
                   aria-label="Schedule delivery date" 
+                />
+                <input
+                  type="time"
+                  className="sm:w-36 h-10 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                  value={repScheduleTime}
+                  onChange={(event) => setRepScheduleTime(event.target.value)}
+                  aria-label="Schedule delivery time"
                 />
                 <button className="px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors shrink-0 inline-flex items-center gap-2" onClick={saveRepScheduleDate}>
                   <CalendarClock className="w-4 h-4" /> Schedule
@@ -9706,22 +11890,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
           <div className="p-5 flex-1 flex flex-col space-y-4">
             <div className="flex-1 overflow-y-auto max-h-[300px] space-y-4 pr-2 custom-scrollbar">
-              {(order.notes ?? []).length === 0 ? (
+              {orderNotesFor(order).length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">No timeline entries yet.</p>
               ) : (
-                (order.notes ?? []).map((note) => (
+                orderNotesFor(order).map((note) => (
                   <div key={note.id} className="relative pl-4 border-l-2 border-gray-100">
                     <div className="absolute -left-[5px] top-1 w-2 h-2 rounded-full bg-gray-200"></div>
                     <div className="flex items-center justify-between mb-1">
                       <strong className="text-xs font-bold text-gray-900">{note.by}</strong>
                       <span className="text-[10px] text-gray-400 font-medium">
-                        {new Date(note.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                        {formatMoment(note.date)}
                       </span>
                     </div>
                     <p className="text-sm text-gray-600 leading-relaxed">{note.text}</p>
-                    {note.followUpDate && (
+                    {followUpMomentForNote(note) && (
                       <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-[#1F8FE0] rounded text-[10px] font-bold uppercase tracking-wide">
-                        <Clock className="w-3 h-3" /> Follow-up {displayDateFromKey(note.followUpDate)}
+                        <Clock className="w-3 h-3" /> Follow-up {formatPlannedMoment(note.followUpAt, note.followUpDate)}
                       </div>
                     )}
                   </div>
@@ -9732,8 +11916,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="space-y-3 pt-4 border-t border-gray-100 mt-auto">
               {showRepFollowUpField && (
                 <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Follow-up Date</span>
-                  <input type="date" className="w-full h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} />
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Follow-up Date &amp; Time</span>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="date" className="w-full h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} />
+                    <input type="time" className="w-full sm:w-36 h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={orderFollowUpTime} onChange={(event) => setOrderFollowUpTime(event.target.value)} />
+                  </div>
                 </div>
               )}
               <textarea 
@@ -10076,7 +12263,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <select
                   className="h-8 px-2 border border-gray-200 rounded text-xs font-medium bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                   value={repConsoleRepId}
-                  onChange={(event) => setRepConsoleRepId(event.target.value)}
+                  onChange={(event) => handleRepConsoleScopeChange(event.target.value)}
                 >
                   <option value="all">All reps (Owner full access)</option>
                   {salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
@@ -10241,7 +12428,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-xs text-gray-500 font-medium">Dedicated full order list for {repScopeName}.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={openRepCreateOrderModal}>
+                <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={openRepCreateOrderRoute}>
                   <Plus className="w-4 h-4" /> Create Order
                 </button>
                 <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => showToast("Use the status tabs to filter rep orders.")}>
@@ -10305,7 +12492,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
                   const dayKey = formatDateKey(d);
                   const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
-                  const count = repOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey).length;
+                  const count = repOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && scheduledKeyForOrder(o) === dayKey).length;
                   const isToday = dayKey === todayKey();
                   const isSelected = repScheduleRange === "Custom" && repScheduleCustomDate === dayKey;
                   return (
@@ -10383,10 +12570,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </td>
                         <td className="px-4 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            <button className="px-3 py-1.5 text-xs font-bold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1.5" onClick={() => openCartModal(cart, "assignCart")}>
+                            <button className="px-3 py-1.5 text-xs font-bold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1.5" onClick={() => openRepCartAssignRoute(cart.id)}>
                               <UserPlus className="w-3 h-3" /> Assign
                             </button>
-                            <button className="px-3 py-1.5 text-xs font-bold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5" onClick={() => openCartModal(cart, "convertCart")}>
+                            <button className="px-3 py-1.5 text-xs font-bold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5" onClick={() => openRepCartConvertRoute(cart.id)}>
                               <ShoppingCart className="w-3 h-3" /> Convert
                             </button>
                           </div>
@@ -10530,6 +12717,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const dismissModal = () => {
+    const modalBeforeClose = modal;
     setModal(null);
     setCreateOrderContext("admin");
     setUserPassword("");
@@ -10539,6 +12727,96 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
+    if (modalBeforeClose === "orderDetails" && hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute("#/dashboard/admin/orders");
+    }
+    if (modalBeforeClose === "createOrder" && hashRoute === "#/dashboard/admin/orders/new") {
+      syncHashRoute("#/dashboard/admin/orders");
+    }
+    if (modalBeforeClose === "createOrder" && hashRoute.startsWith("#/dashboard/sales-rep/orders/new")) {
+      syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders"));
+    }
+    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(selectedOrderId ? `#/dashboard/admin/orders/${selectedOrderId}` : "#/dashboard/admin/orders");
+    }
+    if (modalBeforeClose && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(selectedOrderId ? repRouteWithScope(`#/dashboard/sales-rep/orders/${selectedOrderId}`) : repRouteWithScope("#/dashboard/sales-rep/orders"));
+    }
+    if (modalBeforeClose && ["cartDetails", "assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/abandoned-carts/")) {
+      syncHashRoute(modalBeforeClose === "cartDetails" ? "#/dashboard/admin/abandoned-carts" : (selectedCartId ? `#/dashboard/admin/abandoned-carts/${selectedCartId}` : "#/dashboard/admin/abandoned-carts"));
+    }
+    if (modalBeforeClose && ["assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/abandoned-carts/")) {
+      syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/abandoned-carts"));
+    }
+    if (modalBeforeClose === "setRate" && hashRoute.startsWith("#/dashboard/admin/payroll/")) {
+      syncHashRoute("#/dashboard/admin/payroll");
+    }
+    if (modalBeforeClose === "expenseDetails" && hashRoute.startsWith("#/dashboard/admin/expenses/")) {
+      syncHashRoute("#/dashboard/admin/expenses");
+    }
+    if (modalBeforeClose === "addExpense" && hashRoute === "#/dashboard/admin/expenses/new") {
+      syncHashRoute("#/dashboard/admin/expenses");
+    }
+    if (modalBeforeClose && ["createWaybill", "editWaybill", "receiveWaybill"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/waybill/")) {
+      syncHashRoute("#/dashboard/admin/waybill");
+    }
+    if (modalBeforeClose === "addProduct" && hashRoute === "#/dashboard/admin/inventory/new") {
+      syncHashRoute("#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose === "updateStock" && hashRoute === "#/dashboard/admin/inventory/update-stock") {
+      syncHashRoute("#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose === "productDetails" && hashRoute.startsWith("#/dashboard/admin/inventory/products/")) {
+      syncHashRoute("#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose && ["editProduct", "deleteProduct"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/inventory/products/")) {
+      syncHashRoute(selectedProductId ? `#/dashboard/admin/inventory/products/${selectedProductId}` : "#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose && ["addPricing", "editPricing"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/inventory/pricing/")) {
+      syncHashRoute(selectedProductId ? `#/dashboard/admin/inventory/pricing/${selectedProductId}` : "#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose && ["addPackage", "editPackage", "deletePackage"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/inventory/packages/")) {
+      syncHashRoute(selectedProductId ? `#/dashboard/admin/inventory/packages/${selectedProductId}` : "#/dashboard/admin/inventory");
+    }
+    if (modalBeforeClose && ["newStockCount", "stockCountEntry", "adjustStockCount"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/inventory/stock-count")) {
+      syncHashRoute(activeStockCountId ? `#/dashboard/admin/inventory/stock-count/${activeStockCountId}` : "#/dashboard/admin/inventory/stock-count");
+    }
+    if (modalBeforeClose === "recordRemittance" && hashRoute.startsWith("#/dashboard/admin/finance-accounting/remittance")) {
+      syncHashRoute("#/dashboard/admin/finance-accounting/remittance");
+    }
+    if (modalBeforeClose === "flagCustomer" && hashRoute.startsWith("#/dashboard/admin/customers/flag/")) {
+      syncHashRoute("#/dashboard/admin/customers");
+    }
+    if (modalBeforeClose === "createTeam" && hashRoute === "#/dashboard/admin/sales-teams/new") {
+      syncHashRoute("#/dashboard/admin/sales-teams");
+    }
+    if (modalBeforeClose === "editTeam" && hashRoute.startsWith("#/dashboard/admin/sales-teams/")) {
+      syncHashRoute("#/dashboard/admin/sales-teams");
+    }
+    if (modalBeforeClose === "addSalesRep" && hashRoute === "#/dashboard/admin/sales-reps/new") {
+      syncHashRoute("#/dashboard/admin/sales-reps");
+    }
+    if (modalBeforeClose === "editSalesRep" && hashRoute.startsWith("#/dashboard/admin/sales-reps/")) {
+      syncHashRoute(selectedSalesRepId ? `#/dashboard/admin/sales-reps/${selectedSalesRepId}` : "#/dashboard/admin/sales-reps");
+    }
+    if (modalBeforeClose === "resetUserPassword" && hashRoute.startsWith("#/dashboard/admin/sales-reps/")) {
+      syncHashRoute(selectedSalesRepId ? `#/dashboard/admin/sales-reps/${selectedSalesRepId}` : "#/dashboard/admin/sales-reps");
+    }
+    if (modalBeforeClose === "deleteUser" && hashRoute.startsWith("#/dashboard/admin/sales-reps/")) {
+      syncHashRoute(selectedSalesRepId ? `#/dashboard/admin/sales-reps/${selectedSalesRepId}` : "#/dashboard/admin/sales-reps");
+    }
+    if (modalBeforeClose === "addAgent" && hashRoute === "#/dashboard/admin/agents/new") {
+      syncHashRoute("#/dashboard/admin/agents");
+    }
+    if (modalBeforeClose && ["assignAgentStock", "reconcileAgentStock", "editAgent", "deleteAgent"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/agents/")) {
+      syncHashRoute(selectedAgentId ? `#/dashboard/admin/agents/${selectedAgentId}` : "#/dashboard/admin/agents");
+    }
+    if (modalBeforeClose === "addUser" && hashRoute === "#/dashboard/admin/users/new") {
+      syncHashRoute("#/dashboard/admin/users");
+    }
+    if (modalBeforeClose && ["editUser", "resetUserPassword", "deleteUser"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/users/")) {
+      syncHashRoute("#/dashboard/admin/users");
+    }
   };
   const closeModal = dismissModal;
 
@@ -11281,13 +13559,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               onClick={async () => {
                 try {
                   await subscribeToPush();
-                  setPushSubscribed(true);
-                  setPushPermission(getPermissionState());
+                  await refreshPushDiagnostics(false);
                   setShowPushBanner(false);
                   showToast("Push notifications enabled!");
                 } catch (e: any) {
                   setShowPushBanner(false);
-                  setPushPermission(getPermissionState());
+                  await refreshPushDiagnostics(false);
                   showToast(`Couldn't enable push: ${e?.message ?? "unknown error"}`);
                 }
               }}
@@ -11770,7 +14047,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${statusBadgeClasses(order.status ?? "New")}`}>{order.status ?? "New"}</span>
                             </td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}>
+                              <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openAdminOrderDetail(order.id)}>
                                 <Eye className="w-4 h-4" />
                               </button>
                             </td>
@@ -11798,7 +14075,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
                   {canMutate && (
-                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateOrderModal}>
+                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminCreateOrderRoute}>
                       <Plus className="w-4 h-4" /> Create Order
                     </button>
                   )}
@@ -11833,7 +14110,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {/* Mobile-only: Create Order + Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     {canMutate && (
-                      <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateOrderModal}>
+                      <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminCreateOrderRoute}>
                         <Plus className="w-4 h-4" /> Create Order
                       </button>
                     )}
@@ -12071,14 +14348,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             {!isTerminal && (
                               <button
                                 className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
-                                onClick={() => openOrderModal(order, "editOrderItems")}
+                                onClick={() => openAdminOrderEditRoute(order.id)}
                               >
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
                             <button
                               className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-red-200 bg-white text-red-600 rounded-lg hover:bg-red-50 transition-colors ${isTerminal ? "col-span-2" : ""}`}
-                              onClick={() => openOrderModal(order, "deleteOrder")}
+                              onClick={() => openAdminOrderDeleteRoute(order.id)}
                             >
                               <Trash2 className="w-4 h-4" /> Delete
                             </button>
@@ -12193,7 +14470,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <button
                                       className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
                                       title="Edit"
-                                      onClick={() => openOrderModal(order, "editOrderItems")}
+                                      onClick={() => openAdminOrderEditRoute(order.id)}
                                     >
                                       <Pencil className="w-4 h-4" />
                                     </button>
@@ -12201,7 +14478,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <button
                                     className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                                     title="Delete"
-                                    onClick={() => openOrderModal(order, "deleteOrder")}
+                                    onClick={() => openAdminOrderDeleteRoute(order.id)}
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
@@ -12451,12 +14728,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-3 text-sm text-gray-500">{formatMoment(cart.lastActivity || cart.createdAt)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1 flex-wrap">
-                                <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Details" aria-label="Details" onClick={() => openCartModal(cart, "cartDetails")}><Eye className="w-4 h-4" /></button>
-                                <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Assign" aria-label="Assign" onClick={() => openCartModal(cart, "assignCart")}><UserPlus className="w-4 h-4" /></button>
+                                <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Details" aria-label="Details" onClick={() => openAdminCartDetail(cart.id)}><Eye className="w-4 h-4" /></button>
+                                <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Assign" aria-label="Assign" onClick={() => openAdminCartAssignRoute(cart.id)}><UserPlus className="w-4 h-4" /></button>
                                 <button className="px-2 py-1 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "Contacted")}>Contacted</button>
                                 <button className="px-2 py-1 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "No response")}>No Response</button>
                                 <button className="px-2 py-1 text-xs font-medium border border-red-100 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "Not interested")}>Not Interested</button>
-                                <button className="p-1.5 text-[#1F8FE0] hover:text-blue-700 rounded hover:bg-blue-50 transition-colors disabled:opacity-40" title="Convert" aria-label="Convert" disabled={cart.status === "Converted"} onClick={() => openCartModal(cart, "convertCart")}><ArrowRight className="w-4 h-4" /></button>
+                                <button className="p-1.5 text-[#1F8FE0] hover:text-blue-700 rounded hover:bg-blue-50 transition-colors disabled:opacity-40" title="Convert" aria-label="Convert" disabled={cart.status === "Converted"} onClick={() => openAdminCartConvertRoute(cart.id)}><ArrowRight className="w-4 h-4" /></button>
                               </div>
                             </td>
                           </tr>
@@ -12586,7 +14863,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
                       const dayKey = formatDateKey(d);
                       const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
-                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && normalizeDateKey(o.scheduledDate) === dayKey && matchesProductFilter(o.productId, o.productName, scheduleProductIds)).length;
+                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && scheduledKeyForOrder(o) === dayKey && matchesProductFilter(o.productId, o.productName, scheduleProductIds)).length;
                       const isToday = dayKey === todayKey();
                       const isSelected = scheduleRange === "Custom" && scheduleCustomDate === dayKey;
                       return (
@@ -12629,13 +14906,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           const repName       = users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned";
                           const agentName     = agentNameForOrder(order);
                           const today         = todayKey();
-                          const sk            = normalizeDateKey(order.scheduledDate);
+                          const sk            = scheduledKeyForOrder(order);
                           const isOverdue     = sk && sk < today && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New");
                           const isToday       = sk === today;
                           return (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">
-                                <button className="!min-h-0 hover:underline text-left" onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}>{order.id}</button>
+                                <button className="!min-h-0 hover:underline text-left" onClick={() => openAdminOrderDetail(order.id)}>{order.id}</button>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="font-bold text-gray-900">{order.customer}</div>
@@ -12659,7 +14936,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <span className={`status-pill status-${slugify(order.status ?? "New")}`}>{order.status ?? "New"}</span>
                               </td>
                               <td className="px-4 py-4 text-right whitespace-nowrap">
-                                <div className={`font-bold ${isOverdue ? "text-rose-600" : isToday ? "text-emerald-600" : "text-[#1F8FE0]"}`}>{formatDateTime(order.scheduledDate)}</div>
+                                <div className={`font-bold ${isOverdue ? "text-rose-600" : isToday ? "text-emerald-600" : "text-[#1F8FE0]"}`}>{formatPlannedMoment(order.scheduledAt, order.scheduledDate)}</div>
                                 {isOverdue && <div className="text-[10px] text-rose-600 font-bold uppercase">⚠ Overdue</div>}
                                 {isToday && !isOverdue && <div className="text-[10px] text-emerald-600 font-bold uppercase">Today</div>}
                               </td>
@@ -12678,7 +14955,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                       <Phone className="w-4 h-4" />
                                     </a>
                                   )}
-                                  <button className="!min-h-0 p-1.5 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors" title="Open order details" onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}>
+                                  <button className="!min-h-0 p-1.5 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors" title="Open order details" onClick={() => openAdminOrderDetail(order.id)}>
                                     <Eye className="w-4 h-4" />
                                   </button>
                                 </div>
@@ -12923,7 +15200,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               for (const o of repOrders) {
                 const created = new Date(o.createdAt ?? o.date);
                 if (Number.isNaN(created.getTime())) continue;
-                const firstNote = (o.notes ?? [])
+                const firstNote = orderNotesFor(o)
                   .map((n) => new Date(n.date))
                   .filter((d) => !Number.isNaN(d.getTime()))
                   .sort((a, b) => a.getTime() - b.getTime())[0];
@@ -12965,7 +15242,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="space-y-6">
                   {/* Breadcrumb / back */}
                   <button
-                    onClick={() => setSalesRepView("list")}
+                    onClick={closeAdminSalesRepDetail}
                     className="!min-h-0 inline-flex items-center gap-2 text-sm font-semibold text-[#1F8FE0] hover:underline"
                   >
                     <ChevronLeft className="w-4 h-4" /> Back to All Sales Representatives
@@ -12993,7 +15270,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                        onClick={() => { setSalesRepName(detailUser.name); setSalesRepEmail(detailUser.email); setSalesRepActive(detailUser.active); setModal("editSalesRep"); }}
+                        onClick={() => openAdminSalesRepEditRoute(detailUser.id)}
                       >
                         <Pencil className="w-4 h-4" /> Edit Profile
                       </button>
@@ -13176,7 +15453,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {recentRepOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }}>
+                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAdminOrderDetail(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{o.date}</td>
@@ -13201,7 +15478,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <p className="text-sm font-medium text-gray-500">Manage and monitor your sales team performance</p>
                 </div>
                 {/* Desktop-only action button — on mobile this appears below the controls */}
-                <button className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addSalesRep")}>
+                <button className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminSalesRepCreateRoute}>
                   <Plus className="w-4 h-4" /> Add Sales Rep
                 </button>
               </header>
@@ -13227,7 +15504,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {renderProductFilter(salesProductIds, setSalesProductIds, showSalesProductFilter, setShowSalesProductFilter)}
                   {/* Mobile-only: Add Sales Rep stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addSalesRep")}>
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminSalesRepCreateRoute}>
                       <Plus className="w-4 h-4" /> Add Sales Rep
                     </button>
                   </div>
@@ -13265,7 +15542,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <Users className="w-10 h-10 text-gray-300" />
                     <h3 className="text-base font-bold text-gray-700">No leaderboard yet</h3>
                     <p className="text-sm text-gray-400 text-center max-w-xs">Add your first sales rep to see how the team is performing.</p>
-                    <button className="mt-1 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-1.5" onClick={() => setModal("addSalesRep")}><Plus className="w-4 h-4" />Add Sales Rep</button>
+                    <button className="mt-1 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-1.5" onClick={openAdminSalesRepCreateRoute}><Plus className="w-4 h-4" />Add Sales Rep</button>
                   </div>
                 ) : salesRepRows.every((r) => r.revenue === 0) ? (
                   <div className="flex flex-col items-center py-10 gap-3">
@@ -13339,8 +15616,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatMoney(row.revenue)}</td>
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-1">
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="View" aria-label="View" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepView("detail"); setRepDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => { setSelectedSalesRepId(row.user.id); setSalesRepName(row.user.name); setSalesRepEmail(row.user.email); setSalesRepActive(row.user.active); setModal("editSalesRep"); }}><Pencil className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="View" aria-label="View" onClick={() => { openAdminSalesRepDetail(row.user.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminSalesRepEditRoute(row.user.id)}><Pencil className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => {
                                   const next = !row.user.active;
                                   const prev = row.user.active;
@@ -13386,7 +15663,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Sales Teams</h1>
                   <p className="text-sm font-medium text-gray-500">Group reps, assign team leads, and scope products to the team responsible for selling them.</p>
                 </div>
-                <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={() => { setNewTeamName(""); setNewTeamLeadId(""); setModal("createTeam"); }}>
+                <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={openSalesTeamCreateRoute}>
                   <Plus className="w-4 h-4" /> Create Team
                 </button>
               </header>
@@ -13399,7 +15676,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><Users className="w-6 h-6" /></span>
                   <h2 className="text-base font-bold text-gray-700">No teams yet</h2>
                   <p className="text-sm text-gray-400">Create your first sales team to group reps and scope products.</p>
-                  <button className="mt-2 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={() => { setNewTeamName(""); setNewTeamLeadId(""); setModal("createTeam"); }}>
+                  <button className="mt-2 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={openSalesTeamCreateRoute}>
                     <Plus className="w-4 h-4" /> Create Team
                   </button>
                 </section>
@@ -13438,7 +15715,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
                         <div className="flex items-center gap-1">
-                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => { setEditTeamId(team.id); setEditTeamName(team.name); setEditTeamLeadId(team.leadId ?? ""); setModal("editTeam"); }}><Pencil className="w-4 h-4" /></button>
+                          <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => openSalesTeamEditRoute(team.id)}><Pencil className="w-4 h-4" /></button>
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => {
                             if (!confirm(`Delete team "${team.name}"? This cannot be undone.`)) return;
                             const teamSnapshot = team;
@@ -13621,7 +15898,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               return (
                 <div className="space-y-6">
                   <button
-                    onClick={() => setAgentView("list")}
+                    onClick={closeAdminAgentDetail}
                     className="!min-h-0 inline-flex items-center gap-2 text-sm font-semibold text-[#1F8FE0] hover:underline"
                   >
                     <ChevronLeft className="w-4 h-4" /> Back to Agents
@@ -13655,13 +15932,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </select>
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                        onClick={() => openAgentModal(agent, "assignAgentStock")}
+                        onClick={() => openAdminAgentAssignStockRoute(agent.id)}
                       >
                         <PackagePlus className="w-4 h-4" /> Assign Stock
                       </button>
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
-                        onClick={() => openAgentModal(agent, "editAgent")}
+                        onClick={() => openAdminAgentEditRoute(agent.id)}
                       >
                         <Pencil className="w-4 h-4" /> Edit
                       </button>
@@ -13899,7 +16176,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <button
                             className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-                            onClick={() => openAgentModal(agent, "reconcileAgentStock")}
+                            onClick={() => openAdminAgentReconcileRoute(agent.id)}
                           >
                             <RefreshCw className="w-3.5 h-3.5" /> Reconcile
                           </button>
@@ -14232,7 +16509,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {visibleOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }}>
+                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAdminOrderDetail(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-700">{o.productName}</td>
@@ -14261,7 +16538,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
                     <Download className="w-4 h-4" /> Export CSV
                   </button>
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addAgent")}>
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
                     <Plus className="w-4 h-4" /> Add Agent
                   </button>
                 </div>
@@ -14307,7 +16584,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <span className="text-xs font-medium text-gray-500 hidden sm:inline">All amounts in {selectedCurrency.label}</span>
                   {/* Mobile-only: Add Agent + Export CSV stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addAgent")}>
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminAgentCreateRoute}>
                       <Plus className="w-4 h-4" /> Add Agent
                     </button>
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportAgentsCsv}>
@@ -14381,7 +16658,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
                       ) : (
                         pagedAgentRows.map((row) => (
-                          <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedAgentId(row.agent.id); setAgentView("detail"); setAgentDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                          <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
                                 <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(row.agent.name)}</span>
@@ -14417,11 +16694,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </td>
                             <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1">
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Profile" aria-label="Profile" onClick={() => { setSelectedAgentId(row.agent.id); setAgentView("detail"); setAgentDetailShowAll(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Assign stock" aria-label="Assign stock" onClick={() => openAgentModal(row.agent, "assignAgentStock")}><PackagePlus className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reconcile" aria-label="Reconcile" onClick={() => openAgentModal(row.agent, "reconcileAgentStock")}><RefreshCw className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAgentModal(row.agent, "editAgent")}><Pencil className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAgentModal(row.agent, "deleteAgent")}><Trash2 className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Profile" aria-label="Profile" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Assign stock" aria-label="Assign stock" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}><PackagePlus className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reconcile" aria-label="Reconcile" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}><RefreshCw className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}><Pencil className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}><Trash2 className="w-4 h-4" /></button>
                               </div>
                             </td>
                           </tr>
@@ -14624,13 +16901,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <>
                                     <button
                                       className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors"
-                                      onClick={() => {
-                                        setReceiveWaybillId(w.id);
-                                        setReceiveActualQty(String(w.quantity));
-                                        setReceiveVarianceReason("");
-                                        setReceiveVarianceMode("return");
-                                        setModal("receiveWaybill");
-                                      }}
+                                      onClick={() => openReceiveWaybill(w)}
                                     >Mark Received</button>
                                     <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => cancelWaybill(w.id)}>Cancel</button>
                                   </>
@@ -14717,7 +16988,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </td>
                                 <td className="px-4 py-4 text-gray-500">{formatMoment(structure?.updatedAt) || "-"}</td>
                                 <td className="px-4 py-4">
-                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openPayRateModal(user.id)}>{structure ? "Edit Rate" : "Set Rate"}</button>
+                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openPayrollRateRoute(user.id)}>{structure ? "Edit Rate" : "Set Rate"}</button>
                                 </td>
                               </tr>
                             );
@@ -15122,7 +17393,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
                     <RefreshCw className="w-4 h-4" /> Refresh
                   </button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
+                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminExpenseCreateRoute}>
                     <Plus className="w-4 h-4" /> Add Expense
                   </button>
                 </div>
@@ -15154,7 +17425,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </select>
                   {/* Mobile-only: Add Expense + Refresh stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addExpense")}>
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminExpenseCreateRoute}>
                       <Plus className="w-4 h-4" /> Add Expense
                     </button>
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => { retryLoadData.current(); showToast("Refreshing expenses…"); }}>
@@ -15318,7 +17589,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}</td>
                             <td className="px-4 py-4 text-gray-500 text-xs">{expense.description}{expense.waybillId && <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}</td>
                             <td className="px-4 py-4">
-                              <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => { setSelectedExpenseId(expense.id); setModal("expenseDetails"); }}>Details</button>
+                              <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>Details</button>
                             </td>
                           </tr>
                         ))
@@ -15402,9 +17673,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       role="tab"
                       aria-selected={financeTab === tab}
                       className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all duration-200 whitespace-nowrap ${financeTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
-                      onClick={() => {
-                        setFinanceTab(tab);
-                      }}
+                      onClick={() => openFinanceTab(tab)}
                       key={tab}
                     >
                       {tab}
@@ -15473,7 +17742,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <h2 className="text-sm font-bold text-gray-800">Cash Position</h2>
                         <p className="text-xs text-gray-400 mt-0.5">Pay-on-delivery reconciliation: what's been delivered vs. what's actually in your account</p>
                       </div>
-                      <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => setFinanceTab("Remittance")}>
+                      <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openFinanceRemittanceRoute()}>
                         Open Remittance <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
@@ -16003,7 +18272,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.stockValue)}</td>
                                 <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.profitContribution)}</td>
                                 <td className="px-4 py-4">
-                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAgentModal(row.agent, "agentDetails")}>Details</button>
+                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminAgentDetail(row.agent.id)}>Details</button>
                                 </td>
                               </tr>
                             ))
@@ -16759,7 +19028,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportUserData}>
                     <Upload className="w-4 h-4" /> Export Data
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAddUserModal}>
+                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminUserCreateRoute}>
                     <UserPlus className="w-4 h-4" /> Add User
                   </button>
                 </div>
@@ -16911,9 +19180,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                         onClick={() => enterSpy(user)}
                                       ><Eye className="w-4 h-4" /></button>
                                     )}
-                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit user" aria-label={`Edit ${user.name}`} onClick={() => openEditUserModal(user)}><Pencil className="w-4 h-4" /></button>
-                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reset password" aria-label={`Reset password for ${user.name}`} onClick={() => openResetPasswordModal(user)}><KeyRound className="w-4 h-4" /></button>
-                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete user" aria-label={`Delete ${user.name}`} onClick={() => openDeleteUserModal(user)}><Trash2 className="w-4 h-4" /></button>
+                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit user" aria-label={`Edit ${user.name}`} onClick={() => openAdminUserEditRoute(user.id)}><Pencil className="w-4 h-4" /></button>
+                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reset password" aria-label={`Reset password for ${user.name}`} onClick={() => openAdminUserResetPasswordRoute(user.id)}><KeyRound className="w-4 h-4" /></button>
+                                    <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-400 hover:bg-red-50 transition-colors" title="Delete user" aria-label={`Delete ${user.name}`} onClick={() => openAdminUserDeleteRoute(user.id)}><Trash2 className="w-4 h-4" /></button>
                                   </div>
                                 </td>
                               </tr>
@@ -17163,7 +19432,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <span><strong className="text-gray-900">{row.openOrders}</strong> open</span>
                           <span><strong className="text-gray-900">{row.delivered}</strong> delivered</span>
                         </div>
-                        <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => openEditUserModal(row.user)}>{row.user.active ? "Exclude" : "Enable"}</button>
+                          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => openAdminUserEditRoute(row.user.id)}>{row.user.active ? "Exclude" : "Enable"}</button>
                       </article>
                     ))}
                   </div>
@@ -18027,38 +20296,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
-                <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates.</p>
-                {/* Critical warning when running in browser tab — push won't fire when site is closed */}
-                {!isInstalled && (
+                <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates, and key operational alerts.</p>
+                {pushNeedsStandaloneInstall ? (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div className="flex-1 text-sm">
-                      <p className="font-bold text-amber-900 m-0 mb-1">Install the app for background notifications</p>
+                      <p className="font-bold text-amber-900 m-0 mb-1">Install is required for background notifications on iPhone/iPad</p>
                       <p className="text-amber-800 m-0 leading-relaxed">
-                        You're running in a browser tab. Push notifications only arrive when this site is <strong>open in a tab</strong>. To get alerts when the app is closed, install it to your home screen first.
+                        Open this site in <strong>Safari</strong>, use <strong>Share → Add to Home Screen</strong>, then launch it from the home-screen icon. Without that, iPhone/iPad background push will not reach the lock screen.
                       </p>
                       <p className="text-xs text-amber-700 mt-2 m-0">
-                        <strong>iPhone (Safari):</strong> Share button → Add to Home Screen.{" "}
-                        <strong>Android (Chrome):</strong> menu (⋮) → Install app.{" "}
-                        Then open from the home-screen icon — not the browser.
+                        iOS web push also requires notification permission plus an active subscription after you open the installed app once.
                       </p>
                     </div>
                   </div>
-                )}
+                ) : !isInstalled && installGuidePlatform !== "ios" ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+                    <Info className="w-5 h-5 text-[#1F8FE0] shrink-0 mt-0.5" />
+                    <div className="flex-1 text-sm">
+                      <p className="font-bold text-blue-900 m-0 mb-1">Install is recommended for the best push experience</p>
+                      <p className="text-blue-800 m-0 leading-relaxed">
+                        On supported Android and desktop browsers, web push can still work from the browser. Installing the app gives the most reliable app-like experience and makes it easier to confirm you’re opening the right standalone instance.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+                <div className={`rounded-xl border p-4 flex items-start gap-3 ${pushStatusPanelClasses}`}>
+                  <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center shrink-0">
+                    {pushBackgroundReady ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold m-0 mb-1">{pushStatusTitle}</p>
+                    <p className="text-sm m-0 leading-relaxed">{pushStatusMessage}</p>
+                  </div>
+                </div>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
                   <div className="flex items-start gap-3">
-                    <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushSubscribed ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-600"}`}>
-                      {pushSubscribed ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                    <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${pushBackgroundReady ? "bg-green-50 text-green-600" : pushPermission === "denied" || pushPermission === "unsupported" ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-600"}`}>
+                      {pushBackgroundReady ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
                     </span>
                     <div className="flex-1">
                       <h3 className="text-sm font-bold text-gray-900 mb-1">Push Notifications</h3>
-                      <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders</p>
+                      <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders and operational alerts.</p>
                       <p className="text-xs text-gray-400 mb-3">
                         Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
-                        {" · "}Status: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Subscribed" : "Not subscribed"}</span>
+                        {" · "}Subscription: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active" : "Inactive"}</span>
+                        {" · "}Server: <span className={`font-medium ${pushServerConfigured ? "text-green-600" : "text-amber-600"}`}>{pushServerConfigured ? "Configured" : "Not configured"}</span>
+                        {" · "}Saved subscriptions: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
                       </p>
                       {pushPermission === "denied" ? (
                         <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                      ) : !pushServerConfigured ? (
+                        <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
                       ) : pushSubscribed ? (
                         <button
                           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
@@ -18067,9 +20356,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             setPushLoading(true);
                             try {
                               await unsubscribeFromPush();
-                              setPushSubscribed(false);
+                              await refreshPushDiagnostics(false);
                               showToast("Push notifications disabled.");
                             } catch (e: any) {
+                              await refreshPushDiagnostics(false);
                               showToast(e.message || "Failed to unsubscribe.");
                             } finally {
                               setPushLoading(false);
@@ -18081,16 +20371,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ) : (
                         <button
                           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          disabled={pushLoading}
+                          disabled={pushLoading || !pushServerConfigured}
                           onClick={async () => {
                             setPushLoading(true);
                             try {
                               await subscribeToPush();
-                              setPushSubscribed(true);
-                              setPushPermission(getPermissionState());
+                              await refreshPushDiagnostics(false);
                               showToast("Push notifications enabled!");
                             } catch (e: any) {
-                              setPushPermission(getPermissionState());
+                              await refreshPushDiagnostics(false);
                               showToast(e.message || "Failed to enable notifications.");
                             } finally {
                               setPushLoading(false);
@@ -18111,7 +20400,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         onClick={async () => {
                           if ("serviceWorker" in navigator) {
                             const reg = await navigator.serviceWorker.getRegistration();
-                            if (reg) { await reg.update(); showToast("Service worker updated."); }
+                            if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
                             else { showToast("No service worker registered."); }
                           }
                         }}
@@ -18124,17 +20413,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           try {
                             await unsubscribeFromPush();
                             await subscribeToPush();
-                            setPushSubscribed(true);
-                            setPushPermission(getPermissionState());
+                            await refreshPushDiagnostics(false);
                             showToast("Re-subscribed successfully!");
                           } catch (e: any) {
-                            setPushPermission(getPermissionState());
+                            await refreshPushDiagnostics(false);
                             showToast(e.message || "Re-subscribe failed.");
                           } finally {
                             setPushLoading(false);
                           }
                         }}
                       >Force Re-subscribe</button>
+                      <button
+                        className="text-sm text-[#1F8FE0] font-medium hover:underline disabled:opacity-50"
+                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
+                        onClick={async () => {
+                          setPushTestLoading(true);
+                          try {
+                            await sendTestPush();
+                            showToast("Test push queued. Lock the device and watch for the alert.");
+                          } catch (e: any) {
+                            showToast(e.message || "Test push failed.");
+                          } finally {
+                            setPushTestLoading(false);
+                          }
+                        }}
+                      >{pushTestLoading ? "Sending test push…" : "Send Test Push"}</button>
                     </div>
                   </div>
                 </div>
@@ -18449,7 +20752,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <ul className="text-sm text-gray-600 space-y-2 leading-relaxed">
                       <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">✓</span><span><strong className="text-gray-900">Sign-in</strong> — no re-auth needed.</span></li>
                       <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">✓</span><span><strong className="text-gray-900">Branding</strong> — logo and name from Branding settings show as the app icon and title.</span></li>
-                      <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">✓</span><span><strong className="text-gray-900">Push notifications</strong> — order events, low stock, waybill alerts arrive even when the app is closed.</span></li>
+                      <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">✓</span><span><strong className="text-gray-900">Push notifications</strong> — order events, low stock, waybill alerts, and key operational alerts arrive even when the app is closed.</span></li>
                       <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">✓</span><span><strong className="text-gray-900">Cached pages</strong> — recent screens load fast on slow connections.</span></li>
                     </ul>
                   </div>
@@ -18530,7 +20833,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                   <div className="flex flex-col gap-1">
-                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={() => setInventoryView("dashboard")}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Stock Movement History</h1>
                     <p className="text-sm font-medium text-gray-500">Review additions, corrections, deliveries, and agent stock movements.</p>
                   </div>
@@ -18588,7 +20891,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                   <div className="flex flex-col gap-1">
-                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={() => setInventoryView("dashboard")}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">{selectedProduct.name} Pricing</h1>
                     <p className="text-sm font-medium text-gray-500">Manage multi-currency pricing and costs.</p>
                   </div>
@@ -18656,7 +20959,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                   <div className="flex flex-col gap-1">
-                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={() => setInventoryView("dashboard")}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Manage Packages</h1>
                     <p className="text-sm font-medium text-gray-500">{selectedProduct.name} — configure public order packages and bundle pricing.</p>
                   </div>
@@ -18744,7 +21047,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                   <div className="flex flex-col gap-1">
-                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={() => setInventoryView("dashboard")}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Stock Count</h1>
                     <p className="text-sm font-medium text-gray-500">Reconcile agent physical stock against system records. Both sides must confirm the same number to mark as Verified.</p>
                   </div>
@@ -18778,7 +21081,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                               <span className="text-xs text-gray-500">{verified}/{total} verified</span>
                               {discrepancies > 0 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">{discrepancies} discrepanc{discrepancies === 1 ? "y" : "ies"}</span>}
-                              <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => setActiveStockCountId(isActive ? null : session.id)}>{isActive ? "Collapse" : "View"}</button>
+                              <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(isActive ? null : session.id)}>{isActive ? "Collapse" : "View"}</button>
                               {session.status === "Open" && <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => closeStockCountSession(session.id)}>Close Session</button>}
                             </div>
                           </div>
@@ -18876,7 +21179,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <PackagePlus className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                     <p className="text-sm font-bold text-gray-700">No products yet</p>
                     <p className="text-xs text-gray-500 mt-1 mb-4">Add your first product to start tracking inventory.</p>
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => setModal("addProduct")}>
+                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}>
                       <Plus className="w-4 h-4" /> Add Product
                     </button>
                   </div>
@@ -18889,10 +21192,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
                   </label>
                   <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openAddProductModal}><Plus className="w-4 h-4" /> Add Product</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => setInventoryView("history")}><History className="w-4 h-4" /> Stock History</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setStockProductId(products[0]?.id || ""); setStockChange("0"); setModal("updateStock"); }}><RefreshCw className="w-4 h-4" /> Update Stock</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setActiveStockCountId(stockCounts.find((s) => s.status === "Open")?.id ?? null); setInventoryView("stockcount"); }}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
+                    <button className="flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                   </div>
                 </div>
 
@@ -19059,8 +21362,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               )}
                             </div>
                             <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAgentModal(row.agent, "assignAgentStock")}><PackagePlus className="w-3.5 h-3.5" /> Assign Stock</button>
-                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAgentModal(row.agent, "agentDetails")}><Eye className="w-3.5 h-3.5" /> View Details</button>
+                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}><PackagePlus className="w-3.5 h-3.5" /> Assign Stock</button>
+                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentDetail(row.agent.id)}><Eye className="w-3.5 h-3.5" /> View Details</button>
                             </div>
                           </article>
                         );
@@ -19200,7 +21503,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       if (nextLead !== (team.leadId ?? null)) updates.lead_id = nextLead;
                       const teamSnapshot = team;
                       setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, name: editTeamName.trim(), leadId: editTeamLeadId || undefined } : t));
-                      setModal(null);
+                      closeModal();
                       showToast(`Team "${editTeamName.trim()}" updated.`);
                       salesTeamsApi.update(team.id, updates).catch((err: any) => {
                         setExtraTeams((prev) => prev.map((t) => t.id === teamSnapshot.id ? teamSnapshot : t));
@@ -19276,10 +21579,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                <p className="text-sm text-gray-600">Choose a delivery window for <strong>{selectedOrder.id}</strong> — {selectedOrder.customer}.</p>
 	                <div className="flex flex-wrap gap-2">
 	                  {scheduleRanges.map((range) => (
-	                    <button key={range} className={`!min-h-0 flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${normalizeDateKey(selectedOrder.scheduledDate) === scheduleDateForRange(range) ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`} onClick={() => { scheduleOrder(selectedOrder.id, range); closeModal(); }}>
+	                    <button key={range} className={`!min-h-0 flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${scheduledKeyForOrder(selectedOrder) === scheduleDateForRange(range) ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`} onClick={() => { scheduleOrder(selectedOrder.id, range); closeModal(); }}>
 	                      {range} <span className="block text-[10px] font-medium opacity-70">{displayDateFromKey(scheduleDateForRange(range))}</span>
 	                    </button>
 	                  ))}
+	                </div>
+	                <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_auto] gap-2">
+	                  <input type="date" value={orderScheduleDate} onChange={(event) => setOrderScheduleDate(event.target.value)} />
+	                  <input type="time" value={orderScheduleTime} onChange={(event) => setOrderScheduleTime(event.target.value)} />
+	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => { commitOrderSchedule(selectedOrder, { scheduledDate: orderScheduleDate, scheduledTime: orderScheduleTime, by: ownerName }); closeModal(); }}>Save Time</button>
 	                </div>
 	                <div className="flex items-center justify-end gap-3 pt-2">
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
@@ -19580,7 +21888,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      );
 	                    })}
 	                  </div>
-	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => setModal("reassignOrder")}>
+	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
 	                </div>
@@ -19595,7 +21903,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <button
 	                        type="button"
 	                        className="!min-h-0 mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-amber-600 rounded-md hover:bg-amber-700"
-	                        onClick={() => { setCreateOrderAgentId(""); setModal("sendToAgent"); }}
+	                        onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}
 	                      >Assign agent retroactively →</button>
 	                    </div>
 	                  </div>
@@ -19666,7 +21974,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          <button
 	                            type="button"
 	                            className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-white bg-[#1F8FE0] rounded hover:opacity-90"
-	                            onClick={() => { setCreateOrderAgentId(""); setModal("sendToAgent"); }}
+	                            onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}
 	                          >Assign agent →</button>
 	                        </div>
 	                      ) : (
@@ -19854,21 +22162,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Upsell from</span>
 	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={selectedOrder.upsellFromQty ?? ""} onChange={(e) => {
 	                        const v = e.target.value === "" ? undefined : Number(e.target.value);
-	                        setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, upsellFromQty: v } : o));
+	                        updateOrderUpsellFields(selectedOrder, { upsellFromQty: v });
 	                      }} />
 	                    </label>
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Upsell to</span>
 	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={selectedOrder.upsellToQty ?? ""} onChange={(e) => {
 	                        const v = e.target.value === "" ? undefined : Number(e.target.value);
-	                        setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, upsellToQty: v } : o));
+	                        updateOrderUpsellFields(selectedOrder, { upsellToQty: v });
 	                      }} />
 	                    </label>
 	                    <label className="flex flex-col gap-1">
 	                      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Note</span>
 	                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={selectedOrder.upsellNote ?? ""} onChange={(e) => {
-	                        const v = e.target.value;
-	                        setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, upsellNote: v } : o));
+	                        updateOrderUpsellFields(selectedOrder, { upsellNote: e.target.value });
 	                      }} />
 	                    </label>
 	                  </div>
@@ -19988,17 +22295,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                </section>
 	
 	                {/* Section 6: Notes — only when notes exist */}
-	                {(selectedOrder.notes ?? []).length > 0 && (
+	                {orderNotesFor(selectedOrder).length > 0 && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Notes</h3>
 	                    <div className="flex flex-col gap-3">
-	                      {(selectedOrder.notes ?? []).map((note) => (
+	                      {orderNotesFor(selectedOrder).map((note) => (
 	                        <div key={note.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50/50 space-y-1">
 	                          <div className="flex items-center gap-1.5 text-xs text-gray-400">
 	                            <Clock className="w-3.5 h-3.5" />
 	                            <span>{note.by} · {formatDateTime(note.date)}</span>
 	                          </div>
-	                          <p className="text-sm text-gray-700 m-0">{note.text}{note.followUpDate ? ` · Follow-up: ${displayDateFromKey(note.followUpDate)}` : ""}</p>
+	                          <p className="text-sm text-gray-700 m-0">{note.text}{followUpMomentForNote(note) ? ` · Follow-up: ${formatPlannedMoment(note.followUpAt, note.followUpDate)}` : ""}</p>
 	                        </div>
 	                      ))}
 	                    </div>
@@ -20095,13 +22402,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                </section>
 
 	                <section className="grid grid-cols-2 sm:grid-cols-4 gap-2" aria-label="Order actions">
-	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => setModal("deleteOrder")}><Trash2 /> Delete Order</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => showToast("Choose a new status in the Status Workflow block.")}><Repeat2 /> Change Status</button>
+	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => openAdminOrderDeleteRoute(selectedOrder.id)}><Trash2 /> Delete Order</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id)}><Repeat2 /> Change Status</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(selectedOrder)}><BookOpen /> Print Invoice</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(selectedOrder)}><Download /> Download Invoice</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("sendToAgent")}><Truck /> Send to Agent</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("reassignOrder")}><UserPlus /> Reassign Rep</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={openEditSelectedOrder}><Pencil /> Edit Order</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Send to Agent</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}><UserPlus /> Reassign Rep</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderEditRoute(selectedOrder.id)}><Pencil /> Edit Order</button>
 	                </section>
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
@@ -20120,22 +22427,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <option value="">Unassigned</option>
 	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const rec = orderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === orderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
 	                    </select>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderAgent}>Send to Agent</button>
+	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </section>
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
-	                  <div><h3 className="text-sm font-semibold text-gray-900">Schedule Delivery</h3><p>{selectedOrder.scheduledDate ? formatDateTime(selectedOrder.scheduledDate) : "Not scheduled"}</p></div>
+	                  <div><h3 className="text-sm font-semibold text-gray-900">Schedule Delivery</h3><p>{scheduledMomentForOrder(selectedOrder) ? formatPlannedMoment(selectedOrder.scheduledAt, selectedOrder.scheduledDate) : "Not scheduled"}</p></div>
+	                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_auto] gap-2">
+	                    <input type="date" value={orderScheduleDate} onChange={(event) => setOrderScheduleDate(event.target.value)} />
+	                    <input type="time" value={orderScheduleTime} onChange={(event) => setOrderScheduleTime(event.target.value)} />
+	                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => commitOrderSchedule(selectedOrder, { scheduledDate: orderScheduleDate, scheduledTime: orderScheduleTime, by: ownerName })}>Save Schedule</button>
+	                  </div>
 	                  <div className="flex flex-wrap gap-2">
 	                    {scheduleRanges.map((range) => <button key={range} className="!min-h-0 px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors" onClick={() => scheduleOrder(selectedOrder.id, range)}>{range}</button>)}
 	                  </div>
 	                </section>
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
-	                  <div><h3 className="text-sm font-semibold text-gray-900">Communication Timeline</h3><p>{(selectedOrder.notes ?? []).length} note{(selectedOrder.notes ?? []).length === 1 ? "" : "s"}</p></div>
-	                  <div className="flex flex-col gap-2 max-h-44 overflow-y-auto">{(selectedOrder.notes ?? []).map((note) => <p key={note.id}><strong>{note.by}</strong> · {formatDateTime(note.date)}<br />{note.text}{note.followUpDate ? ` · Follow-up ${displayDateFromKey(note.followUpDate)}` : ""}</p>)}</div>
+	                  <div><h3 className="text-sm font-semibold text-gray-900">Communication Timeline</h3><p>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
+	                  <div className="flex flex-col gap-2 max-h-44 overflow-y-auto">{orderNotesFor(selectedOrder).map((note) => <p key={note.id}><strong>{note.by}</strong> · {formatDateTime(note.date)}<br />{note.text}{followUpMomentForNote(note) ? ` · Follow-up ${formatPlannedMoment(note.followUpAt, note.followUpDate)}` : ""}</p>)}</div>
 	                  <label><span>Note</span><textarea value={orderNoteDraft} onChange={(event) => setOrderNoteDraft(event.target.value)} /></label>
-	                  <label><span>Follow-up Date</span><input value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} placeholder="YYYY-MM-DD" /></label>
+	                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+	                    <label><span>Follow-up Date</span><input type="date" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} /></label>
+	                    <label><span>Follow-up Time</span><input type="time" value={orderFollowUpTime} onChange={(event) => setOrderFollowUpTime(event.target.value)} /></label>
+	                  </div>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={addOrderNote}>Add Note</button>
 	                </section>
 
@@ -20210,7 +22525,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
 	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}</select></label>
 	                </div>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("orderWorkflow")}>Back</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
+	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderDetail(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	            )}
 
@@ -20329,7 +22644,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  )}
 	                  <div className="flex items-center justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderAgent}>Send to Agent</button>
+	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </div>
 	              );
@@ -20428,8 +22743,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	                  {/* Actions */}
 	                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => setModal("assignCart")}><UserPlus className="w-4 h-4" /> Assign rep</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => setModal("convertCart")}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
+	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
+	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
 	                  </div>
 	                </div>
 	              );
@@ -21631,7 +23946,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            })()}
 
 	            {modal === "salesRepDetails" && selectedSalesRep && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => { setSalesRepName(selectedSalesRep.name); setSalesRepEmail(selectedSalesRep.email); setSalesRepActive(selectedSalesRep.active); setModal("editSalesRep"); }}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
+	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                         const rows = [
                           [`Sales Rep Report — ${selectedSalesRep.name}`],
@@ -21777,7 +24092,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <button
                           type="button"
                           className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-white hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors"
-                          onClick={() => openResetPasswordModal(selectedSalesRep)}
+                          onClick={() => openAdminSalesRepResetPasswordRoute(selectedSalesRep.id)}
                         >
                           Reset
                         </button>
@@ -21795,7 +24110,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <button
                           type="button"
                           className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
-                          onClick={() => openDeleteUserModal(selectedSalesRep)}
+                          onClick={() => openAdminSalesRepDeleteRoute(selectedSalesRep.id)}
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Delete
                         </button>
@@ -21817,7 +24132,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           const updates = { name: salesRepName.trim(), email: salesRepEmail.trim(), active: salesRepActive };
                           const repSnapshot = selectedSalesRep;
                           setUsers((value) => value.map((user) => user.id === selectedSalesRep.id ? { ...user, ...updates } : user));
-                          setModal(null);
+                          closeModal();
                           showToast(`${salesRepName.trim()} updated.`);
                           usersApi.update(selectedSalesRep.id, updates).catch((err: any) => {
                             setUsers((value) => value.map((user) => user.id === repSnapshot.id ? repSnapshot : user));
@@ -22201,7 +24516,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <button
                           type="button"
                           className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
-                          onClick={() => openDeleteUserModal(selectedUser)}
+                          onClick={() => openAdminUserDeleteRoute(selectedUser.id)}
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Delete
                         </button>
@@ -22334,11 +24649,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </select>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={Boolean(product.canBeCrossSell)} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, canBeCrossSell: e.target.checked } : p))} />
+                        <input type="checkbox" checked={Boolean(product.canBeCrossSell)} onChange={(e) => updateProductCrossSellAvailability(product.id, e.target.checked)} />
                         <span className="text-gray-700">Also available as cross-sell on other products</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={Boolean(product.canBeFreeGift)} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, canBeFreeGift: e.target.checked } : p))} />
+                        <input type="checkbox" checked={Boolean(product.canBeFreeGift)} onChange={(e) => updateProductFreeGiftAvailability(product.id, e.target.checked)} />
                         <span className="text-gray-700">Also available as free gift on other products</span>
                       </label>
                       <p className="text-[10px] text-gray-500 italic mt-1">A Main product can be ticked here too — it can be sold on its own AND offered as an add-on on another product's form.</p>
@@ -22416,7 +24731,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div key={cp.id} className={`flex flex-col gap-2 px-2.5 py-2 text-xs rounded-lg border ${on ? "bg-amber-50 border-amber-300" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
                                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                                   <label className="flex items-center gap-2 flex-1 cursor-pointer">
-                                    <input type="checkbox" checked={on} onChange={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, crossSellProductIds: on ? selected.filter((id) => id !== cp.id) : [...selected, cp.id] }))} />
+                                    <input type="checkbox" checked={on} onChange={() => toggleProductCrossSellTarget(product.id, cp.id, !on)} />
                                     <span className="font-medium">{cp.name}</span>
                                     <span className="text-gray-500">· standalone {formatProductMoney(standardPrice, currency)}</span>
                                   </label>
@@ -22425,25 +24740,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                       <span className="text-gray-600 font-semibold">Bundle price</span>
                                       <input className="w-24 border border-amber-300 rounded px-2 py-1 text-xs" inputMode="decimal" value={typeof override === "number" ? override : ""} placeholder={String(standardPrice)} onChange={(e) => {
                                         const val = e.target.value.trim();
-                                        setProducts((prev) => prev.map((p) => {
-                                          if (p.id !== product.id) return p;
-                                          const next = { ...(p.crossSellPriceOverrides ?? {}) };
-                                          if (val === "") {
-                                            delete next[cp.id];
-                                          } else {
-                                            next[cp.id] = Number(val) || 0;
-                                          }
-                                          return { ...p, crossSellPriceOverrides: next };
-                                        }));
+                                        setProductCrossSellPriceOverride(product.id, cp.id, val === "" ? undefined : Number(val) || 0);
                                       }} />
                                       {discounted && <span className="text-emerald-700 font-semibold">−{Math.round(((standardPrice - effectivePrice) / standardPrice) * 100)}%</span>}
                                       {typeof override === "number" && (
-                                        <button className="!min-h-0 text-gray-400 hover:text-gray-700" title="Clear override (use standalone price)" onClick={() => setProducts((prev) => prev.map((p) => {
-                                          if (p.id !== product.id) return p;
-                                          const next = { ...(p.crossSellPriceOverrides ?? {}) };
-                                          delete next[cp.id];
-                                          return { ...p, crossSellPriceOverrides: next };
-                                        }))}>×</button>
+                                        <button className="!min-h-0 text-gray-400 hover:text-gray-700" title="Clear override (use standalone price)" onClick={() => setProductCrossSellPriceOverride(product.id, cp.id, undefined)}>×</button>
                                       )}
                                     </div>
                                   )}
@@ -22457,34 +24758,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     </summary>
                                     <div className="mt-2 p-2 border border-amber-200 rounded-lg bg-white">
                                       <div className="flex items-center gap-1.5 mb-2">
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => {
-                                          if (p.id !== product.id) return p;
-                                          const next = { ...(p.crossSellStateRestrictions ?? {}) };
-                                          delete next[cp.id];
-                                          return { ...p, crossSellStateRestrictions: next };
-                                        }))}>All states</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, crossSellStateRestrictions: { ...(p.crossSellStateRestrictions ?? {}), [cp.id]: [...nigeriaStates] } }))}>Select all</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, crossSellStateRestrictions: { ...(p.crossSellStateRestrictions ?? {}), [cp.id]: [] } }))}>Clear</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, undefined)}>All states</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [...nigeriaStates])}>Select all</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [])}>Clear</button>
                                       </div>
                                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 max-h-44 overflow-y-auto">
                                         {nigeriaStates.map((state) => {
                                           const isOn = !limitedStates || stateRestriction.includes(state);
                                           return (
                                             <label key={state} className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer border ${isOn ? "bg-amber-50 border-amber-200" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
-                                              <input type="checkbox" checked={isOn} onChange={() => setProducts((prev) => prev.map((p) => {
-                                                if (p.id !== product.id) return p;
-                                                const cur = p.crossSellStateRestrictions?.[cp.id] ?? [];
-                                                const isAllMode = cur.length === 0;
-                                                let nextList: string[];
-                                                if (isAllMode) {
-                                                  nextList = nigeriaStates.filter((s) => s !== state);
-                                                } else if (cur.includes(state)) {
-                                                  nextList = cur.filter((s) => s !== state);
-                                                } else {
-                                                  nextList = [...cur, state];
-                                                }
-                                                return { ...p, crossSellStateRestrictions: { ...(p.crossSellStateRestrictions ?? {}), [cp.id]: nextList } };
-                                              }))} />
+                                              <input type="checkbox" checked={isOn} onChange={() => toggleProductCrossSellState(product.id, cp.id, state)} />
                                               <span>{state}</span>
                                             </label>
                                           );
@@ -22520,7 +24803,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             return (
                               <div key={cp.id} className={`flex flex-col gap-2 px-2.5 py-2 text-xs rounded-lg border ${on ? "bg-emerald-50 border-emerald-300" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                  <input type="checkbox" checked={on} onChange={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, freeGiftProductIds: on ? selected.filter((id) => id !== cp.id) : [...selected, cp.id] }))} />
+                                  <input type="checkbox" checked={on} onChange={() => toggleProductFreeGiftTarget(product.id, cp.id, !on)} />
                                   <span className="font-medium">{cp.name}</span>
                                 </label>
                                 {on && (
@@ -22532,34 +24815,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     </summary>
                                     <div className="mt-2 p-2 border border-emerald-200 rounded-lg bg-white">
                                       <div className="flex items-center gap-1.5 mb-2">
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => {
-                                          if (p.id !== product.id) return p;
-                                          const next = { ...(p.freeGiftStateRestrictions ?? {}) };
-                                          delete next[cp.id];
-                                          return { ...p, freeGiftStateRestrictions: next };
-                                        }))}>All states</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, freeGiftStateRestrictions: { ...(p.freeGiftStateRestrictions ?? {}), [cp.id]: [...nigeriaStates] } }))}>Select all</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProducts((prev) => prev.map((p) => p.id !== product.id ? p : { ...p, freeGiftStateRestrictions: { ...(p.freeGiftStateRestrictions ?? {}), [cp.id]: [] } }))}>Clear</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductFreeGiftStates(product.id, cp.id, undefined)}>All states</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductFreeGiftStates(product.id, cp.id, [...nigeriaStates])}>Select all</button>
+                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductFreeGiftStates(product.id, cp.id, [])}>Clear</button>
                                       </div>
                                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 max-h-44 overflow-y-auto">
                                         {nigeriaStates.map((state) => {
                                           const isOn = !limitedStates || stateRestriction.includes(state);
                                           return (
                                             <label key={state} className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer border ${isOn ? "bg-emerald-50 border-emerald-200" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
-                                              <input type="checkbox" checked={isOn} onChange={() => setProducts((prev) => prev.map((p) => {
-                                                if (p.id !== product.id) return p;
-                                                const cur = p.freeGiftStateRestrictions?.[cp.id] ?? [];
-                                                const isAllMode = cur.length === 0;
-                                                let nextList: string[];
-                                                if (isAllMode) {
-                                                  nextList = nigeriaStates.filter((s) => s !== state);
-                                                } else if (cur.includes(state)) {
-                                                  nextList = cur.filter((s) => s !== state);
-                                                } else {
-                                                  nextList = [...cur, state];
-                                                }
-                                                return { ...p, freeGiftStateRestrictions: { ...(p.freeGiftStateRestrictions ?? {}), [cp.id]: nextList } };
-                                              }))} />
+                                              <input type="checkbox" checked={isOn} onChange={() => toggleProductFreeGiftState(product.id, cp.id, state)} />
                                               <span>{state}</span>
                                             </label>
                                           );
@@ -22989,7 +25254,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         {linkedOrder && (
                           <button
                             className="!min-h-0 w-full flex items-start justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-left"
-                            onClick={() => { setSelectedOrderId(linkedOrder.id); setModal("orderDetails"); }}
+                            onClick={() => openAdminOrderDetail(linkedOrder.id)}
                           >
                             <div>
                               <p className="text-sm font-bold text-gray-900 m-0">Order {linkedOrder.id}</p>

@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { logger } from "./lib/logger.js";
 import { supabase } from "./lib/supabase.js";
 import { sendWeeklyReport } from "./lib/mailer.js";
+import { sendPushToRoles } from "./lib/push.js";
 
 import authRoutes     from "./routes/auth.js";
 import productRoutes  from "./routes/products.js";
@@ -178,10 +179,19 @@ cron.schedule("0 9 * * *", async () => {
         .limit(1);
       if (existing && existing.length > 0) continue;
 
+      const message = `Stale abandoned carts: ${count} cart${count === 1 ? "" : "s"} with no activity for 3+ days — follow up now.`;
       await supabase.from("system_notifications").insert({
         org_id:  orgId,
         type:    "info",
-        message: `Stale abandoned carts: ${count} cart${count === 1 ? "" : "s"} with no activity for 3+ days — follow up now.`
+        message
+      });
+      await sendPushToRoles(orgId, ["Owner", "Admin"], {
+        title: "Stale Abandoned Carts",
+        body: message,
+        url: "/dashboard/admin/abandoned-carts",
+        tag: `stale-carts-${orgId}`,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-72.png"
       });
     }
     logger.info("cron: stale carts done", { orgsNotified: Object.keys(countByOrg).length });
@@ -231,10 +241,19 @@ cron.schedule("5 9 * * *", async () => {
       if (existing && existing.length > 0) continue;
 
       const formatted = outstanding.toLocaleString("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 });
+      const message = `Remittance overdue: ${count} delivered order${count === 1 ? "" : "s"} unpaid for 7+ days — ${formatted} outstanding.`;
       await supabase.from("system_notifications").insert({
         org_id:  orgId,
         type:    "remittance_overdue",
-        message: `Remittance overdue: ${count} delivered order${count === 1 ? "" : "s"} unpaid for 7+ days — ${formatted} outstanding.`
+        message
+      });
+      await sendPushToRoles(orgId, ["Owner", "Admin"], {
+        title: "Remittance Overdue",
+        body: message,
+        url: "/dashboard/admin/finance-accounting",
+        tag: `remittance-overdue-${orgId}`,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-72.png"
       });
     }
     logger.info("cron: overdue remittances done", { orgsNotified: Object.keys(summaryByOrg).length });
