@@ -5073,6 +5073,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ];
     return all.filter(({ key }) => { if (seen.has(key)) return false; seen.add(key); return true; }).map(({ msg }) => msg);
   })();
+  const repOrderIds = new Set(repOrders.map((order) => order.id));
+  const repWorkspaceSystemNotifications = systemNotifications.filter((notification) => {
+    const directOrderId = notification.orderId;
+    if (directOrderId && repOrderIds.has(directOrderId)) {
+      return true;
+    }
+    const matchedOrderId = notification.link?.match(/\/orders\/([^/?#]+)/)?.[1];
+    return matchedOrderId ? repOrderIds.has(decodeURIComponent(matchedOrderId)) : false;
+  });
+  const repWorkspaceAlertCount = repNotifications.length + repWorkspaceSystemNotifications.filter((notification) => !notification.read).length;
   const repOrderDetail = trackedOrders.find((order) => order.id === repOrderDetailId);
   useEffect(() => {
     if (!repOrderDetailId || !repOrderDetail) {
@@ -12285,9 +12295,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               onClick={() => openRepTab(tab)}
             >
               {tab}
-              {tab === "Notifications" && repNotifications.length > 0 && (
+              {tab === "Notifications" && repWorkspaceAlertCount > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
-                  {repNotifications.length}
+                  {repWorkspaceAlertCount}
                 </span>
               )}
             </button>
@@ -12662,15 +12672,69 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <h2 className="text-base font-bold text-gray-900">Notifications</h2>
             </div>
             <div className="p-5 space-y-3">
-              {repNotifications.length === 0 ? (
+              {repWorkspaceSystemNotifications.length === 0 && repNotifications.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-12">No rep alerts right now.</p>
               ) : (
-                repNotifications.map((notification) => (
-                  <article key={notification} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                    <Bell className="w-4 h-4 text-[#1F8FE0] mt-0.5 shrink-0" />
-                    <span className="text-sm text-gray-700 font-medium">{notification}</span>
-                  </article>
-                ))
+                <>
+                  {repWorkspaceSystemNotifications.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-gray-400">Live system notifications</h3>
+                        {repWorkspaceSystemNotifications.some((notification) => !notification.read) && (
+                          <span className="text-[11px] font-semibold text-[#1F8FE0]">
+                            {repWorkspaceSystemNotifications.filter((notification) => !notification.read).length} unread
+                          </span>
+                        )}
+                      </div>
+                      {repWorkspaceSystemNotifications.map((notification) => {
+                        const title = notification.title
+                          ?? (notification.type === "order_delivered" ? "Order Delivered"
+                            : notification.type === "order_new" ? "New Order"
+                            : notification.type === "order_confirmed" ? "Order Confirmed"
+                            : notification.type === "order_cancelled" ? "Order Cancelled"
+                            : notification.type === "order_failed" ? "Order Failed"
+                            : notification.type === "order_rescheduled" ? "Order Rescheduled"
+                            : notification.type === "order_assigned" ? "Order Assigned"
+                            : "Notification");
+                        return (
+                          <article
+                            key={notification.id}
+                            className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${notification.read ? "bg-gray-50 border-gray-100 hover:bg-gray-100/70" : "bg-blue-50/40 border-blue-100 hover:bg-blue-50"}`}
+                            onClick={() => {
+                              if (!notification.read) {
+                                markOneNotificationRead(notification.id);
+                              }
+                              if (notification.link) {
+                                window.location.hash = notification.link.startsWith("#") ? notification.link : `#${notification.link}`;
+                              }
+                            }}
+                          >
+                            <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${notification.type === "order_delivered" ? "bg-emerald-100 text-emerald-600" : "bg-blue-100 text-[#1F8FE0]"}`}>
+                              <Bell className="w-4 h-4" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-gray-900 m-0">{title}</p>
+                              <p className="text-sm text-gray-600 mt-0.5">{notification.message}</p>
+                              <p className="text-[11px] text-gray-400 mt-1">{formatDateTime(notification.createdAt)}</p>
+                            </div>
+                            {!notification.read && <span className="mt-1.5 w-2 h-2 rounded-full bg-[#1F8FE0] shrink-0" />}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {repNotifications.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-gray-400">Rep reminders</h3>
+                      {repNotifications.map((notification) => (
+                        <article key={notification} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                          <Bell className="w-4 h-4 text-[#1F8FE0] mt-0.5 shrink-0" />
+                          <span className="text-sm text-gray-700 font-medium">{notification}</span>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </section>
