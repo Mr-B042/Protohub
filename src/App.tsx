@@ -212,6 +212,8 @@ type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
 type EmailProviderName = "resend" | "mailjet";
 type SettingsPanel = "workspace" | "email" | "sms";
+type DisplayDensity = "compact" | "comfortable";
+type RevenueCompareMode = "periods" | "statuses";
 type EmailTemplateConfig = { subject: string; body: string };
 type EmailSettingsState = {
   enabled: boolean;
@@ -914,6 +916,17 @@ const statusBadgeClasses = (status: string): string => {
     "Failed":     "bg-orange-50 text-orange-900 border-orange-300",
   };
   return map[status] ?? "bg-stone-50 text-stone-700 border-stone-300";
+};
+
+const revenueStatusColors: Record<Exclude<OrderStatus, "All Orders">, string> = {
+  "New": "#1F8FE0",
+  "Confirmed": "#14b8a6",
+  "In Process": "#f59e0b",
+  "Dispatched": "#8b5cf6",
+  "Delivered": "#22c55e",
+  "Cancelled": "#ef4444",
+  "Postponed": "#78716c",
+  "Failed": "#f97316"
 };
 
 const formatDateKey = (date: Date) => {
@@ -1933,6 +1946,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       raw === "Cumulative" || raw === "Daily" ? raw : null
     )
   );
+  const [revPerfCompareMode, setRevPerfCompareMode] = useState<RevenueCompareMode>(() =>
+    readPref<RevenueCompareMode>("protohub.dashboard.revPerfCompareMode", "periods", (raw) =>
+      raw === "periods" || raw === "statuses" ? raw : null
+    )
+  );
   const [revPerfGranularity, setRevPerfGranularity] = useState<"Day" | "Week" | "Month">(() =>
     readPref<"Day" | "Week" | "Month">("protohub.dashboard.revPerfGranularity", "Day", (raw) =>
       raw === "Day" || raw === "Week" || raw === "Month" ? raw : null
@@ -1950,6 +1968,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.conversion", String(conversion)); }, [conversion]);
   useEffect(() => { writePref("protohub.dashboard.currency", currency); }, [currency]);
   useEffect(() => { writePref("protohub.dashboard.revPerfMode", revPerfMode); }, [revPerfMode]);
+  useEffect(() => { writePref("protohub.dashboard.revPerfCompareMode", revPerfCompareMode); }, [revPerfCompareMode]);
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
@@ -2814,6 +2833,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (stored === "light" || stored === "dark") return stored;
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
+  const [density, setDensity] = useState<DisplayDensity>(() => {
+    if (typeof window === "undefined") return "comfortable";
+    const stored = window.localStorage.getItem("protohub.density");
+    return stored === "compact" ? "compact" : "comfortable";
+  });
   useEffect(() => {
     if (typeof document === "undefined") return;
     const root = document.documentElement;
@@ -2821,6 +2845,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     root.dataset.theme = theme;
     try { window.localStorage.setItem("protohub.theme", theme); } catch (_) { /* private mode */ }
   }, [theme]);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.dataset.density = density;
+    try { window.localStorage.setItem("protohub.density", density); } catch (_) { /* private mode */ }
+  }, [density]);
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState("");
   const [notificationsRead, setNotificationsRead] = useState(false);
@@ -2984,6 +3014,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesStatus = userStatus === "All Status" || (userStatus === "Active" ? user.active : !user.active);
     return matchesSearch && matchesRole && matchesStatus;
   });
+  const USER_PAGE = 25;
+  const filteredUsersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / USER_PAGE));
+  const clampedUserPage = Math.min(userPage, filteredUsersTotalPages);
+  const pagedFilteredUsers = filteredUsers.slice((clampedUserPage - 1) * USER_PAGE, clampedUserPage * USER_PAGE);
   const activeUserCount = users.filter((user) => user.active).length;
   const adminUserCount = users.filter((user) => user.role === "Admin" || user.role === "Owner").length;
   const managerUserCount = users.filter((user) => user.role === "Manager").length;
@@ -3680,6 +3714,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, Array.from({ length: 24 }, () => 0));
   // Revenue Performance chart — date-axis with status / granularity / mode filters.
   const dashboardCurrentRange = explicitPeriodRange(period, dateRange, false);
+  // The chart should be filtered by the date it is actually plotting:
+  // delivered date for delivered revenue, or created date when no delivered
+  // timestamp exists yet. Filtering by created date first causes delivered
+  // revenue to show in the wrong period.
+  const revenueDateKey = (o: TrackedOrder) => orderDeliveredKey(o) || orderCreatedKey(o);
   const enumerateDays = (start: string | undefined, count: number): string[] => {
     if (!start) return [];
     const out: string[] = [];
@@ -3703,11 +3742,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardChartUsesDays = dashboardRangeDays > 1;
 
   const matchesRevPerfStatus = (o: TrackedOrder) => revPerfStatuses.has(o.status ?? "New");
-  const revPerfCurrent = dashboardOrders.filter(matchesRevPerfStatus);
-  const revPerfPrevious = dashboardPreviousOrders.filter(matchesRevPerfStatus);
-
-  // For non-delivered statuses there's no deliveredDate — fall back to creation key.
-  const revenueDateKey = (o: TrackedOrder) => orderDeliveredKey(o) || orderCreatedKey(o);
+  const revPerfCurrent = trackedOrders
+    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
+    .filter(matchesRevPerfStatus)
+    .filter((order) => isInExplicitRange(revenueDateKey(order), dashboardCurrentRange));
+  const revPerfPrevious = trackedOrders
+    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
+    .filter(matchesRevPerfStatus)
+    .filter((order) => isInExplicitRange(revenueDateKey(order), dashboardPreviousRange));
+  const selectedRevPerfStatuses = allOrderStatuses.filter((status) => revPerfStatuses.has(status));
 
   // Bucket key: same calendar day, ISO week (Sun-anchored), or month.
   const bucketKeyFor = (dateKey: string): string => {
@@ -3758,43 +3801,102 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   let currentRevenueRunningTotal = 0;
   let previousRevenueRunningTotal = 0;
-  let dashboardRevenueChartData: Array<{ label: string; current: number; previous: number }>;
+  let dashboardRevenueChartData: Array<Record<string, string | number>>;
+  let revPerfSeries: Array<{ key: string; label: string; color: string; dash?: string }>;
 
-  if (dashboardChartUsesDays) {
-    const currentDays  = enumerateDays(dashboardCurrentRange.start, dashboardRangeDays);
-    const previousDays = enumerateDays(dashboardPreviousRange.start, dashboardRangeDays);
-    const currentBuckets  = buildBucketKeys(currentDays);
-    const previousBuckets = buildBucketKeys(previousDays);
-    const currentByBucket  = sumByBucket(revPerfCurrent, currentBuckets);
-    const previousByBucket = sumByBucket(revPerfPrevious, previousBuckets);
-    const length = Math.max(currentBuckets.length, previousBuckets.length);
-    dashboardRevenueChartData = Array.from({ length }, (_, i) => {
-      const cur  = currentByBucket[i]  ?? 0;
-      const prev = previousByBucket[i] ?? 0;
-      currentRevenueRunningTotal  += cur;
-      previousRevenueRunningTotal += prev;
-      const labelKey = currentBuckets[i] ?? previousBuckets[i] ?? "";
-      return revPerfMode === "Cumulative"
-        ? { label: bucketLabel(labelKey), current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
-        : { label: bucketLabel(labelKey), current: cur, previous: prev };
-    });
+  if (revPerfCompareMode === "statuses") {
+    revPerfSeries = selectedRevPerfStatuses.map((status) => ({
+      key: `status_${slugify(status)}`,
+      label: status,
+      color: revenueStatusColors[status]
+    }));
+
+    if (dashboardChartUsesDays) {
+      const currentDays = enumerateDays(dashboardCurrentRange.start, dashboardRangeDays);
+      const currentBuckets = buildBucketKeys(currentDays);
+      const bucketValuesByStatus = new Map<string, number[]>();
+      selectedRevPerfStatuses.forEach((status) => {
+        bucketValuesByStatus.set(
+          status,
+          sumByBucket(revPerfCurrent.filter((order) => (order.status ?? "New") === status), currentBuckets)
+        );
+      });
+      const runningTotalsByStatus = new Map<string, number>(selectedRevPerfStatuses.map((status) => [status, 0]));
+      dashboardRevenueChartData = currentBuckets.map((bucket, i) => {
+        const row: Record<string, string | number> = { label: bucketLabel(bucket) };
+        selectedRevPerfStatuses.forEach((status) => {
+          const bucketValue = bucketValuesByStatus.get(status)?.[i] ?? 0;
+          const running = (runningTotalsByStatus.get(status) ?? 0) + bucketValue;
+          runningTotalsByStatus.set(status, running);
+          row[`status_${slugify(status)}`] = revPerfMode === "Cumulative" ? running : bucketValue;
+        });
+        return row;
+      });
+    } else {
+      const hourValuesByStatus = new Map<string, number[]>();
+      selectedRevPerfStatuses.forEach((status) => {
+        hourValuesByStatus.set(
+          status,
+          revenueByHour(revPerfCurrent.filter((order) => (order.status ?? "New") === status))
+        );
+      });
+      const runningTotalsByStatus = new Map<string, number>(selectedRevPerfStatuses.map((status) => [status, 0]));
+      dashboardRevenueChartData = revenueData.map((point, index) => {
+        const row: Record<string, string | number> = { label: point.hour };
+        selectedRevPerfStatuses.forEach((status) => {
+          const hourValue = hourValuesByStatus.get(status)?.[index] ?? 0;
+          const running = (runningTotalsByStatus.get(status) ?? 0) + hourValue;
+          runningTotalsByStatus.set(status, running);
+          row[`status_${slugify(status)}`] = revPerfMode === "Cumulative" ? running : hourValue;
+        });
+        return row;
+      });
+    }
   } else {
-    const dashboardCurrentRevenueByHour  = revenueByHour(revPerfCurrent.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
-    const dashboardPreviousRevenueByHour = revenueByHour(revPerfPrevious.filter(o => (o.status ?? "New") === "Delivered" || revenueDateKey(o)));
-    dashboardRevenueChartData = revenueData.map((point, index) => {
-      const hour = index;
-      const cur  = dashboardCurrentRevenueByHour[hour]  ?? 0;
-      const prev = dashboardPreviousRevenueByHour[hour] ?? 0;
-      currentRevenueRunningTotal  += cur;
-      previousRevenueRunningTotal += prev;
-      return revPerfMode === "Cumulative"
-        ? { label: point.hour, current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
-        : { label: point.hour, current: cur, previous: prev };
-    });
+    revPerfSeries = [
+      { key: "current", label: "Current", color: "#1F8FE0" },
+      ...(revPerfShowPrevious ? [{ key: "previous", label: "Previous", color: "#a78bfa", dash: "4 3" }] : [])
+    ];
+    if (dashboardChartUsesDays) {
+      const currentDays  = enumerateDays(dashboardCurrentRange.start, dashboardRangeDays);
+      const previousDays = enumerateDays(dashboardPreviousRange.start, dashboardRangeDays);
+      const currentBuckets  = buildBucketKeys(currentDays);
+      const previousBuckets = buildBucketKeys(previousDays);
+      const currentByBucket  = sumByBucket(revPerfCurrent, currentBuckets);
+      const previousByBucket = sumByBucket(revPerfPrevious, previousBuckets);
+      const length = Math.max(currentBuckets.length, previousBuckets.length);
+      dashboardRevenueChartData = Array.from({ length }, (_, i) => {
+        const cur  = currentByBucket[i]  ?? 0;
+        const prev = previousByBucket[i] ?? 0;
+        currentRevenueRunningTotal  += cur;
+        previousRevenueRunningTotal += prev;
+        const labelKey = currentBuckets[i] ?? previousBuckets[i] ?? "";
+        return revPerfMode === "Cumulative"
+          ? { label: bucketLabel(labelKey), current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
+          : { label: bucketLabel(labelKey), current: cur, previous: prev };
+      });
+    } else {
+      const dashboardCurrentRevenueByHour  = revenueByHour(revPerfCurrent);
+      const dashboardPreviousRevenueByHour = revenueByHour(revPerfPrevious);
+      dashboardRevenueChartData = revenueData.map((point, index) => {
+        const hour = index;
+        const cur  = dashboardCurrentRevenueByHour[hour]  ?? 0;
+        const prev = dashboardPreviousRevenueByHour[hour] ?? 0;
+        currentRevenueRunningTotal  += cur;
+        previousRevenueRunningTotal += prev;
+        return revPerfMode === "Cumulative"
+          ? { label: point.hour, current: currentRevenueRunningTotal, previous: previousRevenueRunningTotal }
+          : { label: point.hour, current: cur, previous: prev };
+      });
+    }
   }
   const dashboardRevenueChartMax = Math.max(
     10,
-    ...dashboardRevenueChartData.map(d => Math.max(d.current, revPerfShowPrevious ? d.previous : 0))
+    ...dashboardRevenueChartData.map((row) =>
+      Math.max(
+        ...revPerfSeries.map((series) => Number(row[series.key] ?? 0))
+      )
+    )
   );
   const ordersDeliveryRateExact = periodOrders.length === 0 ? 0 : (periodDeliveredOrders.length / periodOrders.length) * 100;
   const ordersDeliveryRate = Math.round(ordersDeliveryRateExact);
@@ -12306,7 +12408,62 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const renderRepOrderTable = (orders: TrackedOrder[], emptyLabel = "No orders found") => (
-    <div className="overflow-x-auto">
+    <>
+      {orders.length === 0 ? (
+        <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">{emptyLabel}</div>
+      ) : (
+        <div className="sm:hidden divide-y divide-gray-100">
+          {orders.map((order) => {
+            const status = order.status ?? "New";
+            return (
+              <article key={order.id} className="px-4 py-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold text-[#1F8FE0]">{order.id}</h3>
+                    <p className="text-sm font-semibold text-gray-900 truncate">{order.customer}</p>
+                    <p className="text-xs text-gray-500">{order.phone}</p>
+                  </div>
+                  <span className={`status-pill shrink-0 status-${slugify(status)}`}>{status}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Source</p>
+                    <p className="mt-1 font-semibold text-gray-800">{order.source ?? orderSourceFromUtm(order.utmSource)}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Response</p>
+                    <p className="mt-1 font-semibold text-gray-800">{responseTimeForOrder(order)}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Location</p>
+                    <p className="mt-1 font-semibold text-gray-800">{order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Created</p>
+                    <p className="mt-1 font-semibold text-gray-800">{formatOrderCreatedAt(order)}</p>
+                    <p className="mt-1 text-[11px] text-gray-500 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    onClick={() => openWhatsAppForOrder(order)}
+                  >
+                    <WhatsAppIcon className="w-4 h-4 text-[#25D366]" /> WhatsApp
+                  </button>
+                  <button
+                    className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    onClick={() => openRepOrderDetail(order)}
+                  >
+                    <Eye className="w-4 h-4" /> Details
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <div className="hidden sm:block overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -12369,11 +12526,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 
   const renderRepOrderDetail = (order: TrackedOrder) => (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-6 sm:pb-8 lg:pb-12">
       {/* Header & Breadcrumbs */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -12387,17 +12545,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {order.phone} · {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")} · {repScopeDescription}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
+        <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
             <Repeat2 className="w-4 h-4" /> Change Status
           </button>
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(order)}>
             <BookOpen className="w-4 h-4" /> Print Invoice
           </button>
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
             <Download className="w-4 h-4" /> Download Invoice
           </button>
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
             <Pencil className="w-4 h-4" /> Edit Order
           </button>
         </div>
@@ -12441,7 +12599,75 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="px-5 py-4 border-b border-gray-100">
             <h2 className="text-base font-bold text-gray-900">Order Items</h2>
           </div>
-          <div className="overflow-x-auto">
+          <div className="sm:hidden divide-y divide-gray-100">
+            <article className="px-4 py-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{order.productName}</p>
+                <p className="text-xs text-gray-400">{order.packageName}</p>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                  <p className="mt-1 font-semibold text-gray-800">{quantityForOrder(order)}</p>
+                </div>
+                <div>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
+                  <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</p>
+                </div>
+                <div>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                  <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</p>
+                </div>
+              </div>
+            </article>
+            {(order.crossSellLines ?? []).map((line) => (
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Cross-sell</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
+                  </div>
+                  <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
+                    <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                    <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</p>
+                  </div>
+                </div>
+              </article>
+            ))}
+            {(order.freeGiftLines ?? []).map((line) => (
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Free Gift</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
+                  </div>
+                  <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                    <p className="mt-1 font-semibold text-gray-900">FREE</p>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -12486,9 +12712,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </tbody>
             </table>
           </div>
-          <div className="px-5 py-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
-            <button className="!min-h-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => openCrossSellModal(order)}>+ Cross-sell / Upsell Item</button>
-            <button className="!min-h-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50" onClick={() => openFreeGiftModal(order)}>+ Free Gift</button>
+          <div className="px-5 py-3 border-t border-gray-100 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
+            <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-3 py-2 sm:py-1.5 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => openCrossSellModal(order)}>+ Cross-sell / Upsell Item</button>
+            <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-3 py-2 sm:py-1.5 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50" onClick={() => openFreeGiftModal(order)}>+ Free Gift</button>
           </div>
         </article>
       </div>
@@ -12560,10 +12786,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <h2 className="text-base font-bold text-gray-900">Status Workflow</h2>
           <span className={`status-pill status-${slugify(order.status ?? "New")}`}>{order.status ?? "New"}</span>
         </div>
-        <div className="p-6">
-          <div className="flex items-center justify-between relative">
+          <div className="p-6">
+          <div className="grid grid-cols-2 sm:flex sm:items-center sm:justify-between relative gap-x-3 gap-y-4">
             {/* Background Line */}
-            <div className="absolute top-5 left-8 right-8 h-0.5 bg-gray-100 -z-0"></div>
+            <div className="hidden sm:block absolute top-5 left-8 right-8 h-0.5 bg-gray-100 -z-0"></div>
             
             {(["Confirmed", "In Process", "Dispatched", "Delivered"] as Exclude<OrderStatus, "All Orders">[]).map((status) => {
               const isActive = (order.status ?? "New") === status;
@@ -12572,7 +12798,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const thisIdx = statusOrder.indexOf(status);
               const isCompleted = currentIdx > thisIdx;
               return (
-                <article key={status} className={`flex flex-col items-center gap-2 relative z-10 w-1/4 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`}>
+                <article key={status} className={`flex flex-col items-center gap-2 relative z-10 w-full sm:w-1/4 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`}>
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isActive ? "bg-blue-50 text-[#1F8FE0] ring-4 ring-blue-50" : isCompleted ? "bg-green-50 text-green-500" : "bg-white border-2 border-gray-100 text-gray-300"}`}>
                     {isCompleted ? <BadgeCheck className="w-6 h-6" /> : <CheckCircle2 className="w-5 h-5" />}
                   </div>
@@ -12598,7 +12824,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="p-5 space-y-5">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Assign Agent</label>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <select 
                   className="flex-1 h-10 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                   value={createOrderAgentId} 
@@ -12608,7 +12834,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option value="">Unassigned</option>
                   {agentsForOrder(order).map((agent) => { const rec = order.productId ? agentStock.find((s) => s.agentId === agent.id && s.productId === order.productId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = quantityForOrder(order); const stockTag = !order.productId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
                 </select>
-                <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={() => saveOrderAgent(order)}>Assign Agent</button>
+                <button className="!min-h-0 w-full sm:w-auto px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={() => saveOrderAgent(order)}>Assign Agent</button>
               </div>
             </div>
             <div className="space-y-2">
@@ -12628,7 +12854,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   onChange={(event) => setRepScheduleTime(event.target.value)}
                   aria-label="Schedule delivery time"
                 />
-                <button className="px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors shrink-0 inline-flex items-center gap-2" onClick={saveRepScheduleDate}>
+                <button className="!min-h-0 w-full sm:w-auto px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors shrink-0 inline-flex items-center justify-center gap-2" onClick={saveRepScheduleDate}>
                   <CalendarClock className="w-4 h-4" /> Schedule
                 </button>
               </div>
@@ -12772,7 +12998,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
 
           <div className="flex items-center justify-end pt-2 border-t border-gray-100">
-            <button onClick={() => saveRepDeliveryDetails(order)} className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-md text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm">
+            <button onClick={() => saveRepDeliveryDetails(order)} className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-md text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm">
               <HandCoins className="w-4 h-4" /> Save Delivery & Remittance
             </button>
           </div>
@@ -13012,11 +13238,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
           
           {(currentRole === "Owner" || currentRole === "Admin") && (
-            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col gap-2 min-w-[280px]">
-              <div className="flex items-center justify-between gap-4">
+            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col gap-2 min-w-0 w-full lg:w-auto lg:min-w-[280px]">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">View as</span>
                 <select
-                  className="h-8 px-2 border border-gray-200 rounded text-xs font-medium bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                  className="h-9 w-full sm:w-auto px-2 border border-gray-200 rounded text-xs font-medium bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                   value={repConsoleRepId}
                   onChange={(event) => handleRepConsoleScopeChange(event.target.value)}
                 >
@@ -13032,11 +13258,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           )}
         </header>
 
-        <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
+        <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
           {repConsoleTabs.map((tab) => (
             <button
               key={tab}
-              className={`relative px-4 py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap ${repConsoleTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
+              className={`relative px-4 py-2 sm:py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap text-center ${repConsoleTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
               onClick={() => openRepTab(tab)}
             >
               {tab}
@@ -13087,11 +13313,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Assigned Orders</h2>
-                <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg">
+                <div className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-50 p-1 rounded-lg w-full sm:w-auto">
                   {repOrderStatusTabs.map((tab) => (
                     <button 
                       key={tab} 
-                      className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${repOrderStatusTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`} 
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-center ${repOrderStatusTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`} 
                       onClick={() => setRepOrderStatusTab(tab)}
                     >
                       {tab}
@@ -13129,8 +13355,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="space-y-6">
           {renderRepWorkspaceFilters()}
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-gray-200">
-              <label className="relative flex items-center flex-1 min-w-[200px]">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-5 py-4 border-b border-gray-200">
+              <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[200px]">
                 <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                 <input 
                   className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
@@ -13140,7 +13366,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 />
               </label>
               <select 
-                className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                className="h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                 value={repProductSort} 
                 onChange={(event) => setRepProductSort(event.target.value)} 
                 aria-label="Sort products"
@@ -13182,23 +13408,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <h2 className="text-base font-bold text-gray-900">Orders</h2>
                 <p className="text-xs text-gray-500 font-medium">Dedicated full order list for {repScopeName}.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={openRepCreateOrderRoute}>
+              <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+                <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={openRepCreateOrderRoute}>
                   <Plus className="w-4 h-4" /> Create Order
                 </button>
-                <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => showToast("Use the status tabs to filter rep orders.")}>
+                <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => showToast("Use the status tabs to filter rep orders.")}>
                   <Filter className="w-4 h-4" /> Filter
                 </button>
-                <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportRepOrdersCsv}>
+                <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportRepOrdersCsv}>
                   <Download className="w-4 h-4" /> Export
                 </button>
               </div>
             </div>
-            <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-1 overflow-x-auto no-scrollbar">
+            <div className="px-5 py-3 border-b border-gray-100 grid grid-cols-2 sm:flex items-center gap-1 overflow-x-auto no-scrollbar">
               {repOrderStatusTabs.map((tab) => (
                 <button 
                   key={tab} 
-                  className={`px-3 py-1 text-xs font-bold rounded-full transition-colors whitespace-nowrap ${repOrderStatusTab === tab ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`} 
+                  className={`px-3 py-1.5 text-xs font-bold rounded-full transition-colors whitespace-nowrap text-center ${repOrderStatusTab === tab ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`} 
                   onClick={() => setRepOrderStatusTab(tab)}
                 >
                   {tab}
@@ -13215,30 +13441,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           {renderRepWorkspaceFilters()}
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-4 py-4 border-b border-gray-200 space-y-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
-                <div className="flex items-center gap-1">
-                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-auto">
                     {(["Today", "Tomorrow", "Day After"] as ScheduleRange[]).map((range) => (
                       <button key={range}
-                        className={`px-2.5 py-1 text-xs font-bold rounded-md transition-colors whitespace-nowrap ${repScheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                        className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-colors whitespace-nowrap text-center ${repScheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
                         onClick={() => setRepScheduleRange(range)}>
                         {range}
                       </button>
                     ))}
                   </div>
-                  <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
-                    onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <button className="!min-h-0 px-2 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
-                    onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setRepScheduleWeekStart(formatDateKey(d)); }}>
-                    This Week
-                  </button>
-                  <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
-                    onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="grid grid-cols-3 sm:flex items-center gap-1 w-full sm:w-auto">
+                    <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                      onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                      <ChevronLeft className="w-3.5 h-3.5 mx-auto" />
+                    </button>
+                    <button className="!min-h-0 px-2 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+                      onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                      This Week
+                    </button>
+                    <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
+                      onClick={() => { const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setRepScheduleWeekStart(formatDateKey(d)); }}>
+                      <ChevronRight className="w-3.5 h-3.5 mx-auto" />
+                    </button>
+                  </div>
                 </div>
               </div>
               {/* Day strip */}
@@ -13272,8 +13500,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="space-y-6">
           {renderRepWorkspaceFilters()}
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
-              <label className="relative flex items-center flex-1 max-w-md">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 border-b border-gray-200">
+              <label className="relative flex items-center w-full sm:flex-1 sm:max-w-md">
                 <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                 <input
                   className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
@@ -13283,7 +13511,51 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 />
               </label>
             </div>
-            <div className="overflow-x-auto">
+            {filteredRepCarts.length === 0 ? (
+              <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium">No assigned carts found</div>
+            ) : (
+              <div className="sm:hidden divide-y divide-gray-100">
+                {filteredRepCarts.map((cart) => (
+                  <article key={cart.id} className="px-4 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-gray-900">{cart.id}</h3>
+                        <p className="text-sm font-semibold text-gray-900 truncate">{cart.customer}</p>
+                        <p className="text-xs text-gray-500">{cart.phone} · {cart.city ?? "-"}</p>
+                      </div>
+                      <select
+                        className="h-8 max-w-[140px] px-2 border border-gray-200 rounded text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] disabled:opacity-50 disabled:cursor-not-allowed"
+                        value={cart.status}
+                        disabled={cart.status === "Converted"}
+                        onChange={(event) => { updateCartStatus(cart.id, event.target.value as Exclude<CartStatus, "All statuses">); showToast(`${cart.id} marked ${event.target.value}.`); }}
+                      >
+                        {cartStatuses.filter((status) => status !== "All statuses").map((status) => <option key={status}>{status}</option>)}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="col-span-2">
+                        <p className="font-semibold uppercase tracking-wide text-gray-400">Product</p>
+                        <p className="mt-1 font-semibold text-gray-800">{cart.productName}</p>
+                        <p className="text-[11px] text-gray-500">{cart.packageName}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold uppercase tracking-wide text-gray-400">Last Activity</p>
+                        <p className="mt-1 font-semibold text-gray-800">{formatMoment(cart.lastActivity)}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openRepCartAssignRoute(cart.id)}>
+                        <UserPlus className="w-3 h-3" /> Assign
+                      </button>
+                      <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepCartConvertRoute(cart.id)}>
+                        <ShoppingCart className="w-3 h-3" /> Convert
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -13348,7 +13620,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="px-5 py-4 border-b border-gray-200">
               <h2 className="text-base font-bold text-gray-900">Customers</h2>
             </div>
-            <div className="overflow-x-auto">
+            {repCustomerRows.length === 0 ? (
+              <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium">No customers yet</div>
+            ) : (
+              <div className="sm:hidden divide-y divide-gray-100">
+                {repCustomerRows.map((customer) => (
+                  <article key={customer.id} className="px-4 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900">{customer.name}</h3>
+                        <p className="text-xs text-gray-500">{customer.phone}</p>
+                      </div>
+                      <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(customer.totalSpend)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="font-semibold uppercase tracking-wide text-gray-400">Total Orders</p>
+                        <p className="mt-1 font-semibold text-gray-800">{customer.orders}</p>
+                      </div>
+                      <div>
+                        <p className="font-semibold uppercase tracking-wide text-gray-400">Last Order</p>
+                        <p className="mt-1 font-semibold text-gray-800">{customer.lastOrder}</p>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -13383,7 +13682,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="px-5 py-4 border-b border-gray-200">
               <h2 className="text-base font-bold text-gray-900">Leaderboard</h2>
             </div>
-            <div className="overflow-x-auto">
+            <div className="sm:hidden divide-y divide-gray-100">
+              {repLeaderboardRows.map((row, index) => (
+                <article key={row.user.id} className={`px-4 py-4 space-y-3 ${row.user.id === selectedRepUser?.id ? "bg-blue-50/50" : ""}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold text-gray-400">#{index + 1}</p>
+                      <h3 className="text-sm font-bold text-gray-900">{row.user.name}</h3>
+                      <p className="text-xs text-gray-500 break-all">{row.user.email}</p>
+                    </div>
+                    <span className="text-sm font-bold text-green-600">{formatMoney(row.revenue)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <p className="font-semibold uppercase tracking-wide text-gray-400">Delivered</p>
+                      <p className="mt-1 font-semibold text-gray-800">{row.delivered}</p>
+                    </div>
+                    <div>
+                      <p className="font-semibold uppercase tracking-wide text-gray-400">Conversion</p>
+                      <p className="mt-1 font-semibold text-[#1F8FE0]">{row.conversion}%</p>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -13514,12 +13837,131 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm text-gray-500 font-medium italic">Owner full-access mode is active. Choose a sales rep to edit an individual rep profile.</p>
               )}
               {selectedRepUser && (
-                <button className="inline-flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm" onClick={() => { setSelectedSalesRepId(selectedRepUser.id); setSalesRepName(selectedRepUser.name); setSalesRepEmail(selectedRepUser.email); setSalesRepActive(selectedRepUser.active); setModal("editSalesRep"); }}>
+                <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm" onClick={() => { setSelectedSalesRepId(selectedRepUser.id); setSalesRepName(selectedRepUser.name); setSalesRepEmail(selectedRepUser.email); setSalesRepActive(selectedRepUser.active); setModal("editSalesRep"); }}>
                   <Pencil className="w-4 h-4" /> Edit Profile
                 </button>
               )}
             </div>
           </section>
+        )}
+      </div>
+    );
+  };
+
+  const renderUserPermissionsPanel = (user: ManagedUser) => {
+    const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+    const isOwner = user.role === "Owner";
+    const permGroups = ["Orders", "Inventory", "Operations", "Finance", "Admin"] as const;
+
+    return (
+      <div className="px-4 sm:px-6 py-4 bg-blue-50/30">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{user.name} — Permissions</p>
+            {isOwner && <p className="text-xs text-gray-500 mt-0.5">Owner always has full access. Permissions cannot be changed.</p>}
+            {!isOwner && <p className="text-xs text-gray-500 mt-0.5">Toggle individual permissions for this user.</p>}
+          </div>
+          {!isOwner && (
+            <button className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline" onClick={() => {
+              const prevUsers = users;
+              const defaultPerms = defaultPermsByRole[user.role] ?? [];
+              setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
+              teamApi.update(user.id, { permissions: defaultPerms }).catch((err: any) => {
+                setUsers(prevUsers);
+                showToast(`Failed to reset permissions: ${err.message}`);
+              });
+            }}>Reset to defaults</button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {permGroups.map((group) => {
+            const groupPerms = permissionDefs.filter((p) => p.group === group);
+            if (groupPerms.length === 0) return null;
+            return (
+              <div key={group}>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">{group}</p>
+                <div className="flex flex-col gap-1.5">
+                  {groupPerms.map((perm) => {
+                    const hasIt = isOwner || userPerms.includes(perm.key);
+                    return (
+                      <label key={perm.key} className={`flex items-center gap-2.5 cursor-pointer ${isOwner ? "opacity-60 cursor-not-allowed" : ""}`}>
+                        <button
+                          type="button"
+                          className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${hasIt ? "bg-[#1F8FE0]" : "bg-gray-200"} ${isOwner ? "pointer-events-none" : ""}`}
+                          onClick={() => !isOwner && toggleUserPermission(user.id, perm.key)}
+                        >
+                          <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${hasIt ? "left-4" : "left-0.5"}`} />
+                        </button>
+                        <span className="text-xs text-gray-700">{perm.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {!isOwner && currentRole === "Owner" && (
+          <div className="mt-5 pt-4 border-t border-blue-100">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Page access</p>
+                <p className="text-xs text-gray-500 mt-0.5">Grant <strong>{user.name}</strong> access to pages outside their <strong>{user.role}</strong> role. The role's default pages stay enabled.</p>
+              </div>
+              <button
+                className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
+                onClick={() => {
+                  const prevUsers = users;
+                  setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: [] } : u));
+                  teamApi.update(user.id, { extra_pages: [] }).catch((err: any) => {
+                    setUsers(prevUsers);
+                    showToast(`Failed to reset page access: ${err.message}`);
+                  });
+                }}
+              >Reset extras</button>
+            </div>
+            {(() => {
+              const roleDefaults = roleAllowedPages[user.role] ?? [];
+              const userExtras = user.extraPages ?? [];
+              const allPages = roleAllowedPages["Owner"] ?? [];
+              const candidates = allPages.filter((p) => !roleDefaults.includes(p));
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {candidates.map((page) => {
+                    const granted = userExtras.includes(page);
+                    return (
+                      <label key={page} className="flex items-center gap-2.5 cursor-pointer p-2 rounded-md hover:bg-blue-100/30">
+                        <button
+                          type="button"
+                          className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${granted ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                          onClick={() => {
+                            const prevUsers = users;
+                            const nextExtras = (() => {
+                              const s = new Set(user.extraPages ?? []);
+                              if (granted) s.delete(page);
+                              else s.add(page);
+                              return Array.from(s) as ActivePage[];
+                            })();
+                            setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: nextExtras } : u));
+                            teamApi.update(user.id, { extra_pages: nextExtras }).catch((err: any) => {
+                              setUsers(prevUsers);
+                              showToast(`Failed to update page access: ${err.message}`);
+                            });
+                          }}
+                        >
+                          <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${granted ? "left-4" : "left-0.5"}`} />
+                        </button>
+                        <span className="text-xs text-gray-700">{page}</span>
+                      </label>
+                    );
+                  })}
+                  {candidates.length === 0 && <p className="text-xs text-gray-400 italic">No additional pages to grant.</p>}
+                </div>
+              );
+            })()}
+            <p className="text-[11px] text-gray-400 mt-3">Default pages for {user.role}: {(roleAllowedPages[user.role] ?? []).join(", ") || "none"}.</p>
+          </div>
         )}
       </div>
     );
@@ -14135,7 +14577,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
 
   return (
-    <div className={`app-shell !flex h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme}>
+    <div className={`app-shell !flex min-h-[100dvh] lg:h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
       {isSpying && spiedUser && (
         <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 px-4 py-2 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
           <Eye className="w-4 h-4" />
@@ -14386,8 +14828,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto p-4 pt-2 lg:pt-4 lg:p-8">
-          <div className="flex flex-col gap-4 sm:gap-6 pb-8">
+        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-2 sm:pb-3 lg:p-8">
+          <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 px-5 py-4 bg-gradient-to-r from-blue-50 to-transparent rounded-2xl border border-blue-100">
@@ -14679,19 +15121,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div>
                       <h2 className="text-base font-bold text-gray-900 m-0">Revenue Performance</h2>
                       <p className="text-xs text-gray-400 m-0">
-                        {revPerfMode === "Cumulative" ? "Cumulative" : "Per-bucket"} · {effectiveGranularity} ·{" "}
+                        {revPerfCompareMode === "periods" ? "Current vs previous" : "Status breakdown"} · {revPerfMode === "Cumulative" ? "Cumulative" : "Per-bucket"} · {effectiveGranularity} ·{" "}
                         {revPerfStatuses.size === 1 ? Array.from(revPerfStatuses)[0] : `${revPerfStatuses.size} statuses`}
                       </p>
                     </div>
-                    <div className="flex items-center gap-4 text-xs font-semibold text-gray-500">
-                      <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#1F8FE0]" /> Current</span>
-                      {revPerfShowPrevious && (
-                        <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-400" /> Previous</span>
-                      )}
+                    <div className="flex items-center gap-x-4 gap-y-2 flex-wrap text-xs font-semibold text-gray-500">
+                      {revPerfSeries.map((series) => (
+                        <span key={series.key} className="flex items-center gap-1.5">
+                          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: series.color }} />
+                          {series.label}
+                        </span>
+                      ))}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {/* Compare mode */}
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {([
+                        { id: "periods", label: "Compare Periods" },
+                        { id: "statuses", label: "Break Down by Status" }
+                      ] as const).map((option) => (
+                        <button
+                          key={option.id}
+                          onClick={() => setRevPerfCompareMode(option.id)}
+                          className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${revPerfCompareMode === option.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                     {/* Mode */}
                     <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
                       {(["Cumulative", "Daily"] as const).map((m) => (
@@ -14726,7 +15185,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         Statuses ({revPerfStatuses.size}) <ChevronDown className="w-3 h-3" />
                       </button>
                       {revPerfStatusOpen && (
-                        <div className="absolute right-0 top-full mt-1 z-20 w-56 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-2">
+                        <div className="absolute left-0 top-full mt-1 z-20 w-56 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-2 sm:left-auto sm:right-0">
                           {orderStatuses.filter((s) => s !== "All Orders").map((s) => {
                             const checked = revPerfStatuses.has(s);
                             return (
@@ -14754,15 +15213,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       )}
                     </div>
                     {/* Previous line toggle */}
-                    <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={revPerfShowPrevious}
-                        onChange={(e) => setRevPerfShowPrevious(e.target.checked)}
-                        className="accent-[#1F8FE0]"
-                      />
-                      Show previous
-                    </label>
+                    {revPerfCompareMode === "periods" && (
+                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-700 font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={revPerfShowPrevious}
+                          onChange={(e) => setRevPerfShowPrevious(e.target.checked)}
+                          className="accent-[#1F8FE0]"
+                        />
+                        Show previous
+                      </label>
+                    )}
                   </div>
 
                   <ResponsiveContainer width="100%" height={260}>
@@ -14773,13 +15234,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
                         formatter={(value: number | string, name: string) => [
                           formatMoney(typeof value === "number" ? value : Number(value)),
-                          name === "current" ? "Current" : name === "previous" ? "Previous" : name
+                          name
                         ]}
                       />
-                      <Line type="monotone" dataKey="current" stroke="#1F8FE0" strokeWidth={2.5} dot={false} />
-                      {revPerfShowPrevious && (
-                        <Line type="monotone" dataKey="previous" stroke="#a78bfa" strokeWidth={2} strokeDasharray="4 3" dot={false} />
-                      )}
+                      {revPerfSeries.map((series) => (
+                        <Line
+                          key={series.key}
+                          type="monotone"
+                          dataKey={series.key}
+                          name={series.label}
+                          stroke={series.color}
+                          strokeWidth={series.key === "current" ? 2.5 : 2}
+                          strokeDasharray={series.dash}
+                          dot={false}
+                        />
+                      ))}
                     </LineChart>
                   </ResponsiveContainer>
                 </article>
@@ -14815,7 +15284,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100 gap-3">
                   <h3 className="text-base font-bold text-gray-900 m-0">Recent Transactions</h3>
                   <button className="!min-h-0 text-[#1F8FE0] text-xs font-bold hover:underline whitespace-nowrap" onClick={() => setActivePage("Orders")}>View All Orders</button>
                 </div>
@@ -14825,7 +15294,46 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <p className="text-sm font-medium m-0 text-gray-400">No orders in this period</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <>
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {[...dashboardOrders]
+                        .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)))
+                        .slice(0, 5)
+                        .map((order) => (
+                        <article key={order.id} className="px-4 py-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
+                              <span className="text-base font-bold text-[#1F8FE0] truncate">{order.id}</span>
+                            </div>
+                            <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${statusBadgeClasses(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-gray-900 m-0 truncate">{order.customer}</p>
+                            <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Date</span>
+                              <span className="text-gray-600">{formatOrderCreatedAt(order)}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Amount</span>
+                              <span className="font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 col-span-2">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery fee</span>
+                              <span className="text-gray-600">{renderDeliveryFeeCell(order)}</span>
+                            </div>
+                          </div>
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openAdminOrderDetail(order.id)}>
+                            <Eye className="w-4 h-4" /> View details
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+
+                    <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr>
@@ -14865,6 +15373,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </tbody>
                     </table>
                   </div>
+                  </>
                 )}
               </section>
 
@@ -15032,8 +15541,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {/* Orders table */}
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Orders table">
                 {/* Toolbar */}
-                <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-gray-100">
-                  <label className="relative flex items-center flex-1 min-w-[180px]">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
+                  <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[180px]">
                     <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                     <span className="sr-only">Search orders</span>
                     <input
@@ -15043,19 +15552,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       placeholder="Order #, name, phone…"
                     />
                   </label>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
+                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
                     {orderStatuses.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
+                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
+                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
                     {orderLocations.map((l) => <option key={l}>{l}</option>)}
                   </select>
                   {/* Product multi-select filter */}
-                  <div className="relative">
+                  <div className="relative w-full sm:w-auto">
                     <button
-                      className={`!min-h-0 inline-flex items-center gap-2 h-9 px-3 border rounded-lg bg-white text-sm font-medium transition-colors ${orderProductIds.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`}
+                      className={`!min-h-0 inline-flex items-center justify-center sm:justify-start gap-2 w-full sm:w-auto h-9 px-3 border rounded-lg bg-white text-sm font-medium transition-colors ${orderProductIds.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`}
                       onClick={() => setShowOrderProductFilter((v) => !v)}
                     >
                       <Package className="w-4 h-4" />
@@ -15301,7 +15810,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
 
                 {/* Pagination */}
-                <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
                   <span>
                     {filteredOrderRows.length === 0
                       ? "0 orders"
@@ -15424,14 +15933,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-200">
                   <h2 className="text-base font-bold text-gray-900 m-0">Captured abandoned carts</h2>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="relative flex items-center">
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                    <label className="relative flex items-center w-full sm:w-auto">
                       <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
                       <span className="sr-only">Search abandoned carts</span>
                       <input
-                        className="pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white w-56 transition-colors"
+                        className="pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white w-full sm:w-56 transition-colors"
                         value={cartSearch}
                         onChange={(event) => setCartSearch(event.target.value)}
                         placeholder="Search customer, phone, cart..."
@@ -15439,14 +15948,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </label>
                     {cartSearch && (
                       <button
-                        className="inline-flex items-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                        className="!min-h-0 inline-flex items-center justify-center px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
                         onClick={() => setCartSearch("")}
                       >
                         Clear
                       </button>
                     )}
                     <select
-                      className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                       aria-label="Abandoned cart status"
                       value={cartStatus}
                       onChange={(event) => setCartStatus(event.target.value as CartStatus)}
@@ -15469,7 +15978,75 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 )}
 
-                <div className="overflow-x-auto">
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {filteredAbandonedCarts.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-sm text-gray-400">No carts found</div>
+                  ) : (
+                    pagedAbandonedCarts.map((cart) => {
+                      const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
+                      return (
+                        <article key={cart.id} className="px-4 py-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Cart</span>
+                              <span className="text-base font-bold text-[#1F8FE0] truncate">{cart.id}</span>
+                            </div>
+                            <span className={`status-pill status-${slugify(cart.status)} shrink-0`}>{cart.status}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
+                            <div className="text-xs text-gray-500">{cart.phone}</div>
+                          </div>
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Product</span>
+                              <span className="text-gray-700">{cart.productName}</span>
+                              <span className="text-gray-500">{cart.packageName}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Rep</span>
+                              <span className="text-gray-700">{assignedRep}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
+                              <span className="text-gray-700">{cart.source}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Last activity</span>
+                              <span className="text-gray-700">{formatMoment(cart.lastActivity || cart.createdAt)}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 col-span-2">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Value</span>
+                              <span className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openAdminCartDetail(cart.id)}>
+                              <Eye className="w-4 h-4" /> Details
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(cart.id)}>
+                              <UserPlus className="w-4 h-4" /> Assign
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "Contacted")}>
+                              Contacted
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "No response")}>
+                              No response
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-red-100 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => updateCartStatus(cart.id, "Not interested")}>
+                              Not interested
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-40" disabled={cart.status === "Converted"} onClick={() => openAdminCartConvertRoute(cart.id)}>
+                              <ArrowRight className="w-4 h-4" /> Convert
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-200">
@@ -15552,7 +16129,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
 
                 {/* Pagination */}
-                <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
                   <span>
                     {filteredAbandonedCarts.length === 0
                       ? "0 carts"
@@ -16375,13 +16952,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search sales representatives</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => { setSalesSearch(event.target.value); setSalesRepPage(1); }} placeholder="Search by name, email, phone..." />
                 </label>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Sales rep status" value={salesStatus} onChange={(event) => {
+                <select className="h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Sales rep status" value={salesStatus} onChange={(event) => {
                   setSalesStatus(event.target.value as RepStatus);
                   setSalesRepPage(1);
                   showToast(`Sales rep status filter set to ${event.target.value}.`);
@@ -16395,7 +16972,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
                   <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone ?? "", role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
-                <div className="overflow-x-auto">
+                {pagedSalesRepRows.length === 0 ? (
+                  <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No sales representatives found</div>
+                ) : (
+                  <div className="sm:hidden divide-y divide-gray-100">
+                    {pagedSalesRepRows.map((row) => (
+                      <article key={row.user.id} className="px-4 py-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-bold text-gray-900 truncate">{row.user.name}</h3>
+                            <p className="text-xs text-gray-500 break-all">{row.user.email}</p>
+                            {row.user.phone && <p className="text-xs text-gray-500 mt-1">{row.user.phone}</p>}
+                          </div>
+                          <span className={`status-pill status-${row.user.active ? "active" : "inactive"} shrink-0`}>{row.user.active ? "Active" : "Inactive"}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="role-pill">{row.user.role}</span>
+                          <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(row.revenue)}</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-xs">
+                          <div className="rounded-lg bg-gray-50 px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Orders</p>
+                            <p className="mt-1 font-bold text-gray-900">{row.orders}</p>
+                          </div>
+                          <div className="rounded-lg bg-gray-50 px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Delivered</p>
+                            <p className="mt-1 font-bold text-gray-900">{row.delivered}</p>
+                          </div>
+                          <div className="rounded-lg bg-gray-50 px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Conversion</p>
+                            <p className="mt-1 font-bold text-gray-900">{row.conversion}%</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => { openAdminSalesRepDetail(row.user.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                            <Eye className="w-4 h-4" /> View
+                          </button>
+                          <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(row.user.id)}>
+                            <Pencil className="w-4 h-4" /> Edit
+                          </button>
+                          <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => {
+                            const next = !row.user.active;
+                            const prev = row.user.active;
+                            setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user));
+                            showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`);
+                            usersApi.update(row.user.id, { active: next }).catch((err: any) => {
+                              setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: prev } : user));
+                              showToast(`Failed to ${next ? "activate" : "deactivate"} ${row.user.name}: ${err?.message ?? "please retry"}.`);
+                            });
+                          }}>
+                            <RefreshCw className="w-4 h-4" /> {row.user.active ? "Deactivate" : "Activate"}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -16446,10 +17079,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredSalesRepRows.length} Sales Rep{filteredSalesRepRows.length === 1 ? "" : "s"}</span>
                   {salesRepTotalPages > 1 && (
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <button disabled={salesRepPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setSalesRepPage(salesRepPageClamped - 1)}>&laquo; Prev</button>
                       {Array.from({ length: salesRepTotalPages }, (_, i) => i + 1)
                         .filter((p) => p === 1 || p === salesRepTotalPages || Math.abs(p - salesRepPageClamped) <= 1)
@@ -16473,7 +17106,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Sales Teams</h1>
                   <p className="text-sm font-medium text-gray-500">Group reps, assign team leads, and scope products to the team responsible for selling them.</p>
                 </div>
-                <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={openSalesTeamCreateRoute}>
+                <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-lg hover:bg-[#1560a8] transition-colors" onClick={openSalesTeamCreateRoute}>
                   <Plus className="w-4 h-4" /> Create Team
                 </button>
               </header>
@@ -16522,7 +17155,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   const scopedCount = team.productIds.length;
                   return (
                     <div key={team.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                         <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
                         <div className="flex items-center gap-1">
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => openSalesTeamEditRoute(team.id)}><Pencil className="w-4 h-4" /></button>
@@ -16566,7 +17199,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h2 className="text-sm font-bold text-gray-800">Team Members</h2>
                   <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{assignedRepCount} of {salesRepUsers.length} reps assigned</span>
                 </div>
-                <div className="overflow-x-auto">
+                {salesRepRows.length === 0 ? (
+                  <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No sales reps available for team assignment</div>
+                ) : (
+                  <div className="sm:hidden divide-y divide-gray-100">
+                    {salesRepRows.map((row) => {
+                      const team = teamForRep(row.user);
+                      const lead = users.find((user) => user.id === team?.leadId);
+                      return (
+                        <article key={row.user.id} className="px-4 py-4 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="text-sm font-bold text-gray-900 truncate">{row.user.name}</h3>
+                              <p className="text-xs text-gray-500 break-all">{row.user.email}</p>
+                            </div>
+                            <span className={`status-pill status-${row.user.active ? "active" : "inactive"} shrink-0`}>{row.user.active ? "Active" : "Inactive"}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Current Team</p>
+                              <p className="mt-1 font-semibold text-gray-800">{team?.name ?? "Unassigned"}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Team Lead</p>
+                              <p className="mt-1 font-semibold text-gray-800">{lead?.name ?? "No lead"}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Orders</p>
+                              <p className="mt-1 font-semibold text-gray-800">{row.orders}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Delivered</p>
+                              <p className="mt-1 font-semibold text-gray-800">{row.delivered}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Conversion</span>
+                            <span className="text-sm font-bold text-gray-900">{row.conversion}%</span>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -16607,7 +17283,43 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h2 className="text-sm font-bold text-gray-800">Product Links</h2>
                   <span className="text-xs font-medium text-gray-500">All teams or scoped teams</span>
                 </div>
-                <div className="overflow-x-auto">
+                {products.length === 0 ? (
+                  <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No products available yet</div>
+                ) : (
+                  <div className="sm:hidden divide-y divide-gray-100">
+                    {products.map((product) => {
+                      const scope = productTeamScope(product);
+                      const pricing = primaryPricing(product);
+                      return (
+                        <article key={product.id} className="px-4 py-4 space-y-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-900">{product.name}</h3>
+                            <p className="mt-1 text-xs text-gray-500">{product.description}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">SKU</p>
+                              <p className="mt-1 font-mono text-gray-700 break-all">{product.sku}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Available Units</p>
+                              <p className="mt-1 font-semibold text-gray-800">{totalProductStockLive(product)}</p>
+                            </div>
+                            <div className="col-span-2">
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Scoped Team</p>
+                              <p className="mt-1 font-semibold text-gray-800">{scope.length === 0 ? "All teams" : scope.join(", ")}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Selling Price</span>
+                            <span className="text-sm font-bold text-gray-900">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</span>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -17431,20 +18143,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 })}
               </section>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search agents</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={agentSearch} onChange={(event) => { setAgentSearch(event.target.value); setAgentsPage(1); }} placeholder="Search by name or phone..." />
                 </label>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent zone" value={agentZone} onChange={(event) => {
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent zone" value={agentZone} onChange={(event) => {
                   setAgentZone(event.target.value as AgentZone);
                   setAgentsPage(1);
                   showToast(`Agent zone filter set to ${event.target.value}.`);
                 }}>
                   {agentZoneOptions.map((zone) => <option value={zone} key={zone}>{zone === "All Zones" ? "Zone: All" : zone}</option>)}
                 </select>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent status" value={agentStatus} onChange={(event) => {
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Agent status" value={agentStatus} onChange={(event) => {
                   setAgentStatus(event.target.value as AgentStatus);
                   setAgentsPage(1);
                   showToast(`Agent status filter set to ${event.target.value}.`);
@@ -17454,7 +18166,68 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </div>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Agents table">
-                <div className="overflow-x-auto">
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {pagedAgentRows.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</div>
+                  ) : (
+                    pagedAgentRows.map((row) => (
+                      <article key={row.agent.id} className="px-4 py-4 flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(row.agent.name)}</span>
+                            <div className="min-w-0">
+                              <div className="font-bold text-gray-900 truncate">{row.agent.name}</div>
+                              <div className="text-xs text-gray-500">{row.agent.phone}</div>
+                              <div className="text-xs text-gray-400">{row.agent.zone}</div>
+                            </div>
+                          </div>
+                          <span className={`status-pill status-${slugify(row.status)} shrink-0`}>{row.status}</span>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Orders</span>
+                            <span className="text-gray-700">{row.totalOrders}</span>
+                            <span className="text-gray-500">{row.deliveries} delivered · {row.failed} failed</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery rate</span>
+                            <span className={`font-bold ${row.successRate >= 70 ? "text-green-700" : row.successRate >= 50 ? "text-amber-700" : row.totalOrders === 0 ? "text-gray-400" : "text-red-700"}`}>{row.successRate}%</span>
+                            <span className="text-gray-500">{row.deliveredUnits} units delivered</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Revenue</span>
+                            <span className="font-semibold text-gray-900">{formatMoney(row.revenue)}</span>
+                            <span className="text-gray-500">{row.pending} pending</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Stock value</span>
+                            <span className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</span>
+                            <span className="text-gray-500">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                            <Eye className="w-4 h-4" /> Profile
+                          </button>
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}>
+                            <PackagePlus className="w-4 h-4" /> Assign Stock
+                          </button>
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}>
+                            <RefreshCw className="w-4 h-4" /> Reconcile
+                          </button>
+                          <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}>
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -17517,7 +18290,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>Showing {filteredAgentRows.length} of {agents.length} agents</span>
                   {agentsTotalPages > 1 && (
                     <div className="flex items-center gap-1">
@@ -17666,7 +18439,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 };
                 return (
                   <>
-                  <div className="rounded-xl border border-gray-200 overflow-x-auto">
+                  <div className="sm:hidden space-y-3">
+                    {pagedWaybills.map((w) => (
+                      <article key={w.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Waybill</div>
+                            <div className="font-mono text-xs text-gray-500 break-all">{w.id}</div>
+                            <div className="font-semibold text-sm text-gray-900 mt-1">{w.productName}</div>
+                          </div>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusColors[w.status]}`}>{w.status}</span>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Route</span>
+                            <span className="text-gray-700">{w.sendingState} → {w.receivingState}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Quantity</span>
+                            <span className="text-gray-700">{w.quantity} units</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Partner</span>
+                            <span className="text-gray-700">{w.logisticsPartner}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Fee</span>
+                            <span className="text-gray-700">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5 col-span-2">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Sent</span>
+                            <span className="text-gray-700">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
+                            <span className="text-gray-500">Dispatch date {formatDateOnly(w.dateSent)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {w.status === "In Transit" && (
+                            <>
+                              <button
+                                className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition-colors"
+                                onClick={() => openReceiveWaybill(w)}
+                              >Mark Received</button>
+                              <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => cancelWaybill(w.id)}>Cancel</button>
+                            </>
+                          )}
+                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-blue-100 text-blue-700 bg-blue-50 text-sm font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
+                          <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w)}>Print</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="hidden sm:block rounded-xl border border-gray-200 overflow-x-auto">
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
@@ -17726,7 +18550,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </table>
                   </div>
                   {waybillTotalPages > 1 && (
-                    <div className="flex items-center justify-center gap-1 pt-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-center gap-1 pt-2 text-sm">
                       <button disabled={waybillPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setWaybillPage(waybillPageClamped - 1)}>&laquo; Prev</button>
                       {Array.from({ length: waybillTotalPages }, (_, i) => i + 1)
                         .filter((p) => p === 1 || p === waybillTotalPages || Math.abs(p - waybillPageClamped) <= 2)
@@ -17754,12 +18578,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
-              <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Payroll sections">
+              <nav className="grid grid-cols-3 sm:inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Payroll sections">
                 {payrollTabs.map((tab) => (
                   <button
                     role="tab"
                     aria-selected={payrollTab === tab}
-                    className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap ${payrollTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
+                    className={`px-4 py-2 sm:py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap text-center ${payrollTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
                     key={tab}
                     onClick={() => {
                       setPayrollTab(tab);
@@ -17774,7 +18598,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <section className="space-y-4" aria-label="Pay rates">
                   <p className="text-sm text-gray-600">Set how much each person earns per delivered order. Admins are paid based on total orders delivered by all sales reps.</p>
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {users.map((user) => {
+                        const structure = payStructures.find((item) => item.userId === user.id);
+                        return (
+                          <article key={user.id} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <h3 className="text-sm font-bold text-gray-900 truncate">{user.name}</h3>
+                                <p className="text-xs text-gray-500 break-all">{user.email}</p>
+                              </div>
+                              <span className="role-pill shrink-0">{user.role}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-xs">
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Pay Structure</p>
+                                <p className={`mt-1 font-semibold ${structure ? "text-green-600" : "text-amber-600"}`}>{structure ? payStructureLabelFor(structure) : "Not set"}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Last Updated</p>
+                                <p className="mt-1 font-semibold text-gray-800">{formatMoment(structure?.updatedAt) || "-"}</p>
+                              </div>
+                            </div>
+                            <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openPayrollRateRoute(user.id)}>
+                              {structure ? "Edit Rate" : "Set Rate"}
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -17834,18 +18687,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </section>
               ) : payrollTab === "Run Payroll" ? (
                 <section className="space-y-5" aria-label="Run payroll">
-                  <div className="flex flex-wrap items-end gap-4">
-                    <label className="flex flex-col gap-1">
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-4">
+                    <label className="flex flex-col gap-1 w-full sm:w-auto">
                       <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Payroll Month</span>
-                      <div className="flex items-center gap-2 h-9 px-3 border border-gray-200 rounded-md bg-white focus-within:ring-2 focus-within:ring-[#1F8FE0]">
-                        <input className="bg-transparent outline-none text-sm text-gray-700 w-32" value={payrollMonth} onChange={(event) => {
+                      <div className="flex items-center gap-2 h-10 sm:h-9 px-3 border border-gray-200 rounded-md bg-white focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
+                        <input className="bg-transparent outline-none text-sm text-gray-700 w-full sm:w-32" value={payrollMonth} onChange={(event) => {
                           setPayrollMonth(event.target.value);
                           setPayrollLabel(`${event.target.value || "Monthly"} Payroll`);
                         }} />
                         <CalendarDays className="w-4 h-4 text-gray-400" />
                       </div>
                     </label>
-                    <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={previewPayroll}>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={previewPayroll}>
                       <Eye className="w-4 h-4" /> Preview
                     </button>
                   </div>
@@ -17862,7 +18715,62 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
+                    {payrollPreviewRows.length === 0 ? (
+                      <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">Set pay rates to preview payroll.</div>
+                    ) : (
+                      <div className="sm:hidden divide-y divide-gray-100">
+                        {payrollPreviewRows.map((row) => (
+                          <article key={row.userId} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h3 className="text-sm font-bold text-gray-900">{row.name}</h3>
+                                <p className="text-xs text-gray-500">{row.delivered} delivered order{row.delivered === 1 ? "" : "s"}</p>
+                              </div>
+                              <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(row.total)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-xs">
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Fixed Salary</p>
+                                <p className="mt-1 font-semibold text-gray-800">{formatMoney(row.fixedSalary)}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Commission</p>
+                                <p className="mt-1 font-semibold text-gray-800">{formatMoney(row.commission)}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Auto-Bonus</p>
+                                <p className="mt-1 font-semibold text-emerald-700">{formatMoney(row.autoBonus ?? 0)}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Deductions</p>
+                                <p className="mt-1 font-semibold text-red-600">{(row.deductions ?? 0) > 0 ? `−${formatMoney(row.deductions ?? 0)}` : formatMoney(0)}</p>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                        <div className="px-4 py-4 bg-gray-50">
+                          <div className="flex items-center justify-between text-xs text-gray-500">
+                            <span className="font-semibold uppercase tracking-wide">Grand Total</span>
+                            <span className="text-sm font-bold text-[#1F8FE0]">{formatMoney(payrollGrandTotal)}</span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-3 gap-3 text-xs">
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Delivered</p>
+                              <p className="mt-1 font-semibold text-gray-800">{payrollPreviewRows.reduce((sum, row) => sum + row.delivered, 0)}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Bonus</p>
+                              <p className="mt-1 font-semibold text-emerald-700">{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.autoBonus ?? 0), 0))}</p>
+                            </div>
+                            <div>
+                              <p className="font-semibold uppercase tracking-wide text-gray-400">Deductions</p>
+                              <p className="mt-1 font-semibold text-red-600">−{formatMoney(payrollPreviewRows.reduce((sum, row) => sum + (row.deductions ?? 0), 0))}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -17918,7 +18826,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         return <p className="text-xs text-gray-400 italic">No penalties recorded for {payrollMonth}.</p>;
                       }
                       return (
-                        <div className="overflow-x-auto rounded-lg border border-gray-200">
+                        <div className="rounded-lg border border-gray-200 overflow-hidden">
+                          <div className="sm:hidden divide-y divide-gray-100 bg-white">
+                            {periodPenalties.map((pen) => (
+                              <article key={pen.id} className="px-4 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <h4 className="text-sm font-bold text-gray-900">{pen.repName}</h4>
+                                    <p className="text-xs text-gray-500">{pen.type} · {formatMoment(pen.date)}</p>
+                                  </div>
+                                  <button className="!min-h-0 text-red-500 hover:text-red-700 text-lg leading-none" onClick={() => removePenalty(pen.id)}>×</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-xs">
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wide text-gray-400">Amount</p>
+                                    <p className="mt-1 font-semibold text-red-600">−{formatMoney(pen.amount)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wide text-gray-400">Order</p>
+                                    <p className="mt-1 font-semibold text-gray-800">{pen.orderId ?? "-"}</p>
+                                  </div>
+                                  <div className="col-span-2">
+                                    <p className="font-semibold uppercase tracking-wide text-gray-400">Reason</p>
+                                    <p className="mt-1 font-semibold text-gray-800">{pen.reason || "-"}</p>
+                                  </div>
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                          <div className="hidden sm:block overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider text-[10px]">
                               <tr><th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Rep</th><th className="px-3 py-2 text-left">Type</th><th className="px-3 py-2 text-right">Amount</th><th className="px-3 py-2 text-left">Order</th><th className="px-3 py-2 text-left">Reason</th><th className="px-3 py-2"></th></tr>
@@ -17937,6 +18873,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
                       );
                     })()}
@@ -17950,12 +18887,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Notes (optional)</span>
                       <textarea className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] resize-none" rows={3} value={payrollNotes} onChange={(event) => setPayrollNotes(event.target.value)} placeholder="Any notes for this payroll run..." />
                     </label>
-                    <button className="self-start inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={savePayrollDraft}>Save as Draft</button>
+                    <button className="!min-h-0 self-stretch sm:self-start inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={savePayrollDraft}>Save as Draft</button>
                   </div>
                 </section>
               ) : (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Payroll history">
-                  <div className="overflow-x-auto">
+                  {payrollRuns.length === 0 ? (
+                    <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No payroll records yet. Use the "Run Payroll" tab to create one.</div>
+                  ) : (
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {payrollRuns.map((run) => {
+                        const status = run.status ?? "Draft";
+                        const statusColor = status === "Paid" ? "bg-green-100 text-green-700" : status === "Approved" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600";
+                        return (
+                          <article key={run.id} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h3 className="text-sm font-bold text-gray-900">{run.label}</h3>
+                                <p className="text-xs text-gray-500">{run.id}</p>
+                              </div>
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColor}`}>{status}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-xs">
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Month</p>
+                                <p className="mt-1 font-semibold text-gray-800">{run.month}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">People</p>
+                                <p className="mt-1 font-semibold text-gray-800">{run.rows.length}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                                <p className="mt-1 font-semibold text-[#1F8FE0]">{formatMoney(run.total)}</p>
+                              </div>
+                              <div>
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Created</p>
+                                <p className="mt-1 font-semibold text-gray-800">{formatMoment(run.createdAt)}</p>
+                              </div>
+                              <div className="col-span-2">
+                                <p className="font-semibold uppercase tracking-wide text-gray-400">Notes</p>
+                                <p className="mt-1 font-semibold text-gray-800">{run.notes || "-"}</p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {status === "Draft" && (
+                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition-colors" onClick={() => {
+                                  setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+                                  showToast(`${run.label} approved.`);
+                                  payrollApi.approve(run.id).catch((err: any) => {
+                                    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Draft" } : r));
+                                    showToast(`Failed to approve: ${err.message}`);
+                                  });
+                                }}>Approve</button>
+                              )}
+                              {status === "Approved" && (
+                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors" onClick={() => {
+                                  setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Paid" } : r));
+                                  showToast(`${run.label} marked as paid.`);
+                                  payrollApi.markPaid(run.id).catch((err: any) => {
+                                    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+                                    showToast(`Failed to mark paid: ${err.message}`);
+                                  });
+                                }}>Mark Paid</button>
+                              )}
+                              {status === "Paid" && <span className="text-xs text-green-600 font-medium">Completed</span>}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -18089,24 +19092,86 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 })}
               </section>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search customers</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Search by name, email, or phone..." />
                 </label>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer source" value={customerSource} onChange={(event) => {
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer source" value={customerSource} onChange={(event) => {
                   setCustomerSource(event.target.value as CustomerSource);
                   showToast(`Customer source filter set to ${event.target.value}.`);
                 }}>
                   {customerSources.map((source) => <option key={source}>{source}</option>)}
                 </select>
                 {renderProductFilter(customerProductIds, setCustomerProductIds, showCustomerProductFilter, setShowCustomerProductFilter)}
-                <button className="w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => { retryLoadData.current(); showToast("Refreshing customer data…"); }}><RefreshCw className="w-4 h-4" /></button>
+                <button className="!min-h-0 w-full sm:w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => { retryLoadData.current(); showToast("Refreshing customer data…"); }}><RefreshCw className="w-4 h-4" /></button>
               </div>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Customers table">
-                <div className="overflow-x-auto">
+                {(() => {
+                  const CUST_PAGE_SIZE = 25;
+                  const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUST_PAGE_SIZE));
+                  const custPageClamped = Math.min(customerPage, custTotalPages);
+                  const pagedCustomers = filteredCustomers.slice((custPageClamped - 1) * CUST_PAGE_SIZE, custPageClamped * CUST_PAGE_SIZE);
+                  return (
+                <>
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {pagedCustomers.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</div>
+                  ) : (
+                    pagedCustomers.map((customer) => {
+                      const reliability = customer.orders === 0 ? 0 : Math.round((customer.successful / customer.orders) * 100);
+                      const flagged = isCustomerFlagged(customer.phone);
+                      const flagData = customerFlags[normalizePhone(customer.phone)];
+                      return (
+                        <article key={customer.id} className={`px-4 py-4 flex flex-col gap-3 ${flagged ? "bg-red-50/30" : ""}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-bold text-gray-900 truncate">{customer.name}</div>
+                              <div className="text-xs text-gray-500">{customer.phone}</div>
+                              {customer.email && <div className="text-xs text-gray-400 truncate">{customer.email}</div>}
+                            </div>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${reliability >= 70 ? "bg-green-100 text-green-700" : reliability >= 40 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>{reliability}%</span>
+                          </div>
+                          {flagged && <span className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-3 h-3" /> Flagged</span>}
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
+                              <span className="text-gray-700">{customer.source}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Orders</span>
+                              <span className="text-gray-700">{customer.orders}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Successful</span>
+                              <span className="font-semibold text-green-600">{customer.successful}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Cancelled</span>
+                              <span className="font-semibold text-red-500">{customer.cancelled}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 col-span-2">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Total spend</span>
+                              <span className="font-semibold text-gray-900">{formatMoney(customer.totalSpend)}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => { setOrderSearch(customer.phone); setActivePage("Orders"); }}>
+                              View Orders
+                            </button>
+                            {flagged
+                              ? <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-500 rounded-md hover:bg-gray-50 transition-colors" onClick={() => unflagCustomer(customer.phone)}>Unflag</button>
+                              : <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors" onClick={() => openFlagCustomer(customer.phone)}><AlertTriangle className="w-3.5 h-3.5" /> Flag</button>}
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -18115,12 +19180,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         ))}
                       </tr>
                     </thead>
-                    {(() => {
-                      const CUST_PAGE_SIZE = 25;
-                      const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUST_PAGE_SIZE));
-                      const custPageClamped = Math.min(customerPage, custTotalPages);
-                      const pagedCustomers = filteredCustomers.slice((custPageClamped - 1) * CUST_PAGE_SIZE, custPageClamped * CUST_PAGE_SIZE);
-                      return (
                     <tbody className="divide-y divide-gray-100">
                       {pagedCustomers.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
@@ -18160,16 +19219,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         })
                       )}
                     </tbody>
-                      );
-                    })()}
                   </table>
                 </div>
-                {(() => {
-                  const CUST_PAGE_SIZE = 25;
-                  const custTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUST_PAGE_SIZE));
-                  const custPageClamped = Math.min(customerPage, custTotalPages);
-                  return (
-                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredCustomers.length} customer{filteredCustomers.length === 1 ? "" : "s"}</span>
                   {custTotalPages > 1 && (
                     <div className="flex items-center gap-1">
@@ -18186,6 +19239,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                 </div>
+                </>
                   );
                 })()}
               </section>
@@ -18351,16 +19405,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 );
               })()}
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search expenses</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={expenseSearch} onChange={(event) => setExpenseSearch(event.target.value)} placeholder="Search descriptions or references..." />
                 </label>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportExpensesCsv}>
+                <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors w-full sm:w-auto" onClick={exportExpensesCsv}>
                   <Download className="w-4 h-4" /> Export
                 </button>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Expense type filter" value={expenseFilter} onChange={(event) => {
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Expense type filter" value={expenseFilter} onChange={(event) => {
                   setExpenseFilter(event.target.value as ExpenseFilter);
                   showToast(`Expense filter set to ${event.target.value}.`);
                 }}>
@@ -18375,7 +19429,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const pagedExpenses = filteredExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
                 return (
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Expenses table">
-                <div className="overflow-x-auto">
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {pagedExpenses.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</div>
+                  ) : (
+                    pagedExpenses.map((expense) => (
+                      <article key={expense.id} className="px-4 py-4 flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-gray-900">{expense.type}</div>
+                            <div className="text-xs text-gray-500">{displayDateFromKey(expense.date)}</div>
+                            {expense.createdAt && <div className="text-xs text-gray-400">{formatMoment(expense.createdAt)}</div>}
+                          </div>
+                          <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}</span>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex flex-col gap-2 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Product / Reference</span>
+                            <span className="text-gray-700">{expense.productName}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">Description</span>
+                            <span className="text-gray-600">{expense.description || "No description"}</span>
+                          </div>
+                          {expense.waybillId && <span className="inline-flex items-center self-start px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}
+                        </div>
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>
+                          Details
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -18407,7 +19494,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</span>
                   {expTotalPages > 1 && (
                     <div className="flex items-center gap-1">
@@ -18476,7 +19563,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
               </div>
 
-              <div className="w-full overflow-x-auto no-scrollbar -mx-1 px-1">
+              <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
+                {financeTabs.map((tab) => (
+                  <button
+                    role="tab"
+                    aria-selected={financeTab === tab}
+                    className={`px-3 py-3 rounded-xl border text-left text-xs font-bold leading-tight transition-all duration-200 ${financeTab === tab ? "bg-white text-[#1F8FE0] border-[#1F8FE0] shadow-sm" : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700 hover:bg-gray-100"}`}
+                    onClick={() => openFinanceTab(tab)}
+                    key={tab}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+              <div className="hidden sm:block w-full overflow-x-auto no-scrollbar -mx-1 px-1">
                 <nav className="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg min-w-max" role="tablist" aria-label="Financial report sections">
                   {financeTabs.map((tab) => (
                     <button
@@ -18494,7 +19594,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {/* Product filter chips — toggle one or more products to scope every tab's metrics. Empty = all products merged. */}
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Product filter">
-                <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-3">
                   <div>
                     <h2 className="text-sm font-bold text-gray-800">Filter by Product</h2>
                     <p className="text-xs text-gray-400 mt-0.5">Each product has its own revenue, COGS, expenses, and delivery rate. Pick one for a clean per-product view, or select multiple to merge them.</p>
@@ -18979,17 +20079,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     ))}
                   </section>
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <div className="flex flex-col gap-3 px-5 py-4 border-b border-gray-100 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <h2 className="text-sm font-bold text-gray-800">Performance Breakdown</h2>
                         <p className="text-xs text-gray-400">Metrics aligned with orders &amp; expenses</p>
                       </div>
-                      <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0]">
+                      <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
                         <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                        <input className="bg-transparent outline-none text-xs w-32" value={financeRepSearch} onChange={(event) => setFinanceRepSearch(event.target.value)} placeholder="Search Rep..." />
+                        <input className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={financeRepSearch} onChange={(event) => setFinanceRepSearch(event.target.value)} placeholder="Search Rep..." />
                       </label>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {filteredFinanceRepRows.length === 0 ? (
+                        <div className="px-5 py-12 text-center text-gray-400 font-medium italic">No sales reps found matching your search.</div>
+                      ) : (
+                        filteredFinanceRepRows.map((row) => (
+                          <article key={row.user.id} className="px-5 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{row.user.name}</div>
+                                <div className="text-xs text-gray-400 break-words">{row.user.email}</div>
+                              </div>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700 shrink-0">{row.roi}% ROI</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Net Profit</span>
+                                <div className="font-semibold text-gray-900">{formatMoney(row.netProfit)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span>
+                                <div className="text-gray-700">{row.delivered}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">CPA</span>
+                                <div className="text-gray-600">{formatMoney(row.cpa)}</div>
+                              </div>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19058,7 +20193,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="px-5 py-4 border-b border-gray-100">
                       <h2 className="text-sm font-bold text-gray-800">Agent Performance &amp; Profitability</h2>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {financeAgentRows.length === 0 ? (
+                        <div className="px-5 py-12 text-center text-gray-400 font-medium italic">No agent data available for this period.</div>
+                      ) : (
+                        financeAgentRows.map((row) => (
+                          <article key={row.agent.id} className="px-5 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{row.agent.name}</div>
+                                <div className="text-xs text-gray-400">{row.agent.zone}</div>
+                              </div>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700 shrink-0">{row.successRate}%</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Deliveries</span>
+                                <div className="text-gray-700">{row.deliveries}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Stock Value</span>
+                                <div className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</div>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Profit Contribution</span>
+                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.profitContribution)}</div>
+                              </div>
+                            </div>
+                            <button className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors w-full" onClick={() => openAdminAgentDetail(row.agent.id)}>Details</button>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19135,17 +20302,98 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <h2 className="text-sm font-bold text-gray-800">Per-Logistics-Partner Reconciliation</h2>
                         <p className="text-xs text-gray-400">{selectedFinancePeriodLabel} · sorted by outstanding balance</p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0]">
+                      <div className="flex flex-col gap-2 w-full sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+                        <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
                           <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <input className="bg-transparent outline-none text-xs w-32" value={remittanceSearch} onChange={(e) => setRemittanceSearch(e.target.value)} placeholder="Search partner..." />
+                          <input className="bg-transparent outline-none text-xs w-full sm:w-32 min-w-0" value={remittanceSearch} onChange={(e) => setRemittanceSearch(e.target.value)} placeholder="Search partner..." />
                         </label>
-                        <select className="!min-h-0 h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={remittancePartnerFilter} onChange={(e) => setRemittancePartnerFilter(e.target.value)}>
+                        <select className="!min-h-0 h-10 sm:h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] w-full sm:w-auto" value={remittancePartnerFilter} onChange={(e) => setRemittancePartnerFilter(e.target.value)}>
                           {remittancePartnerOptions.map((p) => <option key={p}>{p}</option>)}
                         </select>
                       </div>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {filteredRemittanceRows.length === 0 ? (
+                        <div className="px-5 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</div>
+                      ) : (
+                        <>
+                          {filteredRemittanceRows.map((row) => {
+                            const pct = row.expected === 0 ? 0 : Math.round((row.remitted / row.expected) * 100);
+                            const pctTone = pct >= 100 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                            const aging = row.outstanding > 0 ? remittanceAgingLabel(row.oldestUnpaidDays) : null;
+                            return (
+                              <article key={row.partnerName} className="px-5 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="font-bold text-gray-900">{row.partnerName}</div>
+                                    {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "—"}</div>}
+                                  </div>
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${pctTone}`}>{pct}% paid</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                    <div className="text-gray-700">{row.orderCount}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                    <div className="text-gray-700">{formatMoney(row.revenue)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Expected</span>
+                                    <div className="font-semibold text-blue-700">{formatMoney(row.expected)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                    <div className="font-semibold text-green-700">{formatMoney(row.remitted)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
+                                    <div className={`font-bold ${row.outstanding > 0 ? "text-amber-700" : "text-gray-400"}`}>{formatMoney(row.outstanding)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics Fees</span>
+                                    <div className="text-gray-600">{formatMoney(row.logisticsCost)}</div>
+                                  </div>
+                                </div>
+                                {aging && (
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Aging</span>
+                                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${aging.cls}`}>{aging.label}</span>
+                                  </div>
+                                )}
+                              </article>
+                            );
+                          })}
+                          <div className="px-5 py-4 bg-gray-50 space-y-2 text-sm">
+                            <div className="font-bold text-gray-900">Total</div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                <div className="text-gray-700">{filteredRemittanceRows.reduce((s, r) => s + r.orderCount, 0)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                <div className="text-gray-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.revenue, 0))}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Expected</span>
+                                <div className="font-semibold text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                <div className="font-semibold text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</div>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
+                                <div className="font-bold text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19207,7 +20455,60 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-xs text-gray-400">Delivered orders with money still owed by the logistics partner</p>
                       </div>
                     </div>
-                    <div className="overflow-x-auto">
+                    {(() => {
+                      const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid").sort((a, b) => orderRemittanceOutstanding(b) - orderRemittanceOutstanding(a));
+                      if (outstanding.length === 0) {
+                        return <div className="sm:hidden px-5 py-12 text-center text-sm text-gray-400 italic">All delivered orders are fully remitted. 🎉</div>;
+                      }
+                      const OS_PAGE = 25;
+                      const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
+                      const osPageClamped = Math.min(outstandingPage, osTotalPages);
+                      const pagedOutstanding = outstanding.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
+                      return (
+                        <div className="sm:hidden divide-y divide-gray-100">
+                          {pagedOutstanding.map((order) => {
+                            const status = orderRemittanceStatus(order);
+                            const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                            return (
+                              <article key={order.id} className="px-5 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="font-bold text-[#1F8FE0]">{order.id}</div>
+                                    <div className="text-sm font-medium text-gray-900">{order.customer}</div>
+                                    <div className="text-xs text-gray-400">{order.phone}</div>
+                                  </div>
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${statusTone}`}>{status}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Partner</span>
+                                    <div className="text-gray-700">{agents.find((a) => a.id === order.agentId)?.name ?? "Unassigned"}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
+                                    <div className="text-gray-700">{formatProductMoney(order.amount, order.currency)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics</span>
+                                    <div className="text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">To Remit</span>
+                                    <div className="font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</div>
+                                  </div>
+                                  <div className="col-span-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                    <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
+                                  </div>
+                                </div>
+                                <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> Record Remittance</button>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19252,9 +20553,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       if (osTotalPages <= 1) return null;
                       const osPageClamped = Math.min(outstandingPage, osTotalPages);
                       return (
-                        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                        <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
                           <span>Showing {(osPageClamped - 1) * OS_PAGE + 1}–{Math.min(osPageClamped * OS_PAGE, outstanding.length)} of {outstanding.length}</span>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 flex-wrap">
                             <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={osPageClamped <= 1} onClick={() => setOutstandingPage(osPageClamped - 1)}>Prev</button>
                             {Array.from({ length: osTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === osTotalPages || Math.abs(p - osPageClamped) <= 1).map((p, idx, arr) => (<>
                               {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
@@ -19289,7 +20590,77 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 return (
                 <div className="space-y-4">
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden space-y-3 p-4">
+                      {[
+                        {
+                          heading: "Revenue",
+                          rows: [
+                            { label: "Delivered Orders", current: formatMoney(financeRevenue), previous: formatMoney(prevRevenue), change: chg(financeRevenue, prevRevenue), tone: "text-gray-900" },
+                          ],
+                          headingClass: "text-[#1F8FE0]",
+                          bgClass: "bg-blue-50",
+                        },
+                        {
+                          heading: "Cost of Goods Sold (COGS)",
+                          rows: [
+                            { label: "Product Sourcing Costs", current: `(${formatMoney(financeCogs)})`, previous: `(${formatMoney(prevCogs)})`, change: chg(financeCogs, prevCogs), tone: "text-red-500" },
+                            { label: "Logistics / Delivery Fees", current: `(${formatMoney(financeLogisticsCost)})`, previous: `(${formatMoney(prevLogistics)})`, change: chg(financeLogisticsCost, prevLogistics), tone: "text-red-500" },
+                          ],
+                          headingClass: "text-red-600",
+                          bgClass: "bg-red-50",
+                        },
+                        {
+                          heading: "Gross Profit",
+                          rows: [
+                            { label: "Gross Profit", current: formatMoney(financeGrossProfit), previous: formatMoney(prevGross), change: chg(financeGrossProfit, prevGross), tone: "text-green-700" },
+                          ],
+                          headingClass: "text-green-700",
+                          bgClass: "bg-green-50",
+                        },
+                        {
+                          heading: "Operating Expenses",
+                          rows: [
+                            { label: "Expenses", current: `(${formatMoney(financeOpex)})`, previous: `(${formatMoney(prevOpex)})`, change: chg(financeOpex, prevOpex), tone: "text-red-500" },
+                          ],
+                          headingClass: "text-red-600",
+                          bgClass: "bg-red-50",
+                        },
+                        {
+                          heading: "Net Profit",
+                          rows: [
+                            { label: "Net Profit", current: formatMoney(financeNetProfit), previous: formatMoney(prevNet), change: chg(financeNetProfit, prevNet), tone: "text-[#1F8FE0]" },
+                          ],
+                          headingClass: "text-[#1F8FE0]",
+                          bgClass: "bg-blue-50",
+                        },
+                      ].map((section) => (
+                        <section key={section.heading} className={`rounded-xl border border-gray-200 overflow-hidden ${section.bgClass}`}>
+                          <div className={`px-4 py-2 text-[10px] font-bold uppercase tracking-wide ${section.headingClass}`}>{section.heading}</div>
+                          <div className="bg-white divide-y divide-gray-100">
+                            {section.rows.map((row) => (
+                              <div key={row.label} className="px-4 py-3 space-y-2">
+                                <div className={`font-medium ${row.tone}`}>{row.label}</div>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Current</span>
+                                    <div className="font-semibold text-gray-900">{row.current}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Previous</span>
+                                    <div className="text-gray-400">{row.previous}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-[10px] uppercase tracking-wider text-gray-400">Change</span>
+                                  {row.change}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19342,22 +20713,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <strong className="text-gray-900">{financeRoas}{financeRoas === "Uncapped" || financeRoas === "N/A" ? "" : "x"}</strong>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex flex-col gap-1 flex-1 max-w-xs">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label className="flex flex-col gap-1 w-full sm:flex-1 sm:max-w-xs">
                       <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Product for Analysis</span>
                       <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Product for analysis" value={selectedProductId} onChange={(event) => { const p = products.find((pr) => pr.id === event.target.value); setSelectedProductId(event.target.value); setFinanceProductSearch(p?.name ?? ""); }}>
                         <option value="">All products</option>
                         {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
                       </select>
                     </label>
-                    <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0 self-end">
+                    <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
                       <Search className="w-4 h-4 text-gray-400 shrink-0" />
                       <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product name or SKU..." />
                     </label>
-                    <span className="self-end text-xs text-gray-400 pb-2">{productProfitabilityRows.length} of {products.length} products</span>
+                    <span className="self-end text-xs text-gray-400 sm:pb-2">{productProfitabilityRows.length} of {products.length} products</span>
                   </div>
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {productProfitabilityRows.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No products found matching your search</div>
+                      ) : (
+                        productProfitabilityRows.map((row) => (
+                          <article key={row.product.id} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{row.product.name}</div>
+                                <div className="text-xs text-gray-400 font-mono break-all">{row.product.sku}</div>
+                              </div>
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${performanceTone(row.tier)}`}>{row.tier}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                <div className="text-gray-700">{row.totalOrders}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span>
+                                <div className="text-green-700 font-semibold">{row.deliveredCount}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span>
+                                <div className="font-bold text-gray-900">{row.deliveryRate}%</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Units Sold</span>
+                                <div className="text-gray-700">{row.unitsSold}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Net Profit</span>
+                                <div className="font-bold text-gray-900">{formatMoney(row.netProfit)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">COGS</span>
+                                <div className="text-gray-600">{formatMoney(row.cogs)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Expenses</span>
+                                <div className="text-gray-600">{formatMoney(row.expenses)}</div>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}% margin</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}% ROI</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700">{row.expenses === 0 ? (row.revenue > 0 ? "Uncapped ROAS" : "ROAS N/A") : `${(row.revenue / row.expenses).toFixed(2)}x ROAS`}</span>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19480,7 +20907,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-xs text-gray-400">{stateRows.length} state{stateRows.length === 1 ? "" : "s"} active{productFilterActive ? ` · filtered to ${financeProductFilter.length} product${financeProductFilter.length === 1 ? "" : "s"}` : ""}</p>
                       </div>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {stateRows.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-sm text-gray-400 italic">No orders captured for this period.</div>
+                      ) : (
+                        stateRows.map((s) => (
+                          <article key={s.state} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{s.state}</div>
+                                <div className="text-xs text-gray-400">{s.delivered}/{s.total} delivered</div>
+                              </div>
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${performanceTone(s.tier)}`}>{s.tier}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Total Orders</span>
+                                <div className="text-gray-700">{s.total}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span>
+                                <div className="font-bold text-gray-900">{s.deliveryRate}%</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Cancelled / Failed</span>
+                                <div className="text-red-600">{s.cancelled + s.failed}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Pending</span>
+                                <div className="text-gray-500">{s.pending}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(s.revenue)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Gross Profit</span>
+                                <div className="text-gray-700">{formatMoney(s.grossProfit)}</div>
+                              </div>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19523,7 +20993,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </header>
 
               {/* Tabs */}
-              <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+              <div className="grid grid-cols-2 gap-2 sm:hidden">
+                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+                  <button key={tab} onClick={() => setAdTrackingTab(tab)}
+                    className={`!min-h-0 px-4 py-3 rounded-xl border text-left text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] border-[#1F8FE0] shadow-sm" : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700"}`}>
+                    {tab}
+                  </button>
+                ))}
+              </div>
+              <div className="hidden sm:flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
                 {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
@@ -19585,20 +21063,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 })}
               </section>
 
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex flex-col sm:flex-row items-start gap-4">
                 <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
                 <div className="flex-1">
                   <h2 className="text-sm font-bold text-blue-900 mb-1">New to ad tracking?</h2>
                   <p className="text-sm text-blue-700">Learn how to tag your ad links so every order gets attributed to the right campaign and creative.</p>
                 </div>
-                <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => { setActivePage("Embed Form"); showToast("Showing embed form with UTM guide."); }}>Read the guide</button>
+                <button className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shrink-0" onClick={() => { setActivePage("Embed Form"); showToast("Showing embed form with UTM guide."); }}>Read the guide</button>
               </div>
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
                   <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredCampaignOrders.length} attributed</span>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {filteredCampaignOrders.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</div>
+                  ) : (
+                    (() => {
+                      const CAMP_PAGE = 25;
+                      const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                      const campPageClamped = Math.min(campaignPage, campTotalPages);
+                      return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                        <article key={order.id} className="p-4 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-bold text-gray-900">{order.id}</div>
+                              <div className="text-sm font-semibold text-gray-900">{order.customer}</div>
+                              <div className="text-xs text-gray-400">{order.phone}</div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</div>
+                              <div className="text-xs text-gray-500">{formatOrderCreatedAt(order)}</div>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5 text-sm">
+                            <div className="font-medium text-gray-700">{order.productName}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 break-all">{order.utmCampaign}</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 break-all">{order.utmSource}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Medium</span>
+                              <div className="text-gray-600 break-words">{order.utmMedium || "—"}</div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Content</span>
+                              <div className="text-gray-600 break-words">{order.utmContent || "—"}</div>
+                            </div>
+                          </div>
+                        </article>
+                      ));
+                    })()
+                  )}
+                </div>
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19642,9 +21163,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   if (campTotalPages <= 1) return null;
                   const campPageClamped = Math.min(campaignPage, campTotalPages);
                   return (
-                    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                    <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
                       <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredCampaignOrders.length)} of {filteredCampaignOrders.length}</span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
                         <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
                         {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
                           {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
@@ -19674,12 +21195,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="space-y-4">
                     {/* Week navigator + save */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                         <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                           onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() - 7); setAdSpendWeekStart(formatDateKey(d)); }}>
                           <ChevronLeft className="w-4 h-4" />
                         </button>
-                        <span className="text-sm font-semibold text-gray-800 min-w-[220px] text-center">{weekLabel}</span>
+                        <span className="text-sm font-semibold text-gray-800 text-center sm:min-w-[220px]">{weekLabel}</span>
                         <button className="!min-h-0 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                           onClick={() => { const d = new Date(`${adSpendWeekStart}T00:00:00`); d.setDate(d.getDate() + 7); setAdSpendWeekStart(formatDateKey(d)); }}>
                           <ChevronRight className="w-4 h-4" />
@@ -19690,13 +21211,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </button>
                       </div>
                       <button onClick={saveAdSpend} disabled={adSpendSaving}
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors disabled:opacity-60">
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors disabled:opacity-60">
                         {adSpendSaving ? "Saving…" : "Save Changes"}
                       </button>
                     </div>
 
                     {/* Week summary KPIs */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {[
                         { label: "Week Spend", value: formatMoney(weekTotalSpend), color: "text-red-600" },
                         { label: "Week Revenue", value: formatMoney(weekTotalRevenue), color: "text-green-600" },
@@ -19713,7 +21234,88 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 italic">No active products. Add a product first.</div>
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="overflow-x-auto">
+                        <div className="sm:hidden divide-y divide-gray-100">
+                          {activeProds.map((product) => {
+                            const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                            const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                            const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
+                            return (
+                              <article key={product.id} className="p-4 space-y-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-gray-800">{product.name}</div>
+                                    <div className="text-xs text-gray-400">Weekly ad spend and revenue breakdown</div>
+                                  </div>
+                                  {rowRoas !== null && (
+                                    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
+                                      {rowRoas.toFixed(2)}x ROAS
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-1 gap-3">
+                                  {adSpendWeekDays.map((day, i) => {
+                                    const key = `${product.id}-${day}`;
+                                    const spend = parseFloat(adSpendDraft[key] ?? "") || 0;
+                                    const rev = revenueForProductDay(product.id, day);
+                                    const roas = spend > 0 ? rev / spend : null;
+                                    const orders = ordersForProductDay(product.id, day);
+                                    return (
+                                      <div key={day} className={`rounded-xl border ${day === todayKey2 ? "border-blue-200 bg-blue-50/40" : "border-gray-200 bg-gray-50"} p-3 space-y-3`}>
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div>
+                                            <div className="text-xs font-bold text-gray-700 uppercase tracking-wide">{dayLabels[i]}</div>
+                                            <div className="text-[11px] text-gray-400">{day.slice(5)}</div>
+                                          </div>
+                                          {roas !== null ? (
+                                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${roas >= 2 ? "bg-green-100 text-green-700" : roas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
+                                              {roas.toFixed(2)}x
+                                            </span>
+                                          ) : (
+                                            <span className="text-[10px] text-gray-300">No spend</span>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Ad Spend</span>
+                                          <input
+                                            type="number" min="0" placeholder="0"
+                                            value={adSpendDraft[key] ?? ""}
+                                            onChange={(e) => setAdSpendDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                                            className="mt-1 w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#1F8FE0] focus:ring-1 focus:ring-[#1F8FE0] bg-white"
+                                          />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3 text-sm">
+                                          <div>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                            <div className={`${spend > 0 && rev >= spend ? "text-green-600" : spend > 0 && rev < spend ? "text-red-500" : "text-gray-500"} font-medium`}>{rev > 0 ? formatMoney(rev) : "—"}</div>
+                                          </div>
+                                          <div>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                            <div className="text-gray-500">{orders > 0 ? orders : "—"}</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="grid grid-cols-3 gap-3 rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm">
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Spend</span>
+                                    <div className="font-semibold text-red-600">{rowSpend > 0 ? formatMoney(rowSpend) : "—"}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</span>
+                                    <div className="font-semibold text-green-600">{rowRevenue > 0 ? formatMoney(rowRevenue) : "—"}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">ROAS</span>
+                                    <div className={`font-semibold ${rowRoas === null ? "text-gray-400" : rowRoas >= 2 ? "text-green-600" : rowRoas >= 1 ? "text-yellow-600" : "text-red-600"}`}>{rowRoas !== null ? `${rowRoas.toFixed(2)}x` : "—"}</div>
+                                  </div>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                        <div className="hidden sm:block overflow-x-auto">
                           <table className="w-full text-sm min-w-[700px]">
                             <thead>
                               <tr className="bg-gray-50 border-b border-gray-200">
@@ -19817,7 +21419,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-green-200 inline-block" /> ROAS ≥ 2x — profitable</span>
                           <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-yellow-200 inline-block" /> ROAS 1–2x — breaking even</span>
                           <span className="inline-flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-3 rounded-full bg-red-200 inline-block" /> ROAS &lt; 1x — losing money</span>
-                          <span className="ml-auto text-xs text-gray-400">Revenue counts non-cancelled/failed orders by creation date</span>
+                          <span className="text-xs text-gray-400 sm:ml-auto">Revenue counts non-cancelled/failed orders by creation date</span>
                         </div>
                       </div>
                     )}
@@ -19834,11 +21436,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">User Management</h1>
                   <p className="text-sm font-medium text-gray-500">Manage company-wide user roles, permissions, and security settings.</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportUserData}>
+                <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={exportUserData}>
                     <Upload className="w-4 h-4" /> Export Data
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminUserCreateRoute}>
+                  <button className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={openAdminUserCreateRoute}>
                     <UserPlus className="w-4 h-4" /> Add User
                   </button>
                 </div>
@@ -19896,7 +21498,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                   <h2 className="text-sm font-bold text-gray-800 mb-1">Role Distribution</h2>
                   <p className="text-xs text-gray-400 mb-3">Active roles by category</p>
-                  <div className="flex items-center gap-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
                     <div className="w-16 h-16 rounded-full border-4 border-[#1F8FE0] flex items-center justify-center flex-col shrink-0">
                       <strong className="text-lg font-bold text-gray-900">{users.length}</strong>
                       <span className="text-[9px] text-gray-400">Total</span>
@@ -19912,18 +21514,101 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search users</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={userSearch} onChange={(event) => { setUserSearch(event.target.value); setUserPage(1); }} placeholder="Search users by name, email..." />
                 </label>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User role" value={userRole} onChange={(event) => { setUserRole(event.target.value as UserRole); setUserPage(1); showToast(`User role filter set to ${event.target.value}.`); }}>{userRoles.map((role) => <option key={role}>{role}</option>)}</select>
-                <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User status" value={userStatus} onChange={(event) => { setUserStatus(event.target.value as UserStatus); setUserPage(1); showToast(`User status filter set to ${event.target.value}.`); }}>{userStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+                <select className="h-10 sm:h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User role" value={userRole} onChange={(event) => { setUserRole(event.target.value as UserRole); setUserPage(1); showToast(`User role filter set to ${event.target.value}.`); }}>{userRoles.map((role) => <option key={role}>{role}</option>)}</select>
+                <select className="h-10 sm:h-9 w-full sm:w-auto px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="User status" value={userStatus} onChange={(event) => { setUserStatus(event.target.value as UserStatus); setUserPage(1); showToast(`User status filter set to ${event.target.value}.`); }}>{userStatuses.map((status) => <option key={status}>{status}</option>)}</select>
               </div>
 
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Users table">
-                <div className="overflow-x-auto">
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="User directory">
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {filteredUsers.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</div>
+                  ) : (
+                    pagedFilteredUsers.map((user) => {
+                      const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+                      const isOwner = user.role === "Owner";
+                      const isExpanded = expandedPermissionsUserId === user.id;
+                      return (
+                        <article key={user.id} className="p-4 space-y-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(user.name)}</span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900 truncate">{user.name}</div>
+                                <div className="text-xs text-gray-400 break-all">{user.email}</div>
+                              </div>
+                            </div>
+                            <span className={`role-pill shrink-0 ${isOwner ? "owner-pill" : ""}`}>{user.role}</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Created</span>
+                              <strong className="text-sm text-gray-900">{formatMoment(user.created) || "—"}</strong>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Permissions</span>
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-1.5 text-sm font-semibold text-[#1F8FE0]"
+                                onClick={() => setExpandedPermissionsUserId(isExpanded ? null : user.id)}
+                              >
+                                {isOwner ? "All access" : `${userPerms.length}/${permissionDefs.length}`}
+                                <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                            <div>
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Status</span>
+                              <strong className={`text-sm ${user.active ? "text-green-600" : "text-gray-500"}`}>{user.active ? "Active" : "Inactive"}</strong>
+                            </div>
+                            <button type="button" className="flex items-center gap-2 text-sm" onClick={() => {
+                              const prevActive = user.active;
+                              setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: !item.active } : item));
+                              showToast(`${user.name} marked ${user.active ? "inactive" : "active"}.`);
+                              teamApi.update(user.id, { active: !prevActive }).catch((err: any) => {
+                                setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
+                                showToast(`Failed to update status: ${err.message}`);
+                              });
+                            }}>
+                              <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
+                                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
+                              </span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {realRole === "Owner" && user.id !== authUser?.id && (
+                              <button
+                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-200 text-amber-600 bg-amber-50 text-xs font-semibold"
+                                onClick={() => enterSpy(user)}
+                              >
+                                <Eye className="w-4 h-4" /> View as
+                              </button>
+                            )}
+                            <button className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold" onClick={() => openAdminUserEditRoute(user.id)}><Pencil className="w-4 h-4" /> Edit</button>
+                            <button className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold" onClick={() => openAdminUserResetPasswordRoute(user.id)}><KeyRound className="w-4 h-4" /> Reset</button>
+                            <button className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-red-200 text-red-600 bg-red-50 text-xs font-semibold" onClick={() => openAdminUserDeleteRoute(user.id)}><Trash2 className="w-4 h-4" /> Delete</button>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="-mx-4 border-t border-blue-100 pt-4">
+                              {renderUserPermissionsPanel(user)}
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -19936,14 +21621,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {filteredUsers.length === 0 ? (
                         <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
                       ) : (
-                        (() => { const USER_PAGE = 25; const uTotalPages = Math.ceil(filteredUsers.length / USER_PAGE); const uPageClamped = Math.min(userPage, uTotalPages); return filteredUsers.slice((uPageClamped - 1) * USER_PAGE, uPageClamped * USER_PAGE); })().map((user) => {
+                        pagedFilteredUsers.map((user) => {
                           const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
-                          const permGroups = ["Orders", "Inventory", "Operations", "Finance", "Admin"] as const;
                           return (
-                            <>
-                              <tr key={user.id} className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
+                            <Fragment key={user.id}>
+                              <tr className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
                                 <td className="px-4 py-4">
                                   <div className="flex items-center gap-2">
                                     <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(user.name)}</span>
@@ -19997,142 +21681,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </td>
                               </tr>
                               {isExpanded && (
-                                <tr key={`${user.id}-perms`} className="bg-blue-50/30 border-t border-blue-100">
-                                  <td colSpan={6} className="px-6 py-4">
-                                    <div className="flex items-start justify-between gap-3 mb-3">
-                                      <div>
-                                        <p className="text-sm font-semibold text-gray-900">{user.name} — Permissions</p>
-                                        {isOwner && <p className="text-xs text-gray-500 mt-0.5">Owner always has full access. Permissions cannot be changed.</p>}
-                                        {!isOwner && <p className="text-xs text-gray-500 mt-0.5">Toggle individual permissions for this user.</p>}
-                                      </div>
-                                      {!isOwner && (
-                                        <button className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline" onClick={() => {
-                                          const prevUsers = users;
-                                          const defaultPerms = defaultPermsByRole[user.role] ?? [];
-                                          setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
-                                          teamApi.update(user.id, { permissions: defaultPerms }).catch((err: any) => {
-                                            setUsers(prevUsers);
-                                            showToast(`Failed to reset permissions: ${err.message}`);
-                                          });
-                                        }}>Reset to defaults</button>
-                                      )}
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                      {permGroups.map((group) => {
-                                        const groupPerms = permissionDefs.filter((p) => p.group === group);
-                                        if (groupPerms.length === 0) return null;
-                                        return (
-                                          <div key={group}>
-                                            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">{group}</p>
-                                            <div className="flex flex-col gap-1.5">
-                                              {groupPerms.map((perm) => {
-                                                const hasIt = isOwner || userPerms.includes(perm.key);
-                                                return (
-                                                  <label key={perm.key} className={`flex items-center gap-2.5 cursor-pointer ${isOwner ? "opacity-60 cursor-not-allowed" : ""}`}>
-                                                    <button
-                                                      type="button"
-                                                      className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${hasIt ? "bg-[#1F8FE0]" : "bg-gray-200"} ${isOwner ? "pointer-events-none" : ""}`}
-                                                      onClick={() => !isOwner && toggleUserPermission(user.id, perm.key)}
-                                                    >
-                                                      <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${hasIt ? "left-4" : "left-0.5"}`} />
-                                                    </button>
-                                                    <span className="text-xs text-gray-700">{perm.label}</span>
-                                                  </label>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-
-                                    {/* Page access — Owner can grant cross-role pages */}
-                                    {!isOwner && currentRole === "Owner" && (
-                                      <div className="mt-5 pt-4 border-t border-blue-100">
-                                        <div className="flex items-start justify-between gap-3 mb-3">
-                                          <div>
-                                            <p className="text-sm font-semibold text-gray-900">Page access</p>
-                                            <p className="text-xs text-gray-500 mt-0.5">Grant <strong>{user.name}</strong> access to pages outside their <strong>{user.role}</strong> role. The role's default pages stay enabled.</p>
-                                          </div>
-                                          <button
-                                            className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
-                                            onClick={() => {
-                                              const prevUsers = users;
-                                              setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: [] } : u));
-                                              teamApi.update(user.id, { extra_pages: [] }).catch((err: any) => {
-                                                setUsers(prevUsers);
-                                                showToast(`Failed to reset page access: ${err.message}`);
-                                              });
-                                            }}
-                                          >Reset extras</button>
-                                        </div>
-                                        {(() => {
-                                          const roleDefaults = roleAllowedPages[user.role] ?? [];
-                                          const userExtras = user.extraPages ?? [];
-                                          const allPages = (roleAllowedPages["Owner"] ?? []);
-                                          const candidates = allPages.filter((p) => !roleDefaults.includes(p));
-                                          return (
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                              {candidates.map((page) => {
-                                                const granted = userExtras.includes(page);
-                                                return (
-                                                  <label key={page} className="flex items-center gap-2.5 cursor-pointer p-2 rounded-md hover:bg-blue-100/30">
-                                                    <button
-                                                      type="button"
-                                                      className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${granted ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
-                                                      onClick={() => {
-                                                        const prevUsers = users;
-                                                        const nextExtras = (() => { const s = new Set(user.extraPages ?? []); if (granted) s.delete(page); else s.add(page); return Array.from(s) as ActivePage[]; })();
-                                                        setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: nextExtras } : u));
-                                                        teamApi.update(user.id, { extra_pages: nextExtras }).catch((err: any) => {
-                                                          setUsers(prevUsers);
-                                                          showToast(`Failed to update page access: ${err.message}`);
-                                                        });
-                                                      }}
-                                                    >
-                                                      <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${granted ? "left-4" : "left-0.5"}`} />
-                                                    </button>
-                                                    <span className="text-xs text-gray-700">{page}</span>
-                                                  </label>
-                                                );
-                                              })}
-                                              {candidates.length === 0 && <p className="text-xs text-gray-400 italic">No additional pages to grant.</p>}
-                                            </div>
-                                          );
-                                        })()}
-                                        <p className="text-[11px] text-gray-400 mt-3">Default pages for {user.role}: {(roleAllowedPages[user.role] ?? []).join(", ") || "none"}.</p>
-                                      </div>
-                                    )}
+                                <tr className="bg-blue-50/30 border-t border-blue-100">
+                                  <td colSpan={6} className="p-0">
+                                    {renderUserPermissionsPanel(user)}
                                   </td>
                                 </tr>
                               )}
-                            </>
+                            </Fragment>
                           );
                         })
                       )}
                     </tbody>
                   </table>
                 </div>
-                {(() => {
-                  const USER_PAGE = 25;
-                  const uTotalPages = Math.ceil(filteredUsers.length / USER_PAGE);
-                  const uPageClamped = Math.min(userPage, uTotalPages || 1);
-                  return (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                      <span>{filteredUsers.length} user{filteredUsers.length === 1 ? "" : "s"}{uTotalPages > 1 ? ` · page ${uPageClamped} of ${uTotalPages}` : ""}</span>
-                      {uTotalPages > 1 && (
-                        <div className="flex items-center gap-1">
-                          <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={uPageClamped <= 1} onClick={() => setUserPage(uPageClamped - 1)}>Prev</button>
-                          {Array.from({ length: uTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === uTotalPages || Math.abs(p - uPageClamped) <= 1).map((p, idx, arr) => (<>
-                            {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
-                            <button key={p} className={`px-2 py-1 rounded border ${p === uPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setUserPage(p)}>{p}</button>
-                          </>))}
-                          <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={uPageClamped >= uTotalPages} onClick={() => setUserPage(uPageClamped + 1)}>Next</button>
-                        </div>
-                      )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                  <span>{filteredUsers.length} user{filteredUsers.length === 1 ? "" : "s"}{filteredUsersTotalPages > 1 ? ` · page ${clampedUserPage} of ${filteredUsersTotalPages}` : ""}</span>
+                  {filteredUsersTotalPages > 1 && (
+                    <div className="flex items-center gap-1 flex-wrap sm:justify-end">
+                      <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={clampedUserPage <= 1} onClick={() => setUserPage(clampedUserPage - 1)}>Prev</button>
+                      {Array.from({ length: filteredUsersTotalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === filteredUsersTotalPages || Math.abs(p - clampedUserPage) <= 1)
+                        .map((p, idx, arr) => (
+                          <Fragment key={p}>
+                            {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1">…</span>}
+                            <button className={`px-2 py-1 rounded border ${p === clampedUserPage ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setUserPage(p)}>{p}</button>
+                          </Fragment>
+                        ))}
+                      <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={clampedUserPage >= filteredUsersTotalPages} onClick={() => setUserPage(clampedUserPage + 1)}>Next</button>
                     </div>
-                  );
-                })()}
+                  )}
+                </div>
               </section>
               </div>
             </div>
@@ -20144,8 +21722,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <p className="text-sm font-medium text-gray-500">Configure the lead distribution sequence for your sales team.</p>
                   {roundRobinActiveRows[0] ? <p className="text-sm font-bold text-gray-700 mt-1">Next in line: <span className="text-[#1F8FE0]">{roundRobinActiveRows[0].user.name}</span></p> : null}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
+                <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     const sorted = roundRobinActiveRows.map((r) => r.user);
                     if (sorted.length < 2) return;
                     const rotated = [...sorted.slice(1), sorted[0]];
@@ -20162,7 +21740,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   }}>
                     <Repeat2 className="w-4 h-4" /> Advance Sequence
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     const sorted = roundRobinActiveRows.map((r) => r.user);
                     if (sorted.length < 2) return;
                     const skipped = sorted[0];
@@ -20182,7 +21760,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   }}>
                     <SkipForward className="w-4 h-4" /> Skip Rep
                   </button>
-                  <button className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
                     const sorted = roundRobinActiveRows.map((r) => r.user).sort((a, b) => a.name.localeCompare(b.name));
                     const prevUsers = users;
@@ -20204,21 +21782,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={4} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
-              <div className="flex flex-wrap items-center gap-3">
-                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Round-robin views">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full w-full sm:w-auto" role="tablist" aria-label="Round-robin views">
                   {roundRobinTabs.map((tab) => (
                     <button
                       key={tab}
                       role="tab"
                       aria-selected={roundRobinTab === tab}
-                      className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap ${roundRobinTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
+                      className={`px-4 py-2 sm:py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap text-center ${roundRobinTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
                       onClick={() => { setRoundRobinTab(tab); }}
                     >
                       {tab} <span className="ml-1 text-xs opacity-70">({tab === "Active Sequence" ? roundRobinActiveRows.length : roundRobinExcludedRows.length})</span>
                     </button>
                   ))}
                 </nav>
-                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
+                <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search reps</span>
                   <input className="bg-transparent outline-none text-sm w-full min-w-0" value={roundRobinSearch} onChange={(event) => setRoundRobinSearch(event.target.value)} placeholder="Search reps..." />
@@ -20232,17 +21810,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 ) : (
                   <div className="flex flex-col gap-2">
                     {roundRobinRows.map((row, index) => (
-                      <article key={row.user.id} className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 ${index === 0 ? "border-[#1F8FE0] ring-1 ring-[#1F8FE0]/20" : "border-gray-200"}`}>
+                      <article key={row.user.id} className={`bg-white rounded-xl border shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${index === 0 ? "border-[#1F8FE0] ring-1 ring-[#1F8FE0]/20" : "border-gray-200"}`}>
                         <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${index === 0 ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>#{index + 1}</span>
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-gray-900">{row.user.name}</div>
                           <div className="text-xs text-gray-400">{row.user.email}</div>
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-gray-500 shrink-0">
+                        <div className="grid grid-cols-2 sm:flex items-center gap-3 sm:gap-4 text-xs text-gray-500 shrink-0 w-full sm:w-auto">
                           <span><strong className="text-gray-900">{row.openOrders}</strong> open</span>
                           <span><strong className="text-gray-900">{row.delivered}</strong> delivered</span>
                         </div>
-                          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => openAdminUserEditRoute(row.user.id)}>{row.user.active ? "Exclude" : "Enable"}</button>
+                        <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => openAdminUserEditRoute(row.user.id)}>{row.user.active ? "Exclude" : "Enable"}</button>
                       </article>
                     ))}
                   </div>
@@ -20939,8 +22517,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const startIdx = (safePage - 1) * perPage + 1;
                 const endIdx = Math.min(safePage * perPage, visibleList.length);
                 return (<>
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center justify-between gap-4">
-                <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <nav className="grid grid-cols-2 sm:inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-auto">
                   {(["All", "Unread"] as NotificationFilter[]).map((filter) => (
                     <button
                       key={filter}
@@ -20952,7 +22530,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   ))}
                 </nav>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={scopedReadCount === 0} onClick={() => { const prev = systemNotifications; setSystemNotifications((p) => p.filter((n) => !n.read)); setNotifPage(1); showToast("Read notifications deleted."); notificationsApi.deleteRead().catch((err: any) => { setSystemNotifications(prev); showToast(`Failed to delete: ${err.message}`); }); }}><Trash2 className="w-4 h-4" /> Delete read</button>
+                <button className="flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 sm:py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={scopedReadCount === 0} onClick={() => { const prev = systemNotifications; setSystemNotifications((p) => p.filter((n) => !n.read)); setNotifPage(1); showToast("Read notifications deleted."); notificationsApi.deleteRead().catch((err: any) => { setSystemNotifications(prev); showToast(`Failed to delete: ${err.message}`); }); }}><Trash2 className="w-4 h-4" /> Delete read</button>
               </div>
 
               {scopedNotifications.length === 0 ? (
@@ -20963,12 +22541,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </section>
               ) : (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
                     <div>
                       <h2 className="text-sm font-bold text-gray-800">System Notifications</h2>
                       <p className="text-xs text-gray-400">{scopedUnread} unread · {scopedNotifications.length} in period</p>
                     </div>
-                    {scopedUnread > 0 && <button className="text-xs font-semibold text-[#1F8FE0] hover:underline" onClick={markAllNotificationsRead}>Mark all read</button>}
+                    {scopedUnread > 0 && <button className="text-xs font-semibold text-[#1F8FE0] hover:underline text-left sm:text-right" onClick={markAllNotificationsRead}>Mark all read</button>}
                   </div>
                   <ul className="divide-y divide-gray-100">
                     {pageSlice.map((n) => {
@@ -20993,7 +22571,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       return (
                         <li key={n.id} className={`${!n.read ? "bg-blue-50/40" : ""}`}>
                           <div
-                            className="flex items-start gap-3 px-5 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                            className="flex items-start gap-3 px-4 sm:px-5 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
                             onClick={handleRowClick}
                           >
                             <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${iconCls}`}>
@@ -21001,7 +22579,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </span>
                             <div className="flex-1 min-w-0">
                               {n.title && <p className={`text-xs font-bold uppercase tracking-wider ${!n.read ? "text-gray-700" : "text-gray-500"}`}>{n.title}</p>}
-                              <p className={`text-sm ${!n.read ? "font-semibold text-gray-900" : "text-gray-700"}`}>{n.message}</p>
+                              <p className={`text-sm break-words ${!n.read ? "font-semibold text-gray-900" : "text-gray-700"}`}>{n.message}</p>
                               <p className="text-xs text-gray-400 mt-0.5">{formatMoment(n.createdAt)}</p>
                             </div>
                             <div className="flex items-center gap-2 shrink-0 mt-1">
@@ -21011,7 +22589,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
 
                           {isExpanded && (
-                            <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 space-y-3">
+                            <div className="px-4 sm:px-5 py-4 bg-gray-50 border-t border-gray-100 space-y-3">
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                 <div>
                                   <span className="block text-gray-400 font-bold uppercase tracking-wider">Type</span>
@@ -21042,8 +22620,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <span className="block text-gray-500 font-mono text-[11px] mt-1 truncate">{n.id}</span>
                                 </div>
                               </div>
-                              <div className="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-gray-200">
-                                <div className="flex items-center gap-2">
+                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-200">
+                                <div className="flex flex-wrap items-center gap-2">
                                   {n.link && (
                                     <button
                                       className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -21063,12 +22641,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     </button>
                                   )}
                                 </div>
-                                <button
-                                  className="!min-h-0 text-[11px] font-semibold text-gray-500 hover:text-gray-700"
-                                  onClick={(e) => { e.stopPropagation(); setExpandedNotificationId(null); }}
-                                >
-                                  Collapse
-                                </button>
+                                <div className="flex items-center justify-end">
+                                  <button
+                                    className="!min-h-0 text-[11px] font-semibold text-gray-500 hover:text-gray-700"
+                                    onClick={(e) => { e.stopPropagation(); setExpandedNotificationId(null); }}
+                                  >
+                                    Collapse
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -21077,9 +22657,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     })}
                   </ul>
                   {totalPages > 1 && (
-                    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-gray-100 text-xs text-gray-500">
                       <span>Showing {startIdx}–{endIdx} of {visibleList.length}</span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 flex-wrap sm:justify-end">
                         <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={safePage <= 1} onClick={() => setNotifPage(safePage - 1)}>Prev</button>
                         {Array.from({ length: totalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1).reduce<(number | "…")[]>((acc, p) => { if (acc.length > 0) { const last = acc[acc.length - 1]; if (typeof last === "number" && p - last > 1) acc.push("…"); } acc.push(p); return acc; }, []).map((p, i) => typeof p === "string" ? <span key={`e${i}`} className="px-1">…</span> : <button key={p} className={`px-2 py-1 rounded border ${p === safePage ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setNotifPage(p)}>{p}</button>)}
                         <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={safePage >= totalPages} onClick={() => setNotifPage(safePage + 1)}>Next</button>
@@ -21094,7 +22674,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
           ) : activePage === "Settings" ? (
             <div className="space-y-8">
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-500">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-500">
                 <span>Dashboard</span>
                 <ArrowRight className="w-3.5 h-3.5" />
                 <strong className="text-gray-900">Settings</strong>
@@ -21106,7 +22686,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <section className="space-y-3">
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
                     {[
                       { id: "workspace", label: "Workspace", hint: "Push, branding, app install, timezone, account" },
                       ...(canManageMessagingSettings ? [{ id: "email", label: "Email Delivery", hint: "Provider setup, templates, activity" }] : []),
@@ -21118,7 +22698,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           key={tab.id}
                           type="button"
                           onClick={() => setSettingsPanel(tab.id as SettingsPanel)}
-                          className={`text-left rounded-xl border px-4 py-3 transition-colors min-w-[220px] ${active ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
+                          className={`w-full text-left rounded-xl border px-4 py-3 transition-colors min-w-0 ${active ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
                         >
                           <span className="block text-sm font-bold">{tab.label}</span>
                           <span className="block text-[11px] mt-1 text-gray-500">{tab.hint}</span>
@@ -21201,7 +22781,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
                       ) : pushSubscribed ? (
                         <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
+                          className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
                           disabled={pushLoading}
                           onClick={async () => {
                             setPushLoading(true);
@@ -21221,7 +22801,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </button>
                       ) : (
                         <button
-                          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
                           disabled={pushLoading || !pushServerConfigured}
                           onClick={async () => {
                             setPushLoading(true);
@@ -21245,9 +22825,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <hr className="border-gray-100" />
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
-                    <div className="flex flex-wrap items-center gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
-                        className="text-sm text-[#1F8FE0] font-medium hover:underline"
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
                         onClick={async () => {
                           if ("serviceWorker" in navigator) {
                             const reg = await navigator.serviceWorker.getRegistration();
@@ -21257,7 +22837,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         }}
                       >Update Service Worker</button>
                       <button
-                        className="text-sm text-[#1F8FE0] font-medium hover:underline disabled:opacity-50"
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
                         disabled={pushLoading}
                         onClick={async () => {
                           setPushLoading(true);
@@ -21275,7 +22855,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         }}
                       >Force Re-subscribe</button>
                       <button
-                        className="text-sm text-[#1F8FE0] font-medium hover:underline disabled:opacity-50"
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
                         disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
                         onClick={async () => {
                           setPushTestLoading(true);
@@ -21442,9 +23022,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
                             </label>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <button
-                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                className="!min-h-0 inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                                 disabled={emailTestLoading}
                                 onClick={sendEmailTest}
                               >
@@ -21452,7 +23032,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 {emailTestLoading ? "Sending…" : "Send Test Email"}
                               </button>
                               <button
-                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                className="!min-h-0 inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                                 disabled={weeklyReportLoading}
                                 onClick={sendWeeklyReportEmail}
                               >
@@ -21484,13 +23064,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
 
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div>
                             <h3 className="text-sm font-bold text-gray-900">Recent Email Activity</h3>
                             <p className="text-xs text-gray-500 mt-1">Customer emails, internal alerts, welcome emails, and tests are logged here with pagination.</p>
                           </div>
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                             disabled={emailMessagesLoading}
                             onClick={() => { void loadEmailMessages(emailActivityPage); }}
                           >
@@ -21534,13 +23114,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           )}
                           {!emailMessagesLoading && emailActivityTotal > emailActivityPageSize && (
-                            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                               <span>
                                 Showing {((emailActivityPage - 1) * emailActivityPageSize) + 1}
                                 –
                                 {Math.min(emailActivityPage * emailActivityPageSize, emailActivityTotal)} of {emailActivityTotal}
                               </span>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap sm:justify-end">
                                 <button
                                   className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
                                   disabled={emailActivityPage <= 1}
@@ -21660,13 +23240,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="text-xs text-gray-400">
                           {emailSettings.updatedAt ? `Last updated ${formatMoment(emailSettings.updatedAt)}` : "Not saved yet"}
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                             disabled={emailSettingsLoading}
                             onClick={reloadEmailSettings}
                           >
@@ -21674,7 +23254,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             Reload
                           </button>
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                             disabled={emailSettingsSaving || !emailSettingsDirty}
                             onClick={saveEmailSettings}
                           >
@@ -21721,7 +23301,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           Only the live balance is visible in Admin view.
                         </div>
                         <button
-                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                           disabled={smsBalanceLoading}
                           onClick={() => { void loadSmsBalance(); }}
                         >
@@ -21957,9 +23537,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
                               />
                             </label>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <button
-                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                className="!min-h-0 inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                                 disabled={smsTestLoading}
                                 onClick={sendSmsTest}
                               >
@@ -21967,7 +23547,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 {smsTestLoading ? "Sending…" : "Send Test SMS"}
                               </button>
                               <button
-                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                className="!min-h-0 inline-flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                                 disabled={smsBalanceLoading || smsMessagesLoading}
                                 onClick={() => { void hydrateSmsSupportData(smsSettings); }}
                               >
@@ -22062,13 +23642,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         <div className="rounded-xl border border-gray-200 p-4 space-y-3">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div>
                               <h3 className="text-sm font-bold text-gray-900">SMS Opt-outs</h3>
                               <p className="text-xs text-gray-500 mt-1">Blocked numbers never receive customer SMS until re-enabled.</p>
                             </div>
                             <button
-                              className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                              className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                               disabled={smsOptOutsLoading}
                               onClick={() => { void hydrateSmsSupportData(smsSettings, { quiet: true }); }}
                             >
@@ -22092,7 +23672,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                             />
                             <button
-                              className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                              className="!min-h-0 inline-flex w-full md:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                               disabled={smsOptOutsLoading}
                               onClick={addSmsOptOutEntry}
                             >
@@ -22127,13 +23707,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
 
                         <div className="rounded-xl border border-gray-200 p-4 space-y-3">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div>
                               <h3 className="text-sm font-bold text-gray-900">Inbound SMS Inbox</h3>
                               <p className="text-xs text-gray-500 mt-1">Replies posted to the webhook show up here, including STOP/START handling.</p>
                             </div>
                             <button
-                              className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                              className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                               disabled={smsInboundLoading}
                               onClick={() => { void hydrateSmsSupportData(smsSettings, { quiet: true }); }}
                             >
@@ -22170,13 +23750,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
 
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div>
                             <h3 className="text-sm font-bold text-gray-900">Recent SMS Activity</h3>
                             <p className="text-xs text-gray-500 mt-1">Latest queued, sent, delivered, and failed customer SMS records.</p>
                           </div>
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                             disabled={smsMessagesLoading}
                             onClick={() => { void hydrateSmsSupportData(smsSettings); }}
                           >
@@ -22241,13 +23821,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           )}
                           {!smsMessagesLoading && smsActivityTotal > smsActivityPageSize && (
-                            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                               <span>
                                 Showing {((smsActivityPage - 1) * smsActivityPageSize) + 1}
                                 –
                                 {Math.min(smsActivityPage * smsActivityPageSize, smsActivityTotal)} of {smsActivityTotal}
                               </span>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap sm:justify-end">
                                 <button
                                   className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
                                   disabled={smsActivityPage <= 1}
@@ -22269,13 +23849,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="text-xs text-gray-400">
                           {smsSettings.updatedAt ? `Last updated ${formatMoment(smsSettings.updatedAt)}` : "Not saved yet"}
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
                             disabled={smsSettingsLoading}
                             onClick={reloadSmsSettings}
                           >
@@ -22283,7 +23863,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             Reload
                           </button>
                           <button
-                            className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                             disabled={smsSettingsSaving || !smsSettingsDirty}
                             onClick={saveSmsSettings}
                           >
@@ -22293,6 +23873,60 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </>
                   )}
+                </div>
+              </section>
+              )}
+
+              {settingsPanel === "workspace" && (
+              <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">Display Density</h2>
+                <p className="text-sm text-gray-500">Choose how roomy the app feels on this device. This mainly affects mobile spacing, chip/button size, and card padding.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {[
+                      {
+                        id: "comfortable" as DisplayDensity,
+                        label: "Comfortable",
+                        hint: "Roomier spacing with bigger touch targets. Best for phones.",
+                        badge: "Recommended"
+                      },
+                      {
+                        id: "compact" as DisplayDensity,
+                        label: "Compact",
+                        hint: "Tighter spacing so more content fits on smaller screens.",
+                        badge: "Dense"
+                      }
+                    ].map((option) => {
+                      const active = density === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            setDensity(option.id);
+                            showToast(`Display density set to ${option.label}.`);
+                          }}
+                          className={`w-full rounded-2xl border p-4 text-left transition-colors ${active ? "border-[#1F8FE0] bg-blue-50 shadow-sm" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${active ? "bg-white text-[#1F8FE0] border border-blue-100" : "bg-gray-100 text-gray-500"}`}>
+                                {option.badge}
+                              </span>
+                              <h3 className={`mt-3 text-sm font-bold ${active ? "text-[#1F8FE0]" : "text-gray-900"}`}>{option.label}</h3>
+                              <p className="mt-1 text-xs leading-relaxed text-gray-500">{option.hint}</p>
+                            </div>
+                            <span className={`mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full border ${active ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-300 bg-white text-transparent"}`}>
+                              <Check className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+                    This preference is saved on this device only, just like your theme choice. Desktop layouts stay mostly the same; the biggest change is on mobile and smaller tablets.
+                  </div>
                 </div>
               </section>
               )}
@@ -22333,7 +23967,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm text-gray-500">Your logo and company name appear in the sidebar, login screen, and on customer-facing pages.</p>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
                   {/* Logo preview + actions */}
-                  <div className="flex items-start gap-4 flex-wrap">
+                  <div className="flex flex-col sm:flex-row items-start gap-4 flex-wrap">
                     <div className="w-20 h-20 rounded-2xl border border-gray-200 bg-[hsl(var(--brand-navy))] flex items-center justify-center shrink-0 overflow-hidden">
                       {companyLogo ? (
                         <img src={companyLogo} alt={companyName} className="w-full h-full object-cover" />
@@ -22344,7 +23978,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="flex-1 min-w-[240px] space-y-2">
                       <h3 className="text-sm font-bold text-gray-900">Company logo</h3>
                       <p className="text-xs text-gray-500">PNG or JPG, square works best (1:1). Synced across your organization.</p>
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
                         <label className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer">
                           <Upload className="w-4 h-4" />
                           {companyLogo ? "Replace" : "Upload"}
@@ -22507,7 +24141,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <h3 className="text-sm font-bold text-gray-900">Choose your device</h3>
                     <p className="text-xs text-gray-500 mt-0.5">We've highlighted the platform you're using right now.</p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 px-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 px-5">
                     {([
                       { id: "android", label: "Android",   sub: "Chrome",  Icon: Smartphone, accent: "emerald" },
                       { id: "ios",     label: "iPhone",    sub: "Safari",  Icon: Apple,      accent: "blue" },
@@ -22641,9 +24275,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Abandoned cart notifications</h2>
                 <p className="text-sm text-gray-500">Choose who gets pinged when a new abandoned cart is captured.</p>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col sm:flex-row items-start gap-4">
                   <span className="w-9 h-9 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center shrink-0"><Bell className="w-4 h-4" /></span>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold text-gray-900 mb-1">Notify admins on new abandoned carts</h3>
                     <p className="text-sm text-gray-500">The assigned sales rep is always notified. Turn this on to also send a push and in-app notification to every admin in your org.</p>
                   </div>
@@ -23019,7 +24653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Inventory Dashboard</h1>
                     <p className="text-sm font-medium text-gray-500">Centralized management for global balance and localized agent distribution.</p>
                   </div>
-                  <select aria-label="Currency" className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={currency} onChange={(event) => {
+                  <select aria-label="Currency" className="w-full sm:w-auto border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={currency} onChange={(event) => {
                     const nextCurrency = event.target.value as CurrencyCode;
                     setCurrency(nextCurrency);
                     showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
@@ -23049,11 +24683,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span className="sr-only">Search inventory</span>
                     <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
                   </label>
-                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
+                  <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
+                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
+                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
+                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                   </div>
                 </div>
 
@@ -23100,14 +24734,83 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
 
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-gray-100 gap-3">
                     <div className="flex items-center gap-2">
                       <EmptyProductsIcon />
                       <h2 className="text-sm font-bold text-gray-900">Global Inventory</h2>
                     </div>
                     <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors" title="Export inventory CSV" aria-label="Export inventory" onClick={exportInventoryCsv}><Download className="w-4 h-4" /></button>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="sm:hidden divide-y divide-gray-100">
+                    {visibleProducts.length === 0 ? (
+                      <div className="px-4 py-10 text-center text-gray-400 text-sm">No products found</div>
+                    ) : (
+                      visibleProducts.map((product) => {
+                        const pricing = primaryPricing(product);
+                        const lowStock = product.warehouseStock <= product.reorderPoint;
+                        const liveAgentStock = agentStock
+                          .filter((s) => s.productId === product.id)
+                          .reduce((sum, s) => sum + (s.quantity || 0), 0);
+                        const liveUnitsSold = trackedOrders
+                          .filter((o) => o.productId === product.id && (o.status ?? "New") === "Delivered")
+                          .reduce((sum, o) => sum + quantityForOrder(o), 0);
+                        return (
+                          <article key={product.id} className="px-4 py-4 flex flex-col gap-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-gray-900">{product.name}</span>
+                                  {lowStock && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase tracking-wider">Low stock</span>}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-0.5">{product.sku}</div>
+                                <p className="text-xs text-gray-400 mt-1">{product.description || "No description"}</p>
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-semibold uppercase tracking-wide text-gray-400">Unit cost</span>
+                                <span className="text-gray-700">{formatProductMoney(pricing?.unitCost ?? 0, pricing?.currency ?? "NGN")}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-semibold uppercase tracking-wide text-gray-400">Selling price</span>
+                                <span className="text-gray-700">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-semibold uppercase tracking-wide text-gray-400">Global balance</span>
+                                <span className="font-semibold text-gray-900">{product.warehouseStock}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-semibold uppercase tracking-wide text-gray-400">Agent balance</span>
+                                <span className="text-gray-700">{liveAgentStock}</span>
+                              </div>
+                              <div className="flex flex-col gap-0.5 col-span-2">
+                                <span className="font-semibold uppercase tracking-wide text-gray-400">Units sold</span>
+                                <span className="text-gray-700">{liveUnitsSold}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openProductDetails(product)}>
+                                <Eye className="w-4 h-4" /> Details
+                              </button>
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openPricingView(product)}>
+                                <CircleDollarSign className="w-4 h-4" /> Pricing
+                              </button>
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openPackagesView(product)}>
+                                <PackageCheck className="w-4 h-4" /> Packages
+                              </button>
+                              <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit name & SKU" onClick={() => openEditProduct(product)}><Pencil className="w-4 h-4" /></button>
+                              <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Preview order form" onClick={() => previewProductForm(product)}><Globe className="w-4 h-4" /></button>
+                              <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Duplicate (clones pricing, packages, bonus, states)" onClick={() => duplicateProduct(product)}><Copy className="w-4 h-4" /></button>
+                              <button className={`!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border transition-colors ${product.active ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50" : "border-gray-200 text-gray-400 hover:bg-gray-50"}`} title={product.active ? "Active — click to deactivate" : "Inactive — click to activate"} onClick={() => toggleProductActive(product)}>{product.active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}</button>
+                              <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete product" onClick={() => openDeleteProduct(product)}><Trash2 className="w-4 h-4" /></button>
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -23246,9 +24949,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-2 sm:p-4 overflow-y-auto">
+          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
@@ -23686,14 +25389,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </section>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                       <button
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                         onClick={closeModal}
                       >Cancel</button>
                       <button
                         disabled={!canCreate}
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         onClick={createManualOrder}
                       >
                         <Plus className="w-4 h-4" /> Create Order
@@ -24280,12 +25983,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
 	                  <div><h3 className="text-sm font-semibold text-gray-900">Fulfillment Assignment</h3><p>{agentNameForOrder(selectedOrder)}</p></div>
-	                  <div className="flex items-center gap-2">
+	                  <div className="flex flex-col gap-2 sm:flex-row">
 	                    <select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)} aria-label="Delivery agent">
 	                      <option value="">Unassigned</option>
 	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const rec = orderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === orderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
 	                    </select>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </section>
 
@@ -24331,7 +26034,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  )}
 	                </div>
 	                <label><span>Reason for Status Change *</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder="Customer confirmed after call, no answer, requested later delivery..." /></label>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>Change Status</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>Change Status</button></div>
 	              </div>
 	            )}
 
@@ -24354,7 +26057,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </label>
 	                </div>
 	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderCustomerEdit}>Save Changes</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveOrderCustomerEdit}>Save Changes</button></div>
 	              </div>
 	            )}
 
@@ -24383,12 +26086,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
 	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}</select></label>
 	                </div>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderDetail(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderDetail(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	            )}
 
 	            {modal === "reassignOrder" && selectedOrder && (
-	              <div className="modal-form">{assignableUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active users available to assign.</p> : <><label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label><label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} /></label></>}<div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{assignableUsers.length > 0 && <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}</div></div>
+	              <div className="modal-form">{assignableUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active users available to assign.</p> : <><label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label><label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} /></label></>}<div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{assignableUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}</div></div>
 	            )}
 
 	            {modal === "sendToAgent" && selectedOrder && (() => {
@@ -24425,14 +26128,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    Delivery to <strong className="text-gray-900">{orderState || "—"}</strong>. Order needs <strong className="text-gray-900">{orderQty}</strong> × {selectedOrder.productName}.
 	                  </p>
 	                  {orderState && (
-	                    <div className={`flex items-start justify-between gap-3 px-3 py-2 rounded-lg border ${sameStateAgents.length === 0 ? "bg-amber-50 border-amber-200 text-amber-900" : "bg-blue-50 border-blue-200 text-blue-900"}`}>
+	                    <div className={`flex flex-col gap-3 px-3 py-2 rounded-lg border sm:flex-row sm:items-start sm:justify-between ${sameStateAgents.length === 0 ? "bg-amber-50 border-amber-200 text-amber-900" : "bg-blue-50 border-blue-200 text-blue-900"}`}>
 	                      <span className="text-xs leading-5">
 	                        {sameStateAgents.length === 0
 	                          ? <>No agent in <strong>{orderState}</strong>. Toggle "Show all states" to assign one from another state.</>
 	                          : <>Showing <strong>{sameStateAgents.length}</strong> {sameStateAgents.length === 1 ? "agent" : "agents"} in <strong>{orderState}</strong>.</>
 	                        }
 	                      </span>
-	                      <label className="inline-flex items-center gap-2 text-xs font-semibold cursor-pointer shrink-0">
+	                      <label className="inline-flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer sm:justify-start shrink-0">
 	                        <input
 	                          type="checkbox"
 	                          className="w-3.5 h-3.5 accent-[#1F8FE0]"
@@ -24500,16 +26203,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      </div>
 	                    </>
 	                  )}
-	                  <div className="flex items-center justify-end gap-3 pt-2">
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </div>
 	              );
 	            })()}
 
 	            {modal === "deleteOrder" && selectedOrder && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><p>Delete <strong>{selectedOrder.id}</strong> for {selectedOrder.customer}?</p><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={deleteSelectedOrder}>Delete Order</button></div></div>
+	              <div className="px-6 py-5 flex flex-col gap-4"><p>Delete <strong>{selectedOrder.id}</strong> for {selectedOrder.customer}?</p><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={deleteSelectedOrder}>Delete Order</button></div></div>
 	            )}
 
 	            {modal === "cartDetails" && selectedCart && (() => {
@@ -24562,12 +26265,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  {/* Customer */}
 	                  <section>
 	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer</h4>
-	                    <div className="grid grid-cols-2 gap-3 text-sm">
+	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "—"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "—"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "—"}</p></div>
 	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className="font-semibold text-gray-900 m-0">{selectedCart.email}</p></div>}
-	                      <div className="col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
+	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
 	                    </div>
 	                  </section>
 
@@ -24593,7 +26296,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  {/* Workflow + timeline */}
 	                  <section>
 	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Workflow</h4>
-	                    <div className="grid grid-cols-2 gap-3 text-sm">
+	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
@@ -24602,20 +26305,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </section>
 
 	                  {/* Actions */}
-	                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
 	                  </div>
 	                </div>
 	              );
 	            })()}
 
 	            {modal === "assignCart" && selectedCart && (
-	              <div className="modal-form">{salesRepUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No sales reps available. Add a sales rep first.</p> : <label><span>Sales Rep</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>}<div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{salesRepUsers.length > 0 && <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignSelectedCart}>Assign Cart</button>}</div></div>
+	              <div className="modal-form">{salesRepUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No sales reps available. Add a sales rep first.</p> : <label><span>Sales Rep</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>}<div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{salesRepUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignSelectedCart}>Assign Cart</button>}</div></div>
 	            )}
 
 	            {modal === "convertCart" && selectedCart && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><p>Convert <strong>{selectedCart.id}</strong> into a new order for {selectedCart.customer}?</p><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={convertSelectedCart}>Convert</button></div></div>
+	              <div className="px-6 py-5 flex flex-col gap-4"><p>Convert <strong>{selectedCart.id}</strong> into a new order for {selectedCart.customer}?</p><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={convertSelectedCart}>Convert</button></div></div>
 	            )}
 
             {modal === "addProduct" && (() => {
@@ -24713,7 +26416,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </label>
                     </div>
                     {price > 0 && (
-                      <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="flex flex-col gap-2 bg-gray-50 rounded-lg px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                         <span className="text-xs text-gray-600">Gross margin</span>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${marginCls}`}>{margin}%</span>
                       </div>
@@ -24752,7 +26455,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {/* Status */}
                   <section className="space-y-2">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Status</h4>
-                    <div className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg p-3">
+                    <div className="flex flex-col gap-3 bg-gray-50 rounded-lg p-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900 m-0">Active</p>
                         <p className="text-xs text-gray-500 m-0 mt-0.5">When active, this product can be ordered via the embed form and the admin Create Order flow.</p>
@@ -24769,14 +26472,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </section>
 
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                     <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                       onClick={closeModal}
                     >Cancel</button>
                     <button
                       disabled={!canCreate}
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       onClick={createProduct}
                     >
                       <Plus className="w-4 h-4" /> Create product
@@ -24792,16 +26495,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label><span>Select Product *</span><select aria-label="Select product" value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}><option value="">Choose a product...</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} - {product.warehouseStock} in stock</option>)}</select></label>
                 <label><span>Quantity Change *</span><input value={stockChange} onChange={(event) => setStockChange(event.target.value)} inputMode="numeric" /></label>
                 <p>Positive numbers add stock, negative numbers remove stock</p>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitStockUpdate}>Update Stock</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitStockUpdate}>Update Stock</button>
                 </div>
               </div>
             )}
 
             {modal === "productDetails" && selectedProduct && (
               <div className="px-6 py-5 flex flex-col gap-5">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Product Name</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.name}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">SKU</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.sku}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Unit Cost</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.unitCost ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>
@@ -24864,7 +26567,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                   <p className="text-[11px] text-gray-500 italic">State availability and form labels are now configured on the <strong>Embed Form</strong> page so the same settings live next to the form preview.</p>
                 </section>
-                <div className="flex items-center justify-between gap-3 pt-2 flex-wrap">
+                <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 flex-wrap">
                     <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors" onClick={() => { openEditProduct(selectedProduct); }}><Pencil className="w-3.5 h-3.5" /> Edit Details</button>
                     <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50 transition-colors" onClick={() => { previewProductForm(selectedProduct); }}><Globe className="w-3.5 h-3.5" /> Preview Form</button>
@@ -24872,9 +26575,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <button className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${selectedProduct.active ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`} onClick={() => toggleProductActive(selectedProduct)}>{selectedProduct.active ? <><ToggleRight className="w-3.5 h-3.5" /> Deactivate</> : <><ToggleLeft className="w-3.5 h-3.5" /> Activate</>}</button>
                     <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50 transition-colors" onClick={() => { closeModal(); openDeleteProduct(selectedProduct); }}><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Close</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => { closeModal(); openPackagesView(selectedProduct); }}>Manage Packages</button>
+                  <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Close</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => { closeModal(); openPackagesView(selectedProduct); }}>Manage Packages</button>
                   </div>
                 </div>
               </div>
@@ -24923,9 +26626,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     )}
                   </div>
                   {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete — {activeOrders.length} active order{activeOrders.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
-                  <div className="flex items-center justify-end gap-3 pt-1">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedProduct}>Delete Product</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-1">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedProduct}>Delete Product</button>
                   </div>
                 </div>
               );
@@ -24942,7 +26645,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label><span>Selling Price</span><input value={pricingSellingPrice} onChange={(event) => setPricingSellingPrice(event.target.value)} inputMode="decimal" /></label>
                 <label><span>Cost per Unit</span><input value={pricingCost} onChange={(event) => setPricingCost(event.target.value)} inputMode="decimal" /></label>
                 <p>Margin: <strong>{Number(pricingSellingPrice) > 0 ? Math.round(((Number(pricingSellingPrice) - Number(pricingCost)) / Number(pricingSellingPrice)) * 100) : 0}%</strong></p>
-                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePricing}>Save Pricing</button></div>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePricing}>Save Pricing</button></div>
               </div>
             )}
 
@@ -25102,8 +26805,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </>
                               )}
                             </div>
-                            <div className="flex items-center justify-between">
-                              <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <label className="inline-flex items-start gap-2 text-xs text-gray-700">
                                 <input
                                   type="checkbox"
                                   className="w-4 h-4 accent-[#1F8FE0]"
@@ -25114,7 +26817,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </label>
                               <button
                                 type="button"
-                                className="!min-h-0 inline-flex items-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
+                                className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
                                 onClick={remove}
                               ><Trash2 className="w-3 h-3" /> Remove</button>
                             </div>
@@ -25124,7 +26827,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                 </section>
-                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePackage}>{modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePackage}>{modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
               </div>
             )}
 
@@ -25156,9 +26859,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                   {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete — {activeUsingPackage.length} active order{activeUsingPackage.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
-                  <div className="flex items-center justify-end gap-3 pt-1">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedPackage}>Delete Package</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-1">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedPackage}>Delete Package</button>
                   </div>
                 </div>
               );
@@ -25315,14 +27018,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </section>
 
                   {/* Footer */}
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                     <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                       onClick={closeModal}
                     >Cancel</button>
                     <button
                       disabled={!canCreate}
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       onClick={createSalesRep}
                     >
                       <Plus className="w-4 h-4" /> Create
@@ -25405,7 +27108,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {/* Status */}
                     <section className="space-y-2">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Status</h4>
-                      <div className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between bg-gray-50 rounded-lg p-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-gray-900 m-0">Active</p>
                           <p className="text-xs text-gray-500 m-0 mt-0.5">When inactive, the agent stops appearing in waybill routing and order assignment.</p>
@@ -25422,14 +27125,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </section>
 
-                    <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                       <button
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                         onClick={closeModal}
                       >Cancel</button>
                       <button
                         disabled={!canCreate}
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         onClick={createAgent}
                       >
                         <Plus className="w-4 h-4" /> Create agent
@@ -25586,7 +27289,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              const qtyNum = Math.max(1, Number(assignStockQty) || 1);
 	              const wouldExceed = curTotal + qtyNum > cap;
 	              return (
-	              <div className="modal-form">
+	                <div className="modal-form">
 	                <p><strong>{selectedAgent.name}</strong></p>
 	                <div className={`text-xs font-semibold px-3 py-2 rounded-lg border ${wouldExceed ? "bg-red-50 border-red-200 text-red-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
 	                  Stock: {curTotal} / {cap} — {avail > 0 ? `${avail} available` : "at capacity"}
@@ -25594,7 +27297,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                <label><span>Product</span><select value={assignStockProductId} onChange={(event) => setAssignStockProductId(event.target.value)}>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · warehouse {product.warehouseStock}</option>)}</select></label>
 	                <label><span>Quantity</span><input value={assignStockQty} onChange={(event) => setAssignStockQty(event.target.value)} inputMode="numeric" /></label>
 	                {wouldExceed && <p className="text-xs text-red-600 font-medium">This would exceed capacity by {curTotal + qtyNum - cap} units.</p>}
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignStockToSelectedAgent}>Assign Stock</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignStockToSelectedAgent}>Assign Stock</button></div>
 	              </div>
 	              );
 	            })()}
@@ -25627,7 +27330,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              return (
 	                <div className="px-6 py-5 space-y-5">
 	                  {/* Summary card */}
-	                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 grid grid-cols-2 gap-x-6 gap-y-4">
+	                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	                    <div>
 	                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</p>
 	                      <p className="text-sm font-bold text-gray-900 mt-0.5">{selectedAgent.name}</p>
@@ -25721,9 +27424,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    </div>
 	                  )}
 
-	                  <div className="flex items-center justify-between gap-3 pt-2">
-	                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={overReconciled || totalRemoved === 0} onClick={reconcileSelectedAgentStock}>Reconcile Stock</button>
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={overReconciled || totalRemoved === 0} onClick={reconcileSelectedAgentStock}>Reconcile Stock</button>
 	                  </div>
 	                </div>
 	              );
@@ -25741,7 +27444,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${agentActive ? "left-5" : "left-0.5"}`} />
                   </button>
                 </div>
-	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={updateSelectedAgent}>Save Agent</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={updateSelectedAgent}>Save Agent</button></div>
 	              </div>
 	            )}
 
@@ -25813,16 +27516,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    </p>
 	                  )}
 
-	                  <div className="flex items-center justify-end gap-3 pt-1">
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedAgent}>Delete Agent</button>
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-1">
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedAgent}>Delete Agent</button>
 	                  </div>
 	                </div>
 	              );
 	            })()}
 
 	            {modal === "salesRepDetails" && selectedSalesRep && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
+	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                         const rows = [
                           [`Sales Rep Report — ${selectedSalesRep.name}`],
@@ -25865,7 +27568,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 return (
                   <div className="px-6 py-5 flex flex-col gap-5">
                     {/* Identity strip */}
-                    <header className="flex items-center gap-4 pb-4 border-b border-gray-100">
+                    <header className="flex flex-col sm:flex-row sm:items-center gap-4 pb-4 border-b border-gray-100">
                       <div className="w-14 h-14 rounded-full bg-blue-100 text-[#1F8FE0] flex items-center justify-center text-xl font-extrabold shrink-0">
                         {(selectedSalesRep.name || "?").charAt(0).toUpperCase()}
                       </div>
@@ -25879,7 +27582,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </header>
 
                     {/* Lifetime stats — read-only context */}
-                    <section className="grid grid-cols-3 gap-3">
+                    <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="bg-gray-50 rounded-lg p-3">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Total orders</p>
                         <p className="text-lg font-extrabold text-gray-900 mt-0.5">{repAllOrders.length}</p>
@@ -25958,14 +27661,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {/* Pay structure quick action */}
                     <section className="space-y-2">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Pay structure</h4>
-                      <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-lg p-3 flex-wrap">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-gray-50 rounded-lg p-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-gray-900 m-0">{repPay?.type ?? "Not set"}</p>
                           <p className="text-xs text-gray-500 m-0 mt-0.5">{payLabel}</p>
                         </div>
                         <button
                           type="button"
-                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-white hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-white hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors"
                           onClick={() => openPayRateModal(selectedSalesRep.id)}
                         >
                           <Pencil className="w-3.5 h-3.5" /> {repPay ? "Edit pay" : "Set pay"}
@@ -25976,14 +27679,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {/* Security */}
                     <section className="space-y-2">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Security</h4>
-                      <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-lg p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-gray-50 rounded-lg p-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-gray-900 m-0">Reset password</p>
                           <p className="text-xs text-gray-500 m-0 mt-0.5">Send a new sign-in password to this rep.</p>
                         </div>
                         <button
                           type="button"
-                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-white hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-white hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors"
                           onClick={() => openAdminSalesRepResetPasswordRoute(selectedSalesRep.id)}
                         >
                           Reset
@@ -25994,14 +27697,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {/* Danger zone */}
                     <section className="space-y-2">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-red-500">Danger zone</h4>
-                      <div className="flex items-center justify-between gap-3 bg-red-50 border border-red-100 rounded-lg p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-red-50 border border-red-100 rounded-lg p-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-red-700 m-0">Delete this sales rep</p>
                           <p className="text-xs text-red-500 m-0 mt-0.5">Removes the user account. Their past orders stay attributed to them.</p>
                         </div>
                         <button
                           type="button"
-                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
                           onClick={() => openAdminSalesRepDeleteRoute(selectedSalesRep.id)}
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -26010,14 +27713,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </section>
 
                     {/* Footer actions */}
-                    <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                       <button
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                         onClick={closeModal}
                       >Cancel</button>
                       <button
                         disabled={!canSave}
-                        className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         onClick={() => {
                           if (!salesRepName.trim() || !salesRepEmail.trim()) { showToast("Name and email are required."); return; }
                           if (emailTaken) { showToast("Another user already uses this email."); return; }
@@ -26063,13 +27766,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 )}
                 {payStructureType === "Performance Bonus" && (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <span className="text-sm font-semibold text-gray-700">Bonus Tiers</span>
                       <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setBonusTiers((prev) => [...prev, { threshold: 0, amount: 0 }])}>+ Add Tier</button>
                     </div>
                     <p className="text-[10px] text-gray-500 italic">Highest matching tier wins. e.g. if rep delivered 75 orders and tiers are 50→₦5k, 100→₦15k, the ₦5k tier applies.</p>
                     {bonusTiers.map((tier, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
+                      <div key={idx} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <div className="flex-1">
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">≥ Orders</label>
                           <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.threshold || ""} placeholder="e.g. 50" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, threshold: Number(e.target.value) || 0 } : t))} />
@@ -26078,14 +27781,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Bonus (₦)</label>
                           <input className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" inputMode="numeric" value={tier.amount || ""} placeholder="e.g. 5000" onChange={(e) => setBonusTiers((prev) => prev.map((t, i) => i === idx ? { ...t, amount: Number(e.target.value) || 0 } : t))} />
                         </div>
-                        <button type="button" className="!min-h-0 mt-4 p-1.5 text-red-400 hover:text-red-600 transition-colors" onClick={() => setBonusTiers((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
+                        <button type="button" className="!min-h-0 w-full sm:w-auto p-1.5 text-red-400 hover:text-red-600 transition-colors" onClick={() => setBonusTiers((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePayRate}>Save</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePayRate}>Save</button>
                 </div>
               </div>
             )}
@@ -26099,9 +27802,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label><span>Product (Optional)</span><select value={expenseProduct} onChange={(event) => setExpenseProduct(event.target.value)}><option>General Expense</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
                 <p>Link this expense to a specific product</p>
                 <label><span>Description (Optional)</span><textarea value={expenseDescription} onChange={(event) => setExpenseDescription(event.target.value)} placeholder="Enter expense details..." /></label>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={createExpense}>Create Expense</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={createExpense}>Create Expense</button>
                 </div>
               </div>
             )}
@@ -26262,14 +27965,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </section>
 
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                     <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                       onClick={closeModal}
                     >Cancel</button>
                     <button
                       disabled={!canCreate}
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       onClick={createUser}
                     >
                       <Plus className="w-4 h-4" /> Create user
@@ -26325,7 +28028,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               return (
                 <div className="px-6 py-5 flex flex-col gap-5">
                   {/* Identity strip */}
-                  <header className="flex items-center gap-4 pb-4 border-b border-gray-100">
+                  <header className="flex flex-col sm:flex-row sm:items-center gap-4 pb-4 border-b border-gray-100">
                     <div className="w-14 h-14 rounded-full bg-blue-100 text-[#1F8FE0] flex items-center justify-center text-xl font-extrabold shrink-0">
                       {initial}
                     </div>
@@ -26458,14 +28161,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {!isOwner && (
                     <section className="space-y-2">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-red-500">Danger zone</h4>
-                      <div className="flex items-center justify-between gap-3 bg-red-50 border border-red-100 rounded-lg p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-red-50 border border-red-100 rounded-lg p-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-red-700 m-0">Delete this user</p>
                           <p className="text-xs text-red-500 m-0 mt-0.5">Removes the account. Their past activity stays attributed.</p>
                         </div>
                         <button
                           type="button"
-                          className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-xs font-semibold border border-red-200 bg-white text-red-600 rounded-md hover:bg-red-100 transition-colors"
                           onClick={() => openAdminUserDeleteRoute(selectedUser.id)}
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -26475,14 +28178,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   )}
 
                   {/* Footer */}
-                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
                     <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                       onClick={closeModal}
                     >Cancel</button>
                     <button
                       disabled={!canSave}
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       onClick={updateUser}
                     >Save changes</button>
                   </div>
@@ -26500,9 +28203,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <button type="button" className="!min-h-0 p-0" aria-label="Toggle password visibility" onClick={() => toggleShowPassword("resetPwd")}><Eye className="w-4 h-4" /></button>
                   </div>
                 </label>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={resetUserPassword}>Reset Password</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={resetUserPassword}>Reset Password</button>
                 </div>
               </div>
             )}
@@ -26542,9 +28245,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     )}
                   </div>
                   {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{selectedUser.role === "Owner" ? "Owner account cannot be deleted." : `Reassign ${activeOrders.length} active order${activeOrders.length !== 1 ? "s" : ""} first.`}</p>}
-                  <div className="flex items-center justify-end gap-3 pt-1">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedUser}>Delete User</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-1">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedUser}>Delete User</button>
                   </div>
                 </div>
               );
@@ -26552,7 +28255,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
             {modal === "recordRemittance" && remittanceTargetOrder && (
               <div className="modal-form">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Customer</span><strong className="text-sm font-semibold text-gray-900">{remittanceTargetOrder.customer}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
@@ -26569,9 +28272,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <strong>Expected to receive:</strong> {formatProductMoney(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)), remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
                   <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}
                 </p>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
                 </div>
               </div>
             )}
@@ -26588,10 +28291,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <h3 className="text-base font-semibold text-gray-900">{product.name}</h3>
                       <p className="text-xs text-gray-500">All amounts in {moneyCode}. Edit, add, or delete any rule. Changes save immediately.</p>
                     </div>
-                    <div className="flex flex-col gap-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg p-2.5 min-w-[240px]">
+                    <div className="flex w-full flex-col gap-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg p-2.5 sm:w-auto sm:min-w-[240px]">
                       <span className="text-[10px] uppercase font-semibold text-gray-500 tracking-wider">This product can be:</span>
-                      <label className="flex items-center gap-2">
-                        <span className="text-gray-700 font-semibold w-24">Primary role</span>
+                      <label className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+                        <span className="text-gray-700 font-semibold sm:w-24">Primary role</span>
                         <select className="flex-1 border border-gray-200 rounded-md px-2 py-1 text-xs" value={product.role ?? "Main"} onChange={(e) => updateProductRole(product.id, e.target.value as ProductRole)}>
                           <option value="Main">Main (sold standalone)</option>
                           <option value="Cross-sell">Cross-sell add-on</option>
@@ -26611,45 +28314,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </header>
 
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <strong className="text-sm">1. Base Order Bonus (Delivered)</strong>
-                      <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: [...c.baseDelivered, { id: makeBonusRuleId(), quantity: 0, amount: 0 }] }))}>+ Add</button>
+                      <button className="!min-h-0 w-full sm:w-auto text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: [...c.baseDelivered, { id: makeBonusRuleId(), quantity: 0, amount: 0 }] }))}>+ Add</button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {cfg.baseDelivered.map((rule) => (
-                        <div key={rule.id} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                        <div key={rule.id} className="flex flex-col gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs sm:flex-row sm:items-center">
                           <span className="text-gray-500">Qty</span>
                           <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={rule.quantity} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, quantity: Number(e.target.value) || 0 } : r) }))} />
                           <span className="text-gray-500">→ ₦</span>
                           <input className="w-24 border border-gray-200 rounded px-2 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
-                          <button className="!min-h-0 ml-auto text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.filter((r) => r.id !== rule.id) }))}>Delete</button>
+                          <button className="!min-h-0 sm:ml-auto text-left sm:text-right text-red-500 hover:text-red-700 text-xs" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, baseDelivered: c.baseDelivered.filter((r) => r.id !== rule.id) }))}>Delete</button>
                         </div>
                       ))}
                     </div>
                   </section>
 
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <strong className="text-sm">2. Upgrade Bonus</strong>
                         <p className="text-[11px] text-gray-500">Paid only when rep upgrades the order AND meets the delivery-rate gate.</p>
                       </div>
-                      <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: [...c.upgradeBonuses, { id: makeBonusRuleId(), fromQty: 3, toQty: 5, amount: 1000 }] }))}>+ Add</button>
+                      <button className="!min-h-0 w-full sm:w-auto text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: [...c.upgradeBonuses, { id: makeBonusRuleId(), fromQty: 3, toQty: 5, amount: 1000 }] }))}>+ Add</button>
                     </div>
-                    <label className="text-xs flex items-center gap-2">
+                    <label className="text-xs flex flex-col gap-2 sm:flex-row sm:items-center">
                       <span className="text-gray-600">Min weekly delivery rate to qualify (%)</span>
                       <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.upgradeRequiresMinDeliveryRate} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeRequiresMinDeliveryRate: Number(e.target.value) || 0 }))} />
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {cfg.upgradeBonuses.map((rule) => (
-                        <div key={rule.id} className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                        <div key={rule.id} className="flex flex-col gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:gap-1">
                           <span className="text-gray-500">From</span>
                           <input className="w-12 border border-gray-200 rounded px-1.5 py-1" inputMode="numeric" value={rule.fromQty} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, fromQty: Number(e.target.value) || 0 } : r) }))} />
                           <span className="text-gray-500">→</span>
                           <input className="w-12 border border-gray-200 rounded px-1.5 py-1" inputMode="numeric" value={rule.toQty} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, toQty: Number(e.target.value) || 0 } : r) }))} />
                           <span className="text-gray-500">= ₦</span>
                           <input className="w-20 border border-gray-200 rounded px-1.5 py-1" inputMode="decimal" value={rule.amount} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.map((r) => r.id === rule.id ? { ...r, amount: Number(e.target.value) || 0 } : r) }))} />
-                          <button className="!min-h-0 ml-auto text-red-500 hover:text-red-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.filter((r) => r.id !== rule.id) }))}>×</button>
+                          <button className="!min-h-0 sm:ml-auto text-left sm:text-right text-red-500 hover:text-red-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, upgradeBonuses: c.upgradeBonuses.filter((r) => r.id !== rule.id) }))}>×</button>
                         </div>
                       ))}
                     </div>
@@ -26884,9 +28587,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </section>
 
-                  <div className="flex items-center justify-between pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { if (window.confirm("Reset bonus config to defaults?")) { updateProductBonusConfig(product.id, () => defaultBonusConfig()); showToast("Reset to defaults"); } }}>Reset to Defaults</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={closeModal}>Done</button>
+                  <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { if (window.confirm("Reset bonus config to defaults?")) { updateProductBonusConfig(product.id, () => defaultBonusConfig()); showToast("Reset to defaults"); } }}>Reset to Defaults</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={closeModal}>Done</button>
                   </div>
                 </div>
               );
@@ -26899,12 +28602,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const allSelected = selected.length === 0;
               return (
                 <div className="px-6 py-5 flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="text-base font-semibold text-gray-900">{product.name}</h3>
                       <p className="text-xs text-gray-500">Pick the states this product is stocked in. The order form will only show those states. Empty = available everywhere.</p>
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center">
                       <button className="!min-h-0 px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => updateProductStates(product.id, [])}>All states ({nigeriaStates.length})</button>
                       <button className="!min-h-0 px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => updateProductStates(product.id, [...nigeriaStates])}>Select all</button>
                       <button className="!min-h-0 px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => updateProductStates(product.id, ["__none__"])}>Clear</button>
@@ -26930,8 +28633,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     })}
                   </div>
                   <p className="text-xs text-gray-500"><strong>{allSelected ? `${nigeriaStates.length} (all)` : selected.filter((s) => s !== "__none__").length}</strong> states will be shown on the order form.</p>
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={closeModal}>Done</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={closeModal}>Done</button>
                   </div>
                 </div>
               );
@@ -26952,14 +28655,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       {crossSellOptions.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatProductMoney(primaryPricing(p)?.sellingPrice ?? 0, primaryPricing(p)?.currency ?? "NGN")} {p.role && p.role !== "Main" ? `(${p.role})` : ""}</option>)}
                     </select>
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label><span>Quantity</span><input value={crossSellQuantity} onChange={(e) => setCrossSellQuantity(e.target.value)} inputMode="numeric" /></label>
                     <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><input value={crossSellAmount} onChange={(e) => setCrossSellAmount(e.target.value)} inputMode="decimal" placeholder={String(suggested)} /></label>
                   </div>
                   <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Bonus is applied automatically based on this product's cross-sell %.</p>
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveCrossSell}>Add Cross-sell</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveCrossSell}>Add Cross-sell</button>
                   </div>
                 </div>
               );
@@ -26978,9 +28681,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </select>
                   </label>
                   <label><span>Quantity</span><input value={freeGiftQuantity} onChange={(e) => setFreeGiftQuantity(e.target.value)} inputMode="numeric" /></label>
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveFreeGift}>Add Free Gift</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveFreeGift}>Add Free Gift</button>
                   </div>
                 </div>
               );
@@ -26994,11 +28697,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <p className="text-xs text-gray-500">Override the computed bonus for <strong>{order.id}</strong>. Use this when the auto rules don't capture the correct amount.</p>
                   <label><span>Manual bonus amount (₦)</span><input value={manualBonusAmount} onChange={(e) => setManualBonusAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 1500" /></label>
                   <label><span>Reason</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder="Why are you overriding the bonus?" /></label>
-                  <div className="flex items-center justify-between pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear Override</button>
-                    <div className="flex items-center gap-3">
-                      <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                      <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveManualBonus}>Save Override</button>
+                  <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear Override</button>
+                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveManualBonus}>Save Override</button>
                     </div>
                   </div>
                 </div>
@@ -27013,7 +28716,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <label><span>SKU</span><input value={productSku} onChange={(e) => setProductSku(e.target.value)} placeholder="EDGE-BRUSHER-001" /></label>
                   <label><span>Reorder Point</span><input value={reorderPoint} onChange={(e) => setReorderPoint(e.target.value)} inputMode="numeric" /></label>
                 </div>
-                <div className="flex items-center justify-between py-1">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-1">
                   <div>
                     <span className="text-sm font-medium text-gray-700 block">Active Status</span>
                     <span className="text-xs text-gray-400">Inactive products are hidden from order forms and rep workspace.</span>
@@ -27025,9 +28728,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </button>
                 </div>
                 <p className="text-[11px] text-gray-500">Pricing, packages, bonus settings, and state availability are managed in their own sections from the product details page.</p>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveEditProduct}>Save Changes</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveEditProduct}>Save Changes</button>
                 </div>
               </div>
             )}
@@ -27067,9 +28770,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </label>
                 <label><span>Order ID (optional)</span><input value={penaltyOrderId} onChange={(e) => setPenaltyOrderId(e.target.value)} placeholder="e.g. 1746891234567001" /></label>
                 <label><span>Reason / Notes</span><textarea value={penaltyReason} onChange={(e) => setPenaltyReason(e.target.value)} placeholder="What happened?" /></label>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700" onClick={savePenalty}>Apply Penalty</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700" onClick={savePenalty}>Apply Penalty</button>
                 </div>
               </div>
             )}
@@ -27123,10 +28826,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </label>
                     </>
                   )}
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                     <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
                       onClick={() => {
                         markWaybillReceived(receiveWaybillId, {
                           actualQty: actual,
@@ -27183,16 +28886,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {/* Details grid */}
                   <section>
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Details</h4>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                       <div><p className="text-[11px] text-gray-400 m-0">Category</p><p className="font-semibold text-gray-900 m-0">{expense.type}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Amount</p><p className="font-semibold text-gray-900 m-0">{formatProductMoney(expense.amount, expense.currency)}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Date</p><p className="font-semibold text-gray-900 m-0">{formatDateOnly(expense.date)}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Recorded</p><p className="font-semibold text-gray-900 m-0">{formatMoment(expense.createdAt) || "—"}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Currency</p><p className="font-semibold text-gray-900 m-0">{expense.currency}</p></div>
                       {expense.productName && (
-                        <div className="col-span-2"><p className="text-[11px] text-gray-400 m-0">Product</p><p className="font-semibold text-gray-900 m-0">{expense.productName}</p></div>
+                        <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Product</p><p className="font-semibold text-gray-900 m-0">{expense.productName}</p></div>
                       )}
-                      <div className="col-span-2"><p className="text-[11px] text-gray-400 m-0">Description</p><p className="font-semibold text-gray-900 m-0 leading-relaxed">{expense.description || "—"}</p></div>
+                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Description</p><p className="font-semibold text-gray-900 m-0 leading-relaxed">{expense.description || "—"}</p></div>
                     </div>
                   </section>
 
@@ -27230,9 +28933,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   )}
 
                   {/* Footer actions */}
-                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100">
                     <button
-                      className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-md"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-md"
                       onClick={async () => {
                         if (!window.confirm(`Delete expense ${expense.id}? This cannot be undone.`)) return;
                         const snapshot = expense;
@@ -27245,7 +28948,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         }
                       }}
                     ><Trash2 className="w-3.5 h-3.5" /> Delete expense</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
                   </div>
                 </div>
               );
@@ -27269,8 +28972,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const ErrMsg = ({ k }: { k: string }) => e[k] ? <p className="mt-1 text-xs text-red-600 font-medium">{e[k]}</p> : null;
               return (
                 <div className="px-6 py-5 flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Product<Req /></label>
                       <select className={fieldCls("product")} value={waybillProductId} onChange={(e) => { setWaybillProductId(e.target.value); setWaybillErrors((prev) => ({ ...prev, product: "" })); }}>
                         <option value="">Select product</option>
@@ -27302,16 +29005,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(optional)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Logistics Partner / Carrier<Req /></label>
                       <input type="text" className={fieldCls("partner")} placeholder="e.g. RNR Log., Korrect, MR B/BSTAR" value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <ErrMsg k="partner" />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending From<Req /></label>
-                      <div className="flex gap-2 mb-2">
-                        <button type="button" className={`px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Warehouse" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Warehouse")}>Warehouse (Lagos)</button>
-                        <button type="button" className={`px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Agent" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Agent")}>State Agent</button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                        <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Warehouse" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Warehouse")}>Warehouse (Lagos)</button>
+                        <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Agent" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Agent")}>State Agent</button>
                       </div>
                       {waybillFromType === "Warehouse" && warehouseBalance !== null && (
                         <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${warehouseBalance === 0 ? "bg-red-50 text-red-700 border border-red-200" : senderAfter !== null && senderAfter < 0 ? "bg-orange-50 text-orange-700 border border-orange-200" : "bg-blue-50 text-blue-700 border border-blue-100"}`}>
@@ -27338,7 +29041,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </>
                       )}
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
                       <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a?.zone ?? ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
                         <option value="">No specific agent (enter state below)</option>
@@ -27367,9 +29070,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors" onClick={createWaybill}>Create Waybill</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors" onClick={createWaybill}>Create Waybill</button>
                   </div>
                 </div>
               );
@@ -27389,14 +29092,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="px-6 py-5 flex flex-col gap-4">
                   {/* Read-only summary */}
                   {editRecord && (
-                    <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                    <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
                       <span className="text-gray-500">Product: <strong className="text-gray-900">{editRecord.productName}</strong></span>
                       <span className="text-gray-500">Qty: <strong className="text-gray-900">{editRecord.quantity} units</strong></span>
                       <span className="text-gray-500">From: <strong className="text-gray-900">{editRecord.sendingState}</strong></span>
                       <span className="text-gray-500">Status: <strong className="text-gray-900">{editRecord.status}</strong></span>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(optional)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
@@ -27406,12 +29109,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <input type="date" className={efieldCls("dateSent")} value={waybillDateSent} onChange={(ev) => { setWaybillDateSent(ev.target.value); setWaybillErrors((prev) => ({ ...prev, dateSent: "" })); }} />
                       <EErr k="dateSent" />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Logistics Partner / Carrier<EReq /></label>
                       <input type="text" className={efieldCls("partner")} value={waybillPartner} onChange={(ev) => { setWaybillPartner(ev.target.value); setWaybillErrors((prev) => ({ ...prev, partner: "" })); }} />
                       <EErr k="partner" />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Receiving Agent <span className="font-normal text-gray-400">(optional)</span></label>
                       <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a?.zone ?? ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
                         <option value="">No specific agent</option>
@@ -27430,14 +29133,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <input type="text" className={efieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onChange={(ev) => { setWaybillToState(ev.target.value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
                       <EErr k="toState" />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Note <span className="font-normal text-gray-400">(optional)</span></label>
                       <input type="text" className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Restock, Urgent transfer" value={waybillNote} onChange={(e) => setWaybillNote(e.target.value)} />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors" onClick={saveEditWaybill}>Save Changes</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors" onClick={saveEditWaybill}>Save Changes</button>
                   </div>
                 </div>
               );
@@ -27446,9 +29149,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <div className="modal-form">
                 <p className="text-sm text-gray-600">This customer will be marked as high-risk. A warning will appear when creating orders for this phone number.</p>
                 <label><span>Reason for flagging *</span><textarea value={flagReasonDraft} onChange={(e) => setFlagReasonDraft(e.target.value)} placeholder="e.g., Refused delivery 3 times, RTS x2, wrong number repeatedly..." rows={3} /></label>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={saveFlagCustomer}><AlertTriangle className="w-4 h-4" /> Flag Customer</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={saveFlagCustomer}><AlertTriangle className="w-4 h-4" /> Flag Customer</button>
                 </div>
               </div>
             )}
@@ -27481,9 +29184,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-blue-700 transition-colors" disabled={stockCountAgentIdsDraft.length === 0} onClick={createStockCountSession}><ClipboardCheck className="w-4 h-4" /> Create Session</button>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-blue-700 transition-colors" disabled={stockCountAgentIdsDraft.length === 0} onClick={createStockCountSession}><ClipboardCheck className="w-4 h-4" /> Create Session</button>
                 </div>
               </div>
             )}
@@ -27495,7 +29198,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const wouldDiscrepancy = bothFilled && parseInt(agentCountDraft, 10) !== parseInt(adminCountDraft, 10);
               return (
                 <div className="modal-form">
-                  <div className="grid grid-cols-3 gap-3 text-center mb-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center mb-2">
                     <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">System Qty</p>
                       <strong className="text-xl font-bold text-gray-900">{entry.systemQty}</strong>
@@ -27526,9 +29229,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span>Notes <span className="text-gray-400 font-normal">(optional)</span></span>
                     <input type="text" value={stockCountNotesDraft} onChange={(e) => setStockCountNotesDraft(e.target.value)} placeholder="e.g., 2 units found damaged and set aside" />
                   </label>
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className={`!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${wouldVerify ? "bg-green-600 hover:bg-green-700" : wouldDiscrepancy ? "bg-red-600 hover:bg-red-700" : "bg-[#1F8FE0] hover:bg-blue-700"}`} onClick={saveStockCountEntry}><ClipboardCheck className="w-4 h-4" /> Save Count</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${wouldVerify ? "bg-green-600 hover:bg-green-700" : wouldDiscrepancy ? "bg-red-600 hover:bg-red-700" : "bg-[#1F8FE0] hover:bg-blue-700"}`} onClick={saveStockCountEntry}><ClipboardCheck className="w-4 h-4" /> Save Count</button>
                   </div>
                 </div>
               );
@@ -27542,7 +29245,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="modal-form">
                   <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex flex-col gap-2">
                     <p className="text-sm font-bold text-red-800">{writeOffQty} unit{writeOffQty === 1 ? "" : "s"} will be written off for {entry.agentName} — {entry.productName}</p>
-                    <div className="flex items-center gap-6 text-sm text-red-700">
+                    <div className="flex flex-col gap-2 text-sm text-red-700 sm:flex-row sm:items-center sm:gap-6">
                       <span>System: <strong>{entry.systemQty}</strong></span>
                       <span>→</span>
                       <span>Adjusted: <strong>{entry.agentCount}</strong></span>
@@ -27565,9 +29268,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </label>
                   )}
                   <p className="text-xs text-gray-500">This reason will appear in the Stock History as a Correction movement. It cannot be changed after saving.</p>
-                  <div className="flex items-center justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40" disabled={!writeOffReason || (writeOffReason === "Other" && !writeOffCustomReason.trim())} onClick={confirmAdjustStockFromCount}><ClipboardCheck className="w-4 h-4" /> Confirm Write-off</button>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40" disabled={!writeOffReason || (writeOffReason === "Other" && !writeOffCustomReason.trim())} onClick={confirmAdjustStockFromCount}><ClipboardCheck className="w-4 h-4" /> Confirm Write-off</button>
                   </div>
                 </div>
               );

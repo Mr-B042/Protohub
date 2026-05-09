@@ -6908,20 +6908,20 @@ tbody tr:hover {
   }
 
   .page {
-    padding: 58px 12px 26px;
+    padding: 58px 14px 32px;
   }
 
   .top-actions {
     height: auto;
-    padding: 6px 0 12px 48px;
-    gap: 6px;
+    padding: 8px 0 14px 48px;
+    gap: 8px;
   }
 
   .top-actions .icon-button,
   .mobile-menu-toggle {
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
   }
 
   .top-actions .icon-button svg,
@@ -6968,8 +6968,8 @@ tbody tr:hover {
   .round-header p,
   .projection,
   .rep-detail-panel p {
-    font-size: 12px;
-    line-height: 1.35;
+    font-size: 13px;
+    line-height: 1.45;
   }
 
   .breadcrumb {
@@ -6996,27 +6996,27 @@ tbody tr:hover {
   textarea,
   .token-pill,
   .date-range-panel button {
-    min-height: 36px;
+    min-height: 42px;
     height: auto;
-    border-radius: 7px;
-    font-size: 12px;
+    border-radius: 10px;
+    font-size: 13px;
   }
 
   .primary-button,
   .ghost-button,
   .filter-button {
-    padding: 0 10px;
+    padding: 0 14px;
   }
 
   textarea {
-    min-height: 82px;
-    padding: 10px;
+    min-height: 92px;
+    padding: 12px;
   }
 
   label span,
   .product-form label span,
   .date-range-panel label {
-    font-size: 12px;
+    font-size: 12.5px;
   }
 
   .filters,
@@ -7028,24 +7028,24 @@ tbody tr:hover {
   .user-filter-panel,
   .agent-filter-panel,
   .team-filter-row {
-    gap: 8px;
-    padding: 12px;
+    gap: 10px;
+    padding: 14px;
   }
 
   .segmented {
-    padding: 3px;
+    padding: 4px;
   }
 
   .segmented button {
-    min-height: 32px;
-    font-size: 12px;
-    padding: 0 6px;
+    min-height: 38px;
+    font-size: 13px;
+    padding: 0 10px;
   }
 
   .currency-note {
     min-height: auto;
-    padding: 10px 12px;
-    margin-bottom: 12px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
   }
 
   .metric-grid,
@@ -7106,8 +7106,8 @@ tbody tr:hover {
   .mini-stat,
   .field-readout {
     min-height: auto;
-    padding: 14px;
-    border-radius: 8px;
+    padding: 16px;
+    border-radius: 10px;
   }
 
   .metric-icon,
@@ -7181,8 +7181,8 @@ tbody tr:hover {
   .rep-detail-panel,
   .rep-status-panel,
   .dashboard-math-panel {
-    padding: 14px;
-    border-radius: 8px;
+    padding: 16px;
+    border-radius: 10px;
   }
 
   .cart-grid,
@@ -7227,15 +7227,15 @@ tbody tr:hover {
   }
 
   .table-action-button {
-    min-height: 30px;
-    padding: 0 8px;
-    font-size: 11px;
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .orders-pagination {
     min-height: auto;
-    padding: 10px 12px;
-    font-size: 12px;
+    padding: 12px 14px;
+    font-size: 12.5px;
   }
 
   .rep-console-scope {
@@ -7265,9 +7265,9 @@ tbody tr:hover {
   .rep-console-tabs button,
   .rep-status-tabs button {
     flex: 0 0 auto;
-    min-height: 34px;
-    padding: 0 10px;
-    font-size: 12px;
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 13px;
   }
 
   .rep-product-card {
@@ -7356,11 +7356,97 @@ tbody tr:hover {
     grid-template-columns: 1fr;
     gap: 8px;
   }
+
+  .app-shell[data-density="compact"] .page {
+    padding: 58px 12px 26px;
+  }
+
+  .app-shell[data-density="compact"] .top-actions {
+    padding: 6px 0 12px 48px;
+    gap: 6px;
+  }
+
+  .app-shell[data-density="compact"] :is(.top-actions .icon-button, .mobile-menu-toggle) {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+
+  .app-shell[data-density="compact"] :is(.page-header p, .simple-stack-header p, .panel p, .metric-card p, .embed-header p, .round-header p, .projection, .rep-detail-panel p) {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .app-shell[data-density="compact"] :is(.primary-button, .ghost-button, .filter-button, select, input, textarea, .token-pill, .date-range-panel button) {
+    min-height: 36px;
+    border-radius: 7px;
+    font-size: 12px;
+  }
+
+  .app-shell[data-density="compact"] :is(.primary-button, .ghost-button, .filter-button) {
+    padding: 0 10px;
+  }
+
+  .app-shell[data-density="compact"] textarea {
+    min-height: 82px;
+    padding: 10px;
+  }
+
+  .app-shell[data-density="compact"] :is(label span, .product-form label span, .date-range-panel label) {
+    font-size: 12px;
+  }
+
+  .app-shell[data-density="compact"] :is(.filters, .orders-toolbar, .deliveries-toolbar, .abandoned-toolbar, .customer-filter-panel, .expense-filter-panel, .user-filter-panel, .agent-filter-panel, .team-filter-row) {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .app-shell[data-density="compact"] .segmented {
+    padding: 3px;
+  }
+
+  .app-shell[data-density="compact"] .segmented button {
+    min-height: 32px;
+    font-size: 12px;
+    padding: 0 6px;
+  }
+
+  .app-shell[data-density="compact"] .currency-note {
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+
+  .app-shell[data-density="compact"] :is(.metric-card, .order-metric-card, .abandoned-metric-card, .delivery-card, .rep-card, .agent-card, .expense-metric-card, .user-metric-card, .finance-card, .rep-kpi-card, .mini-stat, .field-readout) {
+    padding: 14px;
+    border-radius: 8px;
+  }
+
+  .app-shell[data-density="compact"] :is(.panel-header, .simulator, .chart-panel, .empty-card, .transactions, .orders-product-panel, .abandoned-carts-panel, .inventory-table-panel, .expense-chart-panel, .finance-chart-panel, .finance-small-panel, .stock-loss-panel, .settings-card, .subscription-card, .plan-limits-card, .embed-settings, .rep-work-panel, .rep-cart-widget, .rep-detail-panel, .rep-status-panel, .dashboard-math-panel) {
+    padding: 14px;
+    border-radius: 8px;
+  }
+
+  .app-shell[data-density="compact"] .table-action-button {
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .app-shell[data-density="compact"] .orders-pagination {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+
+  .app-shell[data-density="compact"] :is(.rep-console-tabs button, .rep-status-tabs button) {
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 520px) {
   .page {
-    padding-inline: 10px;
+    padding-inline: 12px;
   }
 
   h1 {
@@ -7374,7 +7460,7 @@ tbody tr:hover {
   .page-header p,
   .panel p,
   .metric-card p {
-    font-size: 11.5px;
+    font-size: 12.5px;
   }
 
   .metric-card,
@@ -7399,7 +7485,7 @@ tbody tr:hover {
   .rep-cart-widget,
   .rep-detail-panel,
   .rep-status-panel {
-    padding: 12px;
+    padding: 14px;
   }
 
   .metric-card strong,
@@ -7436,6 +7522,18 @@ tbody tr:hover {
   .app-shell .sidebar,
   .app-shell.is-collapsed .sidebar {
     width: min(274px, 86vw);
+  }
+
+  .app-shell[data-density="compact"] .page {
+    padding-inline: 10px;
+  }
+
+  .app-shell[data-density="compact"] :is(.page-header p, .panel p, .metric-card p) {
+    font-size: 11.5px;
+  }
+
+  .app-shell[data-density="compact"] :is(.metric-card, .order-metric-card, .abandoned-metric-card, .delivery-card, .rep-card, .agent-card, .expense-metric-card, .user-metric-card, .finance-card, .rep-kpi-card, .panel-header, .simulator, .chart-panel, .empty-card, .transactions, .orders-product-panel, .abandoned-carts-panel, .inventory-table-panel, .rep-work-panel, .rep-cart-widget, .rep-detail-panel, .rep-status-panel) {
+    padding: 12px;
   }
 }
 
@@ -7837,4 +7935,3 @@ article.public-order-card.public-form-clean .package-picker-clean > label {
 }
 article.public-order-card.public-form-clean .package-picker-clean > label > div { flex: 1; min-width: 0; }
 article.public-order-card.public-form-clean .package-picker-clean > label > strong { white-space: nowrap; flex-shrink: 0; }
-
