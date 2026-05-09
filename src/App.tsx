@@ -6682,113 +6682,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // Manager is included so Sales Teams / Sales Reps pages they're allowed
       // to see actually hydrate with data instead of rendering empty tables.
       const isAdmin = role === "Owner" || role === "Admin" || role === "Manager";
+      const fastBootDashboard = activePage === "Dashboard";
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
         isAdmin ? p() : Promise.resolve(skipped as Skipped);
-      try {
-        const [
-          apiProducts,
-          apiOrders,
-          apiAgents,
-          apiMovements,
-          apiExpenses,
-          apiWaybills,
-          apiNotifications,
-          apiStockCounts,
-          apiTeam,
-          apiCarts,
-          apiSalesTeams,
-          apiPayStructures,
-          apiPayrollRuns,
-          apiPenalties
-        ] = await Promise.allSettled([
-          productsApi.list(),
-          // 5000 covers ~1 year of orders for most orgs. The "Showing N of M"
-          // banner still surfaces if the org actually has more, so dashboard
-          // KPIs aren't silently truncated. For very large orgs, the right
-          // long-term fix is server-side paginated dashboard aggregation —
-          // tracked in the master scorecard.
-          ordersApi.list({ limit: "5000" }),
-          agentsApi.list(),
-          stockApi.movements({ limit: "500" }),
-          expensesApi.list(),
-          waybillsApi.list(),
-          notificationsApi.list(),
-          stockApi.countSessions(),
-          teamApi.list(),
-          cartsApi.list(),
-          ifAdmin(() => salesTeamsApi.list()),
-          ifAdmin(() => payStructuresApi.list()),
-          ifAdmin(() => payrollApi.list()),
-          ifAdmin(() => penaltiesApi.list())
-        ]);
 
-        if (cancelled) return;
-
-        // Check if ALL requests rejected (total API failure)
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
-        const allFailed = allResults.every((r) => r.status === "rejected");
-        if (allFailed) {
-          setDataError("Unable to reach the server. Please check your connection and refresh.");
+      const hydrateProducts = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setProducts(result.value as any);
         }
-
-        // Accept empty arrays — server-side bulk delete should clear local
-        // cache, not be silently ignored. Pre-fix logic kept stale data after
-        // every entity was deleted on another device.
-        if (apiProducts.status === "fulfilled" && Array.isArray(apiProducts.value)) {
-          setProducts(apiProducts.value as any);
-        }
-        if (apiOrders.status === "fulfilled" && Array.isArray(apiOrders.value?.data)) {
-          setTrackedOrders((apiOrders.value.data as any[]).map((order) => normalizeTrackedOrder(order)));
-          // Seed the poll timestamps so the 30s poller only refetches deltas.
-          // updatedSince (preferred) catches status changes made on other devices;
-          // since is a fallback for the very first poll if updatedAt isn't set.
-          const first = apiOrders.value.data[0];
+      };
+      const hydrateOrders = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value?.data)) {
+          setTrackedOrders((result.value.data as any[]).map((order) => normalizeTrackedOrder(order)));
+          const first = result.value.data[0];
           if (first) {
             latestOrderTimestamp.current = first.createdAt ?? first.created_at ?? "";
-            // Walk the batch for the largest updatedAt — list is sorted by created_at,
-            // so an old order edited recently could sit deep in the list.
-            const maxUpdated = (apiOrders.value.data as any[]).reduce<string>((acc, o) => {
+            const maxUpdated = (result.value.data as any[]).reduce<string>((acc, o) => {
               const u = o.updatedAt ?? o.updated_at ?? "";
               return u > acc ? u : acc;
             }, "");
             if (maxUpdated) latestOrderUpdatedAt.current = maxUpdated;
           }
-          // Warn if we hit the fetch cap
-          const total = apiOrders.value.total ?? 0;
-          const fetched = apiOrders.value.data.length;
+          const total = result.value.total ?? 0;
+          const fetched = result.value.data.length;
           if (total > fetched) {
             setOrdersCappedWarning(`Showing most recent ${fetched.toLocaleString()} of ${total.toLocaleString()} orders. Dashboard stats may be incomplete.`);
           } else {
             setOrdersCappedWarning(null);
           }
         }
-        if (apiAgents.status === "fulfilled" && Array.isArray(apiAgents.value)) {
-          // Server stores agents.status (enum: Active / Inactive / …) but the
-          // frontend type uses `active: boolean`. Normalise here so every
-          // place that filters by `agent.active` keeps working. Also surface
-          // the original status for any UI that wants the richer label.
-          const normalised = (apiAgents.value as any[]).map((a: any) => ({
+      };
+      const hydrateAgents = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          const normalised = (result.value as any[]).map((a: any) => ({
             ...a,
             active: typeof a.active === "boolean" ? a.active : (a.status ?? "Active") === "Active",
             address: a.address ?? "",
             created: a.created ?? a.createdAt ?? a.created_at ?? ""
           }));
           setAgents(normalised as any);
-          // Flatten agent stock from nested agent.stock array
           const flat = normalised.flatMap((a: any) =>
             (a.stock ?? []).map((s: any) => ({ agentId: a.id, productId: s.productId ?? s.product_id, quantity: s.quantity }))
           );
           if (flat.length) setAgentStock(flat as any);
         }
-        if (apiMovements.status === "fulfilled" && Array.isArray(apiMovements.value?.data)) {
-          // Backend stores snake_case columns including agent_id (UUID, not name),
-          // order_id, by_user_id, by_name, waybill_id, from_location, to_location.
-          // Frontend StockMovement type expects friendlier camelCase names.
-          // Resolve agent UUID → name lookup at hydration time so the ledger
-          // and drill-down panel always have human-readable values.
-          setStockMovements((apiMovements.value.data as any[]).map((m: any) => ({
+      };
+      const hydrateMovements = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value?.data)) {
+          setStockMovements((result.value.data as any[]).map((m: any) => ({
             id:           m.id,
             date:         m.date         ?? m.createdAt   ?? m.created_at,
             createdAt:    m.createdAt    ?? m.created_at,
@@ -6809,20 +6752,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             toLocation:   m.toLocation   ?? m.to_location   ?? undefined
           })) as any);
         }
-        if (apiExpenses.status === "fulfilled" && Array.isArray(apiExpenses.value)) {
-          // Backend stores "category" but frontend ExpenseRecord uses "type" — normalise at boundary
-          setExpenses((apiExpenses.value as any[]).map((e: any) => ({
+      };
+      const hydrateExpenses = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setExpenses((result.value as any[]).map((e: any) => ({
             ...e,
             createdAt: e.createdAt ?? e.created_at ?? "",
             type: e.type ?? e.category ?? "Other",
             productName: e.productName ?? e.productName ?? ""
           })) as any);
         }
-        if (apiWaybills.status === "fulfilled" && Array.isArray(apiWaybills.value)) {
-          // Backend columns (snake → camel) don't 1:1 match the frontend
-          // WaybillRecord type. Remap so the form preserves all the fields
-          // (sending/receiving state, partner, note, sent/received dates).
-          setWaybillRecords((apiWaybills.value as any[]).map((w: any) => ({
+      };
+      const hydrateWaybills = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setWaybillRecords((result.value as any[]).map((w: any) => ({
             id:               w.id,
             productId:        w.productId ?? w.product_id ?? "",
             productName:      w.productName ?? w.product_name ?? "",
@@ -6841,14 +6784,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             createdAt:        w.createdAt ?? w.created_at ?? new Date().toISOString()
           })) as any);
         }
-        if (apiNotifications.status === "fulfilled" && Array.isArray(apiNotifications.value)) {
-          setSystemNotifications(apiNotifications.value as any);
+      };
+      const hydrateNotifications = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setSystemNotifications(result.value as any);
         }
-        if (apiStockCounts.status === "fulfilled" && Array.isArray(apiStockCounts.value)) {
-          setStockCounts(apiStockCounts.value as any);
+      };
+      const hydrateStockCounts = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setStockCounts(result.value as any);
         }
-        if (apiTeam.status === "fulfilled" && Array.isArray(apiTeam.value)) {
-          setUsers(apiTeam.value.map((u: any) => ({
+      };
+      const hydrateTeam = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setUsers(result.value.map((u: any) => ({
             id: u.id,
             name: u.name,
             email: u.email,
@@ -6859,13 +6808,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
           })));
         }
-        if (apiCarts.status === "fulfilled" && Array.isArray(apiCarts.value)) {
-          // The API normalize layer converts snake_case → camelCase; the cart
-          // shape arrives matching AbandonedCartRecord. Replace local state
-          // (don't merge) so server is source of truth.
-          // Defensive remap so any backend shape drift doesn't wipe fields.
-          // (snake→camel handles 1:1 conversions; this safeguards aliased columns.)
-          setAbandonedCarts((apiCarts.value as any[]).map((c: any) => ({
+      };
+      const hydrateCarts = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setAbandonedCarts((result.value as any[]).map((c: any) => ({
             id:           c.id,
             customer:     c.customer ?? "",
             phone:        c.phone ?? "",
@@ -6886,8 +6832,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             createdAt:    c.createdAt ?? c.created_at ?? ""
           })) as any);
         }
-        if (apiSalesTeams.status === "fulfilled" && Array.isArray(apiSalesTeams.value)) {
-          setExtraTeams(apiSalesTeams.value.map((t: any) => ({
+      };
+      const hydrateSalesTeams = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setExtraTeams(result.value.map((t: any) => ({
             id: t.id,
             name: t.name,
             leadId: t.lead_id ?? undefined,
@@ -6895,8 +6843,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             memberIds: Array.isArray(t.member_ids) ? t.member_ids : []
           })));
         }
-        if (apiPayStructures.status === "fulfilled" && Array.isArray(apiPayStructures.value)) {
-          setPayStructures(apiPayStructures.value.map((s: any) => ({
+      };
+      const hydratePayStructures = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setPayStructures(result.value.map((s: any) => ({
             userId: s.userId ?? s.user_id,
             type: s.type ?? "Per Delivered Order",
             fixedSalary: Number(s.fixedSalary ?? s.fixed_salary ?? 0),
@@ -6905,8 +6855,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             updatedAt: s.updatedAt ?? s.updated_at ?? ""
           })));
         }
-        if (apiPayrollRuns.status === "fulfilled" && Array.isArray(apiPayrollRuns.value)) {
-          setPayrollRuns(apiPayrollRuns.value.map((r: any) => ({
+      };
+      const hydratePayrollRuns = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setPayrollRuns(result.value.map((r: any) => ({
             id: r.id,
             month: r.month ?? r.period ?? "",
             label: r.label ?? r.period ?? "",
@@ -6918,8 +6870,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             topPerformer: r.topPerformer ?? r.top_performer ?? undefined
           })));
         }
-        if (apiPenalties.status === "fulfilled" && Array.isArray(apiPenalties.value)) {
-          setRepPenalties(apiPenalties.value.map((p: any) => ({
+      };
+      const hydratePenalties = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setRepPenalties(result.value.map((p: any) => ({
             id: p.id,
             repId: p.repId ?? p.rep_id,
             repName: p.repName ?? p.rep_name ?? "",
@@ -6932,10 +6886,127 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             by: p.by ?? p.byName ?? p.by_name ?? ""
           })));
         }
+      };
+      try {
+        if (fastBootDashboard) {
+          const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
+            productsApi.list(),
+            ordersApi.list({ limit: "5000" }),
+            expensesApi.list(),
+            notificationsApi.list(),
+            cartsApi.list()
+          ]);
+
+          if (cancelled) return;
+
+          const criticalResults = [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts];
+          if (criticalResults.every((r) => r.status === "rejected")) {
+            setDataError("Unable to reach the server. Please check your connection and refresh.");
+          }
+
+          hydrateProducts(apiProducts);
+          hydrateOrders(apiOrders);
+          hydrateExpenses(apiExpenses);
+          hydrateNotifications(apiNotifications);
+          hydrateCarts(apiCarts);
+
+          if (!cancelled) setDataLoading(false);
+
+          void Promise.allSettled([
+            agentsApi.list(),
+            stockApi.movements({ limit: "500" }),
+            waybillsApi.list(),
+            stockApi.countSessions(),
+            teamApi.list(),
+            ifAdmin(() => salesTeamsApi.list()),
+            ifAdmin(() => payStructuresApi.list()),
+            ifAdmin(() => payrollApi.list()),
+            ifAdmin(() => penaltiesApi.list())
+          ]).then(([
+            apiAgents,
+            apiMovements,
+            apiWaybills,
+            apiStockCounts,
+            apiTeam,
+            apiSalesTeams,
+            apiPayStructures,
+            apiPayrollRuns,
+            apiPenalties
+          ]) => {
+            if (cancelled) return;
+            hydrateAgents(apiAgents);
+            hydrateMovements(apiMovements);
+            hydrateWaybills(apiWaybills);
+            hydrateStockCounts(apiStockCounts);
+            hydrateTeam(apiTeam);
+            hydrateSalesTeams(apiSalesTeams);
+            hydratePayStructures(apiPayStructures);
+            hydratePayrollRuns(apiPayrollRuns);
+            hydratePenalties(apiPenalties);
+          }).catch(() => { /* background hydrate failures should not block dashboard */ });
+          return;
+        }
+
+        const [
+          apiProducts,
+          apiOrders,
+          apiAgents,
+          apiMovements,
+          apiExpenses,
+          apiWaybills,
+          apiNotifications,
+          apiStockCounts,
+          apiTeam,
+          apiCarts,
+          apiSalesTeams,
+          apiPayStructures,
+          apiPayrollRuns,
+          apiPenalties
+        ] = await Promise.allSettled([
+          productsApi.list(),
+          ordersApi.list({ limit: "5000" }),
+          agentsApi.list(),
+          stockApi.movements({ limit: "500" }),
+          expensesApi.list(),
+          waybillsApi.list(),
+          notificationsApi.list(),
+          stockApi.countSessions(),
+          teamApi.list(),
+          cartsApi.list(),
+          ifAdmin(() => salesTeamsApi.list()),
+          ifAdmin(() => payStructuresApi.list()),
+          ifAdmin(() => payrollApi.list()),
+          ifAdmin(() => penaltiesApi.list())
+        ]);
+
+        if (cancelled) return;
+
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
+        if (allResults.every((r) => r.status === "rejected")) {
+          setDataError("Unable to reach the server. Please check your connection and refresh.");
+        }
+
+        hydrateProducts(apiProducts);
+        hydrateOrders(apiOrders);
+        hydrateAgents(apiAgents);
+        hydrateMovements(apiMovements);
+        hydrateExpenses(apiExpenses);
+        hydrateWaybills(apiWaybills);
+        hydrateNotifications(apiNotifications);
+        hydrateStockCounts(apiStockCounts);
+        hydrateTeam(apiTeam);
+        hydrateCarts(apiCarts);
+        hydrateSalesTeams(apiSalesTeams);
+        hydratePayStructures(apiPayStructures);
+        hydratePayrollRuns(apiPayrollRuns);
+        hydratePenalties(apiPenalties);
       } catch (_) {
-        if (!cancelled) setDataError("Unable to reach the server. Showing cached data.");
+        if (!cancelled) {
+          setDataError("Unable to reach the server. Showing cached data.");
+          if (fastBootDashboard) setDataLoading(false);
+        }
       } finally {
-        if (!cancelled) setDataLoading(false);
+        if (!cancelled && !fastBootDashboard) setDataLoading(false);
       }
     };
 
