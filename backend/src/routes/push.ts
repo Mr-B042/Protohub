@@ -140,10 +140,9 @@ router.post("/test", async (req, res) => {
     await sendPushToUser(req.user!.orgId, req.user!.id, {
       title,
       body,
+      kind: "test_push",
       url: "/dashboard/admin/notifications",
-      tag: `protohub-test-${Date.now()}`,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-72.png"
+      tag: `protohub-test-${Date.now()}`
     });
   } catch (error: any) {
     res.status(502).json({ error: error?.message ?? "Failed to queue test push." });

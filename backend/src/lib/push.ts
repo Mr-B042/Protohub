@@ -24,11 +24,28 @@ export function isPushConfigured(): boolean {
 type PushPayload = {
   title: string;
   body: string;
+  kind?: string;
   icon?: string;
   badge?: string;
+  image?: string;
   url?: string;
   tag?: string;
+  color?: string;
+  brandName?: string;
+  brandLogo?: string;
+  requireInteraction?: boolean;
+  vibrate?: number[];
+  timestamp?: number;
 };
+
+function pushTopicForPayload(payload: PushPayload): string {
+  const raw = payload.tag ?? payload.kind ?? payload.title ?? "protohub";
+  const sanitized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 32);
+  return sanitized || "protohub";
+}
 
 async function getActiveUserIdsByRoles(orgId: string, roles: string[]): Promise<string[]> {
   if (roles.length === 0) return [];
@@ -70,7 +87,7 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
           {
             TTL: 60 * 60,         // 1 hour — drop if undeliverable that long
             urgency: "high",      // bypass FCM coalescing / battery delays
-            topic: "protohub-evt" // collapse repeated alerts for same device
+            topic: pushTopicForPayload(payload)
           }
         );
       } catch (err: any) {

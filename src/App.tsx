@@ -1615,6 +1615,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   }, [companyLogo]);
 
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const message = {
+      type: "SET_PUSH_BRANDING",
+      brandName: companyName || "Protohub",
+      logoUrl: companyLogo || ""
+    };
+    void navigator.serviceWorker.ready
+      .then((registration) => {
+        const targets = [
+          navigator.serviceWorker.controller,
+          registration.active,
+          registration.waiting,
+          registration.installing
+        ].filter((worker, index, all) => worker && all.indexOf(worker) === index);
+        targets.forEach((worker) => worker?.postMessage(message));
+      })
+      .catch(() => undefined);
+  }, [companyName, companyLogo]);
+
   // NOTE: We intentionally do NOT override the static <link rel="manifest">
   // with a blob: URL here. Chrome's WebAPK installer requires a stable,
   // re-fetchable manifest URL — blob URLs are per-session and disqualify the

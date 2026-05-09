@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cron from "node-cron";
 import { logger } from "./lib/logger.js";
+import { getOrgPushBranding } from "./lib/push-branding.js";
 import { supabase } from "./lib/supabase.js";
 import { sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -185,13 +186,15 @@ cron.schedule("0 9 * * *", async () => {
         type:    "info",
         message
       });
+      const branding = await getOrgPushBranding(orgId);
       await sendPushToRoles(orgId, ["Owner", "Admin"], {
         title: "Stale Abandoned Carts",
         body: message,
+        kind: "stale_carts",
         url: "/dashboard/admin/abandoned-carts",
         tag: `stale-carts-${orgId}`,
-        icon: "/icons/icon-192.png",
-        badge: "/icons/icon-72.png"
+        brandName: branding.brandName,
+        brandLogo: branding.brandLogo
       });
     }
     logger.info("cron: stale carts done", { orgsNotified: Object.keys(countByOrg).length });
@@ -247,13 +250,15 @@ cron.schedule("5 9 * * *", async () => {
         type:    "remittance_overdue",
         message
       });
+      const branding = await getOrgPushBranding(orgId);
       await sendPushToRoles(orgId, ["Owner", "Admin"], {
         title: "Remittance Overdue",
         body: message,
+        kind: "remittance_overdue",
         url: "/dashboard/admin/finance-accounting",
         tag: `remittance-overdue-${orgId}`,
-        icon: "/icons/icon-192.png",
-        badge: "/icons/icon-72.png"
+        brandName: branding.brandName,
+        brandLogo: branding.brandLogo
       });
     }
     logger.info("cron: overdue remittances done", { orgsNotified: Object.keys(summaryByOrg).length });

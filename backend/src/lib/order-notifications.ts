@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUsers } from "./push.js";
 
 type OrderContext = {
@@ -49,6 +50,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
 
     const body = `Order ${order.id} — ${order.customer} (${order.productName})`;
     const link = `/dashboard/admin/orders/${order.id}`;
+    const branding = await getOrgPushBranding(orgId);
 
     const rows = [...recipientIds].map((rid) => ({
       org_id:       orgId,
@@ -68,10 +70,11 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
     sendPushToUsers(orgId, [...recipientIds], {
       title: config.title,
       body,
+      kind: config.type,
       url: link,
       tag: `order-${order.id}-${toStatus}`,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-72.png"
+      brandName: branding.brandName,
+      brandLogo: branding.brandLogo
     }).catch((err) => console.warn("[order-notifications] push send error:", err));
   } catch (err) {
     console.error("[order-notifications] unexpected error:", err);

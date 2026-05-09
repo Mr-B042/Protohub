@@ -1,4 +1,5 @@
 import { sendPushToUsers } from "./push.js";
+import { getOrgPushBranding } from "./push-branding.js";
 import { supabase } from "./supabase.js";
 
 type WaybillContext = {
@@ -20,28 +21,31 @@ function buildRouteLabel(waybill: WaybillContext): string {
   return route ? ` | ${route}` : "";
 }
 
-function buildEventPayload(waybill: WaybillContext, event: WaybillEvent): { title: string; body: string; tag: string } {
+function buildEventPayload(waybill: WaybillContext, event: WaybillEvent): { title: string; body: string; tag: string; kind: string } {
   const summary = `${waybill.productName} x${waybill.quantity}${buildRouteLabel(waybill)}`;
   if (event === "dispatched") {
     const carrier = waybill.carrier ? ` via ${waybill.carrier}` : "";
     return {
       title: "Waybill Dispatched",
       body: `Waybill ${waybill.id} was dispatched for ${summary}${carrier}.`,
-      tag: `waybill-${waybill.id}-dispatched`
+      tag: `waybill-${waybill.id}-dispatched`,
+      kind: "waybill_dispatched"
     };
   }
   if (event === "updated") {
     return {
       title: "Waybill Updated",
       body: `Waybill ${waybill.id} details were updated for ${summary}.`,
-      tag: `waybill-${waybill.id}-updated`
+      tag: `waybill-${waybill.id}-updated`,
+      kind: "waybill_updated"
     };
   }
   const status = waybill.status ?? "updated";
   return {
     title: `Waybill ${status}`,
     body: `Waybill ${waybill.id} is now ${status} for ${summary}.`,
-    tag: `waybill-${waybill.id}-${String(status).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+    tag: `waybill-${waybill.id}-${String(status).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    kind: "waybill_status_changed"
   };
 }
 
@@ -61,8 +65,9 @@ export async function notifyWaybillEvent(orgId: string, waybill: WaybillContext,
     const recipientIds = [...new Set((roleUsers ?? []).map((user) => user.id))];
     if (recipientIds.length === 0) return;
 
-    const { title, body, tag } = buildEventPayload(waybill, event);
+    const { title, body, tag, kind } = buildEventPayload(waybill, event);
     const link = "/dashboard/admin/waybill";
+    const branding = await getOrgPushBranding(orgId);
 
     const rows = recipientIds.map((recipientId) => ({
       org_id: orgId,
@@ -82,10 +87,11 @@ export async function notifyWaybillEvent(orgId: string, waybill: WaybillContext,
     sendPushToUsers(orgId, recipientIds, {
       title,
       body,
+      kind,
       url: link,
       tag,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-72.png"
+      brandName: branding.brandName,
+      brandLogo: branding.brandLogo
     }).catch((err) => console.warn("[waybill-notifications] push send error:", err));
   } catch (err) {
     console.error("[waybill-notifications] unexpected error:", err);
