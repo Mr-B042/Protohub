@@ -37,6 +37,144 @@ interface EmailSettings {
   templates: Record<string, { subject: string; body: string }>;
 }
 
+type ProviderDispatchResult = {
+  provider: EmailProvider;
+  fallbackFrom?: EmailProvider;
+};
+
+class EmailDispatchError extends Error {
+  provider: EmailProvider;
+  statusCode?: number;
+  code?: string;
+  quotaLike: boolean;
+  raw?: unknown;
+
+  constructor(
+    provider: EmailProvider,
+    message: string,
+    opts?: { statusCode?: number; code?: string; quotaLike?: boolean; raw?: unknown }
+  ) {
+    super(message);
+    this.name = "EmailDispatchError";
+    this.provider = provider;
+    this.statusCode = opts?.statusCode;
+    this.code = opts?.code;
+    this.quotaLike = !!opts?.quotaLike;
+    this.raw = opts?.raw;
+  }
+}
+
+const DEFAULT_EMAIL_PROVIDER: EmailProvider =
+  process.env.EMAIL_PROVIDER === "mailjet" ? "mailjet" : "resend";
+
+const providerQuotaBackoff = new Map<string, number>();
+
+function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
+  return {
+    ...settings,
+    provider: settings.provider ?? DEFAULT_EMAIL_PROVIDER,
+    api_key_public: settings.api_key_public || process.env.MAILJET_API_PUBLIC || "",
+    api_key_private: settings.api_key_private || process.env.MAILJET_API_PRIVATE || "",
+    resend_api_key: settings.resend_api_key || process.env.RESEND_API_KEY || "",
+    from_name: settings.from_name || process.env.EMAIL_FROM_NAME || "",
+    from_email: settings.from_email || process.env.EMAIL_FROM_EMAIL || "",
+    reply_to: settings.reply_to || process.env.EMAIL_REPLY_TO || ""
+  };
+}
+
+function providerKey(orgId: string, provider: EmailProvider) {
+  return `${orgId}:${provider}`;
+}
+
+function nextUtcMidnightTimestamp() {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0);
+}
+
+function isProviderBackedOff(orgId: string, provider: EmailProvider) {
+  const until = providerQuotaBackoff.get(providerKey(orgId, provider));
+  if (!until) return false;
+  if (until <= Date.now()) {
+    providerQuotaBackoff.delete(providerKey(orgId, provider));
+    return false;
+  }
+  return true;
+}
+
+function setProviderQuotaBackoff(orgId: string, provider: EmailProvider) {
+  providerQuotaBackoff.set(providerKey(orgId, provider), nextUtcMidnightTimestamp());
+}
+
+function clearProviderQuotaBackoff(orgId: string, provider: EmailProvider) {
+  providerQuotaBackoff.delete(providerKey(orgId, provider));
+}
+
+function hasKeysForProvider(settings: EmailSettings, provider: EmailProvider): boolean {
+  if (provider === "mailjet") return !!(settings.api_key_public && settings.api_key_private);
+  return !!settings.resend_api_key;
+}
+
+function configuredProviders(settings: EmailSettings): EmailProvider[] {
+  const primary = settings.provider ?? DEFAULT_EMAIL_PROVIDER;
+  const secondary = primary === "resend" ? "mailjet" : "resend";
+  const ordered: EmailProvider[] = [primary, secondary];
+  return ordered.filter((provider, index, list) =>
+    list.indexOf(provider) === index && hasKeysForProvider(settings, provider)
+  );
+}
+
+function sendOrder(settings: EmailSettings, orgId: string): EmailProvider[] {
+  const configured = configuredProviders(settings);
+  const ready = configured.filter((provider) => !isProviderBackedOff(orgId, provider));
+  return ready.length ? ready : configured;
+}
+
+function looksQuotaLike(raw: unknown): boolean {
+  const text = typeof raw === "string"
+    ? raw
+    : JSON.stringify(raw ?? "");
+  const normalized = text.toLowerCase();
+  return [
+    "quota",
+    "rate limit",
+    "rate-limit",
+    "too many requests",
+    "daily limit",
+    "hourly limit",
+    "monthly limit",
+    "credits",
+    "limit exceeded",
+    "throttl"
+  ].some((fragment) => normalized.includes(fragment));
+}
+
+function normalizeDispatchError(provider: EmailProvider, err: any): EmailDispatchError {
+  if (err instanceof EmailDispatchError) return err;
+  if (provider === "mailjet") {
+    const payload = err?.response?.body ?? err?.response?.data ?? err;
+    const nested = payload?.Messages?.[0]?.Errors?.[0];
+    const message = nested?.ErrorMessage ?? payload?.ErrorMessage ?? err?.message ?? "Mailjet send failed.";
+    const statusCode = Number(err?.statusCode ?? err?.response?.status ?? err?.response?.statusCode) || undefined;
+    const code = nested?.ErrorCode ?? payload?.ErrorCode ?? err?.code;
+    return new EmailDispatchError(provider, message, {
+      statusCode,
+      code: code ? String(code) : undefined,
+      quotaLike: looksQuotaLike([message, code, statusCode, payload]),
+      raw: payload
+    });
+  }
+
+  const message = err?.message ?? err?.error?.message ?? "Resend send failed.";
+  const statusCode = Number(err?.statusCode ?? err?.status ?? err?.error?.statusCode) || undefined;
+  const code = err?.code ?? err?.name ?? err?.error?.name;
+  return new EmailDispatchError(provider, message, {
+    statusCode,
+    code: code ? String(code) : undefined,
+    quotaLike: looksQuotaLike([message, code, statusCode, err]),
+    raw: err
+  });
+}
+
 // ── Template variable interpolation ───────────────────────
 function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
@@ -51,15 +189,12 @@ async function loadSettings(orgId: string): Promise<EmailSettings | null> {
     .single();
 
   if (error || !data) return null;
-  return data as EmailSettings;
+  return applyEnvFallbacks(data as EmailSettings);
 }
 
 // ── Check provider keys are configured ────────────────────
 function hasValidKeys(settings: EmailSettings): boolean {
-  const provider = settings.provider ?? "mailjet";
-  if (provider === "mailjet") return !!(settings.api_key_public && settings.api_key_private);
-  if (provider === "resend")  return !!settings.resend_api_key;
-  return false;
+  return configuredProviders(settings).length > 0;
 }
 
 // ── Send via Mailjet ──────────────────────────────────────
@@ -83,7 +218,11 @@ async function sendViaMailjet(
 
   if (settings.reply_to) message.ReplyTo = { Email: settings.reply_to };
 
-  await (client.post("send", { version: "v3.1" }) as any).request({ Messages: [message] });
+  try {
+    await (client.post("send", { version: "v3.1" }) as any).request({ Messages: [message] });
+  } catch (err: any) {
+    throw normalizeDispatchError("mailjet", err);
+  }
 }
 
 // ── Send via Resend ───────────────────────────────────────
@@ -108,21 +247,63 @@ async function sendViaResend(
   };
 
   const { error } = await client.emails.send(payload);
-  if (error) throw new Error(error.message);
+  if (error) throw normalizeDispatchError("resend", error);
 }
 
-// ── Dispatch to correct provider ──────────────────────────
-async function dispatch(
+async function sendViaProvider(
+  provider: EmailProvider,
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
   body: string
 ): Promise<void> {
-  if ((settings.provider ?? "mailjet") === "resend") {
+  if (provider === "resend") {
     await sendViaResend(settings, to, subject, body);
-  } else {
-    await sendViaMailjet(settings, to, subject, body);
+    return;
   }
+  await sendViaMailjet(settings, to, subject, body);
+}
+
+// ── Dispatch to correct provider with fallback ────────────
+async function dispatch(
+  orgId: string,
+  settings: EmailSettings,
+  to: { email: string; name?: string },
+  subject: string,
+  body: string
+): Promise<ProviderDispatchResult> {
+  const providers = sendOrder(settings, orgId);
+  if (!providers.length) {
+    throw new EmailDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, "No email providers are configured.");
+  }
+
+  let lastError: EmailDispatchError | null = null;
+  for (let index = 0; index < providers.length; index += 1) {
+    const provider = providers[index];
+    try {
+      await sendViaProvider(provider, settings, to, subject, body);
+      clearProviderQuotaBackoff(orgId, provider);
+      return {
+        provider,
+        ...(index > 0 ? { fallbackFrom: providers[0] } : {})
+      };
+    } catch (err: any) {
+      const normalized = normalizeDispatchError(provider, err);
+      if (normalized.quotaLike) setProviderQuotaBackoff(orgId, provider);
+      logger.warn("email provider failed", {
+        orgId,
+        provider,
+        to: to.email,
+        statusCode: normalized.statusCode,
+        code: normalized.code,
+        quotaLike: normalized.quotaLike,
+        error: normalized.message
+      });
+      lastError = normalized;
+    }
+  }
+
+  throw lastError ?? new EmailDispatchError(settings.provider ?? DEFAULT_EMAIL_PROVIDER, "Email send failed.");
 }
 
 // ── Get staff emails by role ──────────────────────────────
@@ -160,8 +341,8 @@ export async function sendEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    await dispatch(settings, to, subject, body);
-    logger.info("email sent", { orgId, trigger, provider: settings.provider, to: to.email });
+    const result = await dispatch(orgId, settings, to, subject, body);
+    logger.info("email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: to.email });
   } catch (err: any) {
     logger.error("email send failed", { orgId, trigger, to: to.email, error: err?.message });
   }
@@ -188,8 +369,8 @@ export async function sendToStaff(
     const subject = interpolate(tpl.subject, vars);
     const body    = interpolate(tpl.body, { ...vars, recipient_name: r.name });
     try {
-      await dispatch(settings, r, subject, body);
-      logger.info("staff email sent", { orgId, trigger, to: r.email });
+      const result = await dispatch(orgId, settings, r, subject, body);
+      logger.info("staff email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: r.email });
     } catch (err: any) {
       logger.error("staff email failed", { orgId, trigger, to: r.email, error: err?.message });
     }
@@ -225,8 +406,8 @@ export async function sendToUser(
   const body    = interpolate(tpl.body, { ...vars, recipient_name: user.name });
 
   try {
-    await dispatch(settings, user, subject, body);
-    logger.info("user email sent", { orgId, trigger, to: user.email });
+    const result = await dispatch(orgId, settings, user, subject, body);
+    logger.info("user email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: user.email });
   } catch (err: any) {
     logger.error("user email failed", { orgId, trigger, to: user.email, error: err?.message });
   }
@@ -471,8 +652,8 @@ export async function sendWelcomeEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    await dispatch(settings, { email: member.email, name: member.name }, subject, body);
-    logger.info("welcome email sent", { orgId, to: member.email });
+    const result = await dispatch(orgId, settings, { email: member.email, name: member.name }, subject, body);
+    logger.info("welcome email sent", { orgId, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: member.email });
   } catch (err: any) {
     logger.error("welcome email failed", { orgId, to: member.email, error: err?.message });
   }
@@ -482,22 +663,21 @@ export async function sendWelcomeEmail(
 export async function sendTestEmail(
   orgId: string,
   toEmail: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; provider?: EmailProvider; fallbackFrom?: EmailProvider }> {
   const settings = await loadSettings(orgId);
   if (!settings) return { ok: false, error: "Email settings not configured." };
   if (!settings.from_email) return { ok: false, error: "From email not set." };
   if (!hasValidKeys(settings)) {
-    const p = settings.provider ?? "mailjet";
-    return { ok: false, error: p === "resend" ? "Resend API key not set." : "Mailjet API keys not set." };
+    return { ok: false, error: "Add a Resend API key or Mailjet API keys first." };
   }
 
   const subject = "Test email from ProtoHub";
-  const body    = `This is a test email from your ProtoHub email integration.\nProvider: ${settings.provider ?? "mailjet"}\n\nIf you received this, your configuration is working correctly.`;
+  const body    = `This is a test email from your ProtoHub email integration.\nProvider: ${settings.provider ?? DEFAULT_EMAIL_PROVIDER}\n\nIf you received this, your configuration is working correctly.`;
 
   try {
-    await dispatch(settings, { email: toEmail }, subject, body);
-    logger.info("test email sent", { orgId, to: toEmail });
-    return { ok: true };
+    const result = await dispatch(orgId, settings, { email: toEmail }, subject, body);
+    logger.info("test email sent", { orgId, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: toEmail });
+    return { ok: true, provider: result.provider, fallbackFrom: result.fallbackFrom };
   } catch (err: any) {
     logger.error("test email failed", { orgId, to: toEmail, error: err?.message });
     return { ok: false, error: err?.message ?? "Unknown error" };

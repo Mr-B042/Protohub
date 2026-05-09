@@ -257,7 +257,11 @@ export const embedSettingsApi = {
 export const emailSettingsApi = {
   get:  ()            => get<any>("/api/email-settings"),
   save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),
-  test: (to: string)  => post<{ message: string }>("/api/email-settings/test", { to })
+  test: (to: string)  => post<{ message: string; provider?: string; fallbackFrom?: string | null }>("/api/email-settings/test", { to })
+};
+
+export const emailReportsApi = {
+  sendWeeklyReport: () => post<{ message: string }>("/api/email/weekly-report", {})
 };
 
 // ── Abandoned Carts ──────────────────────────────────────

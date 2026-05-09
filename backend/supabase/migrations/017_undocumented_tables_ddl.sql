@@ -38,7 +38,7 @@ create table if not exists email_settings (
   id               uuid primary key default gen_random_uuid(),
   org_id           uuid not null unique references organizations(id) on delete cascade,
   enabled          boolean not null default false,
-  provider         text not null default 'mailjet',
+  provider         text not null default 'resend',
   api_key_public   text not null default '',
   api_key_private  text not null default '',
   resend_api_key   text not null default '',

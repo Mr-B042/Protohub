@@ -93,7 +93,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
+  embedSettingsApi, emailReportsApi, emailSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
 import {
   Line,
@@ -209,6 +209,21 @@ type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
+type EmailProviderName = "resend" | "mailjet";
+type EmailTemplateConfig = { subject: string; body: string };
+type EmailSettingsState = {
+  enabled: boolean;
+  provider: EmailProviderName;
+  apiKeyPublic: string;
+  apiKeyPrivate: string;
+  resendApiKey: string;
+  fromName: string;
+  fromEmail: string;
+  replyTo: string;
+  triggers: Record<string, boolean>;
+  templates: Record<string, EmailTemplateConfig>;
+  updatedAt?: string | null;
+};
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
@@ -1280,6 +1295,47 @@ const userInitials = (name: string) =>
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
 
+const emailTriggerSections = [
+  {
+    title: "Customer Emails",
+    keys: ["order_new", "order_status_change", "order_delivered", "payroll_approved"]
+  },
+  {
+    title: "Internal & Staff Emails",
+    keys: [
+      "internal_order_new",
+      "internal_order_assigned",
+      "internal_order_delivered",
+      "internal_order_rescheduled",
+      "internal_order_cancelled",
+      "internal_order_failed",
+      "internal_low_stock",
+      "internal_weekly_report",
+      "internal_waybill_dispatched",
+      "internal_new_team_member"
+    ]
+  }
+] as const;
+
+const emailTriggerMeta: Record<string, { label: string; hint: string }> = {
+  order_new: { label: "Customer order confirmation", hint: "Sent to customers when they place an order and provided an email address." },
+  order_status_change: { label: "Customer status changes", hint: "Covers non-delivered updates like confirmed, postponed, or failed." },
+  order_delivered: { label: "Customer delivered notice", hint: "Sent when an order reaches Delivered." },
+  payroll_approved: { label: "Payroll approved", hint: "Sent when a payroll run is approved for a team member." },
+  internal_order_new: { label: "New order alert", hint: "Internal heads-up when a new order is created." },
+  internal_order_assigned: { label: "Rep assignment alert", hint: "Sent to the assigned sales rep when ownership changes." },
+  internal_order_delivered: { label: "Delivered order alert", hint: "Notifies staff when an order is marked delivered." },
+  internal_order_rescheduled: { label: "Rescheduled order alert", hint: "Sent when a follow-up or delivery date is moved." },
+  internal_order_cancelled: { label: "Cancelled order alert", hint: "Sent when an order is cancelled." },
+  internal_order_failed: { label: "Failed order alert", hint: "Sent when an order is marked failed." },
+  internal_low_stock: { label: "Low stock alert", hint: "Warns staff when stock falls near the reorder point." },
+  internal_weekly_report: { label: "Weekly report", hint: "Used by the manual and scheduled weekly performance email." },
+  internal_waybill_dispatched: { label: "Waybill dispatched", hint: "Sent when a waybill is dispatched." },
+  internal_new_team_member: { label: "Welcome team member", hint: "Sent to a newly added user." }
+};
+
+const defaultEmailTemplateKey = emailTriggerSections[0].keys[0];
+
 // All domain data lives on the backend. Only a handful of org-scoped UI
 // settings are mirrored to localStorage as a fast first-paint cache before
 // /api/auth/me hydrates them on mount.
@@ -1596,11 +1652,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [companyLogo, setCompanyLogo] = useState<string>(() => readStored<string>(storageKeys.companyLogo, ""));
   const [companyName, setCompanyName] = useState<string>(() => readStored<string>(storageKeys.companyName, "Protohub"));
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
+  const [emailSettings, setEmailSettings] = useState<EmailSettingsState | null>(null);
+  const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
+  const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
+  const [emailTestRecipient, setEmailTestRecipient] = useState(() => authUser?.email ?? "");
+  const [emailTestLoading, setEmailTestLoading] = useState(false);
+  const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
+  const [emailTemplateKey, setEmailTemplateKey] = useState<string>(defaultEmailTemplateKey);
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
   const adminCartSyncedRef = useRef(false);
+  const emailSettingsSnapshotRef = useRef("");
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
@@ -1608,6 +1672,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const orderUpsellSaveTimerRef = useRef<Record<string, number>>({});
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
+  useEffect(() => {
+    if (!emailTestRecipient && authUser?.email) setEmailTestRecipient(authUser.email);
+  }, [authUser?.email, emailTestRecipient]);
   // Mirror Branding settings into the document head: favicon + apple-touch-icon
   // follow the uploaded/pasted logo, tab title follows the company name.
   useEffect(() => {
@@ -2066,6 +2133,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (!authUser || !["Owner", "Admin"].includes(authUser.role)) return;
+    let cancelled = false;
+    setEmailSettingsLoading(true);
+    emailSettingsApi.get()
+      .then((settings: EmailSettingsState) => {
+        if (cancelled) return;
+        setEmailSettings(settings);
+        emailSettingsSnapshotRef.current = JSON.stringify(settings);
+        const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultEmailTemplateKey;
+        setEmailTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+      })
+      .catch((err: any) => {
+        if (!cancelled) showToast(`Failed to load email settings: ${err?.message ?? "please retry"}.`);
+      })
+      .finally(() => {
+        if (!cancelled) setEmailSettingsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [authUser?.id, authUser?.role]);
+
   const saveEmbedSettings = async () => {
     setEmbedSettingsSaving(true);
     try {
@@ -2222,6 +2311,75 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : installGuidePlatform === "ios"
       ? "Once installed to the home screen, enable notifications there to receive lock-screen alerts."
       : "Enable notifications on this device to receive lock-screen/background alerts where the browser supports it.";
+  const emailSettingsDirty = emailSettings ? JSON.stringify(emailSettings) !== emailSettingsSnapshotRef.current : false;
+  const saveEmailSettings = async () => {
+    if (!emailSettings) return;
+    setEmailSettingsSaving(true);
+    try {
+      const saved = await emailSettingsApi.save({
+        enabled: emailSettings.enabled,
+        provider: emailSettings.provider,
+        api_key_public: emailSettings.apiKeyPublic,
+        api_key_private: emailSettings.apiKeyPrivate,
+        resend_api_key: emailSettings.resendApiKey,
+        from_name: emailSettings.fromName,
+        from_email: emailSettings.fromEmail,
+        reply_to: emailSettings.replyTo,
+        triggers: emailSettings.triggers,
+        templates: emailSettings.templates
+      });
+      setEmailSettings(saved);
+      emailSettingsSnapshotRef.current = JSON.stringify(saved);
+      showToast("Email settings saved.");
+    } catch (err: any) {
+      showToast(`Failed to save email settings: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setEmailSettingsSaving(false);
+    }
+  };
+  const reloadEmailSettings = async () => {
+    if (!auth.getAccessToken()) return;
+    setEmailSettingsLoading(true);
+    try {
+      const settings = await emailSettingsApi.get();
+      setEmailSettings(settings);
+      emailSettingsSnapshotRef.current = JSON.stringify(settings);
+      const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultEmailTemplateKey;
+      setEmailTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+      showToast("Email settings refreshed.");
+    } catch (err: any) {
+      showToast(`Failed to refresh email settings: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setEmailSettingsLoading(false);
+    }
+  };
+  const sendEmailTest = async () => {
+    const to = emailTestRecipient.trim();
+    if (!to) {
+      showToast("Enter a test recipient email first.");
+      return;
+    }
+    setEmailTestLoading(true);
+    try {
+      const result = await emailSettingsApi.test(to);
+      showToast(result?.message ?? `Test email sent to ${to}.`);
+    } catch (err: any) {
+      showToast(err?.message ?? "Test email failed.");
+    } finally {
+      setEmailTestLoading(false);
+    }
+  };
+  const sendWeeklyReportEmail = async () => {
+    setWeeklyReportLoading(true);
+    try {
+      await emailReportsApi.sendWeeklyReport();
+      showToast("Weekly report sent to owner/admin recipients.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Weekly report send failed.");
+    } finally {
+      setWeeklyReportLoading(false);
+    }
+  };
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     const stored = window.localStorage.getItem("protohub.theme");
@@ -20575,6 +20733,302 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </div>
               </section>
+
+              {(currentRole === "Owner" || currentRole === "Admin") && (
+              <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">Email Delivery</h2>
+                <p className="text-sm text-gray-500">Configure transactional email, internal alerts, and weekly report delivery. Resend works best once your sender address or domain is verified.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
+                  {emailSettingsLoading && !emailSettings ? (
+                    <div className="text-sm text-gray-500">Loading email settings…</div>
+                  ) : !emailSettings ? (
+                    <div className="text-sm text-red-500">Email settings could not be loaded right now.</div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col xl:flex-row gap-5">
+                        <div className="flex-1 space-y-4">
+                          <div className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <div>
+                              <p className="text-sm font-bold text-gray-900 m-0 mb-1">Enable email sending</p>
+                              <p className="text-xs text-gray-500 m-0">Leave this off until the sender address and provider key are ready.</p>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={emailSettings.enabled}
+                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${emailSettings.enabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                              onClick={() => setEmailSettings((prev) => prev ? { ...prev, enabled: !prev.enabled } : prev)}
+                            >
+                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${emailSettings.enabled ? "left-5" : "left-0.5"}`} />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Primary provider</span>
+                              <select
+                                value={emailSettings.provider}
+                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, provider: e.target.value as EmailProviderName } : prev)}
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              >
+                                <option value="resend">Resend</option>
+                                <option value="mailjet">Mailjet</option>
+                              </select>
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Reply-to email</span>
+                              <input
+                                type="email"
+                                value={emailSettings.replyTo ?? ""}
+                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, replyTo: e.target.value } : prev)}
+                                placeholder="support@yourdomain.com"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">From name</span>
+                              <input
+                                type="text"
+                                value={emailSettings.fromName}
+                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, fromName: e.target.value } : prev)}
+                                placeholder="Protohub"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">From email</span>
+                              <input
+                                type="email"
+                                value={emailSettings.fromEmail}
+                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, fromEmail: e.target.value } : prev)}
+                                placeholder="hello@yourdomain.com"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                          </div>
+
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <div>
+                                <p className="text-sm font-bold text-gray-900 m-0">Resend</p>
+                                <p className="text-[11px] text-gray-500 mt-1 mb-0">Best as the primary sender when your domain is verified.</p>
+                              </div>
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${emailSettings.provider === "resend" ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>
+                                {emailSettings.provider === "resend" ? "Primary" : "Backup"}
+                              </span>
+                            </div>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Resend API key</span>
+                              <input
+                                type="password"
+                                value={emailSettings.resendApiKey}
+                                onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, resendApiKey: e.target.value } : prev)}
+                                placeholder="re_..."
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                          </div>
+
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <div>
+                                <p className="text-sm font-bold text-gray-900 m-0">Mailjet</p>
+                                <p className="text-[11px] text-gray-500 mt-1 mb-0">ProtoHub can automatically fall back here if the primary provider fails or hits a quota limit.</p>
+                              </div>
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${emailSettings.provider === "mailjet" ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>
+                                {emailSettings.provider === "mailjet" ? "Primary" : "Backup"}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <label className="flex flex-col gap-1.5">
+                                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mailjet public key</span>
+                                <input
+                                  type="text"
+                                  value={emailSettings.apiKeyPublic}
+                                  onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPublic: e.target.value } : prev)}
+                                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1.5">
+                                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mailjet private key</span>
+                                <input
+                                  type="password"
+                                  value={emailSettings.apiKeyPrivate}
+                                  onChange={(e) => setEmailSettings((prev) => prev ? { ...prev, apiKeyPrivate: e.target.value } : prev)}
+                                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                                />
+                              </label>
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-gray-400 m-0">Existing saved secrets stay masked until you replace them. When both providers are configured, ProtoHub will try the primary one first and automatically switch if it fails or appears quota-limited.</p>
+                        </div>
+
+                        <div className="xl:w-[320px] space-y-4">
+                          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                            <p className="text-sm font-bold text-blue-900 m-0 mb-1">Recommended setup</p>
+                            <p className="text-xs text-blue-800 leading-relaxed m-0">Use a branded sender like <strong>hello@yourdomain.com</strong>, verify it in Resend, then save before sending a test.</p>
+                          </div>
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <p className="text-sm font-bold text-gray-900 m-0">Quick actions</p>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Test recipient</span>
+                              <input
+                                type="email"
+                                value={emailTestRecipient}
+                                onChange={(e) => setEmailTestRecipient(e.target.value)}
+                                placeholder="you@example.com"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                disabled={emailTestLoading}
+                                onClick={sendEmailTest}
+                              >
+                                <Mail className="w-4 h-4" />
+                                {emailTestLoading ? "Sending…" : "Send Test Email"}
+                              </button>
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                disabled={weeklyReportLoading}
+                                onClick={sendWeeklyReportEmail}
+                              >
+                                <FileText className="w-4 h-4" />
+                                {weeklyReportLoading ? "Sending…" : "Send Weekly Report"}
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-gray-400 m-0">Weekly report uses the internal weekly report template and goes to owner/admin recipients.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {emailTriggerSections.map((section) => (
+                          <div key={section.title} className="space-y-3">
+                            <div>
+                              <h3 className="text-sm font-bold text-gray-900">{section.title}</h3>
+                              <p className="text-xs text-gray-500 mt-1">Choose which email flows stay active.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {section.keys.map((key) => {
+                                const enabled = !!emailSettings.triggers?.[key];
+                                const meta = emailTriggerMeta[key] ?? { label: key, hint: "" };
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setEmailSettings((prev) => prev ? { ...prev, triggers: { ...prev.triggers, [key]: !enabled } } : prev)}
+                                    className={`text-left rounded-xl border p-4 transition-colors ${enabled ? "border-[#1F8FE0] bg-blue-50" : "border-gray-200 bg-white hover:border-gray-300"}`}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-bold text-gray-900 m-0">{meta.label}</p>
+                                        <p className="text-xs text-gray-500 mt-1 mb-0 leading-relaxed">{meta.hint}</p>
+                                      </div>
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${enabled ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>
+                                        {enabled ? "On" : "Off"}
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
+                        <div className="space-y-2">
+                          <h3 className="text-sm font-bold text-gray-900">Templates</h3>
+                          <p className="text-xs text-gray-500">Edit the subject and body for each trigger.</p>
+                          <div className="rounded-xl border border-gray-200 overflow-hidden">
+                            {Object.keys(emailSettings.templates ?? {}).map((key) => (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() => setEmailTemplateKey(key)}
+                                className={`w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 transition-colors ${emailTemplateKey === key ? "bg-blue-50 text-[#1F8FE0]" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                              >
+                                <span className="block text-sm font-semibold">{emailTriggerMeta[key]?.label ?? key}</span>
+                                <span className="block text-[11px] text-gray-400 mt-0.5">{key}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-900">{emailTriggerMeta[emailTemplateKey]?.label ?? emailTemplateKey}</h3>
+                            <p className="text-xs text-gray-500 mt-1">{emailTriggerMeta[emailTemplateKey]?.hint ?? "Customize this email template."}</p>
+                          </div>
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Subject</span>
+                            <input
+                              type="text"
+                              value={emailSettings.templates?.[emailTemplateKey]?.subject ?? ""}
+                              onChange={(e) => setEmailSettings((prev) => prev ? {
+                                ...prev,
+                                templates: {
+                                  ...prev.templates,
+                                  [emailTemplateKey]: {
+                                    ...(prev.templates?.[emailTemplateKey] ?? { subject: "", body: "" }),
+                                    subject: e.target.value
+                                  }
+                                }
+                              } : prev)}
+                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Body</span>
+                            <textarea
+                              rows={10}
+                              value={emailSettings.templates?.[emailTemplateKey]?.body ?? ""}
+                              onChange={(e) => setEmailSettings((prev) => prev ? {
+                                ...prev,
+                                templates: {
+                                  ...prev.templates,
+                                  [emailTemplateKey]: {
+                                    ...(prev.templates?.[emailTemplateKey] ?? { subject: "", body: "" }),
+                                    body: e.target.value
+                                  }
+                                }
+                              } : prev)}
+                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] font-mono"
+                            />
+                          </label>
+                          <p className="text-[11px] text-gray-400 m-0">Variables like <code>{"{{order_id}}"}</code>, <code>{"{{customer}}"}</code>, <code>{"{{status}}"}</code>, and <code>{"{{currency}}"}</code> are filled automatically.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-xs text-gray-400">
+                          {emailSettings.updatedAt ? `Last updated ${formatMoment(emailSettings.updatedAt)}` : "Not saved yet"}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            disabled={emailSettingsLoading}
+                            onClick={reloadEmailSettings}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Reload
+                          </button>
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            disabled={emailSettingsSaving || !emailSettingsDirty}
+                            onClick={saveEmailSettings}
+                          >
+                            {emailSettingsSaving ? "Saving…" : "Save Email Settings"}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+              )}
 
               {(currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
