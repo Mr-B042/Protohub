@@ -109,6 +109,18 @@ import {
   summaryCards
 } from "./data";
 
+const PUSH_BRANDING_API_BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
+
+function resolvePushBrandingLogoUrl(logoUrl: string, orgId?: string | null): string {
+  const trimmed = typeof logoUrl === "string" ? logoUrl.trim() : "";
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("/")) return trimmed;
+  if (trimmed.startsWith("data:image/") && orgId) {
+    return `${PUSH_BRANDING_API_BASE}/api/public/branding/${encodeURIComponent(orgId)}/logo`;
+  }
+  return "";
+}
+
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
@@ -1324,6 +1336,7 @@ if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)
 }
 
 export function App({ onLogout }: { onLogout?: () => void }) {
+  const authUser = auth.getUser();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [hashRoute, setHashRoute] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
@@ -1620,7 +1633,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const message = {
       type: "SET_PUSH_BRANDING",
       brandName: companyName || "Protohub",
-      logoUrl: companyLogo || ""
+      logoUrl: resolvePushBrandingLogoUrl(companyLogo || "", authUser?.orgId)
     };
     void navigator.serviceWorker.ready
       .then((registration) => {
@@ -1633,7 +1646,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         targets.forEach((worker) => worker?.postMessage(message));
       })
       .catch(() => undefined);
-  }, [companyName, companyLogo]);
+  }, [authUser?.orgId, companyName, companyLogo]);
 
   // NOTE: We intentionally do NOT override the static <link rel="manifest">
   // with a blob: URL here. Chrome's WebAPK installer requires a stable,
@@ -1840,7 +1853,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // ── Role + access derivation (must come before any data filter that
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
-  const authUser = auth.getUser();
   const realManagedUser: ManagedUser | undefined =
     (authUser ? users.find((u) => u.id === authUser.id) : undefined) as ManagedUser | undefined;
   const realRole: EditableUserRole = (realManagedUser?.role
@@ -20426,8 +20438,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
                         {" · "}Subscription: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active" : "Inactive"}</span>
                         {" · "}Server: <span className={`font-medium ${pushServerConfigured ? "text-green-600" : "text-amber-600"}`}>{pushServerConfigured ? "Configured" : "Not configured"}</span>
-                        {" · "}Saved subscriptions: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
+                        {" · "}Saved device/browser subscriptions: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
                       </p>
+                      {pushSubscriptionCount > 1 ? (
+                        <p className="text-xs text-amber-600 font-medium mb-3">
+                          More than one push registration is saved on this account. That can happen when the same account enables notifications on multiple browsers/devices or when an older browser registration has not expired yet.
+                        </p>
+                      ) : null}
                       {pushPermission === "denied" ? (
                         <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
                       ) : !pushServerConfigured ? (

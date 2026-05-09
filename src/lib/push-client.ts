@@ -11,6 +11,26 @@ function getAuthHeaders(): Record<string, string> {
   };
 }
 
+async function saveSubscription(subscription: PushSubscription): Promise<void> {
+  const subJson = subscription.toJSON();
+  const res = await fetch(`${BASE}/api/push/subscribe`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      endpoint: subJson.endpoint,
+      keys: {
+        p256dh: subJson.keys?.p256dh,
+        auth: subJson.keys?.auth
+      }
+    })
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: "Failed to save subscription" }));
+    throw new Error(data.error ?? "Failed to save subscription");
+  }
+}
+
 /**
  * Fetch the VAPID public key from the backend.
  */
@@ -81,31 +101,20 @@ export async function subscribeToPush(): Promise<boolean> {
     throw new Error("Push notifications not configured on this server.");
   }
 
-  // 5. Subscribe to push
+  // 5. Reuse the browser's existing subscription when available so this
+  // device doesn't keep minting extra server-side rows unnecessarily.
+  const existingSubscription = await registration.pushManager.getSubscription();
+  if (existingSubscription) {
+    await saveSubscription(existingSubscription);
+    return true;
+  }
+
+  // 6. Otherwise create and persist a new subscription.
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource
   });
-
-  // 6. Send subscription to backend
-  const subJson = subscription.toJSON();
-  const res = await fetch(`${BASE}/api/push/subscribe`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({
-      endpoint: subJson.endpoint,
-      keys: {
-        p256dh: subJson.keys?.p256dh,
-        auth: subJson.keys?.auth
-      }
-    })
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ error: "Failed to save subscription" }));
-    throw new Error(data.error ?? "Failed to save subscription");
-  }
-
+  await saveSubscription(subscription);
   return true;
 }
 

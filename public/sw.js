@@ -1,26 +1,26 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v5-auto-update";
+const CACHE_NAME = "protohub-v6-auto-update";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 const DEFAULT_BRAND_NAME = "Protohub";
-const DEFAULT_BADGE = "/icons/badge-72.svg";
+const DEFAULT_BADGE = "/icons/icon-72.png";
 
 const PUSH_PRESENTATION = {
-  order_new:               { icon: "/icons/notifications/order-new.svg",            color: "#1F8FE0", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "New Order" },
-  order_confirmed:         { icon: "/icons/notifications/order-confirmed.svg",      color: "#0F9F6E", requireInteraction: false, vibrate: [100, 40, 100],  defaultTitle: "Order Confirmed" },
-  order_delivered:         { icon: "/icons/notifications/order-delivered.svg",      color: "#11935A", requireInteraction: false, vibrate: [160, 60, 140],  defaultTitle: "Order Delivered" },
-  order_cancelled:         { icon: "/icons/notifications/order-cancelled.svg",      color: "#D14343", requireInteraction: true,  vibrate: [200, 70, 200],  defaultTitle: "Order Cancelled" },
-  order_failed:            { icon: "/icons/notifications/order-failed.svg",         color: "#C43C4E", requireInteraction: true,  vibrate: [220, 80, 220],  defaultTitle: "Order Failed" },
-  order_rescheduled:       { icon: "/icons/notifications/order-rescheduled.svg",    color: "#7A4FE0", requireInteraction: false, vibrate: [120, 50, 180],  defaultTitle: "Order Rescheduled" },
-  order_assigned:          { icon: "/icons/notifications/order-assigned.svg",       color: "#0C7B93", requireInteraction: false, vibrate: [90, 40, 90],    defaultTitle: "Order Assigned" },
-  low_stock:               { icon: "/icons/notifications/low-stock.svg",            color: "#D97706", requireInteraction: true,  vibrate: [240, 90, 180],  defaultTitle: "Low Stock Alert" },
-  remittance_overdue:      { icon: "/icons/notifications/remittance-overdue.svg",   color: "#C2410C", requireInteraction: true,  vibrate: [260, 100, 200], defaultTitle: "Remittance Overdue" },
-  stale_carts:             { icon: "/icons/notifications/stale-carts.svg",          color: "#C26B14", requireInteraction: true,  vibrate: [200, 80, 160],  defaultTitle: "Stale Abandoned Carts" },
-  waybill_dispatched:      { icon: "/icons/notifications/waybill.svg",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Dispatched" },
-  waybill_updated:         { icon: "/icons/notifications/waybill.svg",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Updated" },
-  waybill_status_changed:  { icon: "/icons/notifications/waybill.svg",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Update" },
-  test_push:               { icon: "/icons/notifications/test-push.svg",            color: "#1F8FE0", requireInteraction: false, vibrate: [80, 40, 80],    defaultTitle: "Test Push" },
-  info:                    { icon: "/icons/notifications/info.svg",                 color: "#1F8FE0", requireInteraction: false, vibrate: [90, 40, 90],    defaultTitle: "Notification" }
+  order_new:               { icon: "/icons/notifications/order-new.png",            color: "#1F8FE0", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "New Order" },
+  order_confirmed:         { icon: "/icons/notifications/order-confirmed.png",      color: "#0F9F6E", requireInteraction: false, vibrate: [100, 40, 100],  defaultTitle: "Order Confirmed" },
+  order_delivered:         { icon: "/icons/notifications/order-delivered.png",      color: "#11935A", requireInteraction: false, vibrate: [160, 60, 140],  defaultTitle: "Order Delivered" },
+  order_cancelled:         { icon: "/icons/notifications/order-cancelled.png",      color: "#D14343", requireInteraction: true,  vibrate: [200, 70, 200],  defaultTitle: "Order Cancelled" },
+  order_failed:            { icon: "/icons/notifications/order-failed.png",         color: "#C43C4E", requireInteraction: true,  vibrate: [220, 80, 220],  defaultTitle: "Order Failed" },
+  order_rescheduled:       { icon: "/icons/notifications/order-rescheduled.png",    color: "#7A4FE0", requireInteraction: false, vibrate: [120, 50, 180],  defaultTitle: "Order Rescheduled" },
+  order_assigned:          { icon: "/icons/notifications/order-assigned.png",       color: "#0C7B93", requireInteraction: false, vibrate: [90, 40, 90],    defaultTitle: "Order Assigned" },
+  low_stock:               { icon: "/icons/notifications/low-stock.png",            color: "#D97706", requireInteraction: true,  vibrate: [240, 90, 180],  defaultTitle: "Low Stock Alert" },
+  remittance_overdue:      { icon: "/icons/notifications/remittance-overdue.png",   color: "#C2410C", requireInteraction: true,  vibrate: [260, 100, 200], defaultTitle: "Remittance Overdue" },
+  stale_carts:             { icon: "/icons/notifications/stale-carts.png",          color: "#C26B14", requireInteraction: true,  vibrate: [200, 80, 160],  defaultTitle: "Stale Abandoned Carts" },
+  waybill_dispatched:      { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Dispatched" },
+  waybill_updated:         { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Updated" },
+  waybill_status_changed:  { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Update" },
+  test_push:               { icon: "/icons/notifications/test-push.png",            color: "#1F8FE0", requireInteraction: false, vibrate: [80, 40, 80],    defaultTitle: "Test Push" },
+  info:                    { icon: "/icons/notifications/info.png",                 color: "#1F8FE0", requireInteraction: false, vibrate: [90, 40, 90],    defaultTitle: "Notification" }
 };
 
 function sanitizeBrandLogo(value) {
@@ -125,12 +125,13 @@ self.addEventListener("push", (event) => {
       ? payload.brandName.trim()
       : branding.brandName || DEFAULT_BRAND_NAME;
     const brandLogo = sanitizeBrandLogo(payload.brandLogo) || branding.logoUrl;
+    const presentationIcon = payload.icon || presentation.icon || "/icons/icon-192.png";
     const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
     const options = {
       body: payload.body || "",
-      icon: payload.icon || presentation.icon || "/icons/icon-192.svg",
+      icon: brandLogo || presentationIcon,
       badge: payload.badge || DEFAULT_BADGE,
-      image: payload.image || brandLogo || undefined,
+      image: payload.image || (brandLogo ? presentationIcon : undefined),
       tag: payload.tag || `protohub-${kind}`,
       renotify: true,
       requireInteraction: typeof payload.requireInteraction === "boolean" ? payload.requireInteraction : !!presentation.requireInteraction,

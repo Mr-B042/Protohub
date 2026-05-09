@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { getOrgPushBranding } from "../lib/push-branding.js";
 import { getVapidPublicKey, isPushConfigured, sendPushToUser } from "../lib/push.js";
 
 const router = Router();
@@ -47,19 +48,43 @@ router.post("/subscribe", async (req, res) => {
 
   const { endpoint, keys } = parsed.data;
 
-  // Upsert: if this endpoint already exists for this user, update keys
-  const { data: existing } = await supabase
+  // Upsert by endpoint so the same browser/device registration gets reused
+  // even if it is re-sent later or previously attached to a stale row.
+  const { data: existingRows, error: existingError } = await supabase
     .from("push_subscriptions")
     .select("id")
-    .eq("user_id", req.user!.id)
     .eq("endpoint", endpoint)
-    .single();
+    .order("created_at", { ascending: false });
 
-  if (existing) {
-    await supabase
+  if (existingError) {
+    res.status(500).json({ error: existingError.message });
+    return;
+  }
+
+  const primary = existingRows?.[0];
+
+  if (primary) {
+    const { error: updateError } = await supabase
       .from("push_subscriptions")
-      .update({ p256dh: keys.p256dh, auth: keys.auth })
-      .eq("id", existing.id);
+      .update({
+        org_id: req.user!.orgId,
+        user_id: req.user!.id,
+        p256dh: keys.p256dh,
+        auth: keys.auth
+      })
+      .eq("id", primary.id);
+    if (updateError) {
+      res.status(500).json({ error: updateError.message });
+      return;
+    }
+
+    const duplicateIds = (existingRows ?? []).slice(1).map((row) => row.id);
+    if (duplicateIds.length > 0) {
+      await supabase
+        .from("push_subscriptions")
+        .delete()
+        .in("id", duplicateIds);
+    }
   } else {
     const { error } = await supabase
       .from("push_subscriptions")
@@ -137,12 +162,15 @@ router.post("/test", async (req, res) => {
   const title = parsed.data.title ?? "Protohub Test Push";
   const body = parsed.data.body ?? "Background notifications are working on this device.";
   try {
+    const branding = await getOrgPushBranding(req.user!.orgId);
     await sendPushToUser(req.user!.orgId, req.user!.id, {
       title,
       body,
       kind: "test_push",
       url: "/dashboard/admin/notifications",
-      tag: `protohub-test-${Date.now()}`
+      tag: `protohub-test-${Date.now()}`,
+      brandName: branding.brandName,
+      brandLogo: branding.brandLogo
     });
   } catch (error: any) {
     res.status(502).json({ error: error?.message ?? "Failed to queue test push." });
