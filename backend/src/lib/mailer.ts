@@ -42,6 +42,12 @@ type EmailContent = {
   html: string;
 };
 
+type EmailRenderContext = {
+  trigger?: EmailTrigger;
+  audienceRole?: string | null;
+  recipientName?: string;
+};
+
 type ProviderDispatchResult = {
   provider: EmailProvider;
   fallbackFrom?: EmailProvider;
@@ -76,6 +82,60 @@ const providerQuotaBackoff = new Map<string, number>();
 
 function brandName(settings: EmailSettings) {
   return settings.from_name?.trim() || "Protohub";
+}
+
+function normalizeAudienceRole(role?: string | null): "Owner" | "Admin" | "Sales Rep" | null {
+  if (role === "Owner" || role === "Admin" || role === "Sales Rep") return role;
+  return null;
+}
+
+function roleBriefing(context: EmailRenderContext) {
+  const role = normalizeAudienceRole(context.audienceRole);
+  if (!role) return null;
+
+  const trigger = context.trigger;
+  if (!trigger || (!trigger.startsWith("internal_") && trigger !== "payroll_approved")) return null;
+
+  const name = context.recipientName ? `Hello ${context.recipientName},` : "Hello,";
+
+  const palette = role === "Owner"
+    ? { label: "Owner Briefing", bg: "#ecfdf3", border: "#bbf7d0", text: "#166534" }
+    : role === "Admin"
+      ? { label: "Operations Desk", bg: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" }
+      : { label: "Sales Rep Action", bg: "#fff7ed", border: "#fed7aa", text: "#c2410c" };
+
+  const note = role === "Owner"
+    ? `${name} this version is tailored for owner-level visibility, with emphasis on oversight, throughput, and commercial impact.`
+    : role === "Admin"
+      ? `${name} this version is tailored for operational coordination, execution quality, and record accuracy.`
+      : `${name} this version is tailored for direct follow-up, customer handling, and fast next actions.`;
+
+  let nextStep = "Review the update in Protohub and take the next appropriate action.";
+  if (role === "Owner") {
+    if (trigger === "internal_order_new") nextStep = "Confirm the order is properly assigned and that response time stays healthy.";
+    if (trigger === "internal_order_delivered") nextStep = "Review delivery performance and confirm the revenue/remittance picture looks right.";
+    if (trigger === "internal_order_rescheduled") nextStep = "Watch the follow-up timeline and intervene if the order is aging.";
+    if (trigger === "internal_order_cancelled" || trigger === "internal_order_failed") nextStep = "Review the loss reason and use it for sales-process correction.";
+    if (trigger === "internal_low_stock") nextStep = "Approve replenishment priorities before stockouts affect sales.";
+    if (trigger === "internal_weekly_report") nextStep = "Use this summary to review trend lines, margins, and team execution.";
+    if (trigger === "internal_waybill_dispatched") nextStep = "Monitor movement and ensure accountability stays tight through delivery.";
+  } else if (role === "Admin") {
+    if (trigger === "internal_order_new") nextStep = "Verify assignment, product readiness, and any operations details that could block fulfillment.";
+    if (trigger === "internal_order_delivered") nextStep = "Update records, check remittance flow, and close related operational tasks.";
+    if (trigger === "internal_order_rescheduled") nextStep = "Coordinate the next contact window and keep the order queue accurate.";
+    if (trigger === "internal_order_cancelled" || trigger === "internal_order_failed") nextStep = "Review the case, log the outcome cleanly, and resolve any remaining tasks.";
+    if (trigger === "internal_low_stock") nextStep = "Coordinate restock or warehouse adjustment before this affects active demand.";
+    if (trigger === "internal_weekly_report") nextStep = "Use the summary to spot operational gaps and prepare the next set of actions.";
+    if (trigger === "internal_waybill_dispatched") nextStep = "Track movement and keep fulfillment records aligned while the shipment is in transit.";
+  } else {
+    if (trigger === "internal_order_assigned") nextStep = "Reach out to the customer promptly, log your notes, and update the order status in Protohub.";
+    if (trigger === "internal_order_rescheduled") nextStep = "Prepare for the scheduled follow-up and capture the next outcome clearly.";
+    if (trigger === "internal_order_cancelled" || trigger === "internal_order_failed") nextStep = "Review the reason, tidy up any open tasks, and move to the next active lead.";
+    if (trigger === "payroll_approved") nextStep = "Check your approved amount in Protohub and keep your records up to date.";
+    if (trigger === "internal_new_team_member") nextStep = "Log in, review your workspace, and start with the highest-priority tasks.";
+  }
+
+  return { ...palette, note, nextStep };
 }
 
 function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
@@ -251,21 +311,37 @@ function renderSectionHtml(section: string): string {
     .join("");
 }
 
-function buildEmailContent(settings: EmailSettings, subject: string, body: string): EmailContent {
+function buildEmailContent(
+  settings: EmailSettings,
+  subject: string,
+  body: string,
+  context: EmailRenderContext = {}
+): EmailContent {
   const brandedText = ensureBrandSignature(body, settings);
+  const briefing = roleBriefing(context);
+  const fullText = briefing
+    ? `${briefing.label}\n${briefing.note}\nRecommended next step: ${briefing.nextStep}\n\n${brandedText}`
+    : brandedText;
   const sections = brandedText.split(/\n\s*\n/).filter((section) => section.trim());
   const preview = sections.find((section) => section.trim())?.replace(/\s+/g, " ").slice(0, 140) ?? subject;
   const sectionsHtml = sections.map(renderSectionHtml).join("");
   const sender = escapeHtml(brandName(settings));
   const escapedSubject = escapeHtml(subject);
   const escapedPreview = escapeHtml(preview);
+  const briefingHtml = briefing
+    ? `<div style="margin:0 0 22px;padding:18px 18px 16px;border-radius:16px;background:${briefing.bg};border:1px solid ${briefing.border};">
+        <p style="margin:0 0 8px;color:${briefing.text};font-size:12px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(briefing.label)}</p>
+        <p style="margin:0 0 10px;color:#111827;font-size:14px;line-height:1.7;">${escapeHtml(briefing.note)}</p>
+        <p style="margin:0;color:#374151;font-size:14px;line-height:1.7;"><strong>Recommended next step:</strong> ${escapeHtml(briefing.nextStep)}</p>
+      </div>`
+    : "";
   const replyTo = settings.reply_to || settings.from_email;
   const replyToHtml = replyTo
     ? `<a href="mailto:${escapeHtml(replyTo)}" style="color:#15803d;text-decoration:none;">${escapeHtml(replyTo)}</a>`
     : sender;
 
   return {
-    text: brandedText,
+    text: fullText,
     html: `<!doctype html>
 <html lang="en">
   <head>
@@ -288,6 +364,7 @@ function buildEmailContent(settings: EmailSettings, subject: string, body: strin
               <td style="background:#ffffff;border:1px solid #e5e7eb;border-radius:22px;padding:34px 28px 28px;box-shadow:0 18px 48px rgba(15, 23, 42, 0.08);">
                 <p style="margin:0 0 10px;color:#166534;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Protohub Email Update</p>
                 <h1 style="margin:0 0 18px;color:#111827;font-size:28px;line-height:1.2;">${escapedSubject}</h1>
+                ${briefingHtml}
                 ${sectionsHtml}
                 <div style="margin-top:26px;padding-top:18px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:13px;line-height:1.7;">
                   Sent by ${sender} via Protohub.<br />
@@ -326,9 +403,10 @@ async function sendViaMailjet(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  context: EmailRenderContext = {}
 ): Promise<void> {
-  const content = buildEmailContent(settings, subject, body);
+  const content = buildEmailContent(settings, subject, body, context);
   const client = new Mailjet({
     apiKey:    settings.api_key_public,
     apiSecret: settings.api_key_private
@@ -356,9 +434,10 @@ async function sendViaResend(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  context: EmailRenderContext = {}
 ): Promise<void> {
-  const content = buildEmailContent(settings, subject, body);
+  const content = buildEmailContent(settings, subject, body, context);
   const client = new Resend(settings.resend_api_key);
 
   const from = settings.from_name
@@ -383,13 +462,14 @@ async function sendViaProvider(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  context: EmailRenderContext = {}
 ): Promise<void> {
   if (provider === "resend") {
-    await sendViaResend(settings, to, subject, body);
+    await sendViaResend(settings, to, subject, body, context);
     return;
   }
-  await sendViaMailjet(settings, to, subject, body);
+  await sendViaMailjet(settings, to, subject, body, context);
 }
 
 // ── Dispatch to correct provider with fallback ────────────
@@ -398,7 +478,8 @@ async function dispatch(
   settings: EmailSettings,
   to: { email: string; name?: string },
   subject: string,
-  body: string
+  body: string,
+  context: EmailRenderContext = {}
 ): Promise<ProviderDispatchResult> {
   const providers = sendOrder(settings, orgId);
   if (!providers.length) {
@@ -409,7 +490,7 @@ async function dispatch(
   for (let index = 0; index < providers.length; index += 1) {
     const provider = providers[index];
     try {
-      await sendViaProvider(provider, settings, to, subject, body);
+      await sendViaProvider(provider, settings, to, subject, body, context);
       clearProviderQuotaBackoff(orgId, provider);
       return {
         provider,
@@ -438,10 +519,10 @@ async function dispatch(
 async function getStaffRecipients(
   orgId: string,
   roles: string[]
-): Promise<{ email: string; name: string }[]> {
+): Promise<{ email: string; name: string; role?: string | null }[]> {
   const { data } = await supabase
     .from("users")
-    .select("email, name")
+    .select("email, name, role")
     .eq("org_id", orgId)
     .eq("active", true)
     .in("role", roles);
@@ -469,7 +550,7 @@ export async function sendEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    const result = await dispatch(orgId, settings, to, subject, body);
+    const result = await dispatch(orgId, settings, to, subject, body, { trigger, recipientName: to.name });
     logger.info("email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: to.email });
   } catch (err: any) {
     logger.error("email send failed", { orgId, trigger, to: to.email, error: err?.message });
@@ -497,7 +578,11 @@ export async function sendToStaff(
     const subject = interpolate(tpl.subject, vars);
     const body    = interpolate(tpl.body, { ...vars, recipient_name: r.name });
     try {
-      const result = await dispatch(orgId, settings, r, subject, body);
+      const result = await dispatch(orgId, settings, r, subject, body, {
+        trigger,
+        audienceRole: r.role,
+        recipientName: r.name
+      });
       logger.info("staff email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: r.email });
     } catch (err: any) {
       logger.error("staff email failed", { orgId, trigger, to: r.email, error: err?.message });
@@ -523,7 +608,7 @@ export async function sendToUser(
 
   const { data: user } = await supabase
     .from("users")
-    .select("email, name")
+    .select("email, name, role")
     .eq("id", userId)
     .eq("org_id", orgId)
     .single();
@@ -534,7 +619,11 @@ export async function sendToUser(
   const body    = interpolate(tpl.body, { ...vars, recipient_name: user.name });
 
   try {
-    const result = await dispatch(orgId, settings, user, subject, body);
+    const result = await dispatch(orgId, settings, user, subject, body, {
+      trigger,
+      audienceRole: user.role,
+      recipientName: user.name
+    });
     logger.info("user email sent", { orgId, trigger, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: user.email });
   } catch (err: any) {
     logger.error("user email failed", { orgId, trigger, to: user.email, error: err?.message });
@@ -780,7 +869,18 @@ export async function sendWelcomeEmail(
   const body    = interpolate(tpl.body, vars);
 
   try {
-    const result = await dispatch(orgId, settings, { email: member.email, name: member.name }, subject, body);
+    const result = await dispatch(
+      orgId,
+      settings,
+      { email: member.email, name: member.name },
+      subject,
+      body,
+      {
+        trigger: "internal_new_team_member",
+        audienceRole: member.role,
+        recipientName: member.name
+      }
+    );
     logger.info("welcome email sent", { orgId, provider: result.provider, fallbackFrom: result.fallbackFrom ?? null, to: member.email });
   } catch (err: any) {
     logger.error("welcome email failed", { orgId, to: member.email, error: err?.message });
