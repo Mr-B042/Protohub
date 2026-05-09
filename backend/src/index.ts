@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import cron from "node-cron";
 import { logger } from "./lib/logger.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
+import { syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { supabase } from "./lib/supabase.js";
 import { sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -22,6 +23,7 @@ import notifRoutes         from "./routes/notifications.js";
 import waybillRoutes       from "./routes/waybills.js";
 import emailSettingsRoutes from "./routes/email-settings.js";
 import emailReportsRoutes  from "./routes/email-reports.js";
+import smsSettingsRoutes   from "./routes/sms-settings.js";
 import cartRoutes          from "./routes/carts.js";
 import publicCartRoutes    from "./routes/public-carts.js";
 import publicOrderRoutes   from "./routes/public-orders.js";
@@ -128,6 +130,7 @@ app.use("/api/notifications",  notifRoutes);
 app.use("/api/waybills",       waybillRoutes);
 app.use("/api/email-settings", emailSettingsRoutes);
 app.use("/api/email",          emailReportsRoutes);
+app.use("/api/sms-settings",   smsSettingsRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
 app.use("/api/public/products",        publicProductRoutes);
@@ -150,6 +153,26 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 app.listen(PORT, () => {
   logger.info("server started", { port: PORT });
+});
+
+// ── SMS delivery-report sync — every 10 minutes ──────────
+cron.schedule("*/10 * * * *", async () => {
+  logger.info("cron: syncing sms delivery reports");
+  try {
+    await syncSmsDeliveryReports();
+  } catch (e) {
+    logger.error("cron: sms delivery report sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── SMS follow-up reminders — every 15 minutes ───────────
+cron.schedule("*/15 * * * *", async () => {
+  logger.info("cron: syncing due sms follow-up reminders");
+  try {
+    await syncDueFollowUpSms();
+  } catch (e) {
+    logger.error("cron: sms follow-up reminder sync crashed", { error: (e as Error).message });
+  }
 });
 
 // ── Abandoned-cart staleness cron — daily at 9:00 AM ─────

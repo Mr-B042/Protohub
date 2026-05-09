@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { makeOrderId } from "../lib/order-id.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
   sendOrderStatusEmail, sendNewOrderEmail,
@@ -9,6 +10,7 @@ import {
   sendInternalDeliveredEmail
 } from "../lib/mailer.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
+import { sendNewOrderSms, sendOrderStatusSms } from "../lib/sms.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -120,7 +122,7 @@ router.get("/", async (req, res) => {
 
 // ── POST /api/orders ──────────────────────────────────────
 const OrderSchema = z.object({
-  id:             z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/, "Order ID must be alphanumeric (hyphens and underscores allowed)"),
+  id:             z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/, "Order ID must be alphanumeric (hyphens and underscores allowed)").optional(),
   customer:       z.string().min(1),
   phone:          z.string().min(1),
   whatsapp:       z.string().optional(),
@@ -161,6 +163,7 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+  const orderId = d.id ?? makeOrderId();
 
   // Validate productId belongs to this org
   if (d.productId) {
@@ -208,7 +211,7 @@ router.post("/", async (req, res) => {
     timelineNotes
   });
   const baseInsert = {
-    id:              d.id,
+    id:              orderId,
     org_id:          req.user!.orgId,
     customer:        d.customer,
     phone:           d.phone,
@@ -264,7 +267,7 @@ router.post("/", async (req, res) => {
 
   if (error) {
     if (error.code === "23505") {
-      res.status(409).json({ error: `Order ID "${d.id}" already exists.` });
+      res.status(409).json({ error: `Order ID "${orderId}" already exists.` });
     } else {
       res.status(500).json({ error: error.message });
     }
@@ -293,6 +296,14 @@ router.post("/", async (req, res) => {
     id: data.id, customer: data.customer, email: data.email,
     phone: data.phone, product_name: data.product_name,
     amount: data.amount, currency: data.currency, source: data.source
+  });
+  sendNewOrderSms(req.user!.orgId, {
+    id: data.id,
+    customer: data.customer,
+    phone: data.phone,
+    product_name: data.product_name,
+    amount: data.amount,
+    currency: data.currency
   });
 
   // Internal: notify owner + admins
@@ -536,6 +547,17 @@ router.patch("/:id/status", async (req, res) => {
   sendOrderStatusEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
     product_name: data.product_name, amount: data.amount, currency: data.currency
+  }, existing?.status ?? null, status);
+  sendOrderStatusSms(req.user!.orgId, {
+    id: data.id,
+    customer: data.customer,
+    phone: data.phone,
+    product_name: data.product_name,
+    amount: data.amount,
+    currency: data.currency,
+    scheduled_date: data.scheduled_date,
+    call_outcome: data.call_outcome,
+    response: data.response
   }, existing?.status ?? null, status);
 
   // Internal: notify owner + admins when delivered

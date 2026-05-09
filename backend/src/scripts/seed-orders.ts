@@ -290,7 +290,7 @@ async function main() {
     const source = randomItem([...SOURCES]);
     const assignedRep = assignableUsers[index % assignableUsers.length] as UserRow;
     const createdAt = new Date(createdBase + index * 2.5 * 60 * 60 * 1000 + Math.floor(Math.random() * 45 * 60 * 1000));
-    const id = `ORD-MOCK-${batchToken}-${String(index + 1).padStart(3, "0")}`;
+    const id = `${createdAt.getTime()}${String(index + 1).padStart(4, "0")}`;
     const phone = makePhone(phoneSeedBase + index);
     const email = resolveEmail(index, customer);
     const preferredDelivery = index % 4 === 0 ? randomItem([...DELIVERY_CHOICES]) : null;

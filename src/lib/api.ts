@@ -260,6 +260,18 @@ export const emailSettingsApi = {
   test: (to: string)  => post<{ message: string; provider?: string; fallbackFrom?: string | null }>("/api/email-settings/test", { to })
 };
 
+export const smsSettingsApi = {
+  get: () => get<any>("/api/sms-settings"),
+  save: (body: unknown) => request<any>("PUT", "/api/sms-settings", body),
+  test: (phone: string) =>
+    post<{ message: string; provider?: string; providerMessageId?: string | null; units?: number; segments?: number }>(
+      "/api/sms-settings/test",
+      { phone }
+    ),
+  balance: () => get<{ balance: number | null; raw?: unknown }>("/api/sms-settings/balance"),
+  messages: (limit = 100) => get<any[]>(`/api/sms-settings/messages?limit=${limit}`)
+};
+
 export const emailReportsApi = {
   sendWeeklyReport: () => post<{ message: string }>("/api/email/weekly-report", {})
 };

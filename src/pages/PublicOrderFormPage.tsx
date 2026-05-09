@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
+import { makeOrderId } from "../lib/order-id";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -152,8 +153,6 @@ function publicSettingsCacheKey(orgId: string) {
   return `protohub.publicEmbedSettings.${orgId}`;
 }
 
-const makeOrderId = () =>
-  `ORD-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
 const makeCartId = () => `CART-${Math.floor(100000 + Math.random() * 900000)}`;
 
 function activeProductPackages(product: PublicProduct) {

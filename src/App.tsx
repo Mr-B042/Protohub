@@ -79,7 +79,9 @@ import {
   Laptop,
   Apple
 } from "lucide-react";
+import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import { auth } from "./lib/auth";
+import { makeOrderId } from "./lib/order-id";
 import {
   subscribeToPush,
   unsubscribeFromPush,
@@ -93,7 +95,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, emailReportsApi, emailSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
+  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
 import {
   Line,
@@ -223,6 +225,40 @@ type EmailSettingsState = {
   triggers: Record<string, boolean>;
   templates: Record<string, EmailTemplateConfig>;
   updatedAt?: string | null;
+};
+type SmsProviderName = "multitexter";
+type SmsTemplateConfig = { body: string };
+type SmsSettingsState = {
+  enabled: boolean;
+  provider: SmsProviderName;
+  apiKey: string;
+  senderName: string;
+  triggers: Record<string, boolean>;
+  templates: Record<string, SmsTemplateConfig>;
+  updatedAt?: string | null;
+};
+type SmsMessageLog = {
+  id: string;
+  trigger: string;
+  audience?: string;
+  recipientName?: string;
+  recipientPhone: string;
+  normalizedPhone?: string;
+  body: string;
+  senderName?: string;
+  provider: string;
+  providerMessageId?: string;
+  providerStatus?: string;
+  status: string;
+  units?: number;
+  segments?: number;
+  errorCode?: string;
+  errorMessage?: string;
+  scheduledFor?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
 };
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
@@ -703,7 +739,6 @@ const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-
 const makeProductId = () => `prod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makePackageId = () => `pkg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makeMovementId = () => `mov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-const makeOrderId = () => `ORD-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
 const makeBonusRuleId = () => `bonus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 const makeCrossSellLineId = () => `xsell-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
 const makeFreeGiftLineId = () => `gift-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
@@ -1336,6 +1371,31 @@ const emailTriggerMeta: Record<string, { label: string; hint: string }> = {
 
 const defaultEmailTemplateKey = emailTriggerSections[0].keys[0];
 
+const smsTriggerSections = [
+  {
+    title: "Customer SMS Updates",
+    keys: ["order_new", "order_status_change", "order_delivered", "order_failed", "order_cancelled"]
+  },
+  {
+    title: "Follow-up & Recovery SMS",
+    keys: ["order_rescheduled", "order_not_picking", "order_not_ready", "order_follow_up"]
+  }
+] as const;
+
+const smsTriggerMeta: Record<string, { label: string; hint: string }> = {
+  order_new: { label: "Customer order received", hint: "Sent when a new order is created and the customer has a valid phone number." },
+  order_status_change: { label: "General status changes", hint: "Covers standard updates like confirmed, in process, or dispatched." },
+  order_delivered: { label: "Delivered confirmation", hint: "Sent when the order reaches Delivered." },
+  order_failed: { label: "Failed delivery alert", hint: "Sent when the order is marked Failed." },
+  order_cancelled: { label: "Cancelled order alert", hint: "Sent when the order is cancelled." },
+  order_rescheduled: { label: "Rescheduled follow-up", hint: "Sent immediately when a postponed order is given a new follow-up date." },
+  order_not_picking: { label: "Not picking reminder", hint: "Useful when calls are unanswered, switched off, or unreachable." },
+  order_not_ready: { label: "Not ready reminder", hint: "Sent when the customer asks to be contacted later or is not ready yet." },
+  order_follow_up: { label: "Due follow-up reminder", hint: "Automated reminder sent when a scheduled delivery time or timeline follow-up becomes due." }
+};
+
+const defaultSmsTemplateKey = smsTriggerSections[0].keys[0];
+
 // All domain data lives on the backend. Only a handful of org-scoped UI
 // settings are mirrored to localStorage as a fast first-paint cache before
 // /api/auth/me hydrates them on mount.
@@ -1659,12 +1719,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [emailTestLoading, setEmailTestLoading] = useState(false);
   const [weeklyReportLoading, setWeeklyReportLoading] = useState(false);
   const [emailTemplateKey, setEmailTemplateKey] = useState<string>(defaultEmailTemplateKey);
+  const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
+  const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
+  const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
+  const [smsTestPhone, setSmsTestPhone] = useState("");
+  const [smsTestLoading, setSmsTestLoading] = useState(false);
+  const [smsBalance, setSmsBalance] = useState<number | null>(null);
+  const [smsBalanceLoading, setSmsBalanceLoading] = useState(false);
+  const [smsBalanceError, setSmsBalanceError] = useState("");
+  const [smsMessages, setSmsMessages] = useState<SmsMessageLog[]>([]);
+  const [smsMessagesLoading, setSmsMessagesLoading] = useState(false);
+  const [smsTemplateKey, setSmsTemplateKey] = useState<string>(defaultSmsTemplateKey);
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
   const adminCartSyncedRef = useRef(false);
   const emailSettingsSnapshotRef = useRef("");
+  const smsSettingsSnapshotRef = useRef("");
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
@@ -2155,6 +2227,62 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => { cancelled = true; };
   }, [authUser?.id, authUser?.role]);
 
+  const hydrateSmsSupportData = async (settingsOverride?: SmsSettingsState | null, options: { quiet?: boolean } = {}) => {
+    const settings = settingsOverride ?? smsSettings;
+    setSmsMessagesLoading(true);
+    try {
+      const messages = await smsSettingsApi.messages(40);
+      setSmsMessages(messages);
+    } catch (err: any) {
+      setSmsMessages([]);
+      if (!options.quiet) showToast(`Failed to load SMS activity: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setSmsMessagesLoading(false);
+    }
+
+    if (!settings?.apiKey) {
+      setSmsBalance(null);
+      setSmsBalanceError("");
+      return;
+    }
+
+    setSmsBalanceLoading(true);
+    try {
+      const balance = await smsSettingsApi.balance();
+      setSmsBalance(balance.balance ?? null);
+      setSmsBalanceError("");
+    } catch (err: any) {
+      setSmsBalance(null);
+      setSmsBalanceError(err?.message ?? "Balance unavailable.");
+      if (!options.quiet) showToast(`Failed to load SMS balance: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setSmsBalanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (!authUser || !["Owner", "Admin"].includes(authUser.role)) return;
+    let cancelled = false;
+    setSmsSettingsLoading(true);
+    smsSettingsApi.get()
+      .then((settings: SmsSettingsState) => {
+        if (cancelled) return;
+        setSmsSettings(settings);
+        smsSettingsSnapshotRef.current = JSON.stringify(settings);
+        const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultSmsTemplateKey;
+        setSmsTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+        void hydrateSmsSupportData(settings, { quiet: true });
+      })
+      .catch((err: any) => {
+        if (!cancelled) showToast(`Failed to load SMS settings: ${err?.message ?? "please retry"}.`);
+      })
+      .finally(() => {
+        if (!cancelled) setSmsSettingsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [authUser?.id, authUser?.role]);
+
   const saveEmbedSettings = async () => {
     setEmbedSettingsSaving(true);
     try {
@@ -2378,6 +2506,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(err?.message ?? "Weekly report send failed.");
     } finally {
       setWeeklyReportLoading(false);
+    }
+  };
+  const smsSettingsDirty = smsSettings ? JSON.stringify(smsSettings) !== smsSettingsSnapshotRef.current : false;
+  const saveSmsSettings = async () => {
+    if (!smsSettings) return;
+    setSmsSettingsSaving(true);
+    try {
+      const saved = await smsSettingsApi.save({
+        enabled: smsSettings.enabled,
+        provider: smsSettings.provider,
+        api_key: smsSettings.apiKey,
+        sender_name: smsSettings.senderName,
+        triggers: smsSettings.triggers,
+        templates: smsSettings.templates
+      });
+      setSmsSettings(saved);
+      smsSettingsSnapshotRef.current = JSON.stringify(saved);
+      await hydrateSmsSupportData(saved, { quiet: true });
+      showToast("SMS settings saved.");
+    } catch (err: any) {
+      showToast(`Failed to save SMS settings: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setSmsSettingsSaving(false);
+    }
+  };
+  const reloadSmsSettings = async () => {
+    if (!auth.getAccessToken()) return;
+    setSmsSettingsLoading(true);
+    try {
+      const settings = await smsSettingsApi.get();
+      setSmsSettings(settings);
+      smsSettingsSnapshotRef.current = JSON.stringify(settings);
+      const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultSmsTemplateKey;
+      setSmsTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+      await hydrateSmsSupportData(settings, { quiet: true });
+      showToast("SMS settings refreshed.");
+    } catch (err: any) {
+      showToast(`Failed to refresh SMS settings: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setSmsSettingsLoading(false);
+    }
+  };
+  const sendSmsTest = async () => {
+    const phone = smsTestPhone.trim();
+    if (!phone) {
+      showToast("Enter a test phone number first.");
+      return;
+    }
+    setSmsTestLoading(true);
+    try {
+      const result = await smsSettingsApi.test(phone);
+      await hydrateSmsSupportData(undefined, { quiet: true });
+      showToast(result?.message ?? `Test SMS sent to ${phone}.`);
+    } catch (err: any) {
+      showToast(err?.message ?? "Test SMS failed.");
+    } finally {
+      setSmsTestLoading(false);
     }
   };
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -6625,6 +6810,66 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ]);
 
   const showToast = (message: string) => setToast(message);
+
+  const buildWhatsAppUrl = (phone: string | null | undefined, message: string) => {
+    const clean = (phone ?? "").replace(/\D/g, "");
+    if (clean.length < 7) return null;
+    return `https://wa.me/${clean}?text=${encodeURIComponent(message)}`;
+  };
+
+  const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
+    const quantity = quantityForOrder(order);
+    const productLabel = order.packageName
+      ? `${order.productName} - ${order.packageName}`
+      : order.productName;
+    return [
+      `Hi ${order.customer}, this is ${ownerName} from ${companyName || "Protohub"}.`,
+      "",
+      `I'm reaching out about your order ${order.id}.`,
+      `Product: ${productLabel}`,
+      `Quantity: ${quantity} unit${quantity === 1 ? "" : "s"}`,
+      `Amount: ${formatProductMoney(order.amount, order.currency)}`,
+      "",
+      "Please reply here if you'd like us to confirm or help with the order."
+    ].join("\n");
+  };
+
+  const buildCartWhatsAppMessage = (cart: AbandonedCartRecord) => {
+    const productLabel = cart.packageName
+      ? `${cart.productName} - ${cart.packageName}`
+      : cart.productName;
+    return [
+      `Hi ${cart.customer}, this is ${ownerName} from ${companyName || "Protohub"}.`,
+      "",
+      "You left this item in your cart:",
+      `Product: ${productLabel}`,
+      `Amount: ${formatProductMoney(cart.amount, cart.currency)}`,
+      "",
+      "Reply here and we'll help you complete the order."
+    ].join("\n");
+  };
+
+  const openWhatsAppUrl = (url: string | null, customerName: string) => {
+    if (!url) {
+      showToast(`No valid WhatsApp number for ${customerName}.`);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const openWhatsAppForOrder = (order: TrackedOrder) => {
+    openWhatsAppUrl(
+      buildWhatsAppUrl(order.whatsapp || order.phone, buildOrderWhatsAppMessage(order)),
+      order.customer
+    );
+  };
+
+  const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
+    openWhatsAppUrl(
+      buildWhatsAppUrl(cart.whatsapp || cart.phone, buildCartWhatsAppMessage(cart)),
+      cart.customer
+    );
+  };
 
   useEffect(() => {
     if (!toast) return;
@@ -11817,9 +12062,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         className="p-1.5 text-gray-400 hover:text-[#25D366] rounded-md hover:bg-green-50 transition-colors"
                         title="Open WhatsApp"
                         aria-label={`WhatsApp ${order.id}`}
-                        onClick={() => { const phone = (order.whatsapp || order.phone).replace(/\D/g, ""); window.open(`https://wa.me/${phone}`, "_blank", "noopener,noreferrer"); }}
+                        onClick={() => openWhatsAppForOrder(order)}
                       >
-                        <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                        <WhatsAppIcon className="w-4 h-4" />
                       </button>
                       <button 
                         className="px-3 py-1.5 text-xs font-bold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1.5" 
@@ -12331,14 +12576,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   >
                     <Phone className="w-4 h-4" /> {order.phone}
                   </a>
-                  <a
-                    href={`https://wa.me/${(order.whatsapp || order.phone).replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hi ${order.customer}, this is ${ownerName} from ProTools Hardware. I'm calling about your order ${order.id}. Is this a good time?`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => openWhatsAppForOrder(order)}
                     className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:bg-green-700 transition-colors shadow-sm"
                   >
-                    <MessageCircle className="w-4 h-4" /> WhatsApp
-                  </a>
+                    <WhatsAppIcon className="w-4 h-4" /> WhatsApp
+                  </button>
                 </div>
               </div>
 
@@ -14587,7 +14831,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const status = order.status ?? "New";
                       const isTerminal = status === "Delivered" || status === "Cancelled";
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
-                      const phone = (order.whatsapp || order.phone).replace(/\D/g, "");
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
                         <article key={order.id} className="p-4 flex flex-col gap-3">
@@ -14611,9 +14854,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <div className="grid grid-cols-2 gap-2 pt-1">
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe57] transition-colors"
-                              onClick={() => window.open(`https://wa.me/${phone}`, "_blank", "noopener,noreferrer")}
+                              onClick={() => openWhatsAppForOrder(order)}
                             >
-                              <MessageCircle className="w-4 h-4" /> WhatsApp
+                              <WhatsAppIcon className="w-4 h-4" /> WhatsApp
                             </button>
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -14709,7 +14952,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   if (s.includes("facebook")) return <Facebook className={`${cls} text-[#1877F2]`} aria-label="Facebook" />;
                                   if (s.includes("instagram")) return <Instagram className={`${cls} text-pink-500`} aria-label="Instagram" />;
                                   if (s.includes("youtube")) return <Youtube className={`${cls} text-red-500`} aria-label="YouTube" />;
-                                  if (s.includes("whatsapp")) return <MessageCircle className={`${cls} text-[#25D366]`} aria-label="WhatsApp" />;
+                                  if (s.includes("whatsapp")) return <WhatsAppIcon className={`${cls} text-[#25D366]`} aria-label="WhatsApp" />;
                                   return <Globe className={`${cls} text-gray-400`} aria-label={source} />;
                                 })()}
                               </td>
@@ -14732,9 +14975,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <button
                                     className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md bg-[#25D366] text-white hover:bg-[#1ebe57] transition-colors"
                                     title="Open WhatsApp"
-                                    onClick={() => { const phone = (order.whatsapp || order.phone).replace(/\D/g, ""); window.open(`https://wa.me/${phone}`, "_blank", "noopener,noreferrer"); }}
+                                    onClick={() => openWhatsAppForOrder(order)}
                                   >
-                                    <MessageCircle className="w-4 h-4" />
+                                    <WhatsAppIcon className="w-4 h-4" />
                                   </button>
                                   <button
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
@@ -15219,11 +15462,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-4">
                                 <div className="flex items-center justify-end gap-1.5">
                                   {whatsappClean && (
-                                    <a href={`https://wa.me/${whatsappClean}`} target="_blank" rel="noopener noreferrer"
+                                    <button
+                                      type="button"
                                       title="WhatsApp customer"
+                                      onClick={() => openWhatsAppForOrder(order)}
                                       className="!min-h-0 p-1.5 rounded text-gray-500 hover:bg-emerald-50 hover:text-[#25D366] transition-colors">
-                                      <MessageCircle className="w-4 h-4" />
-                                    </a>
+                                      <WhatsAppIcon className="w-4 h-4" />
+                                    </button>
                                   )}
                                   {phoneClean && (
                                     <a href={`tel:${phoneClean}`} title="Call customer"
@@ -21032,6 +21277,306 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {(currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">SMS Delivery</h2>
+                <p className="text-sm text-gray-500">Configure Multitexter SMS for customer order updates, recovery follow-ups, and scheduled reminder automation.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
+                  {smsSettingsLoading && !smsSettings ? (
+                    <div className="text-sm text-gray-500">Loading SMS settings…</div>
+                  ) : !smsSettings ? (
+                    <div className="text-sm text-red-500">SMS settings could not be loaded right now.</div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col xl:flex-row gap-5">
+                        <div className="flex-1 space-y-4">
+                          <div className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <div>
+                              <p className="text-sm font-bold text-gray-900 m-0 mb-1">Enable SMS sending</p>
+                              <p className="text-xs text-gray-500 m-0">Leave this off until the Multitexter API key and sender name are ready.</p>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smsSettings.enabled}
+                              className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${smsSettings.enabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                              onClick={() => setSmsSettings((prev) => prev ? { ...prev, enabled: !prev.enabled } : prev)}
+                            >
+                              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${smsSettings.enabled ? "left-5" : "left-0.5"}`} />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Provider</span>
+                              <input
+                                type="text"
+                                value="Multitexter"
+                                readOnly
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Sender name</span>
+                              <input
+                                type="text"
+                                value={smsSettings.senderName}
+                                maxLength={11}
+                                onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, senderName: e.target.value } : prev)}
+                                placeholder="Protohub"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                          </div>
+
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <div>
+                                <p className="text-sm font-bold text-gray-900 m-0">Multitexter API</p>
+                                <p className="text-[11px] text-gray-500 mt-1 mb-0">Used for customer order updates, due reminders, and delivery recovery SMS.</p>
+                              </div>
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#1F8FE0] text-white">
+                                Primary
+                              </span>
+                            </div>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">API key</span>
+                              <input
+                                type="password"
+                                value={smsSettings.apiKey}
+                                onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, apiKey: e.target.value } : prev)}
+                                placeholder="Paste your Multitexter API key"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <p className="text-[11px] text-gray-400 m-0">Saved keys stay masked until you replace them. Sender names are typically limited to 11 characters, so keep this short and branded.</p>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                              <p className="text-sm font-bold text-emerald-900 m-0 mb-1">SMS balance</p>
+                              <p className="text-2xl font-black text-emerald-700 m-0">
+                                {smsBalanceLoading ? "…" : smsBalance == null ? "—" : smsBalance}
+                              </p>
+                              <p className="text-[11px] text-emerald-800 mt-2 mb-0">
+                                {smsBalanceError || "Fetched from Multitexter so you can spot low credits before customer updates start failing."}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                              <p className="text-sm font-bold text-blue-900 m-0 mb-1">Automation coverage</p>
+                              <p className="text-xs text-blue-800 leading-relaxed m-0">
+                                <code>order_follow_up</code> now powers two workflows: scheduled delivery reminders and timeline follow-up reminders once their due time arrives.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="xl:w-[320px] space-y-4">
+                          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                            <p className="text-sm font-bold text-blue-900 m-0 mb-1">Recommended setup</p>
+                            <p className="text-xs text-blue-800 leading-relaxed m-0">Keep order creation and delivery notices on. Add postponement and follow-up reminders once your customer messaging tone is finalized.</p>
+                          </div>
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <p className="text-sm font-bold text-gray-900 m-0">Quick actions</p>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Test phone</span>
+                              <input
+                                type="tel"
+                                value={smsTestPhone}
+                                onChange={(e) => setSmsTestPhone(e.target.value)}
+                                placeholder="08012345678"
+                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                disabled={smsTestLoading}
+                                onClick={sendSmsTest}
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                {smsTestLoading ? "Sending…" : "Send Test SMS"}
+                              </button>
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                disabled={smsBalanceLoading || smsMessagesLoading}
+                                onClick={() => { void hydrateSmsSupportData(smsSettings); }}
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                                Refresh Balance & Log
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-gray-400 m-0">Tests use the provider directly and also refresh recent SMS activity so you can see the latest status quickly.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {smsTriggerSections.map((section) => (
+                          <div key={section.title} className="space-y-3">
+                            <div>
+                              <h3 className="text-sm font-bold text-gray-900">{section.title}</h3>
+                              <p className="text-xs text-gray-500 mt-1">Choose which SMS flows stay active.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {section.keys.map((key) => {
+                                const enabled = !!smsSettings.triggers?.[key];
+                                const meta = smsTriggerMeta[key] ?? { label: key, hint: "" };
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setSmsSettings((prev) => prev ? { ...prev, triggers: { ...prev.triggers, [key]: !enabled } } : prev)}
+                                    className={`text-left rounded-xl border p-4 transition-colors ${enabled ? "border-[#1F8FE0] bg-blue-50" : "border-gray-200 bg-white hover:border-gray-300"}`}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-bold text-gray-900 m-0">{meta.label}</p>
+                                        <p className="text-xs text-gray-500 mt-1 mb-0 leading-relaxed">{meta.hint}</p>
+                                      </div>
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${enabled ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>
+                                        {enabled ? "On" : "Off"}
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
+                        <div className="space-y-2">
+                          <h3 className="text-sm font-bold text-gray-900">Templates</h3>
+                          <p className="text-xs text-gray-500">Edit the SMS body for each trigger.</p>
+                          <div className="rounded-xl border border-gray-200 overflow-hidden">
+                            {Object.keys(smsSettings.templates ?? {}).map((key) => (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() => setSmsTemplateKey(key)}
+                                className={`w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 transition-colors ${smsTemplateKey === key ? "bg-blue-50 text-[#1F8FE0]" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                              >
+                                <span className="block text-sm font-semibold">{smsTriggerMeta[key]?.label ?? key}</span>
+                                <span className="block text-[11px] text-gray-400 mt-0.5">{key}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-900">{smsTriggerMeta[smsTemplateKey]?.label ?? smsTemplateKey}</h3>
+                            <p className="text-xs text-gray-500 mt-1">{smsTriggerMeta[smsTemplateKey]?.hint ?? "Customize this SMS template."}</p>
+                          </div>
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">SMS body</span>
+                            <textarea
+                              rows={8}
+                              value={smsSettings.templates?.[smsTemplateKey]?.body ?? ""}
+                              onChange={(e) => setSmsSettings((prev) => prev ? {
+                                ...prev,
+                                templates: {
+                                  ...prev.templates,
+                                  [smsTemplateKey]: {
+                                    ...(prev.templates?.[smsTemplateKey] ?? { body: "" }),
+                                    body: e.target.value
+                                  }
+                                }
+                              } : prev)}
+                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] font-mono"
+                            />
+                          </label>
+                          <p className="text-[11px] text-gray-400 m-0">Variables like <code>{"{{order_id}}"}</code>, <code>{"{{customer}}"}</code>, <code>{"{{status}}"}</code>, <code>{"{{scheduled_date}}"}</code>, <code>{"{{product_name}}"}</code>, and <code>{"{{note_text}}"}</code> are filled automatically.</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold text-gray-900">Recent SMS Activity</h3>
+                            <p className="text-xs text-gray-500 mt-1">Latest queued, sent, delivered, and failed customer SMS records.</p>
+                          </div>
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            disabled={smsMessagesLoading}
+                            onClick={() => { void hydrateSmsSupportData(smsSettings); }}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Refresh Activity
+                          </button>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 overflow-hidden">
+                          {smsMessagesLoading ? (
+                            <div className="px-4 py-5 text-sm text-gray-500">Loading SMS activity…</div>
+                          ) : smsMessages.length === 0 ? (
+                            <div className="px-4 py-5 text-sm text-gray-500">No SMS activity has been logged yet.</div>
+                          ) : (
+                            <div className="divide-y divide-gray-100">
+                              {smsMessages.slice(0, 10).map((message) => (
+                                <div key={message.id} className="px-4 py-4 flex flex-col gap-2">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-bold text-gray-900 m-0">{smsTriggerMeta[message.trigger]?.label ?? message.trigger}</p>
+                                      <p className="text-xs text-gray-500 mt-1 mb-0">
+                                        {message.recipientName ? `${message.recipientName} · ` : ""}{message.recipientPhone}
+                                        {" · "}
+                                        {message.sentAt ? `Sent ${formatMoment(message.sentAt)}` : `Created ${formatMoment(message.createdAt)}`}
+                                      </p>
+                                    </div>
+                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                      message.status === "delivered" ? "bg-emerald-100 text-emerald-700"
+                                      : message.status === "sent" ? "bg-blue-100 text-blue-700"
+                                      : message.status === "failed" ? "bg-rose-100 text-rose-700"
+                                      : "bg-amber-100 text-amber-700"
+                                    }`}>
+                                      {message.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-gray-700 m-0 leading-relaxed">{message.body}</p>
+                                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
+                                    <span>Provider: {message.provider}</span>
+                                    <span>Segments: {message.segments ?? 1}</span>
+                                    {message.units != null ? <span>Units: {message.units}</span> : null}
+                                    {message.providerStatus ? <span>Provider status: {message.providerStatus}</span> : null}
+                                    {message.deliveredAt ? <span>Delivered: {formatMoment(message.deliveredAt)}</span> : null}
+                                    {message.errorMessage ? <span className="text-rose-500">Error: {message.errorMessage}</span> : null}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-xs text-gray-400">
+                          {smsSettings.updatedAt ? `Last updated ${formatMoment(smsSettings.updatedAt)}` : "Not saved yet"}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                            disabled={smsSettingsLoading}
+                            onClick={reloadSmsSettings}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Reload
+                          </button>
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            disabled={smsSettingsSaving || !smsSettingsDirty}
+                            onClick={saveSmsSettings}
+                          >
+                            {smsSettingsSaving ? "Saving…" : "Save SMS Settings"}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+              )}
+
+              {(currentRole === "Owner" || currentRole === "Admin") && (
+              <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Timezone</h2>
                 <p className="text-sm text-gray-500">All dates and times shown across the app are formatted in this timezone.</p>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
@@ -22532,7 +23077,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <div className="flex items-center gap-1.5 mt-0.5">
 	                        {(() => {
 	                          const src = selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource);
-	                          if (src === "WhatsApp") return <MessageCircle className="w-4 h-4 shrink-0 text-[#25D366]" />;
+	                          if (src === "WhatsApp") return <WhatsAppIcon className="w-4 h-4 shrink-0 text-[#25D366]" />;
 	                          if (src === "TikTok") return <Music2 className="w-4 h-4 shrink-0 text-gray-900" />;
 	                          if (src === "Facebook") return <span className="w-4 h-4 shrink-0 rounded-full bg-[#1877F2] text-white text-[10px] font-bold flex items-center justify-center">f</span>;
 	                          if (src === "Website") return <Globe className="w-4 h-4 shrink-0 text-gray-500" />;
@@ -23272,10 +23817,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    {/* Quick contact */}
 	                    <div className="flex items-center gap-2">
 	                      {whatsappClean && (
-	                        <a href={`https://wa.me/${whatsappClean}`} target="_blank" rel="noopener noreferrer"
+	                        <button
+	                          type="button"
+	                          onClick={() => openWhatsAppForCart(selectedCart)}
 	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90">
-	                          <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
-	                        </a>
+	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
+	                        </button>
 	                      )}
 	                      {phoneClean && (
 	                        <a href={`tel:${phoneClean}`}
@@ -25702,7 +26249,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <input type="checkbox" checked={penaltyRemoveAllBonuses} onChange={(e) => setPenaltyRemoveAllBonuses(e.target.checked)} />
                   <span>Also remove all bonuses for the related order/week</span>
                 </label>
-                <label><span>Order ID (optional)</span><input value={penaltyOrderId} onChange={(e) => setPenaltyOrderId(e.target.value)} placeholder="ORD-XXXX" /></label>
+                <label><span>Order ID (optional)</span><input value={penaltyOrderId} onChange={(e) => setPenaltyOrderId(e.target.value)} placeholder="e.g. 1746891234567001" /></label>
                 <label><span>Reason / Notes</span><textarea value={penaltyReason} onChange={(e) => setPenaltyReason(e.target.value)} placeholder="What happened?" /></label>
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>

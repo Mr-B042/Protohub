@@ -15,12 +15,14 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { makeOrderId } from "../lib/order-id.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import {
   sendNewOrderEmail,
   sendInternalNewOrderEmail,
   sendOrderAssignedEmail
 } from "../lib/mailer.js";
+import { sendNewOrderSms } from "../lib/sms.js";
 
 const router = Router();
 
@@ -39,7 +41,7 @@ const CrossSellLineSchema = z.object({
 });
 
 const PublicOrderSchema = z.object({
-  id:           z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/),
+  id:           z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/).optional(),
   cartId:       z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/).optional(),
   customer:     z.string().min(1).max(120),
   phone:        z.string().min(1).max(40),
@@ -87,10 +89,11 @@ router.post("/", submitRateLimit, async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
+  const orderId = parsed.data.id ?? makeOrderId();
   if (parsed.data.company) {
     // Honeypot tripped. Pretend success so the bot doesn't retry.
     logger.warn("public-orders: honeypot tripped", { ip: req.ip });
-    res.status(201).json({ id: parsed.data.id, ignored: true });
+    res.status(201).json({ id: orderId, ignored: true });
     return;
   }
   const d = parsed.data;
@@ -259,7 +262,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const { data: order, error: orderErr } = await supabase
     .from("orders")
     .insert({
-      id:                d.id,
+      id:                orderId,
       org_id:            product.org_id,
       customer:          d.customer,
       phone:             d.phone,
@@ -329,6 +332,14 @@ router.post("/", submitRateLimit, async (req, res) => {
     id: order.id, customer: order.customer, email: order.email,
     phone: order.phone, product_name: order.product_name,
     amount: order.amount, currency: order.currency, source: order.source
+  });
+  sendNewOrderSms(product.org_id, {
+    id: order.id,
+    customer: order.customer,
+    phone: order.phone,
+    product_name: order.product_name,
+    amount: order.amount,
+    currency: order.currency
   });
 
   sendInternalNewOrderEmail(product.org_id, {
