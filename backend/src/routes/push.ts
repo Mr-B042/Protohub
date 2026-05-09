@@ -184,7 +184,7 @@ router.post("/test", async (req, res) => {
   const body = parsed.data.body ?? "Background notifications are working on this device.";
   try {
     const branding = await getOrgPushBranding(req.user!.orgId);
-    await sendPushToUser(req.user!.orgId, req.user!.id, {
+    const result = await sendPushToUser(req.user!.orgId, req.user!.id, {
       title,
       body,
       kind: "test_push",
@@ -193,6 +193,12 @@ router.post("/test", async (req, res) => {
       brandName: branding.brandName,
       brandLogo: branding.brandLogo
     });
+    if (result.attempted === 0 || result.delivered === 0) {
+      res.status(502).json({
+        error: "No active push deliveries succeeded for this account. Re-subscribe on this device and try again."
+      });
+      return;
+    }
   } catch (error: any) {
     res.status(502).json({ error: error?.message ?? "Failed to queue test push." });
     return;

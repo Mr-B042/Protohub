@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/org-manifest.webmanifest",
+      "destination": "https://protohub-production.up.railway.app/api/public/pwa/manifest"
+    },
+    {
+      "source": "/org-icons/:path*",
+      "destination": "https://protohub-production.up.railway.app/api/public/pwa/icons/:path*"
+    }
+  ]
+}

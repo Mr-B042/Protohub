@@ -111,13 +111,13 @@ import {
   summaryCards
 } from "./data";
 
-const DYNAMIC_MANIFEST_PATH = "/dynamic-manifest.webmanifest";
+const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 
 function manifestVersionToken(brandName: string, logoUrl: string): string {
   return `${brandName.trim().length}-${logoUrl.trim().length}`;
 }
 
-function syncDynamicManifestLink(brandName: string, logoUrl: string) {
+function syncDynamicManifestLink(orgId: string | null | undefined, brandName: string, logoUrl: string) {
   if (typeof document === "undefined") return;
   let link = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
   if (!link) {
@@ -125,7 +125,11 @@ function syncDynamicManifestLink(brandName: string, logoUrl: string) {
     link.rel = "manifest";
     document.head.appendChild(link);
   }
-  link.href = `${DYNAMIC_MANIFEST_PATH}?v=${encodeURIComponent(manifestVersionToken(brandName, logoUrl))}`;
+  if (orgId) {
+    link.href = `${ORG_MANIFEST_PATH}?orgId=${encodeURIComponent(orgId)}&v=${encodeURIComponent(manifestVersionToken(brandName, logoUrl))}`;
+  } else {
+    link.href = "/manifest.json";
+  }
 }
 
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
@@ -1659,8 +1663,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // eligible, while letting the service worker serve brand-aware install
   // metadata for the current workspace.
   useEffect(() => {
-    syncDynamicManifestLink(companyName || "Protohub", companyLogo || "");
-  }, [companyName, companyLogo]);
+    syncDynamicManifestLink(authUser?.orgId, companyName || "Protohub", companyLogo || "");
+  }, [authUser?.orgId, companyName, companyLogo]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;

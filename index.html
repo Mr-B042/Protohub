@@ -10,7 +10,25 @@
     <link rel="icon" type="image/png" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png" />
-    <link rel="manifest" href="/dynamic-manifest.webmanifest" />
+    <script>
+      (() => {
+        let href = "/manifest.json";
+        try {
+          const rawUser = localStorage.getItem("protohub.authUser");
+          const rawName = localStorage.getItem("protohub.companyName") || "Protohub";
+          const rawLogo = localStorage.getItem("protohub.companyLogo") || "";
+          const user = rawUser ? JSON.parse(rawUser) : null;
+          if (user?.orgId) {
+            const version = `${rawName.trim().length}-${rawLogo.trim().length}`;
+            href = `/org-manifest.webmanifest?orgId=${encodeURIComponent(user.orgId)}&v=${encodeURIComponent(version)}`;
+          }
+        } catch {}
+        const link = document.createElement("link");
+        link.rel = "manifest";
+        link.href = href;
+        document.head.appendChild(link);
+      })();
+    </script>
     <meta name="theme-color" content="#1F8FE0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

@@ -38,6 +38,12 @@ type PushPayload = {
   timestamp?: number;
 };
 
+export type PushDeliveryStats = {
+  attempted: number;
+  delivered: number;
+  failed: number;
+};
+
 function pushTopicForPayload(payload: PushPayload): string {
   const raw = payload.tag ?? payload.kind ?? payload.title ?? "protohub";
   const sanitized = raw
@@ -62,8 +68,8 @@ async function getActiveUserIdsByRoles(orgId: string, roles: string[]): Promise<
  * Send push notification to a specific user (all their subscriptions).
  * Silently removes stale/expired subscriptions (410 Gone).
  */
-export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<void> {
-  if (!isPushConfigured()) return;
+export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
+  if (!isPushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
 
   const { data: subscriptions } = await supabase
     .from("push_subscriptions")
@@ -71,7 +77,7 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
     .eq("org_id", orgId)
     .eq("user_id", userId);
 
-  if (!subscriptions || subscriptions.length === 0) return;
+  if (!subscriptions || subscriptions.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
 
   const message = JSON.stringify(payload);
 
@@ -104,25 +110,38 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
   );
 
   const failed = results.filter((r) => r.status === "rejected").length;
+  const attempted = subscriptions.length;
+  const delivered = attempted - failed;
   if (failed > 0) {
     console.warn(`[push] ${failed}/${subscriptions.length} push deliveries failed for user ${userId}`);
   }
+  return { attempted, delivered, failed };
 }
 
 /**
  * Send push notification to multiple users.
  */
-export async function sendPushToUsers(orgId: string, userIds: string[], payload: PushPayload): Promise<void> {
-  if (!isPushConfigured() || userIds.length === 0) return;
-  await Promise.allSettled(userIds.map((uid) => sendPushToUser(orgId, uid, payload)));
+export async function sendPushToUsers(orgId: string, userIds: string[], payload: PushPayload): Promise<PushDeliveryStats> {
+  if (!isPushConfigured() || userIds.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+  const results = await Promise.allSettled(userIds.map((uid) => sendPushToUser(orgId, uid, payload)));
+  return results.reduce<PushDeliveryStats>((acc, result) => {
+    if (result.status === "fulfilled") {
+      acc.attempted += result.value.attempted;
+      acc.delivered += result.value.delivered;
+      acc.failed += result.value.failed;
+    } else {
+      acc.failed += 1;
+    }
+    return acc;
+  }, { attempted: 0, delivered: 0, failed: 0 });
 }
 
 /**
  * Send push notifications to all active users in the given roles.
  */
-export async function sendPushToRoles(orgId: string, roles: string[], payload: PushPayload): Promise<void> {
-  if (!isPushConfigured() || roles.length === 0) return;
+export async function sendPushToRoles(orgId: string, roles: string[], payload: PushPayload): Promise<PushDeliveryStats> {
+  if (!isPushConfigured() || roles.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
   const userIds = await getActiveUserIdsByRoles(orgId, roles);
-  if (userIds.length === 0) return;
-  await sendPushToUsers(orgId, userIds, payload);
+  if (userIds.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+  return sendPushToUsers(orgId, userIds, payload);
 }

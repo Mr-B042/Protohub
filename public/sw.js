@@ -4,9 +4,9 @@ const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 const DEFAULT_BRAND_NAME = "Protohub";
 const DEFAULT_BADGE = "/icons/icon-72.png";
-const DYNAMIC_MANIFEST_PATH = "/dynamic-manifest.webmanifest";
-const DYNAMIC_ICON_192_PATH = "/dynamic-icons/app-192";
-const DYNAMIC_ICON_512_PATH = "/dynamic-icons/app-512";
+const DYNAMIC_MANIFEST_PATH = "/org-manifest.webmanifest";
+const DYNAMIC_ICON_192_PATH = "/org-icons/app-192";
+const DYNAMIC_ICON_512_PATH = "/org-icons/app-512";
 
 const PUSH_PRESENTATION = {
   order_new:               { icon: "/icons/notifications/order-new.png",            color: "#1F8FE0", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "New Order" },

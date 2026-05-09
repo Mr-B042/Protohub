@@ -5,6 +5,11 @@ type OrgPushBranding = {
   brandLogo?: string;
 };
 
+export type OrgBrandingRecord = {
+  brandName: string;
+  rawLogoUrl: string;
+};
+
 function resolvePublicApiBaseUrl(): string | undefined {
   const explicit = process.env.PUBLIC_API_URL?.trim() || process.env.VITE_API_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
@@ -38,6 +43,14 @@ function normalizeLogoForPush(orgId: string, value: unknown): string | undefined
 }
 
 export async function getOrgPushBranding(orgId: string): Promise<OrgPushBranding> {
+  const record = await getOrgBrandingRecord(orgId);
+  return {
+    brandName: record.brandName,
+    brandLogo: normalizeLogoForPush(orgId, record.rawLogoUrl)
+  };
+}
+
+export async function getOrgBrandingRecord(orgId: string): Promise<OrgBrandingRecord> {
   const { data } = await supabase
     .from("organizations")
     .select("name, logo_url")
@@ -46,6 +59,6 @@ export async function getOrgPushBranding(orgId: string): Promise<OrgPushBranding
 
   return {
     brandName: typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "Protohub",
-    brandLogo: normalizeLogoForPush(orgId, data?.logo_url)
+    rawLogoUrl: typeof data?.logo_url === "string" ? data.logo_url.trim() : ""
   };
 }

@@ -27,6 +27,7 @@ import publicCartRoutes    from "./routes/public-carts.js";
 import publicOrderRoutes   from "./routes/public-orders.js";
 import publicProductRoutes from "./routes/public-products.js";
 import publicBrandingRoutes from "./routes/public-branding.js";
+import publicPwaRoutes from "./routes/public-pwa.js";
 import embedSettingsRoutes       from "./routes/embed-settings.js";
 import publicEmbedSettingsRoutes from "./routes/public-embed-settings.js";
 import payStructureRoutes  from "./routes/pay-structures.js";
@@ -76,7 +77,10 @@ app.use(rateLimit({
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isLoopbackIp(req.ip) || req.path.startsWith("/api/public/branding/")
+  skip: (req) =>
+    isLoopbackIp(req.ip) ||
+    req.path.startsWith("/api/public/branding/") ||
+    req.path.startsWith("/api/public/pwa/")
 }));
 
 // Rate limit on auth endpoints — 20 attempts per 15 minutes per IP. Bumped
@@ -128,6 +132,7 @@ app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
 app.use("/api/public/products",        publicProductRoutes);
 app.use("/api/public/branding",        publicBrandingRoutes);
+app.use("/api/public/pwa",             publicPwaRoutes);
 app.use("/api/public/embed-settings",  publicEmbedSettingsRoutes);
 app.use("/api/embed-settings",         embedSettingsRoutes);
 app.use("/api/carts",           cartRoutes);
