@@ -2,7 +2,6 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { makeOrderId } from "../lib/order-id.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
   sendOrderStatusEmail, sendNewOrderEmail,
@@ -163,7 +162,6 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
-  const orderId = d.id ?? makeOrderId();
 
   // Validate productId belongs to this org
   if (d.productId) {
@@ -211,7 +209,7 @@ router.post("/", async (req, res) => {
     timelineNotes
   });
   const baseInsert = {
-    id:              orderId,
+    ...(d.id ? { id: d.id } : {}),
     org_id:          req.user!.orgId,
     customer:        d.customer,
     phone:           d.phone,
@@ -267,7 +265,7 @@ router.post("/", async (req, res) => {
 
   if (error) {
     if (error.code === "23505") {
-      res.status(409).json({ error: `Order ID "${orderId}" already exists.` });
+      res.status(409).json({ error: d.id ? `Order ID "${d.id}" already exists.` : "Order ID already exists." });
     } else {
       res.status(500).json({ error: error.message });
     }
@@ -301,6 +299,7 @@ router.post("/", async (req, res) => {
     id: data.id,
     customer: data.customer,
     phone: data.phone,
+    assignedRepId: data.assigned_rep_id,
     product_name: data.product_name,
     amount: data.amount,
     currency: data.currency
@@ -552,6 +551,7 @@ router.patch("/:id/status", async (req, res) => {
     id: data.id,
     customer: data.customer,
     phone: data.phone,
+    assignedRepId: data.assigned_rep_id,
     product_name: data.product_name,
     amount: data.amount,
     currency: data.currency,

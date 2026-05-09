@@ -81,7 +81,6 @@ import {
 } from "lucide-react";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import { auth } from "./lib/auth";
-import { makeOrderId } from "./lib/order-id";
 import {
   subscribeToPush,
   unsubscribeFromPush,
@@ -235,12 +234,23 @@ type SmsSettingsState = {
   senderName: string;
   triggers: Record<string, boolean>;
   templates: Record<string, SmsTemplateConfig>;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  lowBalanceThreshold: number;
+  autoRetryEnabled: boolean;
+  maxRetryAttempts: number;
+  retryBackoffMinutes: number;
+  inboundWebhookSecret: string;
+  inboundWebhookUrl?: string;
   updatedAt?: string | null;
 };
 type SmsMessageLog = {
   id: string;
   trigger: string;
   audience?: string;
+  orderId?: string | null;
+  cartId?: string | null;
   recipientName?: string;
   recipientPhone: string;
   normalizedPhone?: string;
@@ -254,9 +264,36 @@ type SmsMessageLog = {
   segments?: number;
   errorCode?: string;
   errorMessage?: string;
+  retryCount?: number;
+  nextRetryAt?: string;
+  lastRetryAt?: string;
   scheduledFor?: string;
   sentAt?: string;
   deliveredAt?: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+type SmsOptOutRecord = {
+  id: string;
+  phone: string;
+  normalizedPhone: string;
+  keyword?: string;
+  source: string;
+  note?: string;
+  createdAt: string;
+};
+type SmsInboundMessage = {
+  id: string;
+  senderPhone: string;
+  normalizedPhone: string;
+  receiver?: string;
+  senderName?: string;
+  body: string;
+  keyword?: string;
+  action?: string;
+  linkedOrderId?: string;
+  processed: boolean;
+  receivedAt: string;
   createdAt: string;
   metadata?: Record<string, unknown>;
 };
@@ -274,6 +311,7 @@ type ManagedUser = {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: EditableUserRole;
   active: boolean;
   created: string;
@@ -1374,11 +1412,11 @@ const defaultEmailTemplateKey = emailTriggerSections[0].keys[0];
 const smsTriggerSections = [
   {
     title: "Customer SMS Updates",
-    keys: ["order_new", "order_status_change", "order_delivered", "order_failed", "order_cancelled"]
+    keys: ["order_new", "order_status_change", "order_delivered", "order_failed", "order_cancelled", "cart_assigned"]
   },
   {
     title: "Follow-up & Recovery SMS",
-    keys: ["order_rescheduled", "order_not_picking", "order_not_ready", "order_follow_up"]
+    keys: ["order_rescheduled", "order_not_picking", "order_not_ready", "order_follow_up", "cart_follow_up"]
   }
 ] as const;
 
@@ -1391,7 +1429,9 @@ const smsTriggerMeta: Record<string, { label: string; hint: string }> = {
   order_rescheduled: { label: "Rescheduled follow-up", hint: "Sent immediately when a postponed order is given a new follow-up date." },
   order_not_picking: { label: "Not picking reminder", hint: "Useful when calls are unanswered, switched off, or unreachable." },
   order_not_ready: { label: "Not ready reminder", hint: "Sent when the customer asks to be contacted later or is not ready yet." },
-  order_follow_up: { label: "Due follow-up reminder", hint: "Automated reminder sent when a scheduled delivery time or timeline follow-up becomes due." }
+  order_follow_up: { label: "Due follow-up reminder", hint: "Automated reminder sent when a scheduled delivery time or timeline follow-up becomes due." },
+  cart_assigned: { label: "Cart assigned to rep", hint: "Sent when an abandoned cart is assigned to a sales rep and Protohub wants the customer to have a direct contact." },
+  cart_follow_up: { label: "Abandoned cart follow-up", hint: "Hourly automation that reaches back out to older unconverted carts with rep contact details." }
 };
 
 const defaultSmsTemplateKey = smsTriggerSections[0].keys[0];
@@ -1637,6 +1677,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesStatus, setSalesStatus] = useState<RepStatus>("All statuses");
   const [salesRepName, setSalesRepName] = useState("");
   const [salesRepEmail, setSalesRepEmail] = useState("");
+  const [salesRepPhone, setSalesRepPhone] = useState("");
   const [salesRepPassword, setSalesRepPassword] = useState("");
   const [salesRepRole, setSalesRepRole] = useState<EditableUserRole>("Sales Rep");
   const [salesRepActive, setSalesRepActive] = useState(true);
@@ -1729,6 +1770,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [smsBalanceError, setSmsBalanceError] = useState("");
   const [smsMessages, setSmsMessages] = useState<SmsMessageLog[]>([]);
   const [smsMessagesLoading, setSmsMessagesLoading] = useState(false);
+  const [smsResendLoadingId, setSmsResendLoadingId] = useState<string | null>(null);
+  const [smsOptOuts, setSmsOptOuts] = useState<SmsOptOutRecord[]>([]);
+  const [smsOptOutsLoading, setSmsOptOutsLoading] = useState(false);
+  const [smsOptOutPhone, setSmsOptOutPhone] = useState("");
+  const [smsOptOutNote, setSmsOptOutNote] = useState("");
+  const [smsInboundMessages, setSmsInboundMessages] = useState<SmsInboundMessage[]>([]);
+  const [smsInboundLoading, setSmsInboundLoading] = useState(false);
+  const [smsWebhookRotateLoading, setSmsWebhookRotateLoading] = useState(false);
   const [smsTemplateKey, setSmsTemplateKey] = useState<string>(defaultSmsTemplateKey);
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
@@ -1994,6 +2043,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [expandedPermissionsUserId, setExpandedPermissionsUserId] = useState<string | null>(null);
   const [userFullName, setUserFullName] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [userPhone, setUserPhone] = useState("");
   const [userPassword, setUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<EditableUserRole>("Sales Rep");
   const [newUserActive, setNewUserActive] = useState(true);
@@ -2230,14 +2280,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const hydrateSmsSupportData = async (settingsOverride?: SmsSettingsState | null, options: { quiet?: boolean } = {}) => {
     const settings = settingsOverride ?? smsSettings;
     setSmsMessagesLoading(true);
+    setSmsOptOutsLoading(true);
+    setSmsInboundLoading(true);
     try {
-      const messages = await smsSettingsApi.messages(40);
+      const [messages, optOuts, inbound] = await Promise.all([
+        smsSettingsApi.messages(40),
+        smsSettingsApi.optOuts(),
+        smsSettingsApi.inbound(40)
+      ]);
       setSmsMessages(messages);
+      setSmsOptOuts(optOuts);
+      setSmsInboundMessages(inbound);
     } catch (err: any) {
       setSmsMessages([]);
+      setSmsOptOuts([]);
+      setSmsInboundMessages([]);
       if (!options.quiet) showToast(`Failed to load SMS activity: ${err?.message ?? "please retry"}.`);
     } finally {
       setSmsMessagesLoading(false);
+      setSmsOptOutsLoading(false);
+      setSmsInboundLoading(false);
     }
 
     if (!settings?.apiKey) {
@@ -2519,7 +2581,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         api_key: smsSettings.apiKey,
         sender_name: smsSettings.senderName,
         triggers: smsSettings.triggers,
-        templates: smsSettings.templates
+        templates: smsSettings.templates,
+        quiet_hours_enabled: smsSettings.quietHoursEnabled,
+        quiet_hours_start: smsSettings.quietHoursStart,
+        quiet_hours_end: smsSettings.quietHoursEnd,
+        low_balance_threshold: Number(smsSettings.lowBalanceThreshold) || 0,
+        auto_retry_enabled: smsSettings.autoRetryEnabled,
+        max_retry_attempts: Number(smsSettings.maxRetryAttempts) || 0,
+        retry_backoff_minutes: Number(smsSettings.retryBackoffMinutes) || 30,
+        inbound_webhook_secret: smsSettings.inboundWebhookSecret
       });
       setSmsSettings(saved);
       smsSettingsSnapshotRef.current = JSON.stringify(saved);
@@ -2563,6 +2633,70 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(err?.message ?? "Test SMS failed.");
     } finally {
       setSmsTestLoading(false);
+    }
+  };
+  const resendSmsMessageNow = async (messageId: string) => {
+    setSmsResendLoadingId(messageId);
+    try {
+      const result = await smsSettingsApi.resend(messageId);
+      await hydrateSmsSupportData(undefined, { quiet: true });
+      showToast(result.message ?? "SMS resend queued.");
+    } catch (err: any) {
+      showToast(err?.message ?? "SMS resend failed.");
+    } finally {
+      setSmsResendLoadingId(null);
+    }
+  };
+  const addSmsOptOutEntry = async () => {
+    const phone = smsOptOutPhone.trim();
+    if (!phone) {
+      showToast("Enter a phone number to opt out.");
+      return;
+    }
+    setSmsOptOutsLoading(true);
+    try {
+      await smsSettingsApi.addOptOut({ phone, note: smsOptOutNote.trim() || undefined });
+      setSmsOptOutPhone("");
+      setSmsOptOutNote("");
+      await hydrateSmsSupportData(undefined, { quiet: true });
+      showToast("Phone number opted out of SMS.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save SMS opt-out.");
+    } finally {
+      setSmsOptOutsLoading(false);
+    }
+  };
+  const removeSmsOptOutEntry = async (phone: string) => {
+    setSmsOptOutsLoading(true);
+    try {
+      await smsSettingsApi.removeOptOut(phone);
+      await hydrateSmsSupportData(undefined, { quiet: true });
+      showToast("SMS opt-out removed.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not remove SMS opt-out.");
+    } finally {
+      setSmsOptOutsLoading(false);
+    }
+  };
+  const rotateSmsWebhookSecret = async () => {
+    setSmsWebhookRotateLoading(true);
+    try {
+      const result = await smsSettingsApi.rotateWebhookSecret();
+      setSmsSettings((prev) => {
+        if (!prev) return prev;
+        const next = {
+          ...prev,
+          inboundWebhookSecret: result.inboundWebhookSecret,
+          inboundWebhookUrl: result.inboundWebhookUrl
+        };
+        smsSettingsSnapshotRef.current = JSON.stringify(next);
+        return next;
+      });
+      showToast("Inbound SMS webhook secret rotated.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not rotate inbound webhook secret.");
+    } finally {
+      setSmsWebhookRotateLoading(false);
     }
   };
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -2814,6 +2948,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     setSalesRepName(rep.name);
     setSalesRepEmail(rep.email);
+    setSalesRepPhone(rep.phone ?? "");
     setSalesRepActive(rep.active);
   }, [modal, selectedSalesRepId, users]);
   useEffect(() => {
@@ -2826,6 +2961,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     setUserFullName(user.name);
     setUserEmail(user.email);
+    setUserPhone(user.phone ?? "");
     setUserPassword("");
     setNewUserRole(user.role);
     setNewUserActive(user.active);
@@ -3724,7 +3860,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const filteredSalesRepRows = salesRepRows.filter((row) => {
     const search = salesSearch.trim().toLowerCase();
-    const matchesSearch = !search || `${row.user.name} ${row.user.email}`.toLowerCase().includes(search);
+    const matchesSearch = !search || `${row.user.name} ${row.user.email} ${row.user.phone ?? ""}`.toLowerCase().includes(search);
     const matchesStatus = salesStatus === "All statuses" || (salesStatus === "Active" ? row.user.active : !row.user.active);
     return matchesSearch && matchesStatus;
   });
@@ -6505,6 +6641,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             id: u.id,
             name: u.name,
             email: u.email,
+            phone: u.phone ?? "",
             role: u.role,
             active: u.active,
             created: u.createdAt ?? u.created_at ?? "",
@@ -9138,7 +9275,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal("createOrder");
   };
 
-  const createManualOrder = () => {
+  const createManualOrder = async () => {
     const product = products.find((item) => item.id === createOrderProductId);
     if (!product || !createOrderCustomer.trim() || !createOrderPhone.trim()) {
       showToast("Choose a product and enter customer name and phone.");
@@ -9149,8 +9286,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
-    const order: TrackedOrder = {
-      id: makeOrderId(),
+    const draftOrder: Omit<TrackedOrder, "id"> = {
       productId: product.id,
       packageId: packageRecord?.id,
       customer: createOrderCustomer.trim(),
@@ -9176,17 +9312,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       date: displayDateFromKey(todayKey()),
       notes: [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }]
     };
-    setTrackedOrders((value) => [order, ...value]);
-    closeModal();
-    setCreateOrderContext("admin");
-    showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
-    ordersApi.create(order).catch((err: any) => {
-      // Roll back so the table doesn't claim a phantom order that doesn't exist
-      // server-side. Previously the misleading "saved locally" toast left admins
-      // believing the order was queued for retry — there is no retry queue.
-      setTrackedOrders((value) => value.filter((o) => o.id !== order.id));
-      showToast(`Failed to create ${order.id}: ${err?.message ?? "please retry"}.`);
-    });
+    try {
+      const saved = await ordersApi.create(draftOrder);
+      const order: TrackedOrder = {
+        ...draftOrder,
+        id: saved.id,
+        assignedRepId: saved.assignedRepId ?? draftOrder.assignedRepId,
+        createdAt: saved.createdAt ?? draftOrder.createdAt,
+        date: saved.date ?? draftOrder.date,
+        location: saved.location ?? draftOrder.location
+      };
+      setTrackedOrders((value) => [order, ...value]);
+      closeModal();
+      setCreateOrderContext("admin");
+      showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
+    } catch (err: any) {
+      showToast(`Failed to create order: ${err?.message ?? "please retry"}.`);
+    }
   };
 
   const openOrderModal = (order: TrackedOrder, nextModal: ModalType) => {
@@ -9747,7 +9889,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    const orderId = makeOrderId();
     const source = orderSourceFromUtm(publicUtmSource);
     const location = orderLocationFromFields(orderFormCity, orderFormState);
     const xsLines: CrossSellLine[] = orderFormCrossSells.map((c) => {
@@ -9782,75 +9923,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return { id: makeFreeGiftLineId(), productId: gid, productName: p.name, quantity: 1 };
     }).filter(Boolean) as FreeGiftLine[];
 
-    // Only mirror into local state when an authenticated admin is previewing
-    // the form — anonymous customers have no UI that consumes trackedOrders.
     const isAdminPreview = auth.isLoggedIn();
-    if (isAdminPreview) {
-      setTrackedOrders((value) => [
-        {
-          id: orderId,
-          productId: publicProduct.id,
-          packageId: chosenPackage.id,
-          customer: orderFormName.trim(),
-          phone: orderFormPhone.trim(),
-          whatsapp: orderFormWhatsapp.trim(),
-          email: orderFormEmail.trim(),
-          address: orderFormAddress.trim(),
-          city: orderFormCity.trim(),
-          state: orderFormState.trim(),
-          productName: publicProduct.name,
-          packageName: chosenPackage.name,
-          quantity: chosenPackage.quantity,
-          amount: chosenPackage.price + xsTotal,
-          currency: chosenPackage.currency,
-          utmSource: publicUtmSource,
-          utmCampaign: publicUtmCampaign,
-          utmMedium: publicUtmMedium || undefined,
-          utmContent: publicUtmContent || undefined,
-          utmTerm: publicUtmTerm || undefined,
-          referrer: publicReferrer || undefined,
-          confirmationChecked: orderFormConfirmed,
-          preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
-          source,
-          status: "New",
-          response: "Awaiting confirmation",
-          location,
-          deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
-          assignedRepId: repForNewRecord(),
-          crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
-          freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
-          notes: [
-            { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
-            { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
-                "Public form submission details:",
-                `Customer name: ${orderFormName.trim()}`,
-                `Phone: ${orderFormPhone.trim()}`,
-                orderFormWhatsapp.trim() ? `WhatsApp: ${orderFormWhatsapp.trim()}` : null,
-                `Address: ${[orderFormAddress.trim(), orderFormCity.trim(), orderFormState.trim()].filter(Boolean).join(", ")}`,
-                orderFormDeliveryWindow.trim() ? `Preferred delivery: ${orderFormDeliveryWindow.trim()}` : null,
-                `Confirmation checkbox: ${orderFormConfirmed ? "Accepted" : "Not accepted"}`,
-                `Selected package(s): ${chosenPackage.name} (${chosenPackage.quantity} units, ${formatProductMoney(chosenPackage.price, chosenPackage.currency)})`,
-                `UTM source: ${publicUtmSource || "—"}`,
-                `UTM campaign: ${publicUtmCampaign || "—"}`,
-                publicUtmMedium ? `UTM medium: ${publicUtmMedium}` : null,
-                publicUtmContent ? `UTM content: ${publicUtmContent}` : null,
-                publicUtmTerm ? `UTM term: ${publicUtmTerm}` : null,
-                publicReferrer ? `Referrer: ${publicReferrer}` : null,
-              ].filter(Boolean).join("\n")
-            }
-          ],
-          createdAt: nowIso(),
-          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        },
-        ...value
-      ]);
-    }
     setPublicOrderSubmitting(true);
+    let createdOrderId = "";
     try {
       if (isAdminPreview) {
         // Authenticated admin previewing the form — keep the full create payload.
-        await ordersApi.create({
-          id: orderId, customer: orderFormName.trim(), phone: orderFormPhone.trim(),
+        const saved = await ordersApi.create({
+          customer: orderFormName.trim(), phone: orderFormPhone.trim(),
           whatsapp: orderFormWhatsapp.trim() || undefined, email: orderFormEmail.trim() || undefined,
           address: orderFormAddress.trim() || undefined, city: orderFormCity.trim() || undefined,
           state: orderFormState.trim() || undefined,
@@ -9868,11 +9948,69 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           assignedRepId: repForNewRecord() || undefined,
           date: new Date().toISOString()
         });
+        createdOrderId = saved.id;
+        setTrackedOrders((value) => [
+          {
+            id: saved.id,
+            productId: publicProduct.id,
+            packageId: chosenPackage.id,
+            customer: orderFormName.trim(),
+            phone: orderFormPhone.trim(),
+            whatsapp: orderFormWhatsapp.trim(),
+            email: orderFormEmail.trim(),
+            address: orderFormAddress.trim(),
+            city: orderFormCity.trim(),
+            state: orderFormState.trim(),
+            productName: publicProduct.name,
+            packageName: chosenPackage.name,
+            quantity: chosenPackage.quantity,
+            amount: chosenPackage.price + xsTotal,
+            currency: chosenPackage.currency,
+            utmSource: publicUtmSource,
+            utmCampaign: publicUtmCampaign,
+            utmMedium: publicUtmMedium || undefined,
+            utmContent: publicUtmContent || undefined,
+            utmTerm: publicUtmTerm || undefined,
+            referrer: publicReferrer || undefined,
+            confirmationChecked: orderFormConfirmed,
+            preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+            source,
+            status: "New",
+            response: "Awaiting confirmation",
+            location,
+            deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
+            assignedRepId: saved.assignedRepId ?? repForNewRecord(),
+            crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
+            freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
+            notes: [
+              { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
+              { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
+                  "Public form submission details:",
+                  `Customer name: ${orderFormName.trim()}`,
+                  `Phone: ${orderFormPhone.trim()}`,
+                  orderFormWhatsapp.trim() ? `WhatsApp: ${orderFormWhatsapp.trim()}` : null,
+                  `Address: ${[orderFormAddress.trim(), orderFormCity.trim(), orderFormState.trim()].filter(Boolean).join(", ")}`,
+                  orderFormDeliveryWindow.trim() ? `Preferred delivery: ${orderFormDeliveryWindow.trim()}` : null,
+                  `Confirmation checkbox: ${orderFormConfirmed ? "Accepted" : "Not accepted"}`,
+                  `Selected package(s): ${chosenPackage.name} (${chosenPackage.quantity} units, ${formatProductMoney(chosenPackage.price, chosenPackage.currency)})`,
+                  `UTM source: ${publicUtmSource || "—"}`,
+                  `UTM campaign: ${publicUtmCampaign || "—"}`,
+                  publicUtmMedium ? `UTM medium: ${publicUtmMedium}` : null,
+                  publicUtmContent ? `UTM content: ${publicUtmContent}` : null,
+                  publicUtmTerm ? `UTM term: ${publicUtmTerm}` : null,
+                  publicReferrer ? `Referrer: ${publicReferrer}` : null,
+                ].filter(Boolean).join("\n")
+              }
+            ],
+            createdAt: saved.createdAt ?? nowIso(),
+            date: saved.date ?? new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+          },
+          ...value
+        ]);
       } else {
         // Anonymous customer — server recomputes amount from canonical pricing.
         // We send packageId + cross-sell line ids; server handles the math.
-        await publicOrdersApi.create({
-          id: orderId,
+        const saved = await publicOrdersApi.create({
           cartId: abandonedDraftCartId || undefined,
           customer: orderFormName.trim(),
           phone: orderFormPhone.trim(),
@@ -9895,13 +10033,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
           company: publicHoneypot
         });
+        createdOrderId = saved.id;
       }
     } catch (err: any) {
       setPublicOrderSubmitting(false);
       showToast(err?.message ?? "Could not submit your order. Please try again.");
       return;
     }
-    markDraftCartConverted(orderId);
+    markDraftCartConverted(createdOrderId);
     setOrderFormName("");
     setOrderFormPhone("");
     setOrderFormWhatsapp("");
@@ -9918,7 +10057,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // otherwise show the built-in confirmation screen.
     if (publicRedirectUrl) {
       // Allow the success state to flash briefly so the customer sees confirmation.
-      setPublicOrderSubmitted({ orderId, customer: orderFormName.trim() });
+      setPublicOrderSubmitted({ orderId: createdOrderId, customer: orderFormName.trim() });
       setTimeout(() => {
         try {
           // Use window.top so the redirect escapes the iframe if embedded.
@@ -9928,7 +10067,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
       }, 800);
     } else {
-      setPublicOrderSubmitted({ orderId, customer: orderFormName.trim() });
+      setPublicOrderSubmitted({ orderId: createdOrderId, customer: orderFormName.trim() });
     }
   };
 
@@ -9971,6 +10110,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedSalesRepId("");
     setSalesRepName("");
     setSalesRepEmail("");
+    setSalesRepPhone("");
     setSalesRepPassword("");
     setSalesRepRole("Sales Rep");
     setSalesRepActive(true);
@@ -9981,6 +10121,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedSalesRepId(user.id);
     setSalesRepName(user.name);
     setSalesRepEmail(user.email);
+    setSalesRepPhone(user.phone ?? "");
     setSalesRepPassword("");
     setSalesRepActive(user.active);
     setModal("editSalesRep");
@@ -9989,6 +10130,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const createSalesRep = () => {
     if (!salesRepName.trim() || !salesRepEmail.trim()) {
       showToast("Sales rep name and email are required.");
+      return;
+    }
+    const salesRepPhoneDigits = salesRepPhone.replace(/\D/g, "");
+    if (salesRepPhoneDigits.length < 7) {
+      showToast("Add a valid sales rep phone number so customers can reach the assigned rep by SMS.");
       return;
     }
     if (salesRepPassword.trim().length < 8) {
@@ -10003,11 +10149,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("A user with this email already exists.");
       return;
     }
+    if (users.some((u) => u.phone?.replace(/\D/g, "") === salesRepPhoneDigits)) {
+      showToast("Another team member already uses this phone number.");
+      return;
+    }
 
     const rep: ManagedUser = {
       id: `rep-${Date.now().toString(36)}`,
       name: salesRepName.trim(),
       email: salesRepEmail.trim(),
+      phone: salesRepPhone.trim(),
       role: salesRepRole,
       active: salesRepActive,
       created: nowIso()
@@ -10016,16 +10167,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setUsers((value) => [...value, rep]);
     setSalesRepName("");
     setSalesRepEmail("");
+    setSalesRepPhone("");
     setSalesRepPassword("");
     setSalesRepRole("Sales Rep");
     setSalesRepActive(true);
     closeModal();
     showToast(`Sales rep "${rep.name}" created and added to round-robin.`);
-    authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role })
+    authApi.invite({ name: rep.name, email: rep.email, phone: rep.phone, password: salesRepPassword.trim(), role: rep.role })
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email === rep.email);
-          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? { ...u, id: saved.id } : u));
+          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? { ...u, id: saved.id, phone: saved.phone ?? rep.phone } : u));
         }).catch(() => {});
       })
       .catch(() => {
@@ -11011,13 +11163,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Deliveries exported as CSV.");
   };
 
-  const convertSelectedCart = () => {
+  const convertSelectedCart = async () => {
     if (!selectedCart) {
       return;
     }
 
-    const order: TrackedOrder = {
-      id: makeOrderId(),
+    const draftOrder: Omit<TrackedOrder, "id"> = {
       productId: selectedCart.productId,
       packageId: selectedCart.packageId,
       customer: selectedCart.customer,
@@ -11043,19 +11194,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       notes: [{ id: makeNoteId(), text: `Converted from ${selectedCart.id}.`, by: ownerName, date: nowIso() }]
     };
     const cartSnapshot = selectedCart;
-    setTrackedOrders((value) => [order, ...value]);
-    setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, status: "Converted", lastActivity: new Date().toISOString() } : cart)));
-    closeModal();
-    showToast(`${selectedCart.id} converted to ${order.id}.`);
-
-    // Persist the new order server-side so the backend's notifyOrderEvent
-    // fires (creates an "order_new" notification + triggers email/push).
-    ordersApi.create(order).catch((err: any) => {
-      setTrackedOrders((value) => value.filter((o) => o.id !== order.id));
-      // Cart-status revert lives in the cartsApi.update catch below — keep
-      // the cart "Converted" optimistically until that call resolves.
+    let orderId = "";
+    try {
+      const saved = await ordersApi.create(draftOrder);
+      const order: TrackedOrder = {
+        ...draftOrder,
+        id: saved.id,
+        assignedRepId: saved.assignedRepId ?? draftOrder.assignedRepId,
+        createdAt: saved.createdAt ?? draftOrder.createdAt,
+        date: saved.date ?? draftOrder.date,
+        location: saved.location ?? draftOrder.location
+      };
+      orderId = order.id;
+      setTrackedOrders((value) => [order, ...value]);
+      setAbandonedCarts((value) => value.map((cart) => (cart.id === selectedCart.id ? { ...cart, status: "Converted", lastActivity: new Date().toISOString() } : cart)));
+      closeModal();
+      showToast(`${selectedCart.id} converted to ${order.id}.`);
+    } catch (err: any) {
       showToast(`Failed to convert ${cartSnapshot.id}: ${err?.message ?? "please retry"}.`);
-    });
+      return;
+    }
 
     // Mark the cart as Converted on the server too so it doesn't keep
     // showing up as Open Abandoned for other admins.
@@ -11069,9 +11227,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     pushSystemNotification({
       type: "info",
       title: "Cart Converted",
-      message: `${selectedCart.id} converted to ${order.id} — ${order.customer} (${order.productName})`,
-      orderId: order.id,
-      link: `/dashboard/admin/orders/${order.id}`
+      message: `${selectedCart.id} converted to ${orderId} — ${draftOrder.customer} (${draftOrder.productName})`,
+      orderId,
+      link: `/dashboard/admin/orders/${orderId}`
     });
   };
 
@@ -11089,6 +11247,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedUserId("");
     setUserFullName("");
     setUserEmail("");
+    setUserPhone("");
     setUserPassword("");
     setNewUserRole("Sales Rep");
     setNewUserActive(true);
@@ -11099,6 +11258,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedUserId(user.id);
     setUserFullName(user.name);
     setUserEmail(user.email);
+    setUserPhone(user.phone ?? "");
     setUserPassword("");
     setNewUserRole(user.role);
     setNewUserActive(user.active);
@@ -11279,6 +11439,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("User name and email are required.");
       return;
     }
+    const userPhoneDigits = userPhone.replace(/\D/g, "");
+    if (newUserRole === "Sales Rep" && userPhoneDigits.length < 7) {
+      showToast("Sales reps need a valid phone number so customers can reach them from SMS updates.");
+      return;
+    }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail.trim())) {
       showToast("Please enter a valid email address.");
@@ -11294,6 +11459,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("A user with this email already exists.");
       return;
     }
+    if (userPhoneDigits && users.some((user) => user.phone?.replace(/\D/g, "") === userPhoneDigits)) {
+      showToast("Another team member already uses this phone number.");
+      return;
+    }
 
     const id = `${Date.now()}-${slugify(userEmail.trim())}`;
     setUsers((value) => [
@@ -11302,16 +11471,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         id,
         name: userFullName.trim(),
         email: userEmail.trim(),
+        phone: userPhone.trim(),
         role: newUserRole,
         active: newUserActive,
         created: nowIso()
       }
     ]);
+    setUserPhone("");
     setUserPassword("");
     setShowPasswordFields({});
     closeModal();
     showToast(`User "${userFullName.trim()}" created.`);
-    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch((err: any) => {
+    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), password: userPassword.trim(), role: newUserRole }).catch((err: any) => {
       setUsers((prev) => prev.filter((u) => u.id !== id));
       showToast(`Failed to create user: ${err.message}`);
     });
@@ -11320,6 +11491,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const updateUser = () => {
     if (!selectedUser || !userFullName.trim() || !userEmail.trim()) {
       showToast("User name and email are required.");
+      return;
+    }
+    const userPhoneDigits = userPhone.replace(/\D/g, "");
+    if (newUserRole === "Sales Rep" && userPhoneDigits.length < 7) {
+      showToast("Sales reps need a valid phone number so customers can reach them from SMS updates.");
       return;
     }
 
@@ -11337,6 +11513,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Another user already uses this email.");
       return;
     }
+    if (userPhoneDigits && users.some((user) => user.id !== selectedUser.id && user.phone?.replace(/\D/g, "") === userPhoneDigits)) {
+      showToast("Another user already uses this phone number.");
+      return;
+    }
     if (selectedUser.role === "Owner" && newUserRole !== "Owner") {
       showToast("The Owner role cannot be changed.");
       return;
@@ -11348,7 +11528,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setUsers((value) =>
       value.map((user) =>
         user.id === selectedUser.id
-          ? { ...user, name: userFullName.trim(), email: userEmail.trim(), role: newUserRole, active: newUserActive }
+          ? { ...user, name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive }
           : user
       )
     );
@@ -11356,7 +11536,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     closeModal();
     showToast(`User "${userFullName.trim()}" updated.`);
-    teamApi.update(_uuId, { name: userFullName.trim(), email: userEmail.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
+    teamApi.update(_uuId, { name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
       setUsers(prevUsers);
       showToast(`Failed to update user: ${err.message}`);
     });
@@ -16090,7 +16270,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] flex-1 max-w-xs min-w-0">
                   <Search className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="sr-only">Search sales representatives</span>
-                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => { setSalesSearch(event.target.value); setSalesRepPage(1); }} placeholder="Search by name, email..." />
+                  <input className="bg-transparent outline-none text-sm w-full min-w-0" value={salesSearch} onChange={(event) => { setSalesSearch(event.target.value); setSalesRepPage(1); }} placeholder="Search by name, email, phone..." />
                 </label>
                 <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Sales rep status" value={salesStatus} onChange={(event) => {
                   setSalesStatus(event.target.value as RepStatus);
@@ -16104,7 +16284,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Sales representatives table">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone ?? "", role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -21350,6 +21530,127 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <p className="text-[11px] text-gray-400 m-0">Saved keys stay masked until you replace them. Sender names are typically limited to 11 characters, so keep this short and branded.</p>
                           </div>
 
+                          <div className="rounded-xl border border-gray-200 p-4 space-y-4">
+                            <div>
+                              <p className="text-sm font-bold text-gray-900 m-0">Compliance & automation controls</p>
+                              <p className="text-[11px] text-gray-500 mt-1 mb-0">Quiet hours defer customer SMS, retries re-attempt transient failures, and low-balance alerts warn before sending dries up.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-900 m-0">Quiet hours</p>
+                                    <p className="text-[11px] text-gray-500 mt-1 mb-0">Customer SMS created during this window is deferred automatically.</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={smsSettings.quietHoursEnabled}
+                                    className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${smsSettings.quietHoursEnabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                                    onClick={() => setSmsSettings((prev) => prev ? { ...prev, quietHoursEnabled: !prev.quietHoursEnabled } : prev)}
+                                  >
+                                    <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${smsSettings.quietHoursEnabled ? "left-5" : "left-0.5"}`} />
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Start</span>
+                                    <input
+                                      type="time"
+                                      value={smsSettings.quietHoursStart}
+                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, quietHoursStart: e.target.value } : prev)}
+                                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                    />
+                                  </label>
+                                  <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">End</span>
+                                    <input
+                                      type="time"
+                                      value={smsSettings.quietHoursEnd}
+                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, quietHoursEnd: e.target.value } : prev)}
+                                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-900 m-0">Retry policy</p>
+                                  <p className="text-[11px] text-gray-500 mt-1 mb-0">Retries only kick in for transient/provider failures, not invalid numbers or opt-outs.</p>
+                                </div>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="text-[11px] text-gray-500">Automatic retry</div>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={smsSettings.autoRetryEnabled}
+                                    className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${smsSettings.autoRetryEnabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                                    onClick={() => setSmsSettings((prev) => prev ? { ...prev, autoRetryEnabled: !prev.autoRetryEnabled } : prev)}
+                                  >
+                                    <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${smsSettings.autoRetryEnabled ? "left-5" : "left-0.5"}`} />
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Attempts</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={10}
+                                      value={smsSettings.maxRetryAttempts}
+                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, maxRetryAttempts: Math.max(0, Number(e.target.value) || 0) } : prev)}
+                                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                    />
+                                  </label>
+                                  <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Backoff (mins)</span>
+                                    <input
+                                      type="number"
+                                      min={5}
+                                      max={1440}
+                                      value={smsSettings.retryBackoffMinutes}
+                                      onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, retryBackoffMinutes: Math.max(5, Number(e.target.value) || 30) } : prev)}
+                                      className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <label className="flex flex-col gap-1.5">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Low-balance threshold</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={smsSettings.lowBalanceThreshold}
+                                  onChange={(e) => setSmsSettings((prev) => prev ? { ...prev, lowBalanceThreshold: Math.max(0, Number(e.target.value) || 0) } : prev)}
+                                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                />
+                                <span className="text-[11px] text-gray-400">Protohub raises an internal alert when balance drops to this level or lower.</span>
+                              </label>
+                              <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-900 m-0">Inbound reply webhook</p>
+                                    <p className="text-[11px] text-gray-500 mt-1 mb-0">Provider-ready inbox for STOP/START replies and other inbound SMS.</p>
+                                  </div>
+                                  <button
+                                    className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                    disabled={smsWebhookRotateLoading}
+                                    onClick={rotateSmsWebhookSecret}
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    {smsWebhookRotateLoading ? "Rotating…" : "Rotate Secret"}
+                                  </button>
+                                </div>
+                                <div className="text-[11px] text-gray-600 break-all">
+                                  {smsSettings.inboundWebhookUrl || "Save or rotate a webhook secret to generate your inbound endpoint."}
+                                </div>
+                                <div className="text-[11px] text-gray-400">Protohub already processes STOP / UNSUBSCRIBE to opt customers out and START / RESUME to opt them back in once the provider posts replies here.</div>
+                              </div>
+                            </div>
+                          </div>
+
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                               <p className="text-sm font-bold text-emerald-900 m-0 mb-1">SMS balance</p>
@@ -21485,7 +21786,116 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0] font-mono"
                             />
                           </label>
-                          <p className="text-[11px] text-gray-400 m-0">Variables like <code>{"{{order_id}}"}</code>, <code>{"{{customer}}"}</code>, <code>{"{{status}}"}</code>, <code>{"{{scheduled_date}}"}</code>, <code>{"{{product_name}}"}</code>, and <code>{"{{note_text}}"}</code> are filled automatically.</p>
+                          <p className="text-[11px] text-gray-400 m-0">Variables like <code>{"{{order_id}}"}</code>, <code>{"{{cart_id}}"}</code>, <code>{"{{customer}}"}</code>, <code>{"{{status}}"}</code>, <code>{"{{scheduled_date}}"}</code>, <code>{"{{product_name}}"}</code>, <code>{"{{note_text}}"}</code>, <code>{"{{rep_name}}"}</code>, <code>{"{{rep_phone}}"}</code>, and <code>{"{{rep_contact}}"}</code> are filled automatically.</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-bold text-gray-900">SMS Opt-outs</h3>
+                              <p className="text-xs text-gray-500 mt-1">Blocked numbers never receive customer SMS until re-enabled.</p>
+                            </div>
+                            <button
+                              className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                              disabled={smsOptOutsLoading}
+                              onClick={() => { void hydrateSmsSupportData(smsSettings, { quiet: true }); }}
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Refresh
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3">
+                            <input
+                              type="tel"
+                              value={smsOptOutPhone}
+                              onChange={(e) => setSmsOptOutPhone(e.target.value)}
+                              placeholder="Phone number"
+                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                            />
+                            <input
+                              type="text"
+                              value={smsOptOutNote}
+                              onChange={(e) => setSmsOptOutNote(e.target.value)}
+                              placeholder="Optional note"
+                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                            />
+                            <button
+                              className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                              disabled={smsOptOutsLoading}
+                              onClick={addSmsOptOutEntry}
+                            >
+                              Add
+                            </button>
+                          </div>
+                          <div className="rounded-xl border border-gray-200 overflow-hidden">
+                            {smsOptOutsLoading ? (
+                              <div className="px-4 py-5 text-sm text-gray-500">Loading opt-outs…</div>
+                            ) : smsOptOuts.length === 0 ? (
+                              <div className="px-4 py-5 text-sm text-gray-500">No SMS opt-outs saved yet.</div>
+                            ) : (
+                              <div className="divide-y divide-gray-100">
+                                {smsOptOuts.slice(0, 8).map((entry) => (
+                                  <div key={entry.id} className="px-4 py-3 flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-gray-900 m-0">{entry.phone}</p>
+                                      <p className="text-[11px] text-gray-500 mt-1 mb-0">{entry.source}{entry.keyword ? ` · ${entry.keyword}` : ""} · {formatMoment(entry.createdAt)}</p>
+                                      {entry.note ? <p className="text-xs text-gray-600 mt-1 mb-0">{entry.note}</p> : null}
+                                    </div>
+                                    <button
+                                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50 transition-colors"
+                                      onClick={() => { void removeSmsOptOutEntry(entry.phone); }}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-bold text-gray-900">Inbound SMS Inbox</h3>
+                              <p className="text-xs text-gray-500 mt-1">Replies posted to the webhook show up here, including STOP/START handling.</p>
+                            </div>
+                            <button
+                              className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                              disabled={smsInboundLoading}
+                              onClick={() => { void hydrateSmsSupportData(smsSettings, { quiet: true }); }}
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Refresh
+                            </button>
+                          </div>
+                          <div className="rounded-xl border border-gray-200 overflow-hidden">
+                            {smsInboundLoading ? (
+                              <div className="px-4 py-5 text-sm text-gray-500">Loading inbound SMS…</div>
+                            ) : smsInboundMessages.length === 0 ? (
+                              <div className="px-4 py-5 text-sm text-gray-500">No inbound SMS messages have been received yet.</div>
+                            ) : (
+                              <div className="divide-y divide-gray-100">
+                                {smsInboundMessages.slice(0, 8).map((message) => (
+                                  <div key={message.id} className="px-4 py-3 space-y-1.5">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-semibold text-gray-900 m-0">{message.senderPhone}</p>
+                                        <p className="text-[11px] text-gray-500 mt-1 mb-0">{message.action ?? "logged"}{message.linkedOrderId ? ` · linked to ${message.linkedOrderId}` : ""}</p>
+                                      </div>
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">
+                                        {message.keyword || "reply"}
+                                      </span>
+                                    </div>
+                                    <p className="text-sm text-gray-700 m-0 leading-relaxed">{message.body}</p>
+                                    <p className="text-[11px] text-gray-400 m-0">{formatMoment(message.receivedAt)}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -21522,21 +21932,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                         {message.sentAt ? `Sent ${formatMoment(message.sentAt)}` : `Created ${formatMoment(message.createdAt)}`}
                                       </p>
                                     </div>
-                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                      message.status === "delivered" ? "bg-emerald-100 text-emerald-700"
-                                      : message.status === "sent" ? "bg-blue-100 text-blue-700"
-                                      : message.status === "failed" ? "bg-rose-100 text-rose-700"
-                                      : "bg-amber-100 text-amber-700"
-                                    }`}>
-                                      {message.status}
-                                    </span>
+                                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                        message.status === "delivered" ? "bg-emerald-100 text-emerald-700"
+                                        : message.status === "sent" ? "bg-blue-100 text-blue-700"
+                                        : message.status === "failed" ? "bg-rose-100 text-rose-700"
+                                        : message.status === "blocked" ? "bg-gray-200 text-gray-700"
+                                        : "bg-amber-100 text-amber-700"
+                                      }`}>
+                                        {message.status}
+                                      </span>
+                                      <button
+                                        className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-700 text-[11px] font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                        disabled={smsResendLoadingId === message.id}
+                                        onClick={() => { void resendSmsMessageNow(message.id); }}
+                                      >
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                        {smsResendLoadingId === message.id ? "Resending…" : "Resend"}
+                                      </button>
+                                    </div>
                                   </div>
                                   <p className="text-sm text-gray-700 m-0 leading-relaxed">{message.body}</p>
                                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-400">
                                     <span>Provider: {message.provider}</span>
                                     <span>Segments: {message.segments ?? 1}</span>
+                                    {message.orderId ? <span>Order: {message.orderId}</span> : null}
+                                    {message.cartId ? <span>Cart: {message.cartId}</span> : null}
                                     {message.units != null ? <span>Units: {message.units}</span> : null}
                                     {message.providerStatus ? <span>Provider status: {message.providerStatus}</span> : null}
+                                    {message.retryCount != null && message.retryCount > 0 ? <span>Retries: {message.retryCount}</span> : null}
+                                    {message.nextRetryAt ? <span>Next retry: {formatMoment(message.nextRetryAt)}</span> : null}
+                                    {message.scheduledFor ? <span>Scheduled: {formatMoment(message.scheduledFor)}</span> : null}
                                     {message.deliveredAt ? <span>Delivered: {formatMoment(message.deliveredAt)}</span> : null}
                                     {message.errorMessage ? <span className="text-rose-500">Error: {message.errorMessage}</span> : null}
                                   </div>
@@ -24442,6 +24868,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const emailNormalized = salesRepEmail.trim().toLowerCase();
               const emailFormatOk = !emailNormalized || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized);
               const emailTaken = !!emailNormalized && users.some((u) => u.email.toLowerCase() === emailNormalized);
+              const phoneDigits = salesRepPhone.replace(/\D/g, "");
+              const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
+              const phoneTaken = !!phoneDigits && users.some((u) => u.phone?.replace(/\D/g, "") === phoneDigits);
               const pwd = salesRepPassword;
               const pwdLen = pwd.length;
               const pwdTooShort = pwdLen < 8;
@@ -24452,7 +24881,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   : pwdLen < 10 || !/[A-Z]/.test(pwd) || !/\d/.test(pwd)
                     ? { label: "OK", cls: "text-amber-700 bg-amber-50" }
                     : { label: "Strong", cls: "text-emerald-700 bg-emerald-50" };
-              const canCreate = !!salesRepName.trim() && !!salesRepEmail.trim() && emailFormatOk && !emailTaken && !pwdTooShort;
+              const canCreate = !!salesRepName.trim() && !!salesRepEmail.trim() && phoneDigits.length >= 7 && emailFormatOk && !emailTaken && !phoneTaken && !pwdTooShort;
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Admin": "Full access except billing — can manage users, products, payroll.",
@@ -24495,6 +24924,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         />
                         {emailTaken && <span className="text-[11px] text-red-600 font-medium">A user with this email already exists.</span>}
                         {!emailTaken && !emailFormatOk && <span className="text-[11px] text-red-600 font-medium">Enter a valid email address.</span>}
+                      </label>
+                      <label className="flex flex-col gap-1.5 sm:col-span-2">
+                        <span className="text-xs font-semibold text-gray-700">Phone number <span className="text-red-500">*</span></span>
+                        <input
+                          value={salesRepPhone}
+                          onChange={(e) => setSalesRepPhone(e.target.value)}
+                          inputMode="tel"
+                          className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneShort || phoneTaken) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
+                          placeholder="+234 80..."
+                        />
+                        {phoneTaken && <span className="text-[11px] text-red-600 font-medium">Another team member already uses this phone number.</span>}
+                        {!phoneTaken && phoneShort && <span className="text-[11px] text-red-600 font-medium">Enter a valid phone number.</span>}
+                        {!phoneTaken && !phoneShort && <span className="text-[11px] text-gray-400">Customers receive this number at the end of order SMS so they can contact the assigned rep directly.</span>}
                       </label>
                     </div>
                   </section>
@@ -25115,8 +25557,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const repAllRevenue = repAllDelivered.reduce((s, o) => s + o.amount, 0);
                 const emailNormalized = salesRepEmail.trim().toLowerCase();
                 const emailTaken = !!emailNormalized && users.some((u) => u.id !== selectedSalesRep.id && u.email.toLowerCase() === emailNormalized);
-                const dirty = salesRepName.trim() !== selectedSalesRep.name || salesRepEmail.trim() !== selectedSalesRep.email || salesRepActive !== selectedSalesRep.active;
-                const canSave = !!salesRepName.trim() && !!salesRepEmail.trim() && !emailTaken && dirty;
+                const phoneDigits = salesRepPhone.replace(/\D/g, "");
+                const phoneTaken = !!phoneDigits && users.some((u) => u.id !== selectedSalesRep.id && u.phone?.replace(/\D/g, "") === phoneDigits);
+                const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
+                const dirty = salesRepName.trim() !== selectedSalesRep.name || salesRepEmail.trim() !== selectedSalesRep.email || salesRepPhone.trim() !== (selectedSalesRep.phone ?? "") || salesRepActive !== selectedSalesRep.active;
+                const canSave = !!salesRepName.trim() && !!salesRepEmail.trim() && !emailTaken && !phoneTaken && !phoneShort && phoneDigits.length >= 7 && dirty;
                 return (
                   <div className="px-6 py-5 flex flex-col gap-5">
                     {/* Identity strip */}
@@ -25172,6 +25617,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             placeholder="rep@example.com"
                           />
                           {emailTaken && <span className="text-[11px] text-red-600 font-medium">Already in use by another team member.</span>}
+                        </label>
+                        <label className="flex flex-col gap-1.5 sm:col-span-2">
+                          <span className="text-xs font-semibold text-gray-700">Phone number</span>
+                          <input
+                            value={salesRepPhone}
+                            onChange={(e) => setSalesRepPhone(e.target.value)}
+                            inputMode="tel"
+                            className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
+                            placeholder="+234 80..."
+                          />
+                          {phoneTaken && <span className="text-[11px] text-red-600 font-medium">Already in use by another team member.</span>}
+                          {!phoneTaken && phoneShort && <span className="text-[11px] text-red-600 font-medium">Enter a valid phone number.</span>}
+                          {!phoneTaken && !phoneShort && <span className="text-[11px] text-gray-400">This number is appended to customer SMS so buyers can reach the assigned rep directly.</span>}
                         </label>
                       </div>
                       <p className="text-[11px] text-gray-400">User ID: <span className="font-mono">{selectedSalesRep.id}</span></p>
@@ -25263,7 +25721,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         onClick={() => {
                           if (!salesRepName.trim() || !salesRepEmail.trim()) { showToast("Name and email are required."); return; }
                           if (emailTaken) { showToast("Another user already uses this email."); return; }
-                          const updates = { name: salesRepName.trim(), email: salesRepEmail.trim(), active: salesRepActive };
+                          if (phoneTaken || phoneShort || phoneDigits.length < 7) { showToast("Add a valid phone number so customers can reach this sales rep from SMS."); return; }
+                          const updates = { name: salesRepName.trim(), email: salesRepEmail.trim(), phone: salesRepPhone.trim(), active: salesRepActive };
                           const repSnapshot = selectedSalesRep;
                           setUsers((value) => value.map((user) => user.id === selectedSalesRep.id ? { ...user, ...updates } : user));
                           closeModal();
@@ -25351,6 +25810,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const emailNormalized = userEmail.trim().toLowerCase();
               const emailFormatOk = !emailNormalized || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized);
               const emailTaken = !!emailNormalized && users.some((u) => u.email.toLowerCase() === emailNormalized);
+              const phoneDigits = userPhone.replace(/\D/g, "");
+              const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
+              const phoneTaken = !!phoneDigits && users.some((u) => u.phone?.replace(/\D/g, "") === phoneDigits);
+              const phoneRequired = newUserRole === "Sales Rep";
               const pwd = userPassword;
               const pwdLen = pwd.length;
               const pwdTooShort = pwdLen > 0 && pwdLen < 6;
@@ -25362,7 +25825,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   : pwdLen < 10 || !/[A-Z]/.test(pwd) || !/\d/.test(pwd)
                     ? { label: "OK", cls: "text-amber-700 bg-amber-50" }
                     : { label: "Strong", cls: "text-emerald-700 bg-emerald-50" };
-              const canCreate = !!userFullName.trim() && !!userEmail.trim() && emailFormatOk && !emailTaken && !pwdMissing && !pwdTooShort;
+              const canCreate = !!userFullName.trim()
+                && !!userEmail.trim()
+                && emailFormatOk
+                && !emailTaken
+                && !phoneTaken
+                && !phoneShort
+                && (!phoneRequired || phoneDigits.length >= 7)
+                && !pwdMissing
+                && !pwdTooShort;
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
                 "Admin": "Full access except billing — manage users, products, payroll.",
                 "Manager": "Manage day-to-day operations across orders and team.",
@@ -25406,6 +25877,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         />
                         {emailTaken && <span className="text-[11px] text-red-600 font-medium">A user with this email already exists.</span>}
                         {!emailTaken && !emailFormatOk && <span className="text-[11px] text-red-600 font-medium">Enter a valid email address.</span>}
+                      </label>
+                      <label className="flex flex-col gap-1.5 sm:col-span-2">
+                        <span className="text-xs font-semibold text-gray-700">
+                          Phone number {phoneRequired && <span className="text-red-500">*</span>}
+                        </span>
+                        <input
+                          value={userPhone}
+                          onChange={(e) => setUserPhone(e.target.value)}
+                          inputMode="tel"
+                          className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort || (phoneRequired && !phoneDigits.length)) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
+                          placeholder="+234 80..."
+                        />
+                        {phoneTaken && <span className="text-[11px] text-red-600 font-medium">Another team member already uses this phone number.</span>}
+                        {!phoneTaken && phoneShort && <span className="text-[11px] text-red-600 font-medium">Enter a valid phone number.</span>}
+                        {!phoneTaken && !phoneShort && phoneRequired && !phoneDigits.length && <span className="text-[11px] text-red-600 font-medium">Sales reps need a phone number for customer SMS contact.</span>}
+                        {!phoneTaken && !phoneShort && (!phoneRequired || phoneDigits.length > 0) && <span className="text-[11px] text-gray-400">Sales Rep phone numbers are appended to customer-facing order SMS.</span>}
                       </label>
                     </div>
                   </section>
@@ -25497,6 +25984,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const emailNormalized = userEmail.trim().toLowerCase();
               const emailFormatOk = !emailNormalized || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalized);
               const emailTaken = !!emailNormalized && users.some((u) => u.id !== selectedUser.id && u.email.toLowerCase() === emailNormalized);
+              const phoneDigits = userPhone.replace(/\D/g, "");
+              const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
+              const phoneTaken = !!phoneDigits && users.some((u) => u.id !== selectedUser.id && u.phone?.replace(/\D/g, "") === phoneDigits);
+              const phoneRequired = newUserRole === "Sales Rep";
               const pwd = userPassword;
               const pwdLen = pwd.length;
               const pwdTooShort = pwdLen > 0 && pwdLen < 6;
@@ -25509,10 +26000,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     : { label: "Strong", cls: "text-emerald-700 bg-emerald-50" };
               const dirty = userFullName.trim() !== selectedUser.name
                 || userEmail.trim() !== selectedUser.email
+                || userPhone.trim() !== (selectedUser.phone ?? "")
                 || newUserRole !== selectedUser.role
                 || newUserActive !== selectedUser.active
                 || pwdLen > 0;
-              const canSave = !!userFullName.trim() && !!userEmail.trim() && emailFormatOk && !emailTaken && !pwdTooShort && dirty;
+              const canSave = !!userFullName.trim()
+                && !!userEmail.trim()
+                && emailFormatOk
+                && !emailTaken
+                && !phoneTaken
+                && !phoneShort
+                && (!phoneRequired || phoneDigits.length >= 7)
+                && !pwdTooShort
+                && dirty;
               const initial = (selectedUser.name || "?").charAt(0).toUpperCase();
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
                 "Owner": "Full access including billing and account ownership. Cannot be reassigned.",
@@ -25563,6 +26063,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         />
                         {emailTaken && <span className="text-[11px] text-red-600 font-medium">Already in use by another team member.</span>}
                         {!emailTaken && !emailFormatOk && <span className="text-[11px] text-red-600 font-medium">Enter a valid email address.</span>}
+                      </label>
+                      <label className="flex flex-col gap-1.5 sm:col-span-2">
+                        <span className="text-xs font-semibold text-gray-700">
+                          Phone number {phoneRequired && <span className="text-red-500">*</span>}
+                        </span>
+                        <input
+                          value={userPhone}
+                          onChange={(e) => setUserPhone(e.target.value)}
+                          inputMode="tel"
+                          className={`px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 ${(phoneTaken || phoneShort || (phoneRequired && !phoneDigits.length)) ? "border-red-300 focus:ring-red-200 focus:border-red-400" : "border-gray-200 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"}`}
+                          placeholder="+234 80..."
+                        />
+                        {phoneTaken && <span className="text-[11px] text-red-600 font-medium">Already in use by another team member.</span>}
+                        {!phoneTaken && phoneShort && <span className="text-[11px] text-red-600 font-medium">Enter a valid phone number.</span>}
+                        {!phoneTaken && !phoneShort && phoneRequired && !phoneDigits.length && <span className="text-[11px] text-red-600 font-medium">Sales reps need a phone number for customer SMS contact.</span>}
+                        {!phoneTaken && !phoneShort && (!phoneRequired || phoneDigits.length > 0) && <span className="text-[11px] text-gray-400">If this user is assigned to an order, this number is appended to customer SMS.</span>}
                       </label>
                     </div>
                     <p className="text-[11px] text-gray-400">User ID: <span className="font-mono">{selectedUser.id}</span></p>

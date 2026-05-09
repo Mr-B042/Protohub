@@ -114,7 +114,7 @@ export const authApi = {
   updateBranding: (body: { name?: string; logoUrl?: string; topPerformerBonusEnabled?: boolean; topPerformerBonusAmount?: number; timezone?: string }) =>
     patch<{ name: string; logoUrl: string; topPerformerBonusEnabled: boolean; topPerformerBonusAmount: number; timezone: string }>("/api/auth/org-branding", body),
 
-  invite: (body: { name: string; email: string; password: string; role: string }) =>
+  invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),
 
   resetPassword: (email: string) =>
@@ -132,7 +132,7 @@ export const authApi = {
 // ── Users ────────────────────────────────────────────────
 export const usersApi = {
   list: () => get<any[]>("/api/users"),
-  update: (id: string, body: { name?: string; email?: string; active?: boolean }) =>
+  update: (id: string, body: { name?: string; email?: string; phone?: string; active?: boolean }) =>
     patch<any>(`/api/users/${id}`, body)
 };
 
@@ -269,7 +269,13 @@ export const smsSettingsApi = {
       { phone }
     ),
   balance: () => get<{ balance: number | null; raw?: unknown }>("/api/sms-settings/balance"),
-  messages: (limit = 100) => get<any[]>(`/api/sms-settings/messages?limit=${limit}`)
+  messages: (limit = 100) => get<any[]>(`/api/sms-settings/messages?limit=${limit}`),
+  resend: (id: string) => post<{ message: string; deferred?: boolean; logId?: string | null }>(`/api/sms-settings/messages/${id}/resend`, {}),
+  optOuts: () => get<any[]>("/api/sms-settings/opt-outs"),
+  addOptOut: (body: { phone: string; note?: string }) => post<any>("/api/sms-settings/opt-outs", body),
+  removeOptOut: (phone: string) => del<{ normalizedPhone: string }>(`/api/sms-settings/opt-outs/${encodeURIComponent(phone)}`),
+  inbound: (limit = 50) => get<any[]>(`/api/sms-settings/inbound?limit=${limit}`),
+  rotateWebhookSecret: () => post<{ inboundWebhookSecret: string; inboundWebhookUrl: string }>("/api/sms-settings/webhook-secret/rotate", {})
 };
 
 export const emailReportsApi = {

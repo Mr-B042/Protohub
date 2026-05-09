@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 import cron from "node-cron";
 import { logger } from "./lib/logger.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
-import { syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
+import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { supabase } from "./lib/supabase.js";
 import { sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -28,6 +28,7 @@ import cartRoutes          from "./routes/carts.js";
 import publicCartRoutes    from "./routes/public-carts.js";
 import publicOrderRoutes   from "./routes/public-orders.js";
 import publicProductRoutes from "./routes/public-products.js";
+import publicSmsRoutes from "./routes/public-sms.js";
 import publicBrandingRoutes from "./routes/public-branding.js";
 import publicPwaRoutes from "./routes/public-pwa.js";
 import embedSettingsRoutes       from "./routes/embed-settings.js";
@@ -134,6 +135,7 @@ app.use("/api/sms-settings",   smsSettingsRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
 app.use("/api/public/products",        publicProductRoutes);
+app.use("/api/public/sms",             publicSmsRoutes);
 app.use("/api/public/branding",        publicBrandingRoutes);
 app.use("/api/public/pwa",             publicPwaRoutes);
 app.use("/api/public/embed-settings",  publicEmbedSettingsRoutes);
@@ -172,6 +174,26 @@ cron.schedule("*/15 * * * *", async () => {
     await syncDueFollowUpSms();
   } catch (e) {
     logger.error("cron: sms follow-up reminder sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── SMS retry / deferred queue — every 10 minutes ────────
+cron.schedule("*/10 * * * *", async () => {
+  logger.info("cron: processing queued sms");
+  try {
+    await processQueuedSms();
+  } catch (e) {
+    logger.error("cron: sms queue processor crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Abandoned-cart recovery SMS — hourly ─────────────────
+cron.schedule("0 * * * *", async () => {
+  logger.info("cron: syncing abandoned cart sms follow-ups");
+  try {
+    await syncDueAbandonedCartSms();
+  } catch (e) {
+    logger.error("cron: abandoned cart sms sync crashed", { error: (e as Error).message });
   }
 });
 

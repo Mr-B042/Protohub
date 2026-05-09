@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
-import { makeOrderId } from "../lib/order-id";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -537,13 +536,11 @@ export default function PublicOrderFormPage() {
       return;
     }
 
-    const orderId = makeOrderId();
     const customerName = orderFormName.trim();
 
     setPublicOrderSubmitting(true);
     try {
-      await publicOrdersApi.create({
-        id: orderId,
+      const created = await publicOrdersApi.create({
         cartId: abandonedDraftCartId || undefined,
         customer: customerName,
         phone: orderFormPhone.trim(),
@@ -566,6 +563,7 @@ export default function PublicOrderFormPage() {
         preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
         company: publicHoneypot,
       });
+      setPublicOrderSubmitted({ orderId: created.id, customer: customerName });
     } catch (error: any) {
       setPublicOrderSubmitting(false);
       showToast(error?.message ?? "Could not submit your order. Please try again.");
@@ -573,7 +571,6 @@ export default function PublicOrderFormPage() {
     }
 
     setPublicOrderSubmitting(false);
-    setPublicOrderSubmitted({ orderId, customer: customerName });
     resetOrderForm();
 
     if (publicRedirectUrl) {

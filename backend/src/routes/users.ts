@@ -11,7 +11,7 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, active, created_at")
+    .select("id, name, email, phone, role, active, created_at")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -23,6 +23,7 @@ router.get("/", async (req, res) => {
 const UserPatchSchema = z.object({
   name:   z.string().min(1).max(120).optional(),
   email:  z.string().email().optional(),
+  phone:  z.string().trim().max(40).optional(),
   active: z.boolean().optional()
 }).strict();
 
@@ -38,6 +39,7 @@ router.patch("/:id",
     const updates: Record<string, unknown> = {};
     if (parsed.data.name !== undefined)   updates.name   = parsed.data.name;
     if (parsed.data.email !== undefined)  updates.email  = parsed.data.email;
+    if (parsed.data.phone !== undefined)  updates.phone  = parsed.data.phone.trim() || null;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
 
     if (Object.keys(updates).length === 0) {

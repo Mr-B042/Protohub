@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { sendCartAssignedSms } from "../lib/sms.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -125,6 +126,16 @@ router.patch("/:id",
       return;
     }
     const updates: Record<string, unknown> = {};
+    const { data: existing, error: existingError } = await supabase
+      .from("abandoned_carts")
+      .select("id, customer, phone, product_name, amount, currency, assigned_rep_id, status")
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (existingError || !existing) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
     if (parsed.data.status !== undefined) updates.status = parsed.data.status;
     const repId = parsed.data.assigned_rep_id ?? parsed.data.assignedRepId;
     if (repId !== undefined) {
@@ -150,6 +161,21 @@ router.patch("/:id",
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: "Cart not found." }); return; }
+
+    const repChanged = repId !== undefined && repId && repId !== existing.assigned_rep_id;
+    const newlyAssigned = data.status === "Assigned" || updates.status === "Assigned";
+    if (repChanged && newlyAssigned && data.phone?.trim()) {
+      void sendCartAssignedSms(req.user!.orgId, {
+        id: data.id,
+        customer: data.customer ?? "Customer",
+        phone: data.phone,
+        product_name: data.product_name ?? "your requested item",
+        amount: Number(data.amount ?? 0),
+        currency: data.currency ?? "NGN",
+        assignedRepId: data.assigned_rep_id ?? null
+      });
+    }
+
     res.json(data);
   }
 );

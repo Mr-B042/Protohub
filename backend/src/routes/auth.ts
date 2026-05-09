@@ -232,7 +232,7 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 router.get("/team", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, active, created_at, round_robin_position")
+    .select("id, name, email, phone, role, active, created_at, round_robin_position")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -257,6 +257,7 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     role: "role",
     active: "active",
     email: "email",
+    phone: "phone",
     permissions: "permissions",
     extraPages: "extra_pages",
     extra_pages: "extra_pages",
@@ -347,6 +348,7 @@ router.post("/invite", requireAuth, async (req, res) => {
   const Schema = z.object({
     name: z.string().min(2).max(120),
     email: z.string().email().max(254),
+    phone: z.string().trim().max(40).optional(),
     password: z.string().min(8).max(200),
     role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"])
   });
@@ -356,7 +358,7 @@ router.post("/invite", requireAuth, async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { name, email, password, role } = parsed.data;
+  const { name, email, phone, password, role } = parsed.data;
 
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
@@ -370,7 +372,14 @@ router.post("/invite", requireAuth, async (req, res) => {
 
   const { error: profileError } = await supabase
     .from("users")
-    .insert({ id: authData.user.id, org_id: req.user!.orgId, name, email, role });
+    .insert({
+      id: authData.user.id,
+      org_id: req.user!.orgId,
+      name,
+      email,
+      phone: phone?.trim() || null,
+      role
+    });
   if (profileError) {
     // Rollback the auth user so the email can be reused on retry.
     await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});

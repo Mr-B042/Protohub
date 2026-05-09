@@ -11,7 +11,9 @@ export type SmsTrigger =
   | "order_rescheduled"
   | "order_not_picking"
   | "order_not_ready"
-  | "order_follow_up";
+  | "order_follow_up"
+  | "cart_assigned"
+  | "cart_follow_up";
 
 export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
   order_new: true,
@@ -22,36 +24,44 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
   order_rescheduled: true,
   order_not_picking: true,
   order_not_ready: true,
-  order_follow_up: false
+  order_follow_up: false,
+  cart_assigned: false,
+  cart_follow_up: false
 };
 
 export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   order_new: {
-    body: "Hi {{customer}}, your order {{order_id}} for {{product_name}} has been received. Total: {{currency}} {{amount}}. We will contact you shortly."
+    body: "Hello {{customer}}, your Protohub order {{order_id}} has been received for {{product_name}}. Order value: {{currency}} {{amount}}. Our team will contact you shortly to confirm the next step."
   },
   order_status_change: {
-    body: "Hi {{customer}}, your order {{order_id}} is now {{status}}. Product: {{product_name}}. Protohub will keep you updated."
+    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} is now {{status}}. Current order value: {{currency}} {{amount}}. Thank you for choosing Protohub."
   },
   order_delivered: {
-    body: "Hi {{customer}}, your order {{order_id}} has been delivered successfully. Thank you for choosing Protohub."
+    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been delivered successfully. Total paid: {{currency}} {{amount}}. Thank you for choosing Protohub."
   },
   order_failed: {
-    body: "Hi {{customer}}, we could not complete order {{order_id}} for {{product_name}}. Our team will follow up shortly."
+    body: "Hello {{customer}}, we could not complete delivery for order {{order_id}} ({{product_name}}, {{currency}} {{amount}}). Our team will follow up with you shortly."
   },
   order_cancelled: {
-    body: "Hi {{customer}}, your order {{order_id}} has been cancelled. If this was unexpected, please contact Protohub."
+    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been cancelled. Order value: {{currency}} {{amount}}. If this was unexpected, please contact Protohub."
   },
   order_rescheduled: {
-    body: "Hi {{customer}}, your order {{order_id}} has been rescheduled for {{scheduled_date}}. We will follow up again."
+    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been rescheduled to {{scheduled_date}}. Order value: {{currency}} {{amount}}. We will follow up again as scheduled."
   },
   order_not_picking: {
-    body: "Hi {{customer}}, we tried reaching you about order {{order_id}} but could not get through. Please expect another follow-up from Protohub."
+    body: "Hello {{customer}}, we tried reaching you regarding order {{order_id}} for {{product_name}} ({{currency}} {{amount}}) but could not get through. Please expect another follow-up from Protohub."
   },
   order_not_ready: {
-    body: "Hi {{customer}}, we understand you are not ready for order {{order_id}} yet. We will follow up again on {{scheduled_date}}."
+    body: "Hello {{customer}}, we understand you are not ready yet for order {{order_id}} ({{product_name}}, {{currency}} {{amount}}). We will follow up again on {{scheduled_date}}."
   },
   order_follow_up: {
-    body: "Hi {{customer}}, this is a follow-up on your order {{order_id}} for {{product_name}}. Next follow-up: {{scheduled_date}}. {{note_text}}"
+    body: "Hello {{customer}}, this is a follow-up on your order {{order_id}} for {{product_name}} valued at {{currency}} {{amount}}. Next follow-up: {{scheduled_date}}. {{note_text}}"
+  },
+  cart_assigned: {
+    body: "Hello {{customer}}, your Protohub request for {{product_name}} is now with our team. Estimated order value: {{currency}} {{amount}}. {{rep_contact}}"
+  },
+  cart_follow_up: {
+    body: "Hello {{customer}}, we're still holding your interest in {{product_name}} for you. Estimated order value: {{currency}} {{amount}}. {{rep_contact}}"
   }
 };
 
@@ -62,16 +72,28 @@ interface SmsSettings {
   sender_name: string;
   triggers: Record<string, boolean>;
   templates: Record<string, { body: string }>;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  low_balance_threshold: number;
+  auto_retry_enabled: boolean;
+  max_retry_attempts: number;
+  retry_backoff_minutes: number;
+  inbound_webhook_secret: string;
+  timezone?: string;
 }
 
 type SendSmsOptions = {
   orderId?: string | null;
+  cartId?: string | null;
   audience?: "customer" | "staff";
   recipientName?: string;
   sendAt?: string | null;
+  repContactLine?: string;
   metadata?: Record<string, unknown>;
   ignoreEnabled?: boolean;
   ignoreTrigger?: boolean;
+  ignoreCompliance?: boolean;
 };
 
 type SmsDispatchResult = {
@@ -115,6 +137,14 @@ function applyEnvFallbacks(settings: SmsSettings): SmsSettings {
     provider: settings.provider ?? DEFAULT_SMS_PROVIDER,
     api_key: settings.api_key || process.env.MULTITEXTER_API_KEY || "",
     sender_name: settings.sender_name || process.env.SMS_SENDER_NAME || "Protohub",
+    quiet_hours_enabled: Boolean(settings.quiet_hours_enabled),
+    quiet_hours_start: settings.quiet_hours_start || "21:00",
+    quiet_hours_end: settings.quiet_hours_end || "08:00",
+    low_balance_threshold: Number(settings.low_balance_threshold ?? 200) || 200,
+    auto_retry_enabled: settings.auto_retry_enabled !== false,
+    max_retry_attempts: Math.max(0, Number(settings.max_retry_attempts ?? 2) || 0),
+    retry_backoff_minutes: Math.max(5, Number(settings.retry_backoff_minutes ?? 30) || 30),
+    inbound_webhook_secret: settings.inbound_webhook_secret || "",
     triggers: {
       ...DEFAULT_SMS_TRIGGERS,
       ...(settings.triggers ?? {})
@@ -149,6 +179,19 @@ function fieldFromRecord(record: Record<string, unknown>, ...names: string[]): u
   return undefined;
 }
 
+function extractBalanceValue(record: Record<string, unknown>) {
+  const direct = Number(fieldFromRecord(record, "balance", "Balance", "amount", "Amount"));
+  if (Number.isFinite(direct)) return direct;
+
+  const nested = record.userbalance;
+  if (nested && typeof nested === "object") {
+    const nestedAmount = Number(fieldFromRecord(nested as Record<string, unknown>, "balance", "Balance", "amount", "Amount"));
+    if (Number.isFinite(nestedAmount)) return nestedAmount;
+  }
+
+  return null;
+}
+
 function normalizePhoneForSms(phone: string): string | null {
   const digits = phone.replace(/\D/g, "");
   if (!digits) return null;
@@ -176,15 +219,190 @@ function estimateSmsSegments(message: string) {
   return Math.ceil(message.length / multi);
 }
 
-async function loadSettings(orgId: string): Promise<SmsSettings | null> {
+type AssignedRepContact = {
+  name: string;
+  phone: string;
+  role: string;
+  contactLine: string;
+};
+
+function formatPhoneForDisplay(phone: string) {
+  const trimmed = phone.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("+")) return trimmed;
+  const normalized = normalizePhoneForSms(trimmed);
+  return normalized?.startsWith("234") ? `+${normalized}` : trimmed;
+}
+
+function normalizePhoneDigitsOnly(phone: string) {
+  return phone.replace(/\D/g, "");
+}
+
+function parseClockMinutes(value: string, fallback: number) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return fallback;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return fallback;
+  }
+  return hour * 60 + minute;
+}
+
+function getTimezoneMinutes(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit"
+  }).formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  return hour * 60 + minute;
+}
+
+function isWithinQuietHours(settings: SmsSettings, at = new Date()) {
+  if (!settings.quiet_hours_enabled) return false;
+  const start = parseClockMinutes(settings.quiet_hours_start, 21 * 60);
+  const end = parseClockMinutes(settings.quiet_hours_end, 8 * 60);
+  if (start === end) return false;
+  const nowMinutes = getTimezoneMinutes(at, settings.timezone ?? "Africa/Lagos");
+  return start < end
+    ? nowMinutes >= start && nowMinutes < end
+    : nowMinutes >= start || nowMinutes < end;
+}
+
+function nextAllowedSendAt(settings: SmsSettings, from = new Date()) {
+  if (!settings.quiet_hours_enabled) return null;
+  let probe = new Date(from.getTime() + 5 * 60 * 1000);
+  for (let i = 0; i < (24 * 60) / 5 + 2; i += 1) {
+    if (!isWithinQuietHours(settings, probe)) return probe.toISOString();
+    probe = new Date(probe.getTime() + 5 * 60 * 1000);
+  }
+  return new Date(from.getTime() + 12 * 60 * 60 * 1000).toISOString();
+}
+
+function isRetryableSmsError(error: SmsDispatchError) {
+  if (error.statusCode && error.statusCode >= 500) return true;
+  const retryableCodes = new Set(["-7", "-10"]);
+  if (error.code && retryableCodes.has(error.code)) return true;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("timeout")
+    || message.includes("network")
+    || message.includes("temporar")
+    || message.includes("try again")
+    || message.includes("unavailable")
+    || message.includes("insufficient")
+  );
+}
+
+async function isSmsOptedOut(orgId: string, normalizedPhone: string) {
   const { data, error } = await supabase
-    .from("sms_settings")
-    .select("*")
+    .from("sms_opt_outs")
+    .select("id")
     .eq("org_id", orgId)
+    .eq("normalized_phone", normalizedPhone)
+    .limit(1);
+
+  if (error) {
+    logger.warn("sms opt-out check failed", { orgId, normalizedPhone, error: error.message });
+    return false;
+  }
+
+  return (data?.length ?? 0) > 0;
+}
+
+async function notifyLowBalance(orgId: string, balance: number, threshold: number) {
+  if (!Number.isFinite(balance) || threshold <= 0 || balance > threshold) return;
+
+  const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+  const { data: existing, error: existingError } = await supabase
+    .from("system_notifications")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("type", "info")
+    .ilike("title", "Low SMS Balance")
+    .gte("created_at", since)
+    .limit(1);
+
+  if (existingError) {
+    logger.warn("sms low-balance alert dedupe failed", { orgId, error: existingError.message });
+    return;
+  }
+  if ((existing?.length ?? 0) > 0) return;
+
+  const message = `SMS balance is low: ${balance} unit${balance === 1 ? "" : "s"} remaining. Top up Multitexter credits soon to avoid customer update failures.`;
+  const { error } = await supabase.from("system_notifications").insert({
+    org_id: orgId,
+    type: "info",
+    title: "Low SMS Balance",
+    message,
+    link: "/dashboard/admin/settings"
+  });
+  if (error) {
+    logger.warn("sms low-balance alert insert failed", { orgId, error: error.message });
+  }
+}
+
+async function loadAssignedRepContact(orgId: string, assignedRepId?: string | null): Promise<AssignedRepContact | null> {
+  if (!assignedRepId) return null;
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("name, phone, role")
+    .eq("org_id", orgId)
+    .eq("id", assignedRepId)
     .single();
 
+  if (error || !data) {
+    if (error) {
+      logger.warn("sms assigned rep lookup failed", {
+        orgId,
+        assignedRepId,
+        error: error.message
+      });
+    }
+    return null;
+  }
+
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  const role = typeof data.role === "string" ? data.role.trim() : "";
+  const phone = typeof data.phone === "string" ? formatPhoneForDisplay(data.phone) : "";
+  if (!name) return null;
+
+  const displayName = role ? `${name} (${role})` : name;
+  const contactLine = phone
+    ? `Your assigned contact is ${displayName}. Reach them on ${phone}.`
+    : `Your assigned contact is ${displayName}.`;
+
+  return {
+    name: displayName,
+    phone,
+    role,
+    contactLine
+  };
+}
+
+async function loadSettings(orgId: string): Promise<SmsSettings | null> {
+  const [{ data, error }, { data: org }] = await Promise.all([
+    supabase
+      .from("sms_settings")
+      .select("*")
+      .eq("org_id", orgId)
+      .single(),
+    supabase
+      .from("organizations")
+      .select("timezone")
+      .eq("id", orgId)
+      .single()
+  ]);
+
   if (error || !data) return null;
-  return applyEnvFallbacks(data as SmsSettings);
+  return applyEnvFallbacks({
+    ...(data as SmsSettings),
+    timezone: typeof org?.timezone === "string" && org.timezone.trim() ? org.timezone.trim() : "Africa/Lagos"
+  });
 }
 
 function hasValidSettings(settings: SmsSettings | null): settings is SmsSettings {
@@ -284,7 +502,36 @@ async function sendViaMultitexter(
       : undefined,
     providerStatus: String(fieldFromRecord(parsed, "msg", "message") ?? "Sent"),
     units: Number(fieldFromRecord(parsed, "units", "Units")) || undefined,
-    balance: Number(fieldFromRecord(parsed, "balance", "Balance")) || undefined
+    balance: extractBalanceValue(parsed) ?? undefined
+  };
+}
+
+async function deliverLoggedSms(
+  orgId: string,
+  settings: SmsSettings,
+  logId: string | null,
+  normalizedPhone: string,
+  body: string,
+  sendAt?: string | null
+): Promise<SmsDispatchResult> {
+  const result = await sendViaMultitexter(settings, normalizedPhone, body, sendAt);
+  await updateSmsLog(logId, {
+    status: "sent",
+    provider_message_id: result.providerMessageId ?? null,
+    provider_status: result.providerStatus ?? null,
+    units: result.units ?? 0,
+    sent_at: new Date().toISOString(),
+    next_retry_at: null
+  });
+  await notifyLowBalance(orgId, result.balance ?? Number.NaN, settings.low_balance_threshold);
+  return {
+    provider: settings.provider,
+    providerMessageId: result.providerMessageId,
+    providerStatus: result.providerStatus,
+    units: result.units,
+    balance: result.balance,
+    segments: estimateSmsSegments(body),
+    normalizedPhone
   };
 }
 
@@ -310,13 +557,21 @@ async function dispatchSms(
   const template = settings.templates?.[trigger];
   if (!template?.body) return null;
 
-  const messageBody = interpolate(template.body, vars).trim();
+  const hasRepContactPlaceholder =
+    /\{\{rep_contact\}\}/.test(template.body)
+    || (/\{\{rep_name\}\}/.test(template.body) && /\{\{rep_phone\}\}/.test(template.body));
+  let messageBody = interpolate(template.body, vars).trim();
+  if (options.repContactLine && !hasRepContactPlaceholder && !messageBody.includes(options.repContactLine)) {
+    messageBody = `${messageBody} ${options.repContactLine}`.trim();
+  }
   if (!messageBody) return null;
 
   const segments = estimateSmsSegments(messageBody);
-  const logId = await insertSmsLog({
+  const metadata = options.metadata ?? {};
+  const baseLogPayload = {
     org_id: orgId,
     order_id: options.orderId ?? null,
+    cart_id: options.cartId ?? null,
     trigger,
     audience: options.audience ?? "customer",
     recipient_name: options.recipientName ?? null,
@@ -325,21 +580,45 @@ async function dispatchSms(
     body: messageBody,
     sender_name: settings.sender_name,
     provider: settings.provider,
+    segments,
+    metadata
+  };
+
+  if (!options.ignoreCompliance && options.audience !== "staff") {
+    if (await isSmsOptedOut(orgId, normalizedPhone)) {
+      await insertSmsLog({
+        ...baseLogPayload,
+        status: "blocked",
+        error_message: "Recipient opted out of SMS updates.",
+        provider_status: "Opted out"
+      });
+      logger.info("sms blocked: opted out", { orgId, trigger, normalizedPhone });
+      return null;
+    }
+
+    if (isWithinQuietHours(settings)) {
+      const scheduledFor = nextAllowedSendAt(settings) ?? new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await insertSmsLog({
+        ...baseLogPayload,
+        status: "deferred",
+        scheduled_for: scheduledFor,
+        provider_status: "Deferred for quiet hours"
+      });
+      logger.info("sms deferred: quiet hours", { orgId, trigger, normalizedPhone, scheduledFor });
+      return null;
+    }
+  }
+
+  const logId = await insertSmsLog({
+    ...baseLogPayload,
     status: "queued",
     segments,
     scheduled_for: options.sendAt ?? null,
-    metadata: options.metadata ?? {}
+    metadata
   });
 
   try {
-    const result = await sendViaMultitexter(settings, normalizedPhone, messageBody, options.sendAt);
-    await updateSmsLog(logId, {
-      status: "sent",
-      provider_message_id: result.providerMessageId ?? null,
-      provider_status: result.providerStatus ?? null,
-      units: result.units ?? 0,
-      sent_at: new Date().toISOString()
-    });
+    const result = await deliverLoggedSms(orgId, settings, logId, normalizedPhone, messageBody, options.sendAt);
     logger.info("sms sent", {
       orgId,
       trigger,
@@ -347,30 +626,31 @@ async function dispatchSms(
       to: normalizedPhone,
       providerMessageId: result.providerMessageId ?? null
     });
-    return {
-      provider: settings.provider,
-      providerMessageId: result.providerMessageId,
-      providerStatus: result.providerStatus,
-      units: result.units,
-      balance: result.balance,
-      segments,
-      normalizedPhone
-    };
+    return result;
   } catch (err) {
     const normalized = normalizeSmsError(err);
+    const retryable = settings.auto_retry_enabled && isRetryableSmsError(normalized) && settings.max_retry_attempts > 0;
+    const nextRetryAt = retryable
+      ? new Date(Date.now() + settings.retry_backoff_minutes * 60 * 1000).toISOString()
+      : null;
     await updateSmsLog(logId, {
       status: "failed",
       error_code: normalized.code ?? null,
       error_message: normalized.message,
-      provider_status: normalized.message
+      provider_status: normalized.message,
+      next_retry_at: nextRetryAt
     });
+    if (normalized.code === "-7" || normalized.message.toLowerCase().includes("insufficient")) {
+      await notifyLowBalance(orgId, 0, settings.low_balance_threshold);
+    }
     logger.error("sms send failed", {
       orgId,
       trigger,
       to: normalizedPhone,
       statusCode: normalized.statusCode,
       code: normalized.code,
-      error: normalized.message
+      error: normalized.message,
+      retryScheduled: !!nextRetryAt
     });
     if (options.ignoreEnabled) throw normalized;
     return null;
@@ -405,6 +685,7 @@ type DueReminderOrder = {
   org_id: string;
   customer: string;
   phone: string;
+  assigned_rep_id?: string | null;
   product_name: string;
   amount: number;
   currency: string;
@@ -508,6 +789,7 @@ async function sendFollowUpReminderSms(
     metadata?: Record<string, unknown>;
   }
 ) {
+  const assignedRep = await loadAssignedRepContact(orgId, order.assigned_rep_id);
   return dispatchSms(
     orgId,
     "order_follow_up",
@@ -522,15 +804,22 @@ async function sendFollowUpReminderSms(
       scheduled_date: options.scheduledLabel,
       call_outcome: order.call_outcome ?? "—",
       response: order.response ?? "Follow-up reminder",
-      note_text: options.noteText ?? ""
+      note_text: options.noteText ?? "",
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
     },
     order.phone,
     {
       orderId: order.id,
       audience: "customer",
       recipientName: order.customer,
+      repContactLine: assignedRep?.contactLine,
       metadata: {
         event: "order_follow_up",
+        assignedRepId: order.assigned_rep_id ?? null,
+        assignedRepName: assignedRep?.name ?? null,
+        assignedRepPhone: assignedRep?.phone ?? null,
         dedupeKey: options.dedupeKey,
         ...(options.metadata ?? {})
       }
@@ -563,8 +852,11 @@ export async function getSmsBalance(orgId: string): Promise<{ balance: number | 
     });
   }
 
-  const balance = Number(fieldFromRecord(parsed, "balance", "Balance"));
-  return { balance: Number.isFinite(balance) ? balance : null, raw: parsed };
+  const balance = extractBalanceValue(parsed);
+  if (balance !== null) {
+    await notifyLowBalance(orgId, balance, settings.low_balance_threshold);
+  }
+  return { balance, raw: parsed };
 }
 
 export async function sendTestSms(orgId: string, phone: string) {
@@ -588,6 +880,7 @@ export async function sendTestSms(orgId: string, phone: string) {
     {
       ignoreEnabled: true,
       ignoreTrigger: true,
+      ignoreCompliance: true,
       audience: "customer",
       recipientName: "Protohub Test",
       metadata: { kind: "test_sms" }
@@ -616,11 +909,13 @@ export async function sendNewOrderSms(
     id: string;
     customer: string;
     phone: string;
+    assignedRepId?: string | null;
     product_name: string;
     amount: number;
     currency: string;
   }
 ) {
+  const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
   return dispatchSms(
     orgId,
     "order_new",
@@ -629,14 +924,23 @@ export async function sendNewOrderSms(
       customer: order.customer,
       product_name: order.product_name,
       amount: String(order.amount),
-      currency: order.currency
+      currency: order.currency,
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
     },
     order.phone,
     {
       orderId: order.id,
       audience: "customer",
       recipientName: order.customer,
-      metadata: { event: "order_new" }
+      repContactLine: assignedRep?.contactLine,
+      metadata: {
+        event: "order_new",
+        assignedRepId: order.assignedRepId ?? null,
+        assignedRepName: assignedRep?.name ?? null,
+        assignedRepPhone: assignedRep?.phone ?? null
+      }
     }
   );
 }
@@ -647,6 +951,7 @@ export async function sendOrderStatusSms(
     id: string;
     customer: string;
     phone: string;
+    assignedRepId?: string | null;
     product_name: string;
     amount: number;
     currency: string;
@@ -664,6 +969,8 @@ export async function sendOrderStatusSms(
   else if (toStatus === "Postponed") trigger = resolvePostponedTrigger(order.call_outcome, order.response);
   else trigger = "order_status_change";
 
+  const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
+
   return dispatchSms(
     orgId,
     trigger,
@@ -677,16 +984,363 @@ export async function sendOrderStatusSms(
       status: toStatus,
       scheduled_date: order.scheduled_date ?? "soon",
       call_outcome: order.call_outcome ?? "—",
-      response: order.response ?? "—"
+      response: order.response ?? "—",
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
     },
     order.phone,
     {
       orderId: order.id,
       audience: "customer",
       recipientName: order.customer,
-      metadata: { event: "order_status", fromStatus, toStatus, trigger }
+      repContactLine: assignedRep?.contactLine,
+      metadata: {
+        event: "order_status",
+        fromStatus,
+        toStatus,
+        trigger,
+        assignedRepId: order.assignedRepId ?? null,
+        assignedRepName: assignedRep?.name ?? null,
+        assignedRepPhone: assignedRep?.phone ?? null
+      }
     }
   );
+}
+
+type CartSmsContext = {
+  id: string;
+  customer: string;
+  phone: string;
+  product_name: string;
+  amount: number;
+  currency: string;
+  assignedRepId?: string | null;
+};
+
+type SmsOptOutRecord = {
+  id: string;
+  org_id: string;
+  phone: string;
+  normalized_phone: string;
+  keyword?: string | null;
+  source: string;
+  note?: string | null;
+  created_at: string;
+};
+
+type SmsInboundRecord = {
+  id: string;
+  org_id?: string | null;
+  provider: string;
+  sender_phone: string;
+  normalized_phone: string;
+  receiver?: string | null;
+  sender_name?: string | null;
+  body: string;
+  keyword?: string | null;
+  action?: string | null;
+  linked_order_id?: string | null;
+  metadata?: Record<string, unknown>;
+  processed: boolean;
+  processed_at?: string | null;
+  received_at: string;
+  created_at: string;
+};
+
+async function getRecentOrderForPhone(orgId: string, normalizedPhone: string) {
+  const { data } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("org_id", orgId)
+    .or(`phone.eq.${normalizedPhone},phone.eq.+${normalizedPhone},phone.ilike.%${normalizedPhone.slice(-10)}%`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+export async function listSmsOptOuts(orgId: string) {
+  const { data, error } = await supabase
+    .from("sms_opt_outs")
+    .select("*")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SmsOptOutRecord[];
+}
+
+export async function addSmsOptOut(
+  orgId: string,
+  phone: string,
+  source = "manual",
+  keyword?: string | null,
+  note?: string | null
+) {
+  const normalizedPhone = normalizePhoneForSms(phone);
+  if (!normalizedPhone) throw new Error("Enter a valid phone number.");
+
+  const payload = {
+    org_id: orgId,
+    phone: phone.trim(),
+    normalized_phone: normalizedPhone,
+    source,
+    keyword: keyword?.trim() || null,
+    note: note?.trim() || null
+  };
+
+  const { data, error } = await supabase
+    .from("sms_opt_outs")
+    .upsert(payload, { onConflict: "org_id,normalized_phone" })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as SmsOptOutRecord;
+}
+
+export async function removeSmsOptOut(orgId: string, phone: string) {
+  const normalizedPhone = normalizePhoneForSms(phone) ?? normalizePhoneDigitsOnly(phone);
+  const { error } = await supabase
+    .from("sms_opt_outs")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("normalized_phone", normalizedPhone);
+  if (error) throw new Error(error.message);
+  return normalizedPhone;
+}
+
+export async function listSmsInboundMessages(orgId: string, limit = 50) {
+  const { data, error } = await supabase
+    .from("sms_inbound_messages")
+    .select("*")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SmsInboundRecord[];
+}
+
+export async function rotateSmsInboundWebhookSecret(orgId: string) {
+  const secret = crypto.randomUUID().replace(/-/g, "");
+  const { data, error } = await supabase
+    .from("sms_settings")
+    .upsert({
+      org_id: orgId,
+      inbound_webhook_secret: secret,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "org_id" })
+    .select("inbound_webhook_secret")
+    .single();
+  if (error) throw new Error(error.message);
+  return data?.inbound_webhook_secret ?? secret;
+}
+
+export async function sendCartAssignedSms(orgId: string, cart: CartSmsContext) {
+  const assignedRep = await loadAssignedRepContact(orgId, cart.assignedRepId);
+  return dispatchSms(
+    orgId,
+    "cart_assigned",
+    {
+      cart_id: cart.id,
+      customer: cart.customer,
+      product_name: cart.product_name,
+      amount: String(cart.amount),
+      currency: cart.currency,
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
+    },
+    cart.phone,
+    {
+      cartId: cart.id,
+      audience: "customer",
+      recipientName: cart.customer,
+      repContactLine: assignedRep?.contactLine,
+      metadata: {
+        event: "cart_assigned",
+        assignedRepId: cart.assignedRepId ?? null,
+        assignedRepName: assignedRep?.name ?? null,
+        assignedRepPhone: assignedRep?.phone ?? null
+      }
+    }
+  );
+}
+
+async function sendCartFollowUpSms(orgId: string, cart: CartSmsContext, dedupeKey: string) {
+  const assignedRep = await loadAssignedRepContact(orgId, cart.assignedRepId);
+  return dispatchSms(
+    orgId,
+    "cart_follow_up",
+    {
+      cart_id: cart.id,
+      customer: cart.customer,
+      product_name: cart.product_name,
+      amount: String(cart.amount),
+      currency: cart.currency,
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
+    },
+    cart.phone,
+    {
+      cartId: cart.id,
+      audience: "customer",
+      recipientName: cart.customer,
+      repContactLine: assignedRep?.contactLine,
+      metadata: {
+        event: "cart_follow_up",
+        dedupeKey,
+        assignedRepId: cart.assignedRepId ?? null,
+        assignedRepName: assignedRep?.name ?? null,
+        assignedRepPhone: assignedRep?.phone ?? null
+      }
+    }
+  );
+}
+
+async function cartReminderAlreadyLogged(orgId: string, cartId: string, dedupeKey: string) {
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("cart_id", cartId)
+    .eq("trigger", "cart_follow_up")
+    .neq("status", "failed")
+    .contains("metadata", { dedupeKey })
+    .limit(1);
+
+  if (error) {
+    logger.warn("cart sms reminder dedupe failed", { orgId, cartId, dedupeKey, error: error.message });
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+export async function resendSmsMessage(orgId: string, messageId: string) {
+  const settings = await loadSettings(orgId);
+  if (!hasValidSettings(settings)) throw new Error("SMS settings not configured.");
+
+  const { data: message, error } = await supabase
+    .from("sms_messages")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("id", messageId)
+    .single();
+  if (error || !message) throw new Error("SMS message not found.");
+
+  const body = String(message.body ?? "").trim();
+  const recipientPhone = String(message.recipient_phone ?? "").trim();
+  const normalizedPhone = normalizePhoneForSms(recipientPhone);
+  if (!body || !normalizedPhone) throw new Error("SMS body or recipient is invalid.");
+
+  if (await isSmsOptedOut(orgId, normalizedPhone)) {
+    throw new Error("This customer has opted out of SMS updates.");
+  }
+
+  const resendLogId = await insertSmsLog({
+    org_id: orgId,
+    order_id: message.order_id ?? null,
+    cart_id: message.cart_id ?? null,
+    trigger: message.trigger ?? "order_status_change",
+    audience: message.audience ?? "customer",
+    recipient_name: message.recipient_name ?? null,
+    recipient_phone: recipientPhone,
+    normalized_phone: normalizedPhone,
+    body,
+    sender_name: settings.sender_name,
+    provider: settings.provider,
+    status: isWithinQuietHours(settings) ? "deferred" : "queued",
+    segments: estimateSmsSegments(body),
+    scheduled_for: isWithinQuietHours(settings) ? nextAllowedSendAt(settings) : null,
+    metadata: {
+      ...(typeof message.metadata === "object" && message.metadata ? message.metadata : {}),
+      resendOf: message.id
+    }
+  });
+
+  if (isWithinQuietHours(settings)) {
+    return { deferred: true, logId: resendLogId };
+  }
+
+  try {
+    const result = await deliverLoggedSms(orgId, settings, resendLogId, normalizedPhone, body, null);
+    return { deferred: false, logId: resendLogId, result };
+  } catch (error) {
+    const normalized = normalizeSmsError(error);
+    await updateSmsLog(resendLogId, {
+      status: "failed",
+      error_code: normalized.code ?? null,
+      error_message: normalized.message,
+      provider_status: normalized.message
+    });
+    throw normalized;
+  }
+}
+
+export async function receiveInboundSms(
+  orgId: string,
+  secret: string,
+  payload: Record<string, unknown>
+) {
+  const { data: settings, error } = await supabase
+    .from("sms_settings")
+    .select("inbound_webhook_secret")
+    .eq("org_id", orgId)
+    .single();
+
+  if (error || !settings?.inbound_webhook_secret || settings.inbound_webhook_secret !== secret) {
+    throw new Error("Invalid inbound SMS signature.");
+  }
+
+  const senderPhone =
+    String(
+      fieldFromRecord(payload, "from", "sender", "msisdn", "phone", "mobile", "sender_phone")
+      ?? ""
+    ).trim();
+  const body = String(fieldFromRecord(payload, "message", "text", "body", "msg") ?? "").trim();
+  if (!senderPhone || !body) {
+    throw new Error("Inbound SMS payload is missing sender or message.");
+  }
+
+  const normalizedPhone = normalizePhoneForSms(senderPhone) ?? normalizePhoneDigitsOnly(senderPhone);
+  const keyword = body.split(/\s+/)[0]?.toUpperCase() ?? "";
+  const receiver = String(fieldFromRecord(payload, "to", "receiver", "shortcode", "recipient") ?? "").trim() || null;
+  const senderName = String(fieldFromRecord(payload, "sender_name", "name") ?? "").trim() || null;
+  let action = "logged";
+
+  if (["STOP", "UNSUBSCRIBE", "END", "CANCEL", "QUIT", "STOPALL"].includes(keyword)) {
+    await addSmsOptOut(orgId, senderPhone, "inbound", keyword, "Customer opted out by SMS reply.");
+    action = "opted_out";
+  } else if (["START", "UNSTOP", "RESUME", "YES"].includes(keyword)) {
+    await removeSmsOptOut(orgId, senderPhone);
+    action = "opted_in";
+  }
+
+  const linkedOrderId = normalizedPhone ? await getRecentOrderForPhone(orgId, normalizedPhone) : null;
+  const insertPayload = {
+    org_id: orgId,
+    provider: "multitexter",
+    sender_phone: senderPhone,
+    normalized_phone: normalizedPhone,
+    receiver,
+    sender_name: senderName,
+    body,
+    keyword: keyword || null,
+    action,
+    linked_order_id: linkedOrderId,
+    metadata: payload,
+    processed: true,
+    processed_at: new Date().toISOString()
+  };
+
+  const { data, error: insertError } = await supabase
+    .from("sms_inbound_messages")
+    .insert(insertPayload)
+    .select()
+    .single();
+  if (insertError) throw new Error(insertError.message);
+
+  return data as SmsInboundRecord;
 }
 
 function normalizeDeliveryStatus(rawStatus: unknown): "sent" | "delivered" | "failed" | null {
@@ -798,7 +1452,7 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
   for (const orgId of eligibleOrgIds) {
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, product_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, assigned_rep_id, product_name, amount, currency, status, scheduled_date, scheduled_at, call_outcome, response, notes, timeline_notes")
       .eq("org_id", orgId)
       .in("status", ["Confirmed", "In Process", "Dispatched", "Postponed"])
       .limit(limitPerOrg);
@@ -845,6 +1499,130 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
             followUpDate: note.followUpDate ?? null
           }
         });
+      }
+    }
+  }
+}
+
+export async function syncDueAbandonedCartSms(limitPerOrg = 300) {
+  const { data: settingsRows, error } = await supabase
+    .from("sms_settings")
+    .select("org_id, enabled, triggers");
+
+  if (error) {
+    logger.error("sms cart sync settings query failed", { error: error.message });
+    return;
+  }
+
+  const eligibleOrgIds = (settingsRows ?? [])
+    .filter((row) => row.enabled && (row.triggers as Record<string, boolean> | null)?.cart_follow_up)
+    .map((row) => row.org_id as string)
+    .filter(Boolean);
+
+  if (!eligibleOrgIds.length) return;
+
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const todayKey = new Date().toISOString().slice(0, 10);
+
+  for (const orgId of eligibleOrgIds) {
+    const { data: carts, error: cartsError } = await supabase
+      .from("abandoned_carts")
+      .select("id, customer, phone, product_name, amount, currency, assigned_rep_id, status, last_activity")
+      .eq("org_id", orgId)
+      .in("status", ["Open abandoned", "Assigned", "Contacted"])
+      .lt("last_activity", cutoff)
+      .order("last_activity", { ascending: true })
+      .limit(limitPerOrg);
+
+    if (cartsError) {
+      logger.warn("sms cart sync query failed", { orgId, error: cartsError.message });
+      continue;
+    }
+
+    for (const cart of carts ?? []) {
+      if (!cart.phone?.trim()) continue;
+      const dedupeKey = `cart-follow-up:${todayKey}`;
+      if (await cartReminderAlreadyLogged(orgId, cart.id, dedupeKey)) continue;
+      await sendCartFollowUpSms(orgId, {
+        id: cart.id,
+        customer: cart.customer ?? "Customer",
+        phone: cart.phone,
+        product_name: cart.product_name ?? "your requested item",
+        amount: Number(cart.amount ?? 0),
+        currency: cart.currency ?? "NGN",
+        assignedRepId: cart.assigned_rep_id ?? null
+      }, dedupeKey);
+    }
+  }
+}
+
+export async function processQueuedSms(limit = 150) {
+  const nowIso = new Date().toISOString();
+  const { data: rows, error } = await supabase
+    .from("sms_messages")
+    .select("id, org_id, recipient_phone, normalized_phone, body, provider, status, retry_count, next_retry_at, scheduled_for")
+    .or(`and(status.eq.deferred,scheduled_for.lte.${nowIso}),and(status.eq.failed,next_retry_at.lte.${nowIso})`)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    logger.error("sms queue query failed", { error: error.message });
+    return;
+  }
+
+  for (const row of rows ?? []) {
+    const settings = await loadSettings(row.org_id);
+    if (!hasValidSettings(settings)) continue;
+    const nextRetryCount = Number(row.retry_count ?? 0) + 1;
+    if (row.status === "failed" && nextRetryCount > settings.max_retry_attempts) {
+      continue;
+    }
+
+    if (await isSmsOptedOut(row.org_id, row.normalized_phone)) {
+      await updateSmsLog(row.id, {
+        status: "blocked",
+        error_message: "Recipient opted out of SMS updates.",
+        provider_status: "Opted out",
+        next_retry_at: null
+      });
+      continue;
+    }
+
+    if (isWithinQuietHours(settings)) {
+      await updateSmsLog(row.id, {
+        status: "deferred",
+        scheduled_for: nextAllowedSendAt(settings),
+        next_retry_at: null,
+        provider_status: "Deferred for quiet hours"
+      });
+      continue;
+    }
+
+    try {
+      await updateSmsLog(row.id, {
+        retry_count: nextRetryCount,
+        last_retry_at: new Date().toISOString(),
+        error_message: null,
+        error_code: null
+      });
+      await deliverLoggedSms(row.org_id, settings, row.id, row.normalized_phone, row.body, null);
+    } catch (error) {
+      const normalized = normalizeSmsError(error);
+      const retryable = settings.auto_retry_enabled && isRetryableSmsError(normalized) && nextRetryCount <= settings.max_retry_attempts;
+      const nextRetryAt = retryable
+        ? new Date(Date.now() + settings.retry_backoff_minutes * 60 * 1000).toISOString()
+        : null;
+      await updateSmsLog(row.id, {
+        status: "failed",
+        retry_count: nextRetryCount,
+        last_retry_at: new Date().toISOString(),
+        next_retry_at: nextRetryAt,
+        error_code: normalized.code ?? null,
+        error_message: normalized.message,
+        provider_status: normalized.message
+      });
+      if (normalized.code === "-7" || normalized.message.toLowerCase().includes("insufficient")) {
+        await notifyLowBalance(row.org_id, 0, settings.low_balance_threshold);
       }
     }
   }

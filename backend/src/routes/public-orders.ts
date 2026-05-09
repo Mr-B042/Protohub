@@ -15,7 +15,6 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { makeOrderId } from "../lib/order-id.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import {
   sendNewOrderEmail,
@@ -89,11 +88,10 @@ router.post("/", submitRateLimit, async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const orderId = parsed.data.id ?? makeOrderId();
   if (parsed.data.company) {
     // Honeypot tripped. Pretend success so the bot doesn't retry.
     logger.warn("public-orders: honeypot tripped", { ip: req.ip });
-    res.status(201).json({ id: orderId, ignored: true });
+    res.status(201).json({ id: parsed.data.id ?? null, ignored: true });
     return;
   }
   const d = parsed.data;
@@ -262,7 +260,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const { data: order, error: orderErr } = await supabase
     .from("orders")
     .insert({
-      id:                orderId,
+      ...(d.id ? { id: d.id } : {}),
       org_id:            product.org_id,
       customer:          d.customer,
       phone:             d.phone,
@@ -337,6 +335,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     id: order.id,
     customer: order.customer,
     phone: order.phone,
+    assignedRepId: order.assigned_rep_id,
     product_name: order.product_name,
     amount: order.amount,
     currency: order.currency
