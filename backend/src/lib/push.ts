@@ -91,8 +91,11 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
           }
         );
       } catch (err: any) {
-        // 410 Gone or 404 = subscription expired, remove it
-        if (err.statusCode === 410 || err.statusCode === 404) {
+        const body = typeof err?.body === "string" ? err.body.toLowerCase() : "";
+        const vapidMismatch = err?.statusCode === 403 && body.includes("vapid credentials");
+        // 410 Gone / 404 Not Found / specific 403 VAPID mismatch all mean the
+        // stored browser subscription is no longer usable and should be rebuilt.
+        if (err.statusCode === 410 || err.statusCode === 404 || vapidMismatch) {
           await supabase.from("push_subscriptions").delete().eq("id", sub.id);
         }
         throw err;

@@ -81,6 +81,75 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function getSubscriptionServerKey(subscription: PushSubscription): Uint8Array | null {
+  try {
+    const rawKey = subscription.options?.applicationServerKey;
+    if (!rawKey) return null;
+    if (rawKey instanceof ArrayBuffer) return new Uint8Array(rawKey);
+    if (ArrayBuffer.isView(rawKey)) {
+      const view = rawKey as ArrayBufferView;
+      return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function removeServerSubscription(endpoint: string): Promise<void> {
+  await fetch(`${BASE}/api/push/subscribe`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ endpoint })
+  }).catch(() => undefined);
+}
+
+export async function ensurePushSubscriptionCurrent(): Promise<boolean> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    return false;
+  }
+
+  if (Notification.permission !== "granted") {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  const vapidKey = await getVapidPublicKey();
+  if (!vapidKey) return false;
+  const desiredKey = urlBase64ToUint8Array(vapidKey);
+
+  let subscription = await registration.pushManager.getSubscription();
+  const staleEndpoint = subscription?.endpoint ?? null;
+  const currentKey = subscription ? getSubscriptionServerKey(subscription) : null;
+  const keyMismatch = subscription && currentKey && !arraysEqual(currentKey, desiredKey);
+
+  if (subscription && keyMismatch) {
+    await subscription.unsubscribe().catch(() => undefined);
+    if (staleEndpoint) {
+      await removeServerSubscription(staleEndpoint);
+    }
+    subscription = null;
+  }
+
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: desiredKey as BufferSource
+    });
+  }
+
+  await saveSubscription(subscription);
+  return true;
+}
+
 /**
  * Subscribe to push notifications.
  * Returns true on success, throws on failure.
@@ -98,29 +167,12 @@ export async function subscribeToPush(): Promise<boolean> {
   }
 
   // 3. Get service worker registration
-  const registration = await navigator.serviceWorker.ready;
-
-  // 4. Get VAPID public key from server
   const vapidKey = await getVapidPublicKey();
   if (!vapidKey) {
     throw new Error("Push notifications not configured on this server.");
   }
 
-  // 5. Reuse the browser's existing subscription when available so this
-  // device doesn't keep minting extra server-side rows unnecessarily.
-  const existingSubscription = await registration.pushManager.getSubscription();
-  if (existingSubscription) {
-    await saveSubscription(existingSubscription);
-    return true;
-  }
-
-  // 6. Otherwise create and persist a new subscription.
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource
-  });
-  await saveSubscription(subscription);
-  return true;
+  return ensurePushSubscriptionCurrent();
 }
 
 /**
@@ -137,11 +189,7 @@ export async function unsubscribeFromPush(): Promise<boolean> {
     await subscription.unsubscribe();
 
     // Remove from backend
-    await fetch(`${BASE}/api/push/subscribe`, {
-      method: "DELETE",
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ endpoint: subscription.endpoint })
-    });
+    await removeServerSubscription(subscription.endpoint);
   }
 
   return true;

@@ -1,9 +1,12 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v6-auto-update";
+const CACHE_NAME = "protohub-v7-auto-update";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 const DEFAULT_BRAND_NAME = "Protohub";
 const DEFAULT_BADGE = "/icons/icon-72.png";
+const DYNAMIC_MANIFEST_PATH = "/dynamic-manifest.webmanifest";
+const DYNAMIC_ICON_192_PATH = "/dynamic-icons/app-192";
+const DYNAMIC_ICON_512_PATH = "/dynamic-icons/app-512";
 
 const PUSH_PRESENTATION = {
   order_new:               { icon: "/icons/notifications/order-new.png",            color: "#1F8FE0", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "New Order" },
@@ -71,6 +74,101 @@ async function writePushBranding(branding) {
   );
 }
 
+function pwaManifestName(brandName) {
+  return brandName ? `${brandName} — Order & Inventory Management` : "Protohub — Order & Inventory Management";
+}
+
+function pwaShortName(brandName) {
+  return (brandName || DEFAULT_BRAND_NAME).slice(0, 32);
+}
+
+function brandingVersionToken(branding) {
+  return `${(branding?.brandName || DEFAULT_BRAND_NAME).length}-${(branding?.logoUrl || "").length}`;
+}
+
+function parseDataUrlImage(dataUrl) {
+  if (typeof dataUrl !== "string") return null;
+  const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return { contentType: match[1], bytes };
+  } catch {
+    return null;
+  }
+}
+
+async function brandImageResponse(logoUrl, fallbackPath) {
+  const normalized = sanitizeBrandLogo(logoUrl);
+  if (!normalized) {
+    return fetch(fallbackPath);
+  }
+
+  const dataUrl = parseDataUrlImage(normalized);
+  if (dataUrl) {
+    return new Response(dataUrl.bytes, {
+      headers: {
+        "Content-Type": dataUrl.contentType,
+        "Cache-Control": "no-store"
+      }
+    });
+  }
+
+  try {
+    const response = await fetch(normalized, { mode: normalized.startsWith("/") ? "same-origin" : "cors" });
+    if (response.ok) return response;
+  } catch {
+    // fall through to static fallback
+  }
+  return fetch(fallbackPath);
+}
+
+async function dynamicManifestResponse() {
+  const branding = await readPushBranding();
+  const brandName = branding.brandName || DEFAULT_BRAND_NAME;
+  const version = encodeURIComponent(brandingVersionToken(branding));
+  const hasDynamicLogo = Boolean(sanitizeBrandLogo(branding.logoUrl));
+  const manifest = {
+    name: pwaManifestName(brandName),
+    short_name: pwaShortName(brandName),
+    description: "Nigerian POD CRM for managing orders, agents, inventory, and deliveries",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#ffffff",
+    theme_color: "#1F8FE0",
+    orientation: "portrait-primary",
+    categories: ["business", "productivity"],
+    prefer_related_applications: false,
+    icons: hasDynamicLogo
+      ? [
+          { src: `${DYNAMIC_ICON_192_PATH}.png?v=${version}`, sizes: "192x192", purpose: "any" },
+          { src: `${DYNAMIC_ICON_192_PATH}.png?v=${version}`, sizes: "192x192", purpose: "maskable" },
+          { src: `${DYNAMIC_ICON_512_PATH}.png?v=${version}`, sizes: "512x512", purpose: "any" },
+          { src: `${DYNAMIC_ICON_512_PATH}.png?v=${version}`, sizes: "512x512", purpose: "maskable" }
+        ]
+      : [
+          { src: "/icons/icon-72.png", sizes: "72x72", type: "image/png" },
+          { src: "/icons/icon-96.png", sizes: "96x96", type: "image/png" },
+          { src: "/icons/icon-128.png", sizes: "128x128", type: "image/png" },
+          { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
+        ]
+  };
+  return new Response(JSON.stringify(manifest), {
+    headers: {
+      "Content-Type": "application/manifest+json",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
 // ── Install ──────────────────────────────────────────────
 self.addEventListener("install", (event) => {
   // Activate immediately without waiting for existing tabs to close
@@ -89,6 +187,23 @@ self.addEventListener("activate", (event) => {
 // "Add to Home Screen" shortcut. Network-first pass-through; we don't
 // cache anything to keep API responses fresh.
 self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+
+  if (event.request.method === "GET" && url.origin === self.location.origin && url.pathname === DYNAMIC_MANIFEST_PATH) {
+    event.respondWith(dynamicManifestResponse());
+    return;
+  }
+
+  if (event.request.method === "GET" && url.origin === self.location.origin && url.pathname === `${DYNAMIC_ICON_192_PATH}.png`) {
+    event.respondWith(readPushBranding().then((branding) => brandImageResponse(branding.logoUrl, "/icons/icon-192.png")));
+    return;
+  }
+
+  if (event.request.method === "GET" && url.origin === self.location.origin && url.pathname === `${DYNAMIC_ICON_512_PATH}.png`) {
+    event.respondWith(readPushBranding().then((branding) => brandImageResponse(branding.logoUrl, "/icons/icon-512.png")));
+    return;
+  }
+
   // Pass through — let the browser handle it normally.
   event.respondWith(fetch(event.request).catch(() => Response.error()));
 });

@@ -83,6 +83,7 @@ import { auth } from "./lib/auth";
 import {
   subscribeToPush,
   unsubscribeFromPush,
+  ensurePushSubscriptionCurrent,
   isCurrentlySubscribed,
   getCurrentPushEndpoint,
   getPermissionState,
@@ -109,6 +110,23 @@ import {
   revenueData,
   summaryCards
 } from "./data";
+
+const DYNAMIC_MANIFEST_PATH = "/dynamic-manifest.webmanifest";
+
+function manifestVersionToken(brandName: string, logoUrl: string): string {
+  return `${brandName.trim().length}-${logoUrl.trim().length}`;
+}
+
+function syncDynamicManifestLink(brandName: string, logoUrl: string) {
+  if (typeof document === "undefined") return;
+  let link = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "manifest";
+    document.head.appendChild(link);
+  }
+  link.href = `${DYNAMIC_MANIFEST_PATH}?v=${encodeURIComponent(manifestVersionToken(brandName, logoUrl))}`;
+}
 
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
@@ -1637,13 +1655,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .catch(() => undefined);
   }, [companyName, companyLogo]);
 
-  // NOTE: We intentionally do NOT override the static <link rel="manifest">
-  // with a blob: URL here. Chrome's WebAPK installer requires a stable,
-  // re-fetchable manifest URL — blob URLs are per-session and disqualify the
-  // app from "Install app" (proper WebAPK), silently downgrading to the
-  // inferior "Add to Home Screen" shortcut. The static /manifest.json with
-  // the default Protohub PNG icons is what gets installed. The company logo
-  // still updates the in-tab favicon via the effect above.
+  // Keep a stable same-origin manifest URL so Chrome/WebAPK install stays
+  // eligible, while letting the service worker serve brand-aware install
+  // metadata for the current workspace.
+  useEffect(() => {
+    syncDynamicManifestLink(companyName || "Protohub", companyLogo || "");
+  }, [companyName, companyLogo]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -5258,7 +5275,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Check push notification status on mount
   useEffect(() => {
-    void refreshPushDiagnostics();
+    void (async () => {
+      await ensurePushSubscriptionCurrent().catch(() => false);
+      await refreshPushDiagnostics();
+    })();
     // Listen for SW navigation messages (notification click)
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "NAVIGATE" && event.data.url) {
