@@ -127,11 +127,32 @@ router.delete("/subscribe", async (req, res) => {
 // ── GET /api/push/status ─────────────────────────────────
 // Check if the current user has any active subscriptions
 router.get("/status", async (req, res) => {
-  const { count } = await supabase
+  const { data, count, error } = await supabase
     .from("push_subscriptions")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", req.user!.id);
-  res.json({ subscribed: (count ?? 0) > 0, count: count ?? 0, configured: isPushConfigured() });
+    .select("id, endpoint, created_at", { count: "exact" })
+    .eq("user_id", req.user!.id)
+    .order("created_at", { ascending: false });
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({
+    subscribed: (count ?? 0) > 0,
+    count: count ?? 0,
+    configured: isPushConfigured(),
+    subscriptions: (data ?? []).map((row) => ({
+      id: row.id,
+      endpoint: row.endpoint,
+      createdAt: row.created_at,
+      host: (() => {
+        try {
+          return new URL(row.endpoint).host;
+        } catch {
+          return "unknown";
+        }
+      })()
+    }))
+  });
 });
 
 // ── POST /api/push/test ──────────────────────────────────

@@ -124,7 +124,7 @@ self.addEventListener("push", (event) => {
     const brandName = typeof payload.brandName === "string" && payload.brandName.trim()
       ? payload.brandName.trim()
       : branding.brandName || DEFAULT_BRAND_NAME;
-    const brandLogo = sanitizeBrandLogo(payload.brandLogo) || branding.logoUrl;
+    const brandLogo = branding.logoUrl || sanitizeBrandLogo(payload.brandLogo);
     const presentationIcon = payload.icon || presentation.icon || "/icons/icon-192.png";
     const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
     const options = {

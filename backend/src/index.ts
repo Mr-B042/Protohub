@@ -76,7 +76,7 @@ app.use(rateLimit({
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isLoopbackIp(req.ip)
+  skip: (req) => isLoopbackIp(req.ip) || req.path.startsWith("/api/public/branding/")
 }));
 
 // Rate limit on auth endpoints — 20 attempts per 15 minutes per IP. Bumped

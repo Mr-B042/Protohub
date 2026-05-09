@@ -33,6 +33,10 @@ router.get("/:orgId/logo", async (req, res) => {
     return;
   }
 
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Cross-Origin-Resource-Policy", "cross-origin");
+  res.set("Cache-Control", "public, max-age=300");
+
   const { data, error } = await supabase
     .from("organizations")
     .select("logo_url")
@@ -53,7 +57,6 @@ router.get("/:orgId/logo", async (req, res) => {
   const dataUrl = parseDataUrlImage(raw);
   if (dataUrl) {
     res.set("Content-Type", dataUrl.contentType);
-    res.set("Cache-Control", "public, max-age=300");
     res.send(dataUrl.buffer);
     return;
   }

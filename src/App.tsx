@@ -84,6 +84,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
   isCurrentlySubscribed,
+  getCurrentPushEndpoint,
   getPermissionState,
   getPushStatus,
   sendTestPush
@@ -108,18 +109,6 @@ import {
   revenueData,
   summaryCards
 } from "./data";
-
-const PUSH_BRANDING_API_BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
-
-function resolvePushBrandingLogoUrl(logoUrl: string, orgId?: string | null): string {
-  const trimmed = typeof logoUrl === "string" ? logoUrl.trim() : "";
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("/")) return trimmed;
-  if (trimmed.startsWith("data:image/") && orgId) {
-    return `${PUSH_BRANDING_API_BASE}/api/public/branding/${encodeURIComponent(orgId)}/logo`;
-  }
-  return "";
-}
 
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
@@ -1633,7 +1622,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const message = {
       type: "SET_PUSH_BRANDING",
       brandName: companyName || "Protohub",
-      logoUrl: resolvePushBrandingLogoUrl(companyLogo || "", authUser?.orgId)
+      logoUrl: companyLogo || ""
     };
     void navigator.serviceWorker.ready
       .then((registration) => {
@@ -1646,7 +1635,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         targets.forEach((worker) => worker?.postMessage(message));
       })
       .catch(() => undefined);
-  }, [authUser?.orgId, companyName, companyLogo]);
+  }, [companyName, companyLogo]);
 
   // NOTE: We intentionally do NOT override the static <link rel="manifest">
   // with a blob: URL here. Chrome's WebAPK installer requires a stable,
@@ -2116,6 +2105,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
   const [pushServerConfigured, setPushServerConfigured] = useState(false);
   const [pushSubscriptionCount, setPushSubscriptionCount] = useState(0);
+  const [pushCurrentDeviceLinked, setPushCurrentDeviceLinked] = useState(false);
+  const [pushSubscriptionHosts, setPushSubscriptionHosts] = useState<string[]>([]);
   const [showPushBanner, setShowPushBanner] = useState(false);
   // PWA install
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -2153,13 +2144,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const refreshPushDiagnostics = async (respectBannerDismissal = true) => {
     const perm = getPermissionState();
     setPushPermission(perm);
-    const [{ configured, count }, browserSubscribed] = await Promise.all([
+    const [{ configured, count, subscriptions }, browserSubscribed, currentEndpoint] = await Promise.all([
       getPushStatus(),
-      isCurrentlySubscribed()
+      isCurrentlySubscribed(),
+      getCurrentPushEndpoint()
     ]);
-    const isSubscribed = browserSubscribed && count > 0;
+    const linkedToThisDevice = currentEndpoint
+      ? (subscriptions ?? []).some((subscription) => subscription.endpoint === currentEndpoint)
+      : false;
+    const isSubscribed = browserSubscribed && linkedToThisDevice;
     setPushServerConfigured(configured);
     setPushSubscriptionCount(count);
+    setPushCurrentDeviceLinked(linkedToThisDevice);
+    setPushSubscriptionHosts([...new Set((subscriptions ?? []).map((subscription) => subscription.host).filter(Boolean))]);
     setPushSubscribed(isSubscribed);
     const dismissed = respectBannerDismissal ? sessionStorage.getItem("pushBannerDismissed") : null;
     const shouldShowBanner = configured && !pushNeedsStandaloneInstall && !isSubscribed && perm === "default" && !dismissed;
@@ -2191,7 +2188,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : pushNeedsStandaloneInstall ? "Install to Home Screen is required on this iPhone/iPad"
     : pushPermission === "denied" ? "Notifications are blocked on this device"
     : pushPermission === "unsupported" ? "This browser does not support web push"
-    : pushSubscribed ? "Subscription needs attention"
+    : pushCurrentDeviceLinked ? "Subscription needs attention"
     : "This device is not subscribed yet";
   const pushStatusMessage =
     pushBackgroundReady ? "Lock your screen or close the app and supported push alerts should still arrive."
@@ -2199,7 +2196,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : pushNeedsStandaloneInstall ? "Open this site in Safari, use Share -> Add to Home Screen, then open it from the home-screen icon before enabling notifications."
     : pushPermission === "denied" ? "Enable notifications again from your browser or device settings, then re-subscribe."
     : pushPermission === "unsupported" ? "Use a browser/device combination that supports Service Workers, Push API, and Notifications."
-    : pushSubscribed ? "The browser has permission, but the server is not seeing an active subscription yet. Force re-subscribe to repair it."
+    : pushCurrentDeviceLinked ? "The browser has permission and this device is linked, but delivery still needs a live push check."
+    : pushSubscriptionCount > 0 ? "This account already has push linked on another browser or device, but not on this exact one. Force re-subscribe here to move delivery onto this device."
     : installGuidePlatform === "ios"
       ? "Once installed to the home screen, enable notifications there to receive lock-screen alerts."
       : "Enable notifications on this device to receive lock-screen/background alerts where the browser supports it.";
@@ -20436,13 +20434,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders and operational alerts.</p>
                       <p className="text-xs text-gray-400 mb-3">
                         Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
-                        {" · "}Subscription: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active" : "Inactive"}</span>
+                        {" · "}Subscription: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active on this device" : "Inactive on this device"}</span>
                         {" · "}Server: <span className={`font-medium ${pushServerConfigured ? "text-green-600" : "text-amber-600"}`}>{pushServerConfigured ? "Configured" : "Not configured"}</span>
                         {" · "}Saved device/browser subscriptions: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
                       </p>
+                      {pushSubscriptionHosts.length > 0 ? (
+                        <p className="text-xs text-gray-400 mb-3">
+                          Registered providers: <span className="font-medium text-gray-500">{pushSubscriptionHosts.join(", ")}</span>
+                        </p>
+                      ) : null}
                       {pushSubscriptionCount > 1 ? (
                         <p className="text-xs text-amber-600 font-medium mb-3">
                           More than one push registration is saved on this account. That can happen when the same account enables notifications on multiple browsers/devices or when an older browser registration has not expired yet.
+                        </p>
+                      ) : null}
+                      {installGuidePlatform === "ios" && pushSubscriptionHosts.some((host) => host.includes("fcm.googleapis.com")) ? (
+                        <p className="text-xs text-amber-600 font-medium mb-3">
+                          The saved push registration on this account is currently Chromium/FCM-based, not Apple Web Push. If this phone is an iPhone/iPad, open the Home Screen app on this device and use Force Re-subscribe here.
                         </p>
                       ) : null}
                       {pushPermission === "denied" ? (

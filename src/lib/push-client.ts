@@ -50,15 +50,20 @@ export async function getVapidPublicKey(): Promise<string | null> {
 /**
  * Check if the user currently has push subscriptions on the server.
  */
-export async function getPushStatus(): Promise<{ subscribed: boolean; count: number; configured: boolean }> {
+export async function getPushStatus(): Promise<{
+  subscribed: boolean;
+  count: number;
+  configured: boolean;
+  subscriptions: Array<{ id: string; endpoint: string; createdAt: string; host: string }>;
+}> {
   try {
     const res = await fetch(`${BASE}/api/push/status`, {
       headers: getAuthHeaders()
     });
-    if (!res.ok) return { subscribed: false, count: 0, configured: false };
+    if (!res.ok) return { subscribed: false, count: 0, configured: false, subscriptions: [] };
     return await res.json();
   } catch {
-    return { subscribed: false, count: 0, configured: false };
+    return { subscribed: false, count: 0, configured: false, subscriptions: [] };
   }
 }
 
@@ -169,6 +174,17 @@ export async function isCurrentlySubscribed(): Promise<boolean> {
     return subscription !== null;
   } catch {
     return false;
+  }
+}
+
+export async function getCurrentPushEndpoint(): Promise<string | null> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    return subscription?.endpoint ?? null;
+  } catch {
+    return null;
   }
 }
 
