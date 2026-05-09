@@ -455,6 +455,7 @@ type ExpenseRecord = {
   amount: number;
   currency: CurrencyCode;
   date: string;
+  createdAt?: string;
   productId?: string;
   productName: string;
   description: string;
@@ -852,6 +853,7 @@ const setStoredTimezone = (tz: string) => {
   try { localStorage.setItem(TIMEZONE_STORAGE_KEY, _currentTimezone); } catch {}
 };
 const getStoredTimezone = () => _currentTimezone;
+const nowIso = () => new Date().toISOString();
 
 const formatDateTime = (value?: string | Date | null) => {
   if (!value) return "";
@@ -880,6 +882,28 @@ const formatDateOnly = (value?: string | Date | null) => {
   } catch {
     return d.toLocaleDateString();
   }
+};
+const formatMoment = (value?: string | Date | null) => {
+  if (!value) return "";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return formatDateOnly(value);
+  }
+  return formatDateTime(value);
+};
+const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement[]) => {
+  if (waybill.status === "In Transit") {
+    return waybill.createdAt;
+  }
+  if (waybill.status === "Cancelled") {
+    return undefined;
+  }
+
+  const movementType =
+    waybill.status === "Received" || waybill.status === "Returned"
+      ? "Waybill In"
+      : "Correction";
+  const matchingMovement = movements.find((movement) => movement.waybillId === waybill.id && movement.type === movementType);
+  return matchingMovement?.createdAt ?? matchingMovement?.date ?? (waybill.status === "Received" && waybill.dateReceived ? waybill.createdAt : undefined);
 };
 
 const scheduleDateForRange = (range: ScheduleRange, customDate?: string) => {
@@ -1030,6 +1054,8 @@ const formatTrend = (change: number) => {
   return `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
 };
 
+const formatOrderCreatedAt = (order: Pick<TrackedOrder, "createdAt" | "date">) =>
+  formatMoment(order.createdAt) || displayDateFromKey(order.date);
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
@@ -4654,6 +4680,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           // Backend stores "category" but frontend ExpenseRecord uses "type" — normalise at boundary
           setExpenses((apiExpenses.value as any[]).map((e: any) => ({
             ...e,
+            createdAt: e.createdAt ?? e.created_at ?? "",
             type: e.type ?? e.category ?? "Other",
             productName: e.productName ?? e.productName ?? ""
           })) as any);
@@ -4694,7 +4721,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             email: u.email,
             role: u.role,
             active: u.active,
-            created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "",
+            created: u.createdAt ?? u.created_at ?? "",
             roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
           })));
         }
@@ -4944,8 +4971,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       source: publicProduct ? orderSourceFromUtm(publicUtmSource) : "Website",
       status: abandonedDraftCartId ? "In progress" : "Open abandoned",
       assignedRepId: abandonedCarts.find((cart) => cart.id === abandonedDraftCartId)?.assignedRepId,
-      lastActivity: new Date().toISOString(),
-      createdAt: todayKey()
+      lastActivity: nowIso(),
+      createdAt: nowIso()
     };
 
     setAbandonedCarts((value) => {
@@ -5800,8 +5827,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["General Expenses", formatMoney(generalExpenses)],
       ["Daily Burn Rate", formatMoney(dailyBurnRate)],
       [],
-      ["Date", "Type", "Product / Ref", "Amount", "Description"],
-      ...filteredExpenses.map((expense) => [displayDateFromKey(expense.date), expense.type, expense.productName, formatMoney(expense.amount), expense.description])
+      ["Date", "Recorded At", "Type", "Product / Ref", "Amount", "Description"],
+      ...filteredExpenses.map((expense) => [displayDateFromKey(expense.date), formatMoment(expense.createdAt), expense.type, expense.productName, formatMoney(expense.amount), expense.description])
     ];
 
     const csv = rows
@@ -5828,7 +5855,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Role Filter", userRole],
       ["Status Filter", userStatus],
       ["Name", "Email", "Role", "Status", "Created"],
-      ...users.map((user) => [user.name, user.email, user.role, user.active ? "Active" : "Inactive", user.created])
+      ...users.map((user) => [user.name, user.email, user.role, user.active ? "Active" : "Inactive", formatMoment(user.created)])
     ];
 
     const csv = rows
@@ -6102,7 +6129,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ],
       packages: [],
       packageDescription: "",
-      createdAt: displayDateFromKey(todayKey())
+      createdAt: nowIso()
     };
 
     setProducts((value) => [...value, product]);
@@ -6300,7 +6327,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       warehouseStock: 0,
       agentStock: 0,
       unitsSold: 0,
-      createdAt: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      createdAt: nowIso(),
       pricings: source.pricings.map((p) => ({ ...p })),
       packages: source.packages.map((pkg) => ({ ...pkg, id: makePackageId() })),
       availableStates: source.availableStates ? [...source.availableStates] : undefined,
@@ -7175,9 +7202,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       response: "Awaiting confirmation",
       location: orderLocationFromFields(createOrderCity, createOrderState),
       assignedRepId: repForNewRecord(),
-      createdAt: todayKey(),
+      createdAt: nowIso(),
       date: displayDateFromKey(todayKey()),
-      notes: [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: new Date().toISOString() }]
+      notes: [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }]
     };
     setTrackedOrders((value) => [order, ...value]);
     setModal(null);
@@ -7812,7 +7839,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ].filter(Boolean).join("\n")
             }
           ],
-          createdAt: todayKey(),
+          createdAt: nowIso(),
           date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
         },
         ...value
@@ -7950,7 +7977,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       email: salesRepEmail.trim(),
       role: salesRepRole,
       active: salesRepActive,
-      created: displayDateFromKey(todayKey())
+      created: nowIso()
     };
     const _repLocalId = rep.id;
     setUsers((value) => [...value, rep]);
@@ -7991,7 +8018,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       zone: agentZoneInput.trim(),
       address: agentAddress.trim(),
       active: agentActive,
-      created: displayDateFromKey(todayKey())
+      created: nowIso()
     };
     const _agLocalId = agent.id;
     setAgents((value) => [...value, agent]);
@@ -8929,9 +8956,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       response: "Converted from abandoned cart",
       location: orderLocationFromFields(selectedCart.city ?? "", selectedCart.state ?? ""),
       assignedRepId: selectedCart.assignedRepId ?? repForNewRecord(),
-      createdAt: todayKey(),
+      createdAt: nowIso(),
       date: displayDateFromKey(todayKey()),
-      notes: [{ id: makeNoteId(), text: `Converted from ${selectedCart.id}.`, by: ownerName, date: new Date().toISOString() }]
+      notes: [{ id: makeNoteId(), text: `Converted from ${selectedCart.id}.`, by: ownerName, date: nowIso() }]
     };
     const cartSnapshot = selectedCart;
     setTrackedOrders((value) => [order, ...value]);
@@ -9053,7 +9080,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     }
 
-    const updatedAt = displayDateFromKey(todayKey());
+    const updatedAt = nowIso();
     const nextStructure: PayStructure = {
       userId: selectedPayUser.id,
       type: payStructureType,
@@ -9136,6 +9163,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       amount,
       currency: expenseCurrency,
       date: parseExpenseDateKey(expenseDate),
+      createdAt: nowIso(),
       productId: product?.id,
       productName: product?.name ?? expenseProduct,
       description: expenseDescription.trim() || `${expenseType} expense`
@@ -9184,7 +9212,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         email: userEmail.trim(),
         role: newUserRole,
         active: newUserActive,
-        created: displayDateFromKey(todayKey())
+        created: nowIso()
       }
     ]);
     setUserPassword("");
@@ -9379,7 +9407,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <td className="px-4 py-4 text-gray-600 text-xs">
                     {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}
                   </td>
-                  <td className="px-4 py-4 text-gray-500 text-xs">{formatDateTime(order.createdAt ?? order.date)}</td>
+                  <td className="px-4 py-4 text-gray-500 text-xs">{formatOrderCreatedAt(order)}</td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button
@@ -10351,7 +10379,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </select>
                         </td>
                         <td className="px-4 py-4 text-gray-500">
-                          {new Date(cart.lastActivity).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                          {formatMoment(cart.lastActivity)}
                         </td>
                         <td className="px-4 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -11735,7 +11763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <p className="font-medium text-sm text-gray-900 m-0">{order.customer}</p>
                               <p className="text-xs text-gray-400 m-0 mt-0.5">{order.phone}</p>
                             </td>
-                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs text-gray-400 whitespace-nowrap">{formatDateTime(order.createdAt ?? order.date)}</td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs text-gray-400 whitespace-nowrap">{formatOrderCreatedAt(order)}</td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(order.amount, order.currency)}</td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">{renderDeliveryFeeCell(order)}</td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4">
@@ -12024,7 +12052,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <div className="flex items-center gap-3 flex-wrap text-xs text-gray-600">
                             <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-gray-200" />{source}</span>
                             <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-gray-400" />{location}</span>
-                            <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-gray-400" />{formatDateTime(order.createdAt ?? order.date)}</span>
+                            <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-gray-400" />{formatOrderCreatedAt(order)}</span>
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
                           </div>
                           <div className="grid grid-cols-2 gap-2 pt-1">
@@ -12145,7 +12173,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 })()}
                               </td>
                               <td className="px-4 py-3.5 text-sm text-gray-600 whitespace-nowrap">{location}</td>
-                              <td className="px-4 py-3.5 text-sm text-gray-600 whitespace-nowrap">{formatDateTime(order.createdAt ?? order.date)}</td>
+                              <td className="px-4 py-3.5 text-sm text-gray-600 whitespace-nowrap">{formatOrderCreatedAt(order)}</td>
                               <td className="px-4 py-3.5">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
@@ -12420,7 +12448,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
                             <td className="px-4 py-3"><span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span></td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{formatDateTime(cart.lastActivity || cart.createdAt)}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{formatMoment(cart.lastActivity || cart.createdAt)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1 flex-wrap">
                                 <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-100 transition-colors" title="Details" aria-label="Details" onClick={() => openCartModal(cart, "cartDetails")}><Eye className="w-4 h-4" /></button>
@@ -12959,7 +12987,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-600 mt-1">
                         <CalendarDays className="w-4 h-4 text-gray-400" />
-                        <span>Joined {detailUser.created || "—"}</span>
+                        <span>Joined {formatMoment(detailUser.created) || "—"}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -12977,7 +13005,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             ["Name", detailUser.name],
                             ["Email", detailUser.email],
                             ["Status", detailUser.active ? "Active" : "Inactive"],
-                            ["Joined", detailUser.created || ""],
+                            ["Joined", formatMoment(detailUser.created)],
                             ["Period", salesPeriod === "Custom" && salesDateRange.start && salesDateRange.end ? `${salesDateRange.start} to ${salesDateRange.end}` : salesPeriod],
                             [],
                             ["Total Orders", String(repOrders.length)],
@@ -12991,7 +13019,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             ...repOrders.map((o) => [
                               o.id,
                               o.customer,
-                              o.date,
+                              formatOrderCreatedAt(o),
                               formatProductMoney(o.amount, o.currency),
                               o.source ?? orderSourceFromUtm(o.utmSource),
                               o.status ?? "New"
@@ -13278,7 +13306,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Sales representatives table">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, created: u.created_at ? new Date(u.created_at).toLocaleDateString("en-GB") : "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -13612,7 +13640,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="flex items-center gap-4 flex-wrap mt-1.5 text-sm text-gray-600">
                         <span className="inline-flex items-center gap-1.5"><Phone className="w-4 h-4 text-gray-400" />{agent.phone}</span>
                         <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-gray-400" />{agent.zone}</span>
-                        <span className="inline-flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-gray-400" />Joined {agent.created || "—"}</span>
+                        <span className="inline-flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-gray-400" />Joined {formatMoment(agent.created) || "—"}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
@@ -14001,7 +14029,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                               className="hover:bg-blue-50/50 cursor-pointer transition-colors"
                                               title="Click to see linked order / waybill / record"
                                             >
-                                              <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">{formatDateTime(mov.createdAt ?? mov.date)}</td>
+                                              <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">{formatMoment(mov.createdAt ?? mov.date)}</td>
                                               <td className="px-3 py-2 whitespace-nowrap"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700">{mov.type}</span></td>
                                               <td className={`px-3 py-2 whitespace-nowrap text-right font-bold ${signed > 0 ? "text-emerald-600" : signed < 0 ? "text-rose-600" : "text-gray-500"}`}>{signed > 0 ? "+" : ""}{signed}</td>
                                               <td className="px-3 py-2 whitespace-nowrap text-right font-bold text-gray-900">{balance}</td>
@@ -14078,7 +14106,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
 
                           <Section title="Movement">
-                            <Field label="When" value={formatDateTime(m.createdAt ?? m.date)} />
+                            <Field label="When" value={formatMoment(m.createdAt ?? m.date)} />
                             <Field label="Quantity" value={<span className={signed > 0 ? "text-emerald-600" : signed < 0 ? "text-rose-600" : ""}>{signed > 0 ? "+" : ""}{signed}</span>} />
                             <Field label="Recorded by" value={m.by ?? (m as any).byName} />
                             {m.note && <Field label="Note" value={m.note} />}
@@ -14118,8 +14146,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <Field label="Logistics partner" value={linkedWaybill.logisticsPartner} />
                                   <Field label="Quantity" value={linkedWaybill.quantity} />
                                   <Field label="Fee" value={`₦${linkedWaybill.waybillFee.toLocaleString()}`} />
-                                  <Field label="Sent" value={new Date(linkedWaybill.dateSent).toLocaleDateString()} />
-                                  <Field label="Received" value={linkedWaybill.dateReceived ? new Date(linkedWaybill.dateReceived).toLocaleDateString() : "Pending"} />
+                                  <Field label="Sent" value={formatMoment(linkedWaybill.createdAt) || formatDateOnly(linkedWaybill.dateSent)} />
+                                  <Field label="Received" value={(() => {
+                                    const receivedMoment = getWaybillStatusMoment(linkedWaybill, stockMovements);
+                                    return receivedMoment ? formatMoment(receivedMoment) : linkedWaybill.dateReceived ? formatDateOnly(linkedWaybill.dateReceived) : "Pending";
+                                  })()} />
                                   <Field label="Status" value={linkedWaybill.status} />
                                 </>
                               ) : (
@@ -14570,10 +14601,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</td>
-                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{w.dateSent}</td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                              <span className="block">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
+                              <span className="block text-xs text-gray-400 mt-0.5">Dispatch date {formatDateOnly(w.dateSent)}</span>
+                            </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColors[w.status]}`}>{w.status}</span>
-                              {w.dateReceived && <span className="block text-xs text-gray-400 mt-0.5">{w.dateReceived}</span>}
+                              {(() => {
+                                const statusMoment = getWaybillStatusMoment(w, stockMovements);
+                                if (statusMoment) {
+                                  return <span className="block text-xs text-gray-400 mt-0.5">{formatMoment(statusMoment)}</span>;
+                                }
+                                if (w.dateReceived) {
+                                  return <span className="block text-xs text-gray-400 mt-0.5">{formatDateOnly(w.dateReceived)}</span>;
+                                }
+                                return null;
+                              })()}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="flex gap-2 flex-wrap">
@@ -14672,7 +14715,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-4 py-4">
                                   <span className={`text-sm font-semibold ${structure ? "text-green-600" : "text-amber-600"}`}>{structure ? payStructureLabelFor(structure) : "Not set"}</span>
                                 </td>
-                                <td className="px-4 py-4 text-gray-500">{structure?.updatedAt ?? "-"}</td>
+                                <td className="px-4 py-4 text-gray-500">{formatMoment(structure?.updatedAt) || "-"}</td>
                                 <td className="px-4 py-4">
                                   <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openPayRateModal(user.id)}>{structure ? "Edit Rate" : "Set Rate"}</button>
                                 </td>
@@ -14802,7 +14845,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <tbody className="divide-y divide-gray-100">
                               {periodPenalties.map((pen) => (
                                 <tr key={pen.id}>
-                                  <td className="px-3 py-2 text-gray-600">{new Date(pen.date).toLocaleDateString()}</td>
+                                  <td className="px-3 py-2 text-gray-600">{formatMoment(pen.date)}</td>
                                   <td className="px-3 py-2 font-medium text-gray-800">{pen.repName}</td>
                                   <td className="px-3 py-2 text-gray-700">{pen.type}</td>
                                   <td className="px-3 py-2 text-right text-red-600 font-semibold">−{formatMoney(pen.amount)}</td>
@@ -14857,7 +14900,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-4 text-gray-700">{run.rows.length}</td>
                               <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatMoney(run.total)}</td>
                               <td className="px-4 py-4"><span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColor}`}>{status}</span></td>
-                              <td className="px-4 py-4 text-gray-500">{displayDateFromKey(run.createdAt)}</td>
+                              <td className="px-4 py-4 text-gray-500">{formatMoment(run.createdAt)}</td>
                               <td className="px-4 py-4 text-gray-500">{run.notes || "-"}</td>
                               <td className="px-4 py-4 whitespace-nowrap">
                                 <div className="flex gap-2">
@@ -15266,7 +15309,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ) : (
                         pagedExpenses.map((expense) => (
                           <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-4 text-gray-600">{displayDateFromKey(expense.date)}</td>
+                            <td className="px-4 py-4 text-gray-600">
+                              <span className="block">{displayDateFromKey(expense.date)}</span>
+                              {expense.createdAt && <span className="block text-xs text-gray-400 mt-0.5">{formatMoment(expense.createdAt)}</span>}
+                            </td>
                             <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{expense.type}</span></td>
                             <td className="px-4 py-4 text-gray-700">{expense.productName}</td>
                             <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(expense.amount)}</td>
@@ -16503,7 +16549,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
                               <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
                               <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
-                              <td className="px-4 py-4 text-gray-500">{formatDateTime(order.createdAt ?? order.date)}</td>
+                              <td className="px-4 py-4 text-gray-500">{formatOrderCreatedAt(order)}</td>
                             </tr>
                           ));
                         })()
@@ -16854,7 +16900,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <strong className={user.active ? "text-green-600" : "text-gray-400"}>{user.active ? "Active" : "Inactive"}</strong>
                                   </button>
                                 </td>
-                                <td className="px-4 py-4 text-gray-500">{user.created}</td>
+                                <td className="px-4 py-4 text-gray-500">{formatMoment(user.created) || "—"}</td>
                                 <td className="px-4 py-4">
                                   <div className="flex items-center gap-1">
                                     {realRole === "Owner" && user.id !== authUser?.id && (
@@ -17877,7 +17923,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="flex-1 min-w-0">
                               {n.title && <p className={`text-xs font-bold uppercase tracking-wider ${!n.read ? "text-gray-700" : "text-gray-500"}`}>{n.title}</p>}
                               <p className={`text-sm ${!n.read ? "font-semibold text-gray-900" : "text-gray-700"}`}>{n.message}</p>
-                              <p className="text-xs text-gray-400 mt-0.5">{new Date(n.createdAt).toLocaleString()}</p>
+                              <p className="text-xs text-gray-400 mt-0.5">{formatMoment(n.createdAt)}</p>
                             </div>
                             <div className="flex items-center gap-2 shrink-0 mt-1">
                               {!n.read && <span className="w-2 h-2 rounded-full bg-[#1F8FE0]" aria-label="Unread" />}
@@ -17894,7 +17940,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </div>
                                 <div>
                                   <span className="block text-gray-400 font-bold uppercase tracking-wider">Created</span>
-                                  <span className="block text-gray-700 font-medium mt-1">{formatDateTime(n.createdAt)}</span>
+                                  <span className="block text-gray-700 font-medium mt-1">{formatMoment(n.createdAt)}</span>
                                 </div>
                                 {n.orderId && (
                                   <div>
@@ -18518,7 +18564,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         ) : (
                           filteredStockMovements.map((movement) => (
                             <tr key={movement.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{new Date(movement.date ?? movement.createdAt ?? "").toLocaleString()}</td>
+                              <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatMoment(movement.createdAt ?? movement.date)}</td>
                               <td className="px-4 py-3 font-medium text-gray-900">{movement.productName}</td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${movement.type === "Stock Added" ? "bg-green-100 text-green-700" : movement.type === "Distributed to Agent" ? "bg-blue-100 text-blue-700" : movement.type === "Order Fulfilled" ? "bg-purple-100 text-purple-700" : movement.type === "Return" ? "bg-amber-100 text-amber-700" : movement.type === "Correction" ? "bg-orange-100 text-orange-700" : movement.type === "Waybill Out" ? "bg-rose-100 text-rose-700" : movement.type === "Waybill In" ? "bg-teal-100 text-teal-700" : "bg-gray-100 text-gray-600"}`}>{movement.type}</span>
@@ -18727,7 +18773,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <h2 className="text-sm font-bold text-gray-900">{session.title}</h2>
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${session.status === "Open" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"}`}>{session.status}</span>
                               </div>
-                              <p className="text-xs text-gray-400">Created {new Date(session.createdAt).toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" })} by {session.createdBy}</p>
+                              <p className="text-xs text-gray-400">Created {formatMoment(session.createdAt)} by {session.createdBy}{session.closedAt ? ` · Closed ${formatMoment(session.closedAt)}` : ""}</p>
                             </div>
                             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                               <span className="text-xs text-gray-500">{verified}/{total} verified</span>
@@ -18775,6 +18821,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                               </td>
                                               <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusCls}`}>{entry.status}</span>
+                                                {(entry.verifiedAt ?? entry.adminConfirmedAt ?? entry.agentSubmittedAt) && (
+                                                  <span className="block text-[10px] text-gray-400 mt-1">{formatMoment(entry.verifiedAt ?? entry.adminConfirmedAt ?? entry.agentSubmittedAt)}</span>
+                                                )}
                                               </td>
                                               <td className="px-4 py-3">
                                                 <div className="flex items-center gap-1">
@@ -19603,7 +19652,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    </div>
 	                    <div>
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Order Date</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{formatDateTime(selectedOrder.createdAt ?? selectedOrder.date)}</p>
+	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{formatOrderCreatedAt(selectedOrder)}</p>
 	                    </div>
 	                    <div>
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Assigned To</p>
@@ -20372,8 +20421,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <div className="grid grid-cols-2 gap-3 text-sm">
 	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatDateTime(selectedCart.createdAt)}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatDateTime(selectedCart.lastActivity)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
 	                    </div>
 	                  </section>
 
@@ -21471,7 +21520,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                              </span>
 	                              <div className="flex-1 min-w-0">
 	                                <p className="text-gray-800 font-medium truncate">{m.note || m.type}</p>
-	                                <p className="text-gray-400 mt-0.5">{new Date(m.date ?? m.createdAt ?? "").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} \u00b7 {m.by}</p>
+	                                <p className="text-gray-400 mt-0.5">{formatMoment(m.createdAt ?? m.date)} \u00b7 {m.by}</p>
 	                              </div>
 	                              <span className="text-gray-400 shrink-0 mt-0.5">bal {m.balanceAfter}</span>
 	                            </div>
@@ -21582,7 +21631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            })()}
 
 	            {modal === "salesRepDetails" && selectedSalesRep && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.created}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => { setSalesRepName(selectedSalesRep.name); setSalesRepEmail(selectedSalesRep.email); setSalesRepActive(selectedSalesRep.active); setModal("editSalesRep"); }}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
+	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => { setSalesRepName(selectedSalesRep.name); setSalesRepEmail(selectedSalesRep.email); setSalesRepActive(selectedSalesRep.active); setModal("editSalesRep"); }}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                         const rows = [
                           [`Sales Rep Report — ${selectedSalesRep.name}`],
@@ -21591,7 +21640,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           ["Delivered", String(repOrders.filter((o) => (o.status ?? "New") === "Delivered").length)],
                           [],
                           ["Order ID", "Customer", "Phone", "Product", "Status", "Amount", "Date"],
-                          ...repOrders.map((o) => [o.id, o.customer, o.phone, o.productName, o.status ?? "New", formatProductMoney(o.amount, o.currency), o.date])
+                          ...repOrders.map((o) => [o.id, o.customer, o.phone, o.productName, o.status ?? "New", formatProductMoney(o.amount, o.currency), formatOrderCreatedAt(o)])
                         ];
                         const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
                         const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -21631,7 +21680,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <h3 className="text-base font-bold text-gray-900 m-0 truncate">{selectedSalesRep.name}</h3>
                           <span className={`status-pill status-${selectedSalesRep.active ? "active" : "inactive"}`}>{selectedSalesRep.active ? "Active" : "Inactive"}</span>
                         </div>
-                        <p className="text-xs text-gray-500 m-0 mt-0.5">{selectedSalesRep.role} · joined {selectedSalesRep.created || "—"}</p>
+                        <p className="text-xs text-gray-500 m-0 mt-0.5">{selectedSalesRep.role} · joined {formatMoment(selectedSalesRep.created) || "—"}</p>
                       </div>
                     </header>
 
@@ -22037,7 +22086,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <span className={`status-pill status-${selectedUser.active ? "active" : "inactive"}`}>{selectedUser.active ? "Active" : "Inactive"}</span>
                         {isOwner && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">Owner</span>}
                       </div>
-                      <p className="text-xs text-gray-500 m-0 mt-0.5">{selectedUser.role} · joined {selectedUser.created || "—"}</p>
+                      <p className="text-xs text-gray-500 m-0 mt-0.5">{selectedUser.role} · joined {formatMoment(selectedUser.created) || "—"}</p>
                     </div>
                   </header>
 
@@ -22908,6 +22957,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${toneClass[tone]}`}>{expense.type}</span>
                         <span className="text-xs text-gray-500">{formatDateOnly(expense.date)}</span>
+                        {expense.createdAt && <span className="text-xs text-gray-400">Recorded {formatMoment(expense.createdAt)}</span>}
                         {(expense.id.startsWith("EXP-DEL-") || expense.id.startsWith("EXP-WB-")) && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-bold uppercase">Auto-booked</span>
                         )}
@@ -22922,6 +22972,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div><p className="text-[11px] text-gray-400 m-0">Category</p><p className="font-semibold text-gray-900 m-0">{expense.type}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Amount</p><p className="font-semibold text-gray-900 m-0">{formatProductMoney(expense.amount, expense.currency)}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Date</p><p className="font-semibold text-gray-900 m-0">{formatDateOnly(expense.date)}</p></div>
+                      <div><p className="text-[11px] text-gray-400 m-0">Recorded</p><p className="font-semibold text-gray-900 m-0">{formatMoment(expense.createdAt) || "—"}</p></div>
                       <div><p className="text-[11px] text-gray-400 m-0">Currency</p><p className="font-semibold text-gray-900 m-0">{expense.currency}</p></div>
                       {expense.productName && (
                         <div className="col-span-2"><p className="text-[11px] text-gray-400 m-0">Product</p><p className="font-semibold text-gray-900 m-0">{expense.productName}</p></div>
