@@ -335,7 +335,8 @@ router.post("/", submitRateLimit, async (req, res) => {
   });
 
   await notifyOrderEvent(product.org_id, {
-    id: order.id, customer: order.customer, productName: order.product_name, packageName: order.package_name,
+    id: order.id, customer: order.customer, phone: order.phone, amount: order.amount, currency: order.currency,
+    productName: order.product_name, packageName: order.package_name,
     assignedRepId: order.assigned_rep_id
   }, "New");
 

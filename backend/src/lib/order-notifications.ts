@@ -1,12 +1,15 @@
 import { supabase } from "./supabase.js";
 import { getOrgPushBranding } from "./push-branding.js";
-import { sendPushToUsers } from "./push.js";
+import { sendPushToUser } from "./push.js";
 
 type OrderContext = {
   id: string;
   customer: string;
   productName: string;
   packageName?: string | null;
+  phone?: string | null;
+  amount?: number | null;
+  currency?: string | null;
   assignedRepId?: string | null;
 };
 
@@ -14,6 +17,37 @@ const orderDisplayName = (order: OrderContext) =>
   order.packageName?.trim()
     ? `${order.productName} — ${order.packageName}`
     : order.productName;
+
+const formatNotificationMoney = (amount?: number | null, currency?: string | null) => {
+  if (typeof amount !== "number" || Number.isNaN(amount)) return null;
+  const safeCurrency = currency?.trim() || "NGN";
+  try {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: safeCurrency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount);
+  } catch {
+    return `${safeCurrency} ${Math.round(amount).toLocaleString("en-NG")}`;
+  }
+};
+
+const orderLinkForRole = (role: string, orderId: string) =>
+  role === "Sales Rep"
+    ? `/dashboard/sales-rep/orders/${orderId}`
+    : `/dashboard/admin/orders/${orderId}`;
+
+const orderNotificationSummary = (order: OrderContext) => {
+  const customer = order.phone?.trim()
+    ? `${order.customer} (${order.phone.trim()})`
+    : order.customer;
+  return [
+    customer,
+    orderDisplayName(order),
+    formatNotificationMoney(order.amount, order.currency)
+  ].filter(Boolean).join(" · ");
+};
 
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
   New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
@@ -35,7 +69,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
 
   try {
     // Fetch owners (and optionally the assigned rep) in one query
-    const recipientIds = new Set<string>();
+    const recipients = new Map<string, string>();
 
     const { data: roleUsers } = await supabase
       .from("users")
@@ -45,26 +79,33 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
       .in("role", config.recipientRoles);
 
     if (roleUsers) {
-      for (const u of roleUsers) recipientIds.add(u.id);
+      for (const u of roleUsers) recipients.set(u.id, u.role);
     }
 
-    if (config.includeRep && order.assignedRepId) {
-      recipientIds.add(order.assignedRepId);
+    if (config.includeRep && order.assignedRepId && !recipients.has(order.assignedRepId)) {
+      const { data: repUser } = await supabase
+        .from("users")
+        .select("id, role")
+        .eq("org_id", orgId)
+        .eq("active", true)
+        .eq("id", order.assignedRepId)
+        .maybeSingle();
+      if (repUser?.id) recipients.set(repUser.id, repUser.role);
     }
 
-    if (recipientIds.size === 0) return;
+    if (recipients.size === 0) return;
 
-    const body = `Order ${order.id} — ${order.customer} (${orderDisplayName(order)})`;
-    const link = `/dashboard/admin/orders/${order.id}`;
+    const title = `${config.title} #${order.id}`;
+    const body = orderNotificationSummary(order);
     const branding = await getOrgPushBranding(orgId);
 
-    const rows = [...recipientIds].map((rid) => ({
+    const rows = [...recipients.entries()].map(([recipientId, role]) => ({
       org_id:       orgId,
-      recipient_id: rid,
+      recipient_id: recipientId,
       type:         config.type,
-      title:        config.title,
+      title,
       message:      body,
-      link,
+      link:         orderLinkForRole(role, order.id),
       order_id:     order.id,
       read:         false,
     }));
@@ -73,15 +114,19 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
     if (error) console.error(`[order-notifications] insert failed for ${order.id}:`, error.message);
 
     // Fire push notifications (fire-and-forget, don't block the response)
-    sendPushToUsers(orgId, [...recipientIds], {
-      title: config.title,
-      body,
-      kind: config.type,
-      url: link,
-      tag: `order-${order.id}-${toStatus}`,
-      brandName: branding.brandName,
-      brandLogo: branding.brandLogo
-    }).catch((err) => console.warn("[order-notifications] push send error:", err));
+    await Promise.all(
+      [...recipients.entries()].map(([recipientId, role]) =>
+        sendPushToUser(orgId, recipientId, {
+          title,
+          body,
+          kind: config.type,
+          url: orderLinkForRole(role, order.id),
+          tag: `order-${order.id}-${toStatus}`,
+          brandName: branding.brandName,
+          brandLogo: branding.brandLogo
+        }).catch((err) => console.warn("[order-notifications] push send error:", err))
+      )
+    );
   } catch (err) {
     console.error("[order-notifications] unexpected error:", err);
   }

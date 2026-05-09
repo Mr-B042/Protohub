@@ -284,7 +284,8 @@ router.post("/", async (req, res) => {
 
   // In-app notifications
   await notifyOrderEvent(req.user!.orgId, {
-    id: data.id, customer: data.customer, productName: data.product_name, packageName: data.package_name,
+    id: data.id, customer: data.customer, phone: data.phone, amount: data.amount, currency: data.currency,
+    productName: data.product_name, packageName: data.package_name,
     assignedRepId: data.assigned_rep_id
   }, "New");
 
@@ -557,7 +558,8 @@ router.patch("/:id/status", async (req, res) => {
 
   // In-app notifications
   await notifyOrderEvent(req.user!.orgId, {
-    id: data.id, customer: data.customer, productName: data.product_name, packageName: data.package_name,
+    id: data.id, customer: data.customer, phone: data.phone, amount: data.amount, currency: data.currency,
+    productName: data.product_name, packageName: data.package_name,
     assignedRepId: data.assigned_rep_id
   }, status);
 

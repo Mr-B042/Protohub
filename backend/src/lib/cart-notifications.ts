@@ -19,6 +19,19 @@ const cartDisplayName = (cart: AbandonedCartAlertContext) =>
     ? `${cart.product_name} — ${cart.package_name}`
     : cart.product_name;
 
+const formatCartMoney = (amount: number, currency: string) => {
+  try {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: currency?.trim() || "NGN",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount);
+  } catch {
+    return `${currency} ${Math.round(amount).toLocaleString("en-NG")}`;
+  }
+};
+
 export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartAlertContext) {
   try {
     const { data: org, error: orgError } = await supabase
@@ -41,8 +54,12 @@ export async function notifyNewAbandonedCart(orgId: string, cart: AbandonedCartA
     const recipientIds = [...new Set(users.map((user) => user.id).filter(Boolean))];
     if (!recipientIds.length) return;
 
-    const title = "New Abandoned Cart";
-    const message = `Cart ${cart.id} — ${cart.customer} (${cartDisplayName(cart)})`;
+    const title = `New Abandoned Cart #${cart.id}`;
+    const message = [
+      cart.phone?.trim() ? `${cart.customer} (${cart.phone.trim()})` : cart.customer,
+      cartDisplayName(cart),
+      formatCartMoney(cart.amount, cart.currency)
+    ].filter(Boolean).join(" · ");
     const link = `/dashboard/admin/abandoned-carts/${cart.id}`;
 
     const rows = recipientIds.map((recipientId) => ({
