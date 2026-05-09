@@ -22,18 +22,39 @@ const requireSmsHealthViewer = requireRole("Owner", "Admin");
 
 const SECRET_MASK = "••••••••";
 
+const toSnakeKey = (key: string) =>
+  key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+function normalizeBooleanMap(value: unknown, defaults: Record<string, boolean>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (normalizedKey in defaults) out[normalizedKey] = !!entry;
+  }
+  return out;
+}
+
+function normalizeTemplateMap(value: unknown, defaults: Record<string, { body: string }>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (!(normalizedKey in defaults) || !entry || typeof entry !== "object") continue;
+    const template = entry as Record<string, unknown>;
+    out[normalizedKey] = {
+      body: typeof template.body === "string" ? template.body : defaults[normalizedKey].body
+    };
+  }
+  return out;
+}
+
 function presentSettings(row: Record<string, any>) {
   return {
     ...row,
     api_key: row?.api_key ? SECRET_MASK : "",
-    triggers: {
-      ...DEFAULT_SMS_TRIGGERS,
-      ...(row?.triggers ?? {})
-    },
-    templates: {
-      ...DEFAULT_SMS_TEMPLATES,
-      ...(row?.templates ?? {})
-    },
+    triggers: normalizeBooleanMap(row?.triggers, { ...DEFAULT_SMS_TRIGGERS }),
+    templates: normalizeTemplateMap(row?.templates, { ...DEFAULT_SMS_TEMPLATES }),
     quiet_hours_enabled: !!row?.quiet_hours_enabled,
     quiet_hours_start: row?.quiet_hours_start ?? "21:00",
     quiet_hours_end: row?.quiet_hours_end ?? "08:00",
@@ -149,14 +170,8 @@ router.put("/", requireOwner, async (req, res) => {
     provider: d.provider,
     api_key: apiKey,
     sender_name: d.sender_name,
-    triggers: {
-      ...DEFAULT_SMS_TRIGGERS,
-      ...d.triggers
-    },
-    templates: {
-      ...DEFAULT_SMS_TEMPLATES,
-      ...d.templates
-    },
+    triggers: normalizeBooleanMap(d.triggers, { ...DEFAULT_SMS_TRIGGERS }),
+    templates: normalizeTemplateMap(d.templates, { ...DEFAULT_SMS_TEMPLATES }),
     quiet_hours_enabled: d.quiet_hours_enabled,
     quiet_hours_start: d.quiet_hours_start,
     quiet_hours_end: d.quiet_hours_end,

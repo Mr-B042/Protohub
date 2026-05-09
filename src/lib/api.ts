@@ -8,6 +8,41 @@ import { snakeToCamel } from "./normalize";
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 let refreshInFlight: Promise<boolean> | null = null;
 
+const toSnakeKey = (key: string) =>
+  key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+const normalizeBooleanMapKeys = (value: unknown): Record<string, boolean> => {
+  const out: Record<string, boolean> = {};
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    out[toSnakeKey(key)] = !!entry;
+  }
+  return out;
+};
+
+const normalizeTemplateMapKeys = <T extends Record<string, unknown>>(value: unknown): Record<string, T> => {
+  const out: Record<string, T> = {};
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry && typeof entry === "object") {
+      out[toSnakeKey(key)] = entry as T;
+    }
+  }
+  return out;
+};
+
+const normalizeEmailSettingsResponse = (value: any) => ({
+  ...value,
+  triggers: normalizeBooleanMapKeys(value?.triggers),
+  templates: normalizeTemplateMapKeys<{ subject: string; body: string }>(value?.templates)
+});
+
+const normalizeSmsSettingsResponse = (value: any) => ({
+  ...value,
+  triggers: normalizeBooleanMapKeys(value?.triggers),
+  templates: normalizeTemplateMapKeys<{ body: string }>(value?.templates)
+});
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -264,15 +299,23 @@ export const embedSettingsApi = {
 };
 
 export const emailSettingsApi = {
-  get:  ()            => get<any>("/api/email-settings"),
-  save: (body: unknown) => request<any>("PUT", "/api/email-settings", body),
+  get:  async ()            => normalizeEmailSettingsResponse(await get<any>("/api/email-settings")),
+  save: async (body: any) => normalizeEmailSettingsResponse(await request<any>("PUT", "/api/email-settings", {
+    ...body,
+    triggers: normalizeBooleanMapKeys(body?.triggers),
+    templates: normalizeTemplateMapKeys<{ subject: string; body: string }>(body?.templates)
+  })),
   test: (to: string)  => post<{ message: string; provider?: string; fallbackFrom?: string | null }>("/api/email-settings/test", { to }),
   messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/email-settings/messages?page=${page}&limit=${limit}`)
 };
 
 export const smsSettingsApi = {
-  get: () => get<any>("/api/sms-settings"),
-  save: (body: unknown) => request<any>("PUT", "/api/sms-settings", body),
+  get: async () => normalizeSmsSettingsResponse(await get<any>("/api/sms-settings")),
+  save: async (body: any) => normalizeSmsSettingsResponse(await request<any>("PUT", "/api/sms-settings", {
+    ...body,
+    triggers: normalizeBooleanMapKeys(body?.triggers),
+    templates: normalizeTemplateMapKeys<{ body: string }>(body?.templates)
+  })),
   test: (phone: string) =>
     post<{ message: string; provider?: string; providerMessageId?: string | null; units?: number; segments?: number }>(
       "/api/sms-settings/test",

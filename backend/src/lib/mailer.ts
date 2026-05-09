@@ -77,6 +77,69 @@ const DEFAULT_EMAIL_PROVIDER: EmailProvider =
 
 const providerQuotaBackoff = new Map<string, number>();
 
+const DEFAULT_EMAIL_TRIGGER_MAP: Record<EmailTrigger, boolean> = {
+  order_new: false,
+  order_status_change: true,
+  order_delivered: false,
+  payroll_approved: false,
+  internal_order_new: true,
+  internal_order_assigned: true,
+  internal_order_delivered: true,
+  internal_order_rescheduled: true,
+  internal_order_cancelled: true,
+  internal_order_failed: true,
+  internal_low_stock: true,
+  internal_weekly_report: true,
+  internal_waybill_dispatched: false,
+  internal_new_team_member: false,
+  test_email: true
+};
+
+const DEFAULT_EMAIL_TEMPLATE_MAP: Record<string, { subject: string; body: string }> = {
+  order_new:           { subject: "Protohub order confirmation — {{order_id}}", body: "Hello {{customer}},\n\nWe have received your order and our team is already reviewing it.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nPhone: {{phone}}\n\nWe will keep you updated as your order moves forward." },
+  order_status_change: { subject: "Protohub update — order {{order_id}} is now {{status}}", body: "Hello {{customer}},\n\nYour order status has been updated.\n\nOrder ID: {{order_id}}\nPrevious Status: {{from_status}}\nCurrent Status: {{status}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for choosing Protohub." },
+  order_delivered:     { subject: "Protohub delivery confirmed — {{order_id}}", body: "Hello {{customer}},\n\nGreat news. Your order has been delivered successfully.\n\nOrder ID: {{order_id}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\n\nThank you for shopping with us." },
+  payroll_approved:    { subject: "Protohub payroll approved — {{period}}", body: "Hello {{name}},\n\nYour payroll has been approved for the selected period.\n\nPeriod: {{period}}\nNet Amount: {{currency}} {{amount}}\n\nThe finance record is now ready for your review." },
+  internal_order_new:           { subject: "Protohub alert — new order {{order_id}}", body: "A new order has entered the workspace.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\nAssigned to: {{rep_name}}\n\nLog in to review and take action." },
+  internal_order_assigned:      { subject: "Protohub assigned order {{order_id}} to you", body: "Hi {{recipient_name}},\n\nA new order has been assigned to you.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nOpen Protohub to begin follow-up." },
+  internal_order_delivered:     { subject: "Protohub delivered order — {{order_id}}", body: "An order has been marked as delivered.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nDelivered by: {{rep_name}}\n\nGreat work closing this one out." },
+  internal_order_rescheduled:   { subject: "Protohub rescheduled order {{order_id}}", body: "An order has been postponed and needs follow-up.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\nCall Outcome: {{call_outcome}}\nNotes: {{response}}\n\nPlease return to the workspace at the scheduled time." },
+  internal_order_cancelled:     { subject: "Protohub cancelled order {{order_id}}", body: "An order has been cancelled.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nLog in for full context." },
+  internal_order_failed:        { subject: "Protohub failed order {{order_id}}", body: "An order has been marked as failed.\n\nOrder ID: {{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nProduct: {{product_name}}\nAmount: {{currency}} {{amount}}\nReason: {{response}}\n\nPlease review the case and decide the next step." },
+  internal_low_stock:           { subject: "Protohub low stock alert — {{product_name}}", body: "A product has reached its low stock threshold.\n\nProduct: {{product_name}}\nCurrent Stock: {{current_stock}}\nReorder Point: {{reorder_point}}\n\nPlease restock as soon as possible." },
+  internal_weekly_report:       { subject: "Protohub weekly report — w/e {{week_end}}", body: "Weekly Performance Report\n{{org_name}}\nPeriod: {{week_start}} to {{week_end}}\n\n── ORDERS ──────────────────────────\nTotal Orders:    {{total_orders}}\nDelivered:       {{delivered}}\nCancelled:       {{cancelled}}\nFailed:          {{failed}}\nDelivery Rate:   {{delivery_rate}}%\n\n── REVENUE & FINANCIALS ────────────\nRevenue:         {{currency}} {{revenue}}\nAds Spent:       {{currency}} {{ads_spent}}\nOther Expenses:  {{currency}} {{other_expenses}}\nTotal Expenses:  {{currency}} {{total_expenses}}\nNet Profit:      {{currency}} {{net_profit}}\n\n── TOP PRODUCTS ────────────────────\n{{top_products}}\n\nHere is the latest snapshot from your Protohub workspace." },
+  internal_waybill_dispatched:  { subject: "Protohub waybill dispatched — {{waybill_id}}", body: "A waybill has been dispatched.\n\nWaybill ID: {{waybill_id}}\nDestination: {{destination}}\nItems: {{items}}\nDispatched by: {{rep_name}}\n\nLog in to track progress." },
+  internal_new_team_member:     { subject: "Welcome to Protohub, {{recipient_name}}", body: "Hi {{recipient_name}},\n\nYou have been added to {{org_name}} on Protohub as {{role}}.\n\nLog in to get started and explore your workspace." }
+};
+
+const toSnakeKey = (key: string) =>
+  key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+function normalizeBooleanMap(value: unknown, defaults: Record<string, boolean>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (normalizedKey in defaults) out[normalizedKey] = !!entry;
+  }
+  return out;
+}
+
+function normalizeTemplateMap(value: unknown, defaults: Record<string, { subject: string; body: string }>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (!(normalizedKey in defaults) || !entry || typeof entry !== "object") continue;
+    const template = entry as Record<string, unknown>;
+    out[normalizedKey] = {
+      subject: typeof template.subject === "string" ? template.subject : defaults[normalizedKey].subject,
+      body: typeof template.body === "string" ? template.body : defaults[normalizedKey].body
+    };
+  }
+  return out;
+}
+
 function brandName(settings: EmailSettings) {
   return settings.from_name?.trim() || "Protohub";
 }
@@ -90,7 +153,9 @@ function applyEnvFallbacks(settings: EmailSettings): EmailSettings {
     resend_api_key: settings.resend_api_key || process.env.RESEND_API_KEY || "",
     from_name: settings.from_name || process.env.EMAIL_FROM_NAME || "",
     from_email: settings.from_email || process.env.EMAIL_FROM_EMAIL || "",
-    reply_to: settings.reply_to || process.env.EMAIL_REPLY_TO || ""
+    reply_to: settings.reply_to || process.env.EMAIL_REPLY_TO || "",
+    triggers: normalizeBooleanMap(settings.triggers, DEFAULT_EMAIL_TRIGGER_MAP),
+    templates: normalizeTemplateMap(settings.templates, DEFAULT_EMAIL_TEMPLATE_MAP)
   };
 }
 

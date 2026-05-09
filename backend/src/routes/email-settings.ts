@@ -10,6 +10,9 @@ router.use(requireRole("Owner"));
 
 const SECRET_MASK = "••••••••";
 
+const toSnakeKey = (key: string) =>
+  key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
 const DEFAULT_EMAIL_TRIGGERS = {
   order_new: false,
   order_status_change: true,
@@ -44,9 +47,36 @@ export const DEFAULT_EMAIL_TEMPLATES = {
   internal_new_team_member:     { subject: "Welcome to Protohub, {{recipient_name}}", body: "Hi {{recipient_name}},\n\nYou have been added to {{org_name}} on Protohub as {{role}}.\n\nLog in to get started and explore your workspace." }
 } as const;
 
+function normalizeBooleanMap(value: unknown, defaults: Record<string, boolean>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (normalizedKey in defaults) out[normalizedKey] = !!entry;
+  }
+  return out;
+}
+
+function normalizeTemplateMap(value: unknown, defaults: Record<string, { subject: string; body: string }>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (!(normalizedKey in defaults) || !entry || typeof entry !== "object") continue;
+    const template = entry as Record<string, unknown>;
+    out[normalizedKey] = {
+      subject: typeof template.subject === "string" ? template.subject : defaults[normalizedKey].subject,
+      body: typeof template.body === "string" ? template.body : defaults[normalizedKey].body
+    };
+  }
+  return out;
+}
+
 function presentSettings(row: Record<string, any>) {
   return {
     ...row,
+    triggers: normalizeBooleanMap(row?.triggers, { ...DEFAULT_EMAIL_TRIGGERS }),
+    templates: normalizeTemplateMap(row?.templates, { ...DEFAULT_EMAIL_TEMPLATES }),
     api_key_private: row?.api_key_private ? SECRET_MASK : "",
     resend_api_key: row?.resend_api_key ? SECRET_MASK : ""
   };
@@ -147,8 +177,8 @@ router.put("/", async (req, res) => {
     from_name:       d.from_name,
     from_email:      d.from_email,
     reply_to:        d.reply_to ?? "",
-    triggers:        d.triggers,
-    templates:       d.templates,
+    triggers:        normalizeBooleanMap(d.triggers, { ...DEFAULT_EMAIL_TRIGGERS }),
+    templates:       normalizeTemplateMap(d.templates, { ...DEFAULT_EMAIL_TEMPLATES }),
     updated_at:      new Date().toISOString()
   };
 

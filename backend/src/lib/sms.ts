@@ -132,6 +132,33 @@ const MULTITEXTER_SEND_URL = "https://app.multitexter.com/v2/app/sendsms";
 const MULTITEXTER_BALANCE_URL = "https://app.multitexter.com/v2/app/balance";
 const MULTITEXTER_REPORT_URL = "https://app.multitexter.com/v2/app/message/report";
 
+const toSnakeKey = (key: string) =>
+  key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+function normalizeBooleanMap(value: unknown, defaults: Record<string, boolean>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (normalizedKey in defaults) out[normalizedKey] = !!entry;
+  }
+  return out;
+}
+
+function normalizeTemplateMap(value: unknown, defaults: Record<string, { body: string }>) {
+  const out = { ...defaults };
+  if (!value || typeof value !== "object") return out;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = toSnakeKey(key);
+    if (!(normalizedKey in defaults) || !entry || typeof entry !== "object") continue;
+    const template = entry as Record<string, unknown>;
+    out[normalizedKey] = {
+      body: typeof template.body === "string" ? template.body : defaults[normalizedKey].body
+    };
+  }
+  return out;
+}
+
 function applyEnvFallbacks(settings: SmsSettings): SmsSettings {
   return {
     ...settings,
@@ -146,14 +173,8 @@ function applyEnvFallbacks(settings: SmsSettings): SmsSettings {
     max_retry_attempts: Math.max(0, Number(settings.max_retry_attempts ?? 2) || 0),
     retry_backoff_minutes: Math.max(5, Number(settings.retry_backoff_minutes ?? 30) || 30),
     inbound_webhook_secret: settings.inbound_webhook_secret || "",
-    triggers: {
-      ...DEFAULT_SMS_TRIGGERS,
-      ...(settings.triggers ?? {})
-    },
-    templates: {
-      ...DEFAULT_SMS_TEMPLATES,
-      ...(settings.templates ?? {})
-    }
+    triggers: normalizeBooleanMap(settings.triggers, DEFAULT_SMS_TRIGGERS),
+    templates: normalizeTemplateMap(settings.templates, DEFAULT_SMS_TEMPLATES)
   };
 }
 
@@ -1517,7 +1538,10 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
   }
 
   const eligibleOrgIds = (settingsRows ?? [])
-    .filter((row) => row.enabled && (row.triggers as Record<string, boolean> | null)?.order_follow_up)
+    .filter((row) => {
+      const triggers = normalizeBooleanMap((row as Record<string, unknown>).triggers, DEFAULT_SMS_TRIGGERS);
+      return !!row.enabled && !!triggers.order_follow_up;
+    })
     .map((row) => row.org_id as string)
     .filter(Boolean);
 
@@ -1591,7 +1615,10 @@ export async function syncDueAbandonedCartSms(limitPerOrg = 300) {
   }
 
   const eligibleOrgIds = (settingsRows ?? [])
-    .filter((row) => row.enabled && (row.triggers as Record<string, boolean> | null)?.cart_follow_up)
+    .filter((row) => {
+      const triggers = normalizeBooleanMap((row as Record<string, unknown>).triggers, DEFAULT_SMS_TRIGGERS);
+      return !!row.enabled && !!triggers.cart_follow_up;
+    })
     .map((row) => row.org_id as string)
     .filter(Boolean);
 
