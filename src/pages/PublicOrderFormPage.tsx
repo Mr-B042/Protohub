@@ -120,6 +120,8 @@ const DEFAULT_SETTINGS: PublicEmbedSettings = {
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
+const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 2;
+const PUBLIC_PRODUCT_RETRY_DELAY_MS = 450;
 
 function readCachedValue<T>(key: string, maxAgeMs: number): T | null {
   if (typeof window === "undefined") return null;
@@ -332,37 +334,60 @@ export default function PublicOrderFormPage() {
     setOrderFormCrossSells([]);
     setAbandonedDraftCartId("");
 
-    productsApi.public(publicProductId)
-      .then((res) => {
-        if (cancelled || !res?.product) return;
-        const merged = [res.product, ...(res.related ?? [])] as PublicProduct[];
-        setProducts(merged);
-        writeCachedValue(publicProductCacheKey(publicProductId), {
-          products: merged,
-          orgId: (res.product as PublicProduct).orgId ?? null,
-        });
-        const orgId = (res.product as PublicProduct).orgId;
-        if (orgId) {
-          embedSettingsApi.public(orgId)
-            .then((next) => {
-              if (cancelled || !next) return;
-              setSettings((prev) => ({ ...prev, ...next }));
-              writeCachedValue(publicSettingsCacheKey(orgId), next as PublicEmbedSettings);
-            })
-            .catch(() => {
-              // Keep defaults if settings fetch fails.
-            });
+    (async () => {
+      let resolvedProduct: PublicProduct | null = null;
+      let relatedProducts: PublicProduct[] = [];
+      let lastError: any = null;
+
+      for (let attempt = 0; attempt < PUBLIC_PRODUCT_FETCH_ATTEMPTS; attempt += 1) {
+        try {
+          const res = await productsApi.public(publicProductId);
+          if (!res?.product) {
+            throw new Error("This embed link does not match a product.");
+          }
+          resolvedProduct = res.product as PublicProduct;
+          relatedProducts = (res.related ?? []) as PublicProduct[];
+          break;
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < PUBLIC_PRODUCT_FETCH_ATTEMPTS - 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, PUBLIC_PRODUCT_RETRY_DELAY_MS * (attempt + 1)));
+          }
         }
-      })
-      .catch((error: any) => {
-        if (cancelled) return;
+      }
+
+      if (cancelled) return;
+
+      if (!resolvedProduct) {
         if (cachedBundleProducts.length === 0) {
-          setLoadError(error?.message ?? "Could not load the order form.");
+          setLoadError(lastError?.message ?? "Could not load the order form.");
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
+        return;
+      }
+
+      const merged = [resolvedProduct, ...relatedProducts] as PublicProduct[];
+      setProducts(merged);
+      writeCachedValue(publicProductCacheKey(publicProductId), {
+        products: merged,
+        orgId: resolvedProduct.orgId ?? null,
       });
+
+      const orgId = resolvedProduct.orgId;
+      if (orgId) {
+        embedSettingsApi.public(orgId)
+          .then((next) => {
+            if (cancelled || !next) return;
+            setSettings((prev) => ({ ...prev, ...next }));
+            writeCachedValue(publicSettingsCacheKey(orgId), next as PublicEmbedSettings);
+          })
+          .catch(() => {
+            // Keep defaults if settings fetch fails.
+          });
+      }
+
+      setLoading(false);
+    })();
 
     return () => {
       cancelled = true;

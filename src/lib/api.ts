@@ -140,8 +140,17 @@ export const usersApi = {
 export const productsApi = {
   list: () => get<any[]>("/api/products"),
   // Public storefront view of one product, with cross-sells + free-gifts inlined.
-  // No auth required; safe to call from unauthenticated iframes.
-  public: (id: string) => get<{ product: any; related: any[] }>(`/api/public/products/${encodeURIComponent(id)}`),
+  // Raw fetch so embed forms never inherit stale auth headers or 401 refresh logic.
+  public: async (id: string) => {
+    const res = await fetch(`${BASE}/api/public/products/${encodeURIComponent(id)}`, {
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+    }
+    return snakeToCamel<{ product: any; related: any[] }>(await res.json());
+  },
   create: (body: unknown) => post<any>("/api/products", body),
   update: (id: string, body: unknown) => patch<any>(`/api/products/${id}`, body),
   delete: (id: string) => del<void>(`/api/products/${id}`),
