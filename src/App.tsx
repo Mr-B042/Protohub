@@ -807,6 +807,7 @@ const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-
 
 const makeProductId = () => `prod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makePackageId = () => `pkg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const isTemporaryProductId = (id: string) => id.startsWith("prod-");
 const isTemporaryPackageId = (id: string) => id.startsWith("pkg-");
 const makeMovementId = () => `mov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makeBonusRuleId = () => `bonus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1312,6 +1313,10 @@ const makeAgentId = () => `agent-${Date.now()}-${Math.random().toString(36).slic
 const makeExpenseId = () => `EXP-${Math.floor(100000 + Math.random() * 900000)}`;
 const makePayrollRunId = () => `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 const makeNoteId = () => `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+const isTemporaryAgentId = (id: string) => id.startsWith("agent-");
+const isTemporaryTeamId = (id: string) => id.startsWith("team-");
+const isTemporaryPayrollRunId = (id: string) => id.startsWith("PAY-");
+const isTemporaryUserId = (id: string) => id.startsWith("rep-") || /^\d{13,}-/.test(id);
 
 const normalizeOrderNote = (value: unknown): OrderNote | null => {
   if (!value || typeof value !== "object") {
@@ -4761,6 +4766,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     updater: (product: Product) => Product,
     failureMessage: string
   ) => {
+    if (isTemporaryProductId(productId)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const previousProduct = products.find((product) => product.id === productId);
     if (!previousProduct) return;
     const nextProduct = updater(previousProduct);
@@ -4790,6 +4799,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const updateProductStates = (productId: string, states: string[]) => {
+    if (isTemporaryProductId(productId)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const prevProducts = products;
     setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, availableStates: states } : p));
     productsApi.update(productId, { available_states: states }).catch((err: any) => {
@@ -8499,6 +8512,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a product first.");
       return;
     }
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
 
     if (change === 0) {
       showToast("Enter a positive or negative stock quantity.");
@@ -8573,6 +8590,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a product first.");
       return;
     }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
 
     const activeStatuses: TrackedOrder["status"][] = ["New", "Confirmed", "In Process", "Dispatched"];
     const activeOrders = trackedOrders.filter((o) => o.productId === selectedProduct.id && activeStatuses.includes(o.status));
@@ -8613,6 +8634,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const duplicateProduct = (source: Product) => {
+    if (isTemporaryProductId(source.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const newId = makeProductId();
     const baseName = `${source.name} (Copy)`;
     let candidateName = baseName;
@@ -8704,6 +8729,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const toggleProductActive = (product: Product) => {
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const nextActive = !product.active;
     const productSnapshot = product;
     setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, active: nextActive } : p));
@@ -8767,6 +8796,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const saveEditProduct = () => {
     if (!selectedProduct) return;
     if (!productName.trim()) { showToast("Product name is required."); return; }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const _epId = selectedProduct.id;
     const productSnapshot = selectedProduct;
     setProducts((prev) => prev.map((p) => p.id === selectedProduct.id ? {
@@ -8826,6 +8859,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a product first.");
       return;
     }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     if (Number(pricingSellingPrice) <= 0) {
       showToast("Selling price must be greater than zero.");
       return;
@@ -8882,6 +8919,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const deletePricing = (code: ProductCurrencyCode) => {
     if (!selectedProduct) {
+      return;
+    }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
       return;
     }
 
@@ -8959,6 +9000,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const savePackage = () => {
     if (!selectedProduct || !packageName.trim()) {
       showToast("Package name is required.");
+      return;
+    }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
       return;
     }
     if (modal === "editPackage" && selectedPackage && isTemporaryPackageId(selectedPackage.id)) {
@@ -9154,6 +9199,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const savePackageDescription = () => {
     if (!selectedProduct) {
+      return;
+    }
+    if (isTemporaryProductId(selectedProduct.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
       return;
     }
     if (packageDescriptionDraft === selectedProduct.packageDescription) {
@@ -9665,8 +9714,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a product and enter customer name and phone.");
       return;
     }
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
 
     const packageRecord = product.packages.find((item) => item.id === createOrderPackageId);
+    if (packageRecord && isTemporaryPackageId(packageRecord.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
+    if (createOrderRepId && createOrderRepId !== "auto" && isTemporaryUserId(createOrderRepId)) {
+      showToast("The selected sales rep is still syncing. Try again in a moment.");
+      return;
+    }
+    if (createOrderAgentId && isTemporaryAgentId(createOrderAgentId)) {
+      showToast("The selected agent is still syncing. Try again in a moment.");
+      return;
+    }
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
@@ -9751,6 +9816,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!orderToUpdate) {
       return;
     }
+    if (createOrderAgentId && isTemporaryAgentId(createOrderAgentId)) {
+      showToast("The selected agent is still syncing. Try again in a moment.");
+      return;
+    }
 
     const agentName = agents.find((agent) => agent.id === createOrderAgentId)?.name ?? "Unassigned";
     const orderSnapshot = orderToUpdate;
@@ -9822,8 +9891,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a product and enter customer name and phone.");
       return;
     }
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
 
     const packageRecord = product.packages.find((item) => item.id === createOrderPackageId);
+    if (packageRecord && isTemporaryPackageId(packageRecord.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
+    if (createOrderRepId && createOrderRepId !== "auto" && isTemporaryUserId(createOrderRepId)) {
+      showToast("The selected sales rep is still syncing. Try again in a moment.");
+      return;
+    }
+    if (createOrderAgentId && isTemporaryAgentId(createOrderAgentId)) {
+      showToast("The selected agent is still syncing. Try again in a moment.");
+      return;
+    }
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const autoAmount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
@@ -9878,6 +9963,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const reassignSelectedOrder = () => {
     if (!selectedOrder || !reassignRepId) {
       showToast("Choose the new sales rep.");
+      return;
+    }
+    if (isTemporaryUserId(reassignRepId)) {
+      showToast("The selected sales rep is still syncing. Try again in a moment.");
       return;
     }
 
@@ -10477,6 +10566,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const createTeam = () => {
     if (!newTeamName.trim()) { showToast("Team name is required."); return; }
     if (salesTeams.some((t) => t.name.toLowerCase() === newTeamName.trim().toLowerCase())) { showToast(`A team named "${newTeamName.trim()}" already exists.`); return; }
+    if (newTeamLeadId && isTemporaryUserId(newTeamLeadId)) {
+      showToast("The selected team lead is still syncing. Try again in a moment.");
+      return;
+    }
     const localId = `team-${Date.now().toString(36)}`;
     const teamName = newTeamName.trim();
     const teamLeadId = newTeamLeadId || undefined;
@@ -10655,9 +10748,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose an agent and product.");
       return;
     }
+    if (isTemporaryAgentId(selectedAgent.id)) {
+      showToast("This agent is still syncing. Try again in a moment.");
+      return;
+    }
 
     const quantity = Math.max(1, Number(assignStockQty) || 1);
     const product = products.find((item) => item.id === assignStockProductId);
+    if (product && isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     if (!product || product.warehouseStock < quantity) {
       showToast("Not enough warehouse stock for this assignment.");
       return;
@@ -10729,8 +10830,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose an agent and product.");
       return;
     }
+    if (isTemporaryAgentId(selectedAgent.id)) {
+      showToast("This agent is still syncing. Try again in a moment.");
+      return;
+    }
 
     const product = products.find((item) => item.id === reconcileProductId);
+    if (product && isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
     const currentStock = agentStock.find((stock) => stock.agentId === selectedAgent.id && stock.productId === reconcileProductId);
     const currentQuantity = currentStock?.quantity ?? 0;
     const returned = Math.max(0, Number(reconcileReturned) || 0);
@@ -10885,6 +10994,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Agent name, phone, and zone are required.");
       return;
     }
+    if (isTemporaryAgentId(selectedAgent.id)) {
+      showToast("This agent is still syncing. Try again in a moment.");
+      return;
+    }
     if (agents.some((a) => a.id !== selectedAgent.id && a.phone === agentPhone.trim())) {
       showToast("Another agent already has this phone number.");
       return;
@@ -10910,6 +11023,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const deleteSelectedAgent = () => {
     if (!selectedAgent) return;
+    if (isTemporaryAgentId(selectedAgent.id)) {
+      showToast("This agent is still syncing. Try again in a moment.");
+      return;
+    }
 
     const agentStockRows = agentStock.filter((s) => s.agentId === selectedAgent.id);
     const activeStatuses: TrackedOrder["status"][] = ["New", "Confirmed", "In Process", "Dispatched"];
@@ -11666,6 +11783,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const toggleUserPermission = (userId: string, permission: UserPermission) => {
+    if (isTemporaryUserId(userId)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
     const prevUsers = users;
     setUsers((prev) => prev.map((u) => {
       if (u.id !== userId || u.role === "Owner") return u;
@@ -11685,6 +11806,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openPayRateModal = (userId: string) => {
+    if (isTemporaryUserId(userId)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
     const structure = payStructures.find((item) => item.userId === userId);
     setPayRateUserId(userId);
     setPayStructureType(structure?.type ?? "Per Delivered Order");
@@ -11697,6 +11822,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const savePayRate = () => {
     if (!selectedPayUser) {
       showToast("Choose a user for this pay structure.");
+      return;
+    }
+    if (isTemporaryUserId(selectedPayUser.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
       return;
     }
 
@@ -11789,6 +11918,46 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
+  const approvePayrollRun = (run: PayrollRun) => {
+    if (isTemporaryPayrollRunId(run.id)) {
+      showToast("This payroll run is still syncing. Try again in a moment.");
+      return;
+    }
+    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+    showToast(`${run.label} approved.`);
+    payrollApi.approve(run.id).catch((err: any) => {
+      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Draft" } : r));
+      showToast(`Failed to approve: ${err.message}`);
+    });
+  };
+
+  const markPayrollRunPaid = (run: PayrollRun) => {
+    if (isTemporaryPayrollRunId(run.id)) {
+      showToast("This payroll run is still syncing. Try again in a moment.");
+      return;
+    }
+    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Paid" } : r));
+    showToast(`${run.label} marked as paid.`);
+    payrollApi.markPaid(run.id).catch((err: any) => {
+      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
+      showToast(`Failed to mark paid: ${err.message}`);
+    });
+  };
+
+  const toggleManagedUserActive = (user: ManagedUser) => {
+    if (isTemporaryUserId(user.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
+    const prevActive = user.active;
+    setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: !item.active } : item));
+    showToast(`${user.name} marked ${user.active ? "inactive" : "active"}.`);
+    usersApi.update(user.id, { active: !prevActive }).catch((err: any) => {
+      setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
+      showToast(`Failed to update status: ${err.message}`);
+    });
+  };
+
   const createExpense = () => {
     const parsedAmount = Number(expenseAmount);
     if (!expenseAmount.trim() || isNaN(parsedAmount)) {
@@ -11871,15 +12040,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPasswordFields({});
     closeModal();
     showToast(`User "${userFullName.trim()}" created.`);
-    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), password: userPassword.trim(), role: newUserRole }).catch((err: any) => {
-      setUsers((prev) => prev.filter((u) => u.id !== id));
-      showToast(`Failed to create user: ${err.message}`);
-    });
+    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), password: userPassword.trim(), role: newUserRole })
+      .then(() => {
+        usersApi.list().then((all: any[]) => {
+          const saved = all.find((u: any) => u.email?.toLowerCase() === userEmail.trim().toLowerCase());
+          if (saved) setUsers((prev) => prev.map((u) => u.id === id ? { ...u, id: saved.id, phone: saved.phone ?? u.phone } : u));
+        }).catch(() => {});
+      })
+      .catch((err: any) => {
+        setUsers((prev) => prev.filter((u) => u.id !== id));
+        showToast(`Failed to create user: ${err.message}`);
+      });
   };
 
   const updateUser = () => {
     if (!selectedUser || !userFullName.trim() || !userEmail.trim()) {
       showToast("User name and email are required.");
+      return;
+    }
+    if (isTemporaryUserId(selectedUser.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
       return;
     }
     const userPhoneDigits = userPhone.replace(/\D/g, "");
@@ -11943,6 +12123,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Choose a user first.");
       return;
     }
+    if (isTemporaryUserId(selectedUser.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
 
     if (userPassword.trim().length < 8) {
       showToast("Temporary password must be at least 8 characters.");
@@ -11966,6 +12150,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const deleteSelectedUser = () => {
     if (!selectedUser) {
       showToast("Choose a user first.");
+      return;
+    }
+    if (isTemporaryUserId(selectedUser.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
       return;
     }
     if (selectedUser.role === "Owner") {
@@ -14054,6 +14242,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
           {!isOwner && (
             <button className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline" onClick={() => {
+              if (isTemporaryUserId(user.id)) {
+                showToast("This user is still syncing. Try again in a moment.");
+                return;
+              }
               const prevUsers = users;
               const defaultPerms = defaultPermsByRole[user.role] ?? [];
               setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
@@ -14103,6 +14295,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <button
                 className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
                 onClick={() => {
+                  if (isTemporaryUserId(user.id)) {
+                    showToast("This user is still syncing. Try again in a moment.");
+                    return;
+                  }
                   const prevUsers = users;
                   setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: [] } : u));
                   teamApi.update(user.id, { extra_pages: [] }).catch((err: any) => {
@@ -14127,6 +14323,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           type="button"
                           className={`!min-h-0 w-8 h-4 rounded-full transition-colors relative shrink-0 ${granted ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
                           onClick={() => {
+                            if (isTemporaryUserId(user.id)) {
+                              showToast("This user is still syncing. Try again in a moment.");
+                              return;
+                            }
                             const prevUsers = users;
                             const nextExtras = (() => {
                               const s = new Set(user.extraPages ?? []);
@@ -17202,16 +17402,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(row.user.id)}>
                             <Pencil className="w-4 h-4" /> Edit
                           </button>
-                          <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => {
-                            const next = !row.user.active;
-                            const prev = row.user.active;
-                            setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user));
-                            showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`);
-                            usersApi.update(row.user.id, { active: next }).catch((err: any) => {
-                              setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: prev } : user));
-                              showToast(`Failed to ${next ? "activate" : "deactivate"} ${row.user.name}: ${err?.message ?? "please retry"}.`);
-                            });
-                          }}>
+                          <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => toggleManagedUserActive(row.user)}>
                             <RefreshCw className="w-4 h-4" /> {row.user.active ? "Deactivate" : "Activate"}
                           </button>
                         </div>
@@ -17252,16 +17443,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div className="flex items-center gap-1">
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="View" aria-label="View" onClick={() => { openAdminSalesRepDetail(row.user.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Eye className="w-4 h-4" /></button>
                                 <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminSalesRepEditRoute(row.user.id)}><Pencil className="w-4 h-4" /></button>
-                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => {
-                                  const next = !row.user.active;
-                                  const prev = row.user.active;
-                                  setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: next } : user));
-                                  showToast(`${row.user.name} ${next ? "activated" : "deactivated"}.`);
-                                  usersApi.update(row.user.id, { active: next }).catch((err: any) => {
-                                    setUsers((value) => value.map((user) => user.id === row.user.id ? { ...user, active: prev } : user));
-                                    showToast(`Failed to ${next ? "activate" : "deactivate"} ${row.user.name}: ${err?.message ?? "please retry"}.`);
-                                  });
-                                }}><RefreshCw className="w-4 h-4" /></button>
+                                <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Toggle active" aria-label="Toggle active" onClick={() => toggleManagedUserActive(row.user)}><RefreshCw className="w-4 h-4" /></button>
                               </div>
                             </td>
                           </tr>
@@ -17351,6 +17533,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div className="flex items-center gap-1">
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => openSalesTeamEditRoute(team.id)}><Pencil className="w-4 h-4" /></button>
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => {
+                            if (isTemporaryTeamId(team.id)) {
+                              showToast("This team is still syncing. Try again in a moment.");
+                              return;
+                            }
                             if (!confirm(`Delete team "${team.name}"? This cannot be undone.`)) return;
                             const teamSnapshot = team;
                             setExtraTeams((prev) => prev.filter((t) => t.id !== team.id));
@@ -19123,24 +19309,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {status === "Draft" && (
-                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition-colors" onClick={() => {
-                                  setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
-                                  showToast(`${run.label} approved.`);
-                                  payrollApi.approve(run.id).catch((err: any) => {
-                                    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Draft" } : r));
-                                    showToast(`Failed to approve: ${err.message}`);
-                                  });
-                                }}>Approve</button>
+                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition-colors" onClick={() => approvePayrollRun(run)}>Approve</button>
                               )}
                               {status === "Approved" && (
-                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors" onClick={() => {
-                                  setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Paid" } : r));
-                                  showToast(`${run.label} marked as paid.`);
-                                  payrollApi.markPaid(run.id).catch((err: any) => {
-                                    setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
-                                    showToast(`Failed to mark paid: ${err.message}`);
-                                  });
-                                }}>Mark Paid</button>
+                                <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors" onClick={() => markPayrollRunPaid(run)}>Mark Paid</button>
                               )}
                               {status === "Paid" && <span className="text-xs text-green-600 font-medium">Completed</span>}
                             </div>
@@ -19180,24 +19352,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-4 whitespace-nowrap">
                                 <div className="flex gap-2">
                                   {status === "Draft" && (
-                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors" onClick={() => {
-                                      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
-                                      showToast(`${run.label} approved.`);
-                                      payrollApi.approve(run.id).catch((err: any) => {
-                                        setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Draft" } : r));
-                                        showToast(`Failed to approve: ${err.message}`);
-                                      });
-                                    }}>Approve</button>
+                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors" onClick={() => approvePayrollRun(run)}>Approve</button>
                                   )}
                                   {status === "Approved" && (
-                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors" onClick={() => {
-                                      setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Paid" } : r));
-                                      showToast(`${run.label} marked as paid.`);
-                                      payrollApi.markPaid(run.id).catch((err: any) => {
-                                        setPayrollRuns((prev) => prev.map((r) => r.id === run.id ? { ...r, status: "Approved" } : r));
-                                        showToast(`Failed to mark paid: ${err.message}`);
-                                      });
-                                    }}>Mark Paid</button>
+                                    <button className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors" onClick={() => markPayrollRunPaid(run)}>Mark Paid</button>
                                   )}
                                   {status === "Paid" && <span className="text-xs text-green-600 font-medium">Completed</span>}
                                 </div>
@@ -21759,15 +21917,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Status</span>
                               <strong className={`text-sm ${user.active ? "text-green-600" : "text-gray-500"}`}>{user.active ? "Active" : "Inactive"}</strong>
                             </div>
-                            <button type="button" className="flex items-center gap-2 text-sm" onClick={() => {
-                              const prevActive = user.active;
-                              setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: !item.active } : item));
-                              showToast(`${user.name} marked ${user.active ? "inactive" : "active"}.`);
-                              teamApi.update(user.id, { active: !prevActive }).catch((err: any) => {
-                                setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
-                                showToast(`Failed to update status: ${err.message}`);
-                              });
-                            }}>
+                            <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
                               <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
                                 <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
                               </span>
@@ -21839,15 +21989,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   </button>
                                 </td>
                                 <td className="px-4 py-4">
-                                  <button type="button" className="flex items-center gap-2 text-sm" onClick={() => {
-                                    const prevActive = user.active;
-                                    setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: !item.active } : item));
-                                    showToast(`${user.name} marked ${user.active ? "inactive" : "active"}.`);
-                                    teamApi.update(user.id, { active: !prevActive }).catch((err: any) => {
-                                      setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
-                                      showToast(`Failed to update status: ${err.message}`);
-                                    });
-                                  }}>
+                                  <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
                                     <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
                                       <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
                                     </span>
@@ -21917,6 +22059,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     const sorted = roundRobinActiveRows.map((r) => r.user);
                     if (sorted.length < 2) return;
+                    if (sorted.some((user) => isTemporaryUserId(user.id))) {
+                      showToast("A team member is still syncing. Try again in a moment.");
+                      return;
+                    }
                     const rotated = [...sorted.slice(1), sorted[0]];
                     const prevUsers = users;
                     setUsers((prev) => prev.map((u) => {
@@ -21934,6 +22080,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     const sorted = roundRobinActiveRows.map((r) => r.user);
                     if (sorted.length < 2) return;
+                    if (sorted.some((user) => isTemporaryUserId(user.id))) {
+                      showToast("A team member is still syncing. Try again in a moment.");
+                      return;
+                    }
                     const skipped = sorted[0];
                     // Skip moves to second-to-last (not last) — differs from Advance
                     const rest = sorted.slice(1);
@@ -21954,6 +22104,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
                     const sorted = roundRobinActiveRows.map((r) => r.user).sort((a, b) => a.name.localeCompare(b.name));
+                    if (sorted.some((user) => isTemporaryUserId(user.id))) {
+                      showToast("A team member is still syncing. Try again in a moment.");
+                      return;
+                    }
                     const prevUsers = users;
                     setUsers((prev) => prev.map((u) => {
                       const idx = sorted.findIndex((r) => r.id === u.id);
@@ -22167,7 +22321,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
                         <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
+                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -25268,6 +25422,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       return (
                         <button key={u.id} type="button" className={`!min-h-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${isMember ? "bg-blue-50 border-[#1F8FE0] text-[#1F8FE0] font-semibold" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
                           onClick={() => {
+                            if (isTemporaryTeamId(team.id)) {
+                              showToast("This team is still syncing. Try again in a moment.");
+                              return;
+                            }
+                            if (isTemporaryUserId(u.id)) {
+                              showToast("This user is still syncing. Try again in a moment.");
+                              return;
+                            }
                             const next = isMember ? team.memberIds.filter((id) => id !== u.id) : [...team.memberIds, u.id];
                             const prevMembers = team.memberIds;
                             setExtraTeams((prev) => prev.map((t) => t.id === team.id ? { ...t, memberIds: next } : t));
@@ -25284,6 +25446,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex items-center justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                     <button disabled={!dirty || !editTeamName.trim()} className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors" onClick={() => {
+                      if (isTemporaryTeamId(team.id)) {
+                        showToast("This team is still syncing. Try again in a moment.");
+                        return;
+                      }
+                      if (editTeamLeadId && isTemporaryUserId(editTeamLeadId)) {
+                        showToast("The selected team lead is still syncing. Try again in a moment.");
+                        return;
+                      }
                       const updates: Record<string, unknown> = {};
                       if (editTeamName.trim() !== team.name) updates.name = editTeamName.trim();
                       const nextLead = editTeamLeadId || null;
