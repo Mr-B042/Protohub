@@ -83,6 +83,25 @@ router.post("/", captureRateLimit, async (req, res) => {
     .eq("id", d.id)
     .maybeSingle();
 
+  const { data: existingOrder } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("org_id", product.org_id)
+    .eq("source_cart_id", d.id)
+    .maybeSingle();
+
+  if (existingOrder) {
+    if (existing && existing.org_id === product.org_id && existing.status !== "Converted") {
+      await supabase
+        .from("abandoned_carts")
+        .update({ status: "Converted", last_activity: new Date().toISOString() })
+        .eq("id", d.id)
+        .eq("org_id", product.org_id);
+    }
+    res.status(200).json({ id: d.id, ignored: true, converted: true, orderId: existingOrder.id });
+    return;
+  }
+
   if (existing) {
     if (existing.org_id !== product.org_id) {
       res.status(409).json({ error: "Cart id collision." });

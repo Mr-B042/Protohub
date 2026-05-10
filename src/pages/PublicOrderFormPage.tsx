@@ -268,6 +268,7 @@ export default function PublicOrderFormPage() {
 
   const cartSyncTimerRef = useRef<number | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
+  const publicOrderSubmittingRef = useRef(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
 
   const publicProduct = products.find((product) => product.id === publicProductId);
@@ -440,6 +441,7 @@ export default function PublicOrderFormPage() {
     }
 
     cartSyncTimerRef.current = window.setTimeout(() => {
+      if (publicOrderSubmittingRef.current) return;
       cartsApi.capture({
         id: cartId,
         customer: orderFormName.trim() || "Partial lead",
@@ -569,6 +571,7 @@ export default function PublicOrderFormPage() {
     const customerName = orderFormName.trim();
 
     setPublicOrderSubmitting(true);
+    publicOrderSubmittingRef.current = true;
     try {
       const created = await publicOrdersApi.create({
         cartId: abandonedDraftCartId || undefined,
@@ -596,11 +599,17 @@ export default function PublicOrderFormPage() {
       setPublicOrderSubmitted({ orderId: created.id, customer: customerName });
     } catch (error: any) {
       setPublicOrderSubmitting(false);
+      publicOrderSubmittingRef.current = false;
       showToast(error?.message ?? "Could not submit your order. Please try again.");
       return;
     }
 
     setPublicOrderSubmitting(false);
+    if (cartSyncTimerRef.current) {
+      window.clearTimeout(cartSyncTimerRef.current);
+      cartSyncTimerRef.current = null;
+    }
+    publicOrderSubmittingRef.current = false;
     resetOrderForm();
 
     if (publicRedirectUrl) {

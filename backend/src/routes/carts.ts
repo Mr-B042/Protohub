@@ -81,6 +81,25 @@ router.post("/", async (req, res) => {
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
 
+  const { data: existingOrder } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("org_id", req.user!.orgId)
+    .eq("source_cart_id", d.id)
+    .maybeSingle();
+
+  if (existingOrder) {
+    if (existing && existing.status !== "Converted") {
+      await supabase
+        .from("abandoned_carts")
+        .update({ status: "Converted", last_activity: new Date().toISOString() })
+        .eq("id", d.id)
+        .eq("org_id", req.user!.orgId);
+    }
+    res.status(200).json({ id: d.id, ignored: true, converted: true, orderId: existingOrder.id });
+    return;
+  }
+
   if (existing) {
     const { data, error } = await supabase
       .from("abandoned_carts")

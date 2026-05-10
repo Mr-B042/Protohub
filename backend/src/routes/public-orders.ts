@@ -273,6 +273,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     .insert({
       ...(d.id ? { id: d.id } : {}),
       org_id:            product.org_id,
+      source_cart_id:    d.cartId ?? null,
       customer:          d.customer,
       phone:             d.phone,
       whatsapp:          d.whatsapp ?? null,

@@ -2934,6 +2934,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFormDeliveryWindow, setOrderFormDeliveryWindow] = useState("");
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
+  const publicOrderSubmittingRef = useRef(false);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
@@ -7929,6 +7930,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (publicProduct) {
       window.clearTimeout(cartSyncTimerRef.current ?? undefined);
       cartSyncTimerRef.current = window.setTimeout(() => {
+        if (publicOrderSubmittingRef.current) return;
         cartsApi.capture({
           id:           cartPatch.id,
           customer:     cartPatch.customer,
@@ -11118,6 +11120,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           productName: publicProduct.name, packageName: chosenPackage.name,
           quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
           currency: chosenPackage.currency, source,
+          sourceCartId: abandonedDraftCartId || undefined,
           utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
           utmMedium: publicUtmMedium || undefined,
           utmContent: publicUtmContent || undefined,
@@ -11217,10 +11220,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     } catch (err: any) {
       setPublicOrderSubmitting(false);
+      publicOrderSubmittingRef.current = false;
       showToast(err?.message ?? "Could not submit your order. Please try again.");
       return;
     }
     markDraftCartConverted(createdOrderId);
+    if (cartSyncTimerRef.current) {
+      window.clearTimeout(cartSyncTimerRef.current);
+      cartSyncTimerRef.current = null;
+    }
+    publicOrderSubmittingRef.current = false;
     setOrderFormName("");
     setOrderFormPhone("");
     setOrderFormWhatsapp("");
@@ -12446,7 +12455,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cartSnapshot = selectedCart;
     let orderId = "";
     try {
-      const saved = await ordersApi.create(draftOrder);
+      const saved = await ordersApi.create({ ...draftOrder, sourceCartId: selectedCart.id });
       const order: TrackedOrder = {
         ...draftOrder,
         id: saved.id,
