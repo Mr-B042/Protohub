@@ -44,7 +44,9 @@
     /* Surface colors — single source of truth used by both Tailwind utilities
        and bare CSS. Override in .dark below. */
     --surface-page: 0 0% 92%;       /* #EBEBEB-ish */
+    --surface-page-alt: 0 0% 95%;
     --surface-card: 0 0% 100%;
+    --surface-card-elevated: 0 0% 100%;
     --surface-muted: 220 14% 96%;   /* gray-50 */
     --surface-hover: 220 13% 91%;   /* gray-100 */
     --text-strong: 222 47% 11%;     /* gray-900 */
@@ -56,13 +58,13 @@
   }
 
   .dark {
-    --background: 222 30% 5%;
+    --background: 210 48% 6%;
     --foreground: 0 0% 98%;
 
-    --card: 222 24% 9%;
+    --card: 210 42% 9%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 222 24% 9%;
+    --popover: 210 42% 9%;
     --popover-foreground: 0 0% 98%;
 
     --primary: 207 80% 60%;          /* brand blue, lifted for dark bg legibility */
@@ -70,35 +72,37 @@
     --brand-navy: 220 22% 12%;       /* darker still in dark mode */
     --brand-navy-foreground: 0 0% 98%;
 
-    --secondary: 222 18% 14%;
+    --secondary: 210 34% 11%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 222 18% 14%;
-    --muted-foreground: 215 18% 82%;
+    --muted: 210 34% 11%;
+    --muted-foreground: 215 14% 74%;
 
-    --accent: 222 18% 14%;
+    --accent: 210 34% 11%;
     --accent-foreground: 0 0% 98%;
 
     --destructive: 0 70% 55%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 222 16% 18%;
-    --input: 222 16% 18%;
+    --border: 205 42% 19%;
+    --input: 205 42% 19%;
     --ring: 207 80% 60%;             /* matches brand blue, dark variant */
 
     --glass-bg: rgba(15, 18, 23, 0.7);
     --glass-border: rgba(255, 255, 255, 0.08);
 
-    --surface-page: 222 30% 4%;
-    --surface-card: 222 24% 9%;
-    --surface-muted: 222 20% 12%;
-    --surface-hover: 222 18% 16%;
+    --surface-page: 210 48% 6%;
+    --surface-page-alt: 210 44% 8%;
+    --surface-card: 210 42% 9%;
+    --surface-card-elevated: 210 40% 11%;
+    --surface-muted: 210 34% 11%;
+    --surface-hover: 209 30% 15%;
     --text-strong: 0 0% 98%;
-    --text-default: 210 16% 90%;
-    --text-muted: 215 18% 82%;
-    --text-faint: 215 14% 70%;
-    --border-default: 222 16% 18%;
-    --border-subtle: 222 16% 13%;
+    --text-default: 210 18% 91%;
+    --text-muted: 214 12% 70%;
+    --text-faint: 214 10% 56%;
+    --border-default: 205 42% 19%;
+    --border-subtle: 208 38% 14%;
   }
 }
 
@@ -4384,13 +4388,16 @@ th {
 }
 
 .app-shell[data-theme="dark"] {
-  background: #171a1f;
-  color: #edf3f7;
+  background:
+    radial-gradient(circle at top left, rgba(31, 143, 224, 0.12), transparent 24rem),
+    radial-gradient(circle at top right, rgba(31, 143, 224, 0.08), transparent 18rem),
+    linear-gradient(180deg, hsl(var(--surface-page-alt)), hsl(var(--surface-page)));
+  color: hsl(var(--foreground));
 }
 
 .app-shell[data-theme="dark"] .main,
 .app-shell[data-theme="dark"] .page {
-  background: #20242a;
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .sidebar,
@@ -4400,9 +4407,19 @@ th {
 .app-shell[data-theme="dark"] .field-readout,
 .app-shell[data-theme="dark"] .date-range-panel,
 .app-shell[data-theme="dark"] .modal {
-  background: #272c33;
-  border-color: #3b444d;
-  color: #edf3f7;
+  background: linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card)));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  box-shadow:
+    0 20px 45px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.app-shell[data-theme="dark"] .sidebar {
+  background:
+    linear-gradient(180deg, hsl(210 44% 8%), hsl(210 48% 6%));
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
 }
 
 .app-shell[data-theme="dark"] .nav-item,
@@ -4414,14 +4431,14 @@ th {
 .app-shell[data-theme="dark"] .mini-stat span,
 .app-shell[data-theme="dark"] .legend,
 .app-shell[data-theme="dark"] .currency-note span {
-  color: #c7d1da;
+  color: hsl(var(--text-muted));
 }
 
 .app-shell[data-theme="dark"] .nav-item.active,
 .app-shell[data-theme="dark"] .nav-item:hover,
 .app-shell[data-theme="dark"] .icon-button:hover {
-  background: #14364b;
-  color: #8bd3ff;
+  background: rgba(0, 139, 255, 0.12);
+  color: hsl(201 100% 72%);
 }
 
 .app-shell[data-theme="dark"] .segmented,
@@ -4435,33 +4452,33 @@ th {
 .app-shell[data-theme="dark"] .search-box,
 .app-shell[data-theme="dark"] .search-box input,
 .app-shell[data-theme="dark"] .orders-pagination button {
-  background: #1d2228;
-  border-color: #3b444d;
-  color: #edf3f7;
+  background: hsl(var(--surface-muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
 }
 
 .app-shell[data-theme="dark"] th,
 .app-shell[data-theme="dark"] .orders-pagination strong {
-  color: #edf3f7;
+  color: hsl(var(--foreground));
 }
 
 .app-shell[data-theme="dark"] .orders-table-wrap,
 .app-shell[data-theme="dark"] th,
 .app-shell[data-theme="dark"] td,
 .app-shell[data-theme="dark"] .abandoned-empty-box {
-  border-color: #3b444d;
+  border-color: hsl(var(--border));
 }
 
 .app-shell[data-theme="dark"] .abandoned-empty-box h2 {
-  color: #edf3f7;
+  color: hsl(var(--foreground));
 }
 
 .app-shell[data-theme="dark"] .panel-header.tinted {
-  background: #1e3442;
+  background: hsl(211 48% 18%);
 }
 
 .app-shell[data-theme="dark"] .panel-header span {
-  background: #20242a;
+  background: hsl(var(--surface-card));
 }
 
 @media (max-width: 1180px) {
@@ -7556,7 +7573,13 @@ tbody tr:hover {
 /* Bring html/body bg fully into the variable so no black strip leaks
    above the app-shell on tall viewports or during scroll bounce. */
 html.dark,
-.dark body { background-color: hsl(var(--background)); }
+.dark body {
+  background:
+    radial-gradient(circle at top left, rgba(31, 143, 224, 0.1), transparent 24rem),
+    radial-gradient(circle at top right, rgba(31, 143, 224, 0.06), transparent 16rem),
+    linear-gradient(180deg, hsl(var(--surface-page-alt)), hsl(var(--background)));
+  background-color: hsl(var(--background));
+}
 
 /* Surfaces */
 .dark .bg-white { background-color: hsl(var(--card)); }
@@ -7566,8 +7589,8 @@ html.dark,
 .dark .bg-slate-50 { background-color: hsl(var(--surface-muted)); }
 .dark .bg-gray-100,
 .dark .bg-slate-100 { background-color: hsl(var(--surface-hover)); }
-.dark .bg-gray-200 { background-color: hsl(222 16% 28%); }
-.dark .bg-gray-300 { background-color: hsl(222 16% 34%); }
+.dark .bg-gray-200 { background-color: hsl(208 28% 16%); }
+.dark .bg-gray-300 { background-color: hsl(208 28% 21%); }
 .dark .bg-black\/5 { background-color: rgba(255, 255, 255, 0.05); }
 .dark .bg-black\/10 { background-color: rgba(255, 255, 255, 0.10); }
 .dark .bg-black\/\[0\.02\] { background-color: rgba(255, 255, 255, 0.04); }
@@ -7606,19 +7629,19 @@ html.dark,
 .dark .text-slate-900,
 .dark .text-black { color: hsl(0 0% 98%); }
 .dark .text-gray-800,
-.dark .text-slate-800 { color: hsl(0 0% 95%); }
+.dark .text-slate-800 { color: hsl(0 0% 96%); }
 .dark .text-gray-700,
-.dark .text-slate-700 { color: hsl(210 14% 90%); }
+.dark .text-slate-700 { color: hsl(214 16% 88%); }
 .dark .text-gray-600,
-.dark .text-slate-600 { color: hsl(215 16% 85%); }
+.dark .text-slate-600 { color: hsl(214 14% 76%); }
 .dark .text-gray-500,
 .dark .text-slate-500,
-.dark .text-muted-foreground { color: hsl(215 16% 80%); }
+.dark .text-muted-foreground { color: hsl(214 12% 67%); }
 .dark .text-gray-400,
-.dark .text-slate-400 { color: hsl(215 14% 75%); }
+.dark .text-slate-400 { color: hsl(214 10% 56%); }
 .dark .text-gray-300,
-.dark .text-slate-300 { color: hsl(215 12% 65%); }
-.dark .text-gray-200 { color: hsl(215 10% 55%); }
+.dark .text-slate-300 { color: hsl(214 10% 50%); }
+.dark .text-gray-200 { color: hsl(214 10% 44%); }
 
 /* Tinted text — push lightness up for high readability on deeper bg */
 .dark .text-blue-700 { color: hsl(217 90% 80%); }
@@ -7661,7 +7684,7 @@ html.dark,
 .dark .border-gray-200,
 .dark .border-slate-200 { border-color: hsl(var(--border)); }
 .dark .border-gray-300,
-.dark .border-slate-300 { border-color: hsl(222 16% 30%); }
+.dark .border-slate-300 { border-color: hsl(205 38% 24%); }
 .dark .border-black\/5 { border-color: rgba(255, 255, 255, 0.06); }
 .dark .border-black\/10 { border-color: rgba(255, 255, 255, 0.12); }
 .dark .border-blue-100 { border-color: hsl(217 70% 28%); }
@@ -7702,8 +7725,8 @@ html.dark,
 .dark .hover\:bg-purple-50:hover { background-color: hsl(260 50% 22%); }
 
 .dark .hover\:text-gray-900:hover { color: hsl(var(--foreground)); }
-.dark .hover\:text-gray-700:hover { color: hsl(210 14% 82%); }
-.dark .hover\:text-gray-600:hover { color: hsl(215 14% 75%); }
+.dark .hover\:text-gray-700:hover { color: hsl(214 16% 88%); }
+.dark .hover\:text-gray-600:hover { color: hsl(214 14% 74%); }
 
 /* Form controls — inputs, selects, textareas */
 .dark input,
@@ -7714,13 +7737,13 @@ html.dark,
   color: hsl(var(--foreground));
 }
 .dark input::placeholder,
-.dark textarea::placeholder { color: hsl(215 14% 50%); }
+.dark textarea::placeholder { color: hsl(215 12% 48%); }
 .dark input[type="checkbox"],
 .dark input[type="radio"] { accent-color: hsl(var(--primary)); }
 
 /* Tables */
 .dark table thead { background-color: hsl(var(--surface-muted)); }
-.dark table tbody tr:hover { background-color: hsl(var(--surface-hover) / 0.5); }
+.dark table tbody tr:hover { background-color: hsl(222 18% 14% / 0.8); }
 
 /* Shadows are too dark on top of dark surfaces — soften them */
 .dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4); }
@@ -7741,6 +7764,260 @@ html.dark,
   background-color: hsl(var(--card)) !important;
   border-color: hsl(var(--border)) !important;
   color: hsl(var(--foreground)) !important;
+}
+
+/* Shared component polish for dark mode */
+.dark :is(
+  .metric-card,
+  .order-metric-card,
+  .abandoned-metric-card,
+  .expense-metric-card,
+  .user-metric-card,
+  .finance-card,
+  .rep-kpi-card,
+  .panel,
+  .transactions,
+  .orders-product-panel,
+  .abandoned-carts-panel,
+  .inventory-table-panel,
+  .expense-chart-panel,
+  .finance-chart-panel,
+  .finance-small-panel,
+  .stock-loss-panel,
+  .settings-card,
+  .subscription-card,
+  .plan-limits-card,
+  .embed-settings,
+  .rep-work-panel,
+  .rep-cart-widget,
+  .rep-detail-panel,
+  .rep-status-panel,
+  .dashboard-math-panel,
+  .detail-block,
+  .inventory-agent-card,
+  .order-form-preview,
+  .embed-product-card,
+  .public-order-card,
+  .public-order-empty
+) {
+  background:
+    linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card)));
+  border-color: hsl(var(--border));
+  box-shadow:
+    0 0 0 1px rgba(12, 61, 95, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.dark :is(
+  .panel-header,
+  .finance-mini-list span,
+  .formula-grid span,
+  .rep-console-scope,
+  .order-detail-hero,
+  .modal-detail-article,
+  .embed-ready-card,
+  .light-code-box,
+  .code-actions
+) {
+  background: linear-gradient(180deg, hsl(var(--surface-muted)), hsl(210 34% 10%));
+  border-color: hsl(var(--border));
+}
+
+.dark .public-order-page {
+  background:
+    radial-gradient(circle at top left, rgba(31, 143, 224, 0.09), transparent 18rem),
+    linear-gradient(180deg, hsl(var(--surface-page-alt)), hsl(var(--surface-page)));
+  color: hsl(var(--foreground));
+}
+
+.dark :is(.public-order-card p, .public-order-empty p, .embed-card-form p, .embed-output-panel p, .embed-ready-card span) {
+  color: hsl(var(--text-muted));
+}
+
+.dark .search-box {
+  background: hsl(var(--surface-muted));
+  border-color: hsl(var(--border));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.dark .search-box input {
+  color: hsl(var(--foreground));
+}
+
+.dark .search-box input::placeholder {
+  color: hsl(var(--text-faint));
+}
+
+.dark .orders-pagination,
+.dark .toast,
+.dark .workflow-modal .modal-title-row,
+.dark .date-range-panel,
+.dark .code-tabs,
+.dark .modal {
+  border-color: hsl(var(--border));
+}
+
+.dark .orders-pagination {
+  color: hsl(var(--text-muted));
+}
+
+.dark .toast {
+  background: linear-gradient(135deg, hsl(207 72% 34%), hsl(212 68% 24%));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.4);
+}
+
+.dark .toast button {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dark .modal-backdrop {
+  background: rgba(3, 7, 18, 0.7);
+  backdrop-filter: blur(10px);
+}
+
+.dark .modal {
+  background: linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card)));
+}
+
+.dark .workflow-modal .modal-title-row {
+  background: hsl(var(--surface-card));
+  border-bottom-color: hsl(var(--border));
+}
+
+.dark .modal-form label > span,
+.dark .modal-detail-article span {
+  color: hsl(var(--text-faint));
+}
+
+.dark .modal-form p,
+.dark .dashboard-math-panel p,
+.dark .rep-kpi-card p,
+.dark .low-stock-alert p,
+.dark .inventory-agent-card p {
+  color: hsl(var(--text-muted));
+}
+
+.dark .rep-console-tabs button,
+.dark .rep-status-tabs button,
+.dark .timeline-status,
+.dark .agent-stock-chip-row span,
+.dark .low-stock-products span,
+.dark .low-stock-pill {
+  background: hsl(var(--surface-muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--text-default));
+}
+
+.dark .rep-console-tabs button.selected,
+.dark .rep-status-tabs button.selected,
+.dark .timeline-status.selected {
+  background: linear-gradient(135deg, hsl(211 74% 45%), hsl(214 80% 38%));
+  border-color: hsl(211 74% 45%);
+  color: white;
+}
+
+.dark .status-pill {
+  border: 1px solid hsl(var(--border));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.dark .code-tabs {
+  background: hsl(var(--surface-muted));
+}
+
+.dark .code-tabs button.selected {
+  background: hsl(var(--surface-card-elevated));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32);
+}
+
+.dark .light-code-box {
+  background: hsl(222 26% 11%);
+}
+
+.dark .light-code-box pre {
+  color: hsl(var(--foreground));
+}
+
+.dark .code-box {
+  border-color: hsl(var(--border));
+  background: linear-gradient(180deg, hsl(223 31% 11%), hsl(223 36% 8%));
+}
+
+.dark .order-detail-hero,
+.dark .rep-console-scope,
+.dark .formula-grid span,
+.dark .finance-mini-list span {
+  color: hsl(var(--text-default));
+}
+
+.dark .topbar-icon-button {
+  color: hsl(var(--text-muted));
+  background: hsl(var(--surface-muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.dark .topbar-icon-button:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--surface-hover));
+}
+
+.dark .app-topbar {
+  background: rgba(4, 12, 20, 0.92);
+  border-bottom-color: hsl(var(--border));
+  backdrop-filter: blur(10px);
+}
+
+.dark .dashboard-hero {
+  background: transparent;
+  border: 0;
+  padding-inline: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: 0;
+}
+
+.dark .dashboard-hero h1 {
+  color: hsl(202 100% 46%);
+}
+
+.dark .dashboard-hero p {
+  color: hsl(var(--text-muted));
+}
+
+.dark .dashboard-hero .admin-overview-badge {
+  color: hsl(202 100% 46%);
+}
+
+.dark .dashboard-banner-card {
+  background: linear-gradient(180deg, hsl(var(--surface-card)), hsl(var(--surface-card)));
+  border-color: hsl(202 78% 22%);
+}
+
+.dark .dashboard-summary-card {
+  background: linear-gradient(180deg, hsl(var(--surface-card)), hsl(var(--surface-card)));
+  border-color: hsl(var(--border));
+}
+
+.dark .dashboard-summary-accent {
+  display: none;
+}
+
+.dark .order-detail-hero span,
+.dark .finance-mini-list strong,
+.dark .formula-grid strong,
+.dark .rep-console-scope strong,
+.dark .stock-capacity-row strong {
+  color: hsl(var(--foreground));
+}
+
+.dark .stock-capacity-track {
+  background: hsl(222 16% 18%);
+}
+
+.dark .stock-capacity-track span {
+  background: linear-gradient(90deg, hsl(207 74% 50%), hsl(201 88% 62%));
 }
 
 /* Scrollbars */

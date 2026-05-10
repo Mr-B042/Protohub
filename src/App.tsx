@@ -15745,7 +15745,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
 
   return (
-    <div className={`app-shell !flex min-h-[100dvh] lg:h-screen bg-[#EBEBEB] dark:bg-[hsl(var(--background))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
+    <div className={`app-shell !flex min-h-[100dvh] lg:h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
       {isSpying && spiedUser && (
         <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 px-4 py-2 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
           <Eye className="w-4 h-4" />
@@ -15872,10 +15872,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
-        <header className="h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
+        <header className="app-topbar h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
           <div className="flex items-center lg:hidden">
             <button
-              className="p-2 -ml-2 text-gray-600 hover:text-gray-900"
+              className="topbar-icon-button p-2 -ml-2 text-gray-600 hover:text-gray-900"
               onClick={() => setMobileMenuOpen(true)}
             >
               <Menu className="w-5 h-5" />
@@ -15885,7 +15885,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="ml-auto flex items-center gap-4">
             {/* Notification bell + dropdown */}
             <div className="relative">
-              <button className="text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
+              <button className="topbar-icon-button text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
                 <Bell className="w-5 h-5" />
                 {unreadNotificationCount > 0 && (
                   <span className="absolute top-0 right-0 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none">
@@ -15956,11 +15956,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </>
               )}
             </div>
-            <button className="text-gray-600 hover:text-gray-900" onClick={() => setModal("help")}>
+            <button className="topbar-icon-button text-gray-600 hover:text-gray-900 p-1.5" onClick={() => setModal("help")}>
               <HelpCircle className="w-5 h-5" />
             </button>
             <button
-              className="text-gray-600 hover:text-gray-900"
+              className="topbar-icon-button text-gray-600 hover:text-gray-900 p-1.5"
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
             >
               {theme === "light" ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
@@ -16000,11 +16000,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
-              <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 px-5 py-4 bg-gradient-to-r from-blue-50 to-transparent rounded-2xl border border-blue-100">
+              <header className="dashboard-hero flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 px-5 py-4 bg-gradient-to-r from-blue-50 to-transparent rounded-2xl border border-blue-100">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2 h-2 rounded-full bg-[#1F8FE0]" />
-                    <span className="text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview</span>
+                    <span className="admin-overview-badge text-xs font-semibold text-[#1F8FE0] uppercase tracking-widest">Admin Overview</span>
                   </div>
                   <h1 className="text-2xl font-bold text-gray-900">Administrator Dashboard</h1>
                   <p className="text-sm text-gray-500">Monitor your business performance in real-time</p>
@@ -16116,8 +16116,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                     : "bg-red-50 text-red-700 border border-red-200";
                   return (
-                    <article className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col shadow-sm" key={card.label}>
-                      <div className={`h-1 ${t.bar}`} />
+                    <article className="dashboard-summary-card bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col shadow-sm" key={card.label}>
+                      <div className={`dashboard-summary-accent h-1 ${t.bar}`} />
                       <div className="p-5 flex flex-col gap-4 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${t.icon}`}>
