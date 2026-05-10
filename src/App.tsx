@@ -83,6 +83,8 @@ import {
 } from "lucide-react";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import { auth } from "./lib/auth";
+import { snakeToCamel } from "./lib/normalize";
+import { realtimeClient } from "./lib/realtime";
 import {
   subscribeToPush,
   unsubscribeFromPush,
@@ -1597,6 +1599,45 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     scheduledAt,
     scheduledDate,
     notes: orderNotesFor(value)
+  };
+};
+
+const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
+  const cart = snakeToCamel<any>(value);
+  return {
+    id: cart.id,
+    customer: cart.customer ?? "Partial lead",
+    phone: cart.phone ?? "",
+    whatsapp: cart.whatsapp ?? undefined,
+    email: cart.email ?? undefined,
+    city: cart.city ?? undefined,
+    state: cart.state ?? undefined,
+    productId: cart.productId ?? undefined,
+    packageId: cart.packageId ?? undefined,
+    productName: cart.productName ?? "",
+    packageName: cart.packageName ?? "",
+    amount: Number(cart.amount ?? 0),
+    currency: cart.currency ?? "NGN",
+    source: cart.source ?? "Website",
+    status: cart.status ?? "Open abandoned",
+    assignedRepId: cart.assignedRepId ?? undefined,
+    lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
+    createdAt: cart.createdAt ?? ""
+  };
+};
+
+const normalizeRealtimeUser = (value: any): ManagedUser => {
+  const user = snakeToCamel<any>(value);
+  return {
+    id: user.id,
+    name: user.name ?? "",
+    email: user.email ?? "",
+    phone: user.phone ?? "",
+    role: user.role ?? "Viewer",
+    active: user.active !== false,
+    created: user.createdAt ?? user.created ?? "",
+    lastSeenAt: user.lastSeenAt ?? undefined,
+    roundRobinPosition: user.roundRobinPosition ?? 0
   };
 };
 
@@ -7568,6 +7609,144 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       window.removeEventListener("online", onOnline);
     };
   }, [dataLoading]);
+
+  useEffect(() => {
+    if (!auth.isLoggedIn() || !realtimeClient) return;
+
+    let cancelled = false;
+    let productsReloadTimer: number | null = null;
+    const currentUser = auth.getUser();
+    const syncRealtimeAuth = () => {
+      const token = auth.getAccessToken();
+      if (!token || !realtimeClient) return Promise.resolve();
+      return realtimeClient.realtime.setAuth(token).catch(() => undefined);
+    };
+    const queueProductsReload = () => {
+      if (productsReloadTimer) return;
+      productsReloadTimer = window.setTimeout(() => {
+        productsReloadTimer = null;
+        productsApi.list()
+          .then((rows) => {
+            if (!cancelled && Array.isArray(rows)) setProducts(rows as any);
+          })
+          .catch(() => undefined);
+      }, 300);
+    };
+    const channel = realtimeClient.channel(`protohub-live-${currentUser?.id ?? "session"}`);
+
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
+      const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
+      const orderId = row?.id;
+      if (!orderId) return;
+      const updatedStamp = row?.updatedAt ?? row?.updated_at ?? payload.commit_timestamp ?? "";
+      if (updatedStamp && updatedStamp > latestOrderUpdatedAt.current) latestOrderUpdatedAt.current = updatedStamp;
+      const createdStamp = row?.createdAt ?? row?.created_at ?? "";
+      if (createdStamp && createdStamp > latestOrderTimestamp.current) latestOrderTimestamp.current = createdStamp;
+
+      if (payload.eventType === "DELETE") {
+        setTrackedOrders((prev) => prev.filter((order) => order.id !== orderId));
+        return;
+      }
+
+      const nextOrder = normalizeTrackedOrder(row);
+      setTrackedOrders((prev) => {
+        const index = prev.findIndex((order) => order.id === nextOrder.id);
+        if (index === -1) return [nextOrder, ...prev];
+        const merged = prev.slice();
+        merged[index] = { ...prev[index], ...nextOrder };
+        return merged;
+      });
+    });
+
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "system_notifications" }, (payload) => {
+      const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
+      const notificationId = row?.id;
+      if (!notificationId) return;
+
+      if (payload.eventType === "DELETE") {
+        setSystemNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
+        return;
+      }
+
+      const nextNotification = row as SystemNotification;
+      setSystemNotifications((prev) => {
+        const index = prev.findIndex((notification) => notification.id === nextNotification.id);
+        if (index === -1) return [nextNotification, ...prev];
+        const merged = prev.slice();
+        merged[index] = { ...prev[index], ...nextNotification };
+        return merged;
+      });
+    });
+
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "abandoned_carts" }, (payload) => {
+      const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
+      const cartId = row?.id;
+      if (!cartId) return;
+
+      if (payload.eventType === "DELETE") {
+        setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== cartId));
+        return;
+      }
+
+      const nextCart = normalizeRealtimeCart(row);
+      setAbandonedCarts((prev) => {
+        const index = prev.findIndex((cart) => cart.id === nextCart.id);
+        if (index === -1) return [nextCart, ...prev];
+        const merged = prev.slice();
+        merged[index] = { ...prev[index], ...nextCart };
+        return merged;
+      });
+    });
+
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "users" }, (payload) => {
+      const row = payload.eventType === "DELETE" ? snakeToCamel<any>(payload.old) : snakeToCamel<any>(payload.new);
+      const userId = row?.id;
+      if (!userId) return;
+
+      if (payload.eventType === "DELETE") {
+        setUsers((prev) => prev.filter((user) => user.id !== userId));
+        return;
+      }
+
+      const nextUser = normalizeRealtimeUser(row);
+      setUsers((prev) => {
+        const index = prev.findIndex((user) => user.id === nextUser.id);
+        if (index === -1) return [...prev, nextUser];
+        const merged = prev.slice();
+        merged[index] = {
+          ...prev[index],
+          ...nextUser,
+          permissions: prev[index].permissions,
+          extraPages: prev[index].extraPages
+        };
+        return merged;
+      });
+    });
+
+    for (const table of ["products", "product_packages", "product_pricings"] as const) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        queueProductsReload();
+      });
+    }
+
+    void syncRealtimeAuth().then(() => {
+      if (cancelled) return;
+      channel.subscribe();
+    });
+
+    window.addEventListener("focus", syncRealtimeAuth);
+    window.addEventListener("online", syncRealtimeAuth);
+    window.addEventListener("protohub:auth-changed", syncRealtimeAuth as EventListener);
+
+    return () => {
+      cancelled = true;
+      if (productsReloadTimer) window.clearTimeout(productsReloadTimer);
+      window.removeEventListener("focus", syncRealtimeAuth);
+      window.removeEventListener("online", syncRealtimeAuth);
+      window.removeEventListener("protohub:auth-changed", syncRealtimeAuth as EventListener);
+      realtimeClient?.removeChannel(channel);
+    };
+  }, []);
 
   // ── Order polling — merge new + updated orders every 30s ────
   // Polls by updatedSince so STATUS changes / edits made by other reps come

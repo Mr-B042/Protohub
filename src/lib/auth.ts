@@ -28,6 +28,9 @@ export const auth = {
     localStorage.setItem(ACCESS_TOKEN_KEY,  accessToken);
     localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("protohub:auth-changed"));
+    }
   },
 
   clear() {
