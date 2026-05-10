@@ -42,8 +42,36 @@ import userRoutes          from "./routes/users.js";
 const app = express();
 const PORT = process.env.PORT ?? 4000;
 
+const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "");
+
+const configuredFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URLS
+]
+  .flatMap((value) => (value ?? "").split(/[,\n]/))
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map(normalizeOrigin);
+
+const defaultFrontendOrigins = [
+  "http://localhost:5173",
+  "https://protohub-zeta.vercel.app",
+  "https://brightpathhubs.com",
+  "https://www.brightpathhubs.com"
+].map(normalizeOrigin);
+
+const allowedFrontendOrigins = Array.from(new Set([
+  ...defaultFrontendOrigins,
+  ...configuredFrontendOrigins
+]));
+
 function isLoopbackIp(ip: string | undefined) {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function isAllowedFrontendOrigin(origin: string | undefined) {
+  if (!origin) return true;
+  return allowedFrontendOrigins.includes(normalizeOrigin(origin));
 }
 
 // Trust the first proxy hop so req.ip reflects the real client IP behind
@@ -68,10 +96,17 @@ app.use(helmet());
 
 // Public endpoints are designed to be hit from customer-owned domains hosting
 // the embed iframe — they need wildcard CORS. Authenticated endpoints stay
-// locked to the configured FRONTEND_URL.
+// restricted to known app origins.
 app.use("/api/public", cors({ origin: "*", credentials: false }));
 app.use(cors({
-  origin: process.env.FRONTEND_URL ?? "http://localhost:5173",
+  origin(origin, callback) {
+    if (isAllowedFrontendOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    logger.warn("cors_origin_blocked", { origin, allowedFrontendOrigins });
+    callback(null, false);
+  },
   credentials: true
 }));
 // Global rate limit — skip for local development

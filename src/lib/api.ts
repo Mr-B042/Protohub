@@ -49,6 +49,18 @@ class ApiError extends Error {
   }
 }
 
+function extractErrorMessage(payload: any, fallback: string) {
+  const direct = [
+    payload?.error,
+    payload?.message,
+    typeof payload === "string" ? payload : null
+  ];
+  for (const candidate of direct) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return fallback;
+}
+
 // ── Core request helper ────────────────────────────────────
 async function request<T>(
   method: string,
@@ -57,15 +69,20 @@ async function request<T>(
   retried = false
 ): Promise<T> {
   const token = auth.getAccessToken();
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    cache: "no-store", // never read from or write to HTTP cache
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      cache: "no-store", // never read from or write to HTTP cache
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+  } catch {
+    throw new ApiError(0, "Unable to reach the server. The request may be blocked by your connection or allowed domain settings.");
+  }
 
   // Auto-refresh on 401 (token expired)
   if (res.status === 401 && !retried) {
@@ -78,7 +95,7 @@ async function request<T>(
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, payload?.error ?? res.statusText);
+    throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Request failed."));
   }
 
   if (res.status === 204) return undefined as T;
