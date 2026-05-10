@@ -120,8 +120,8 @@ const DEFAULT_SETTINGS: PublicEmbedSettings = {
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
-const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 2;
-const PUBLIC_PRODUCT_RETRY_DELAY_MS = 450;
+const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 5;
+const PUBLIC_PRODUCT_RETRY_DELAY_MS = 700;
 
 function readCachedValue<T>(key: string, maxAgeMs: number): T | null {
   if (typeof window === "undefined") return null;
@@ -360,7 +360,12 @@ export default function PublicOrderFormPage() {
 
       if (!resolvedProduct) {
         if (cachedBundleProducts.length === 0) {
-          setLoadError(lastError?.message ?? "Could not load the order form.");
+          const status = typeof lastError?.status === "number" ? lastError.status : null;
+          setLoadError(
+            status === 404
+              ? "This order form is still being prepared. Please retry in a moment."
+              : (lastError?.message ?? "Could not load the order form.")
+          );
         }
         setLoading(false);
         return;
@@ -631,7 +636,7 @@ export default function PublicOrderFormPage() {
           <article className="panel public-order-empty">
             <div style={{ fontSize: 40 }}>?</div>
             <h1>Order form unavailable</h1>
-            <p>{loadError || "This embed link does not match a product in your local workspace yet."}</p>
+            <p>{loadError || "This order form is still being prepared. Please retry in a moment."}</p>
             <button className="primary-button" onClick={() => window.location.reload()}>
               Retry
             </button>

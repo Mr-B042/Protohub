@@ -119,7 +119,11 @@ router.get("/:id", readRateLimit, async (req, res) => {
   // complete payload in one round trip.
   const referenced = new Set<string>([
     ...(product.cross_sell_product_ids ?? []),
-    ...(product.free_gift_product_ids ?? [])
+    ...(product.free_gift_product_ids ?? []),
+    ...((product.packages ?? [])
+      .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
+      .map((companion) => companion.productId)
+      .filter(Boolean))
   ]);
   let related: DbProduct[] = [];
   if (referenced.size > 0) {
