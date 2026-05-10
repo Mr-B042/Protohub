@@ -7156,6 +7156,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // On mount, if the user is authenticated, fetch live data from the API
   // and merge it into state (API data wins over localStorage cache).
   const retryLoadData = useRef<() => void>(() => {});
+  const lastAutoResyncAt = useRef(0);
   useEffect(() => {
     if (!auth.isLoggedIn()) { setDataLoading(false); return; }
     let cancelled = false;
@@ -7533,6 +7534,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+
+    const maybeResync = () => {
+      if (dataLoading) return;
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAutoResyncAt.current < 45_000) return;
+      lastAutoResyncAt.current = now;
+      retryLoadData.current();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") maybeResync();
+    };
+    const onFocus = () => maybeResync();
+    const onOnline = () => maybeResync();
+    const intervalId = window.setInterval(() => {
+      if (!document.hasFocus()) return;
+      maybeResync();
+    }, 180_000);
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [dataLoading]);
 
   // ── Order polling — merge new + updated orders every 30s ────
   // Polls by updatedSince so STATUS changes / edits made by other reps come
