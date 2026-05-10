@@ -8438,24 +8438,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const thisWeek = () => { const s = getSundayKey(); setNavStart(s); apply(s, navSpan); };
     const changeSpan = (span: NavSpan) => { setNavSpan(span); apply(navStart, span); };
     return (
-      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
+      <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
         {/* Row 1: Span selector — full width on mobile, evenly distributed */}
-        <div className="flex items-center bg-gray-100 p-0.5 rounded-lg w-full sm:w-auto">
+        <div className="period-nav-segmented flex items-center bg-gray-100 p-0.5 rounded-lg w-full sm:w-auto">
           {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
             <button key={s} onClick={() => changeSpan(s)}
-              className={`!min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+              className={`period-nav-button !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
               {s}
             </button>
           ))}
         </div>
         {/* Row 2: Navigation — full width on mobile, "This Week" stretches between arrows */}
-        <div className="flex items-center gap-1 w-full sm:w-auto">
-          <button onClick={prev} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button onClick={thisWeek} className="!min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
-          <button onClick={next} className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
+        <div className="period-nav-cluster flex items-center gap-1 w-full sm:w-auto">
+          <button onClick={prev} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
+          <button onClick={thisWeek} className="period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
+          <button onClick={next} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
         {/* Row 3: Range label — left-aligned on mobile, muted */}
-        <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
+        <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
       </div>
     );
   };
@@ -8471,7 +8471,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const sorted = [...products].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
     return (
       <div className="relative w-full sm:w-auto" onMouseLeave={() => setShow(false)}>
-        <button onClick={() => setShow(!show)} className={`!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
+        <button onClick={() => setShow(!show)} className={`toolbar-filter-trigger !min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-2 text-sm font-medium border rounded-lg transition-colors ${ids.size > 0 ? "border-[#1F8FE0] text-[#1F8FE0] bg-blue-50" : "border-gray-200 text-gray-700 bg-white hover:bg-gray-50"}`}>
           <Package className="w-4 h-4" />
           {ids.size === 0 ? "All Products" : ids.size === 1 ? products.find(p => ids.has(p.id))?.name ?? "1 product" : `${ids.size} products`}
           {ids.size > 0 && (
@@ -14366,9 +14366,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         {renderProductFilter(repWorkspaceProductIds, setRepWorkspaceProductIds, showRepWorkspaceProductFilter, setShowRepWorkspaceProductFilter)}
       </div>
       {renderWeekNav(repWorkspaceNavStart, setRepWorkspaceNavStart, repWorkspaceNavSpan, setRepWorkspaceNavSpan, setRepWorkspacePeriod, setRepWorkspaceDateRange)}
-      <div className="flex items-center gap-3 text-xs text-gray-500 font-medium">
-        <strong className="text-gray-900">Currency: {selectedCurrency.label}</strong>
-        <span>Period: {repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start && repWorkspaceDateRange.end ? `${repWorkspaceDateRange.start} → ${repWorkspaceDateRange.end}` : repWorkspacePeriod}</span>
+      <div className="meta-chip-row flex flex-wrap items-center gap-3 text-xs text-gray-500 font-medium">
+        <span className="meta-chip inline-flex items-center gap-2">
+          <span className="meta-chip-label">Currency:</span>
+          <strong className="meta-chip-value">{selectedCurrency.label}</strong>
+        </span>
+        <span className="meta-chip inline-flex items-center gap-2">
+          <span className="meta-chip-label">Period:</span>
+          <strong className="meta-chip-value">{repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start && repWorkspaceDateRange.end ? `${repWorkspaceDateRange.start} → ${repWorkspaceDateRange.end}` : repWorkspacePeriod}</strong>
+        </span>
       </div>
     </div>
   );
@@ -16019,7 +16025,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={4} rows={4} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Getting-started checklist — shown only for new accounts with no data */}
               {products.length === 0 && trackedOrders.length === 0 && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
@@ -16049,54 +16055,71 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 mb-6">
-                {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
-                <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {periods.map((item) => (
-                    <button
-                      className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                      onClick={() => handlePeriodChange(item)}
-                      key={item}
-                    >
-                      {item}
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                    {periods.map((item) => (
+                      <button
+                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${period === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        onClick={() => handlePeriodChange(item)}
+                        key={item}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {period === "Custom" ? "Edit date range" : "Pick a date range"}
                     </button>
-                  ))}
+                    {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
+                  </div>
+                  {/* Currency — full width on mobile */}
+                  <select
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                    aria-label="Currency"
+                    value={currency}
+                    onChange={(event) => {
+                      const nextCurrency = event.target.value as CurrencyCode;
+                      setCurrency(nextCurrency);
+                      showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
+                    }}
+                  >
+                    <option value="NGN">₦ Nigerian Naira</option>
+                    <option value="USD">$ US Dollar</option>
+                    <option value="GBP">£ British Pound</option>
+                  </select>
+                  {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
+                  {/* Mobile-only: Export Report stacked full-width */}
+                  <div className="flex flex-col gap-2 w-full sm:hidden">
+                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
+                      <Download className="w-4 h-4" /> Export Report
+                    </button>
+                  </div>
                 </div>
-                {/* Date range — full width on mobile */}
-                <div className="relative w-full sm:w-auto">
-                  <button className="!min-h-0 w-full sm:w-auto inline-flex items-center justify-center sm:justify-start gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowDateRange((value) => !value)}>
-                    <CalendarDays className="w-4 h-4" /> {period === "Custom" ? "Edit date range" : "Pick a date range"}
-                  </button>
-                  {showDateRange && renderDateRangeCalendar("date-range-panel", dateRange, setDateRange, applyDateRange, () => setShowDateRange(false))}
-                </div>
-                {/* Currency — full width on mobile */}
-                <select
-                  className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
-                  aria-label="Currency"
-                  value={currency}
-                  onChange={(event) => {
-                    const nextCurrency = event.target.value as CurrencyCode;
-                    setCurrency(nextCurrency);
-                    showToast(`Currency changed to ${currencies[nextCurrency].label}.`);
-                  }}
-                >
-                  <option value="NGN">₦ Nigerian Naira</option>
-                  <option value="USD">$ US Dollar</option>
-                  <option value="GBP">£ British Pound</option>
-                </select>
-                {renderProductFilter(dashboardProductIds, setDashboardProductIds, showDashboardProductFilter, setShowDashboardProductFilter)}
-                {/* Mobile-only: Export Report stacked full-width */}
-                <div className="flex flex-col gap-2 w-full sm:hidden">
-                  <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm" onClick={exportReport}>
-                    <Download className="w-4 h-4" /> Export Report
-                  </button>
-                </div>
+                {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange)}
               </div>
-              {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange)}
 
-              <div className="flex items-center gap-3 text-sm text-gray-500 font-medium mb-4">
-                <strong className="text-gray-900">Currency: {selectedCurrency.label}</strong>
-                <span>Period: {selectedPeriodLabel}</span>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full overflow-x-hidden">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-xs font-semibold text-[#1F8FE0]">
+                    <CalendarDays className="w-3 h-3" /> {selectedPeriodLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
+                    {currency} · {selectedCurrency.label}
+                  </span>
+                  {dashboardProductIds.size > 0 && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
+                      <Package className="w-3 h-3" />
+                      {dashboardProductIds.size === 1
+                        ? products.find((product) => dashboardProductIds.has(product.id))?.name ?? "1 product"
+                        : `${dashboardProductIds.size} products`}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400"><span className="hidden sm:inline">· </span>All amounts in this currency</span>
               </div>
 
               <section className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4" aria-label="Business summary">
@@ -16570,7 +16593,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={8} rows={6} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Period + date + currency controls */}
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
@@ -17039,7 +17062,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={7} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2 mb-4">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -17354,7 +17377,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 {/* Week navigator */}
                 <div className="p-4 border-b border-gray-200 bg-gray-50/50 space-y-3">
@@ -18271,7 +18294,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={4} rows={4} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               {salesTeams.length === 0 && !dataLoading ? (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 gap-3">
                   <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><Users className="w-6 h-6" /></span>
@@ -19230,7 +19253,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -19486,7 +19509,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Summary cards */}
               {(() => {
                 const base = waybillRecords.filter((w) =>
@@ -19739,7 +19762,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <nav className="grid grid-cols-3 sm:inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Payroll sections">
                 {payrollTabs.map((tab) => (
                   <button
@@ -20399,7 +20422,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -20665,7 +20688,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -22146,7 +22169,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={8} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
 
               {adTrackingTab === "Campaign Orders" && (<>
               <div className="flex flex-col gap-2">
@@ -22662,7 +22685,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <section className={`grid grid-cols-1 ${ownerCanSeeUserPresence ? "xl:grid-cols-4 lg:grid-cols-2" : "lg:grid-cols-3"} gap-4`} aria-label="User summary">
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
@@ -23028,7 +23051,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={4} rows={5} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                 <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full w-full sm:w-auto" role="tablist" aria-label="Round-robin views">
                   {roundRobinTabs.map((tab) => (
@@ -23756,7 +23779,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={3} rows={4} />}
-              <div className={dataLoading ? "hidden" : ""}>
+              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Period + product filter row */}
               <div className="flex flex-col gap-2 mb-4">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
@@ -26046,18 +26069,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </button>
                   </div>
                 )}
-                <div className={dataLoading || products.length === 0 ? "hidden" : ""}>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <label className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-200">
-                    <Search className="w-4 h-4 text-gray-400 shrink-0" />
-                    <span className="sr-only">Search inventory</span>
-                    <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
-                  </label>
-                  <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
-                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
-                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
-                    <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
+                <div className={dataLoading || products.length === 0 ? "hidden" : "space-y-6 lg:space-y-8"}>
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <label className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-200">
+                      <Search className="w-4 h-4 text-gray-400 shrink-0" />
+                      <span className="sr-only">Search inventory</span>
+                      <input className="flex-1 min-w-0 bg-transparent text-sm text-gray-700 outline-none placeholder:text-gray-400" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="Search SKU or Product..." />
+                    </label>
+                    <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full overflow-x-hidden">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
+                        {currency} · {selectedCurrency.label}
+                      </span>
+                      {inventorySearch.trim() && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-xs font-semibold text-[#1F8FE0]">
+                          <Search className="w-3 h-3" /> {inventorySearch.trim()}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-400"><span className="hidden sm:inline">· </span>Global warehouse and agent stock snapshot</span>
                   </div>
                 </div>
 

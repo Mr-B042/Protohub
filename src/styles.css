@@ -471,15 +471,15 @@ input:focus-visible {
 
 .page {
   position: relative;
-  padding: 14px 36px 40px;
+  padding: 22px 44px 56px;
 }
 
 .top-actions {
-  height: 76px;
+  min-height: 82px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 18px;
+  gap: 20px;
 }
 
 .token-pill {
@@ -503,8 +503,8 @@ input:focus-visible {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 56px;
+  gap: 28px;
+  margin-bottom: 64px;
 }
 
 h1,
@@ -544,8 +544,8 @@ h2 {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 22px;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
 .segmented {
@@ -623,7 +623,7 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 24px;
 }
 
 .currency-note strong {
@@ -635,8 +635,8 @@ select {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 28px;
-  margin-bottom: 36px;
+  gap: 32px;
+  margin-bottom: 44px;
 }
 
 .orders-metric-grid {
@@ -772,15 +772,15 @@ select {
 .transactions,
 .orders-opportunity,
 .orders-product-panel {
-  margin-bottom: 36px;
+  margin-bottom: 44px;
 }
 
 .panel-header {
-  padding: 32px 28px;
+  padding: 36px 32px;
   display: flex;
   align-items: start;
   justify-content: space-between;
-  gap: 18px;
+  gap: 22px;
   border-bottom: 1px solid #d7d7d7;
 }
 
@@ -806,8 +806,8 @@ select {
 .cart-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  padding: 56px 28px 26px;
+  gap: 18px;
+  padding: 60px 32px 30px;
 }
 
 .mini-stat {
@@ -840,7 +840,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0 28px 30px;
+  margin: 0 32px 34px;
   color: #087fc3;
   font-weight: 900;
   text-decoration: none;
@@ -850,14 +850,159 @@ select {
 }
 
 .simulator {
-  padding: 28px;
+  padding: 32px;
 }
 
 .simulator-grid,
 .analytics-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  gap: 28px;
+  gap: 32px;
+}
+
+.workspace-content {
+  --workspace-section-gap: clamp(1.85rem, 1.45rem + 1vw, 2.75rem);
+  --workspace-section-gap-lg: clamp(2.4rem, 1.95rem + 1vw, 3.2rem);
+}
+
+.workspace-stack {
+  gap: var(--workspace-section-gap) !important;
+}
+
+.workspace-content :where(.space-y-6) > :not([hidden]) ~ :not([hidden]) {
+  margin-top: var(--workspace-section-gap) !important;
+}
+
+.workspace-content :where(.space-y-8) > :not([hidden]) ~ :not([hidden]) {
+  margin-top: var(--workspace-section-gap-lg) !important;
+}
+
+@media (min-width: 1024px) {
+  .workspace-content :where(.space-y-6) > :not([hidden]) ~ :not([hidden]) {
+    margin-top: calc(var(--workspace-section-gap) + 0.15rem) !important;
+  }
+}
+
+.workspace-content section[aria-label="Orders summary"] {
+  gap: 1.5rem !important;
+}
+
+.workspace-content section[aria-label="Orders summary"] > article {
+  padding: 1.7rem 1.65rem 1.45rem !important;
+  border-radius: 1.35rem !important;
+}
+
+.workspace-content section[aria-label="Orders summary"] > article strong {
+  margin-block: 0.55rem !important;
+}
+
+.workspace-content section[aria-label="Orders table"] {
+  border-radius: 1.5rem !important;
+}
+
+.workspace-content section[aria-label="Orders table"] > div:first-child {
+  padding: 1.15rem 1.4rem !important;
+  gap: 0.95rem !important;
+}
+
+.workspace-content section[aria-label="Orders table"] > div:first-child input,
+.workspace-content section[aria-label="Orders table"] > div:first-child select,
+.workspace-content section[aria-label="Orders table"] > div:first-child button {
+  min-height: 2.75rem;
+  border-radius: 0.9rem !important;
+}
+
+.workspace-content section[aria-label="Orders table"] table th,
+.workspace-content section[aria-label="Orders table"] table td {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
+.workspace-content section[aria-label="Orders table"] > div:last-child {
+  padding-inline: 1.4rem !important;
+}
+
+.meta-chip-row {
+  row-gap: 0.75rem;
+  column-gap: 1.1rem;
+  margin-top: 0.8rem;
+}
+
+.meta-chip {
+  min-height: auto;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.meta-chip-label {
+  color: hsl(var(--text-faint));
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.meta-chip-value {
+  color: hsl(var(--text-strong));
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.period-nav-band {
+  row-gap: 0.85rem;
+  column-gap: 0.9rem;
+  margin-bottom: 0.8rem;
+}
+
+.period-nav-band > div:first-child,
+.period-nav-band > div:nth-child(2) {
+  flex-shrink: 0;
+}
+
+.period-nav-band > span:last-child {
+  padding-top: 0.15rem;
+}
+
+.period-nav-segmented,
+.workspace-content .grid.grid-cols-4.sm\:inline-flex.items-center.bg-gray-100.p-1.rounded-lg {
+  gap: 0.35rem;
+  padding: 0.35rem;
+  border-radius: 1.35rem;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.period-nav-button,
+.workspace-content .grid.grid-cols-4.sm\:inline-flex.items-center.bg-gray-100.p-1.rounded-lg > button {
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+  border-radius: 1rem;
+  font-weight: 700;
+}
+
+.period-nav-cluster {
+  gap: 0.45rem;
+}
+
+.period-nav-current {
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+}
+
+.period-nav-icon {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.period-nav-range {
+  color: hsl(var(--text-muted));
+}
+
+.toolbar-filter-trigger {
+  min-height: 2.9rem;
+  padding-inline: 1rem;
+  border-radius: 1rem;
 }
 
 .simulator-grid {
@@ -8002,6 +8147,40 @@ html.dark,
 
 .dark .dashboard-summary-accent {
   display: none;
+}
+
+.dark .meta-chip {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.dark .meta-chip-label {
+  color: hsl(var(--text-muted));
+}
+
+.dark .meta-chip-value {
+  color: hsl(var(--foreground));
+}
+
+.dark .period-nav-segmented,
+.dark .workspace-content .grid.grid-cols-4.sm\:inline-flex.items-center.bg-gray-100.p-1.rounded-lg {
+  background: rgba(25, 40, 57, 0.9);
+  border-color: hsl(208 34% 20%);
+}
+
+.dark .period-nav-button,
+.dark .workspace-content .grid.grid-cols-4.sm\:inline-flex.items-center.bg-gray-100.p-1.rounded-lg > button {
+  color: hsl(var(--text-muted));
+}
+
+.dark .period-nav-range {
+  color: hsl(var(--text-muted));
+}
+
+.dark .toolbar-filter-trigger {
+  border-color: hsl(207 34% 24%);
+  background: rgba(19, 34, 49, 0.92);
 }
 
 .dark .order-detail-hero span,
