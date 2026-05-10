@@ -7,6 +7,8 @@ import { snakeToCamel } from "./normalize";
 
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 let refreshInFlight: Promise<boolean> | null = null;
+const TRANSIENT_RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_GET_RETRY_LIMIT = 2;
 
 const toSnakeKey = (key: string) =>
   key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
@@ -61,12 +63,15 @@ function extractErrorMessage(payload: any, fallback: string) {
   return fallback;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 // ── Core request helper ────────────────────────────────────
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  retried = false
+  retried = false,
+  transientAttempt = 0
 ): Promise<T> {
   const token = auth.getAccessToken();
   let res: Response;
@@ -81,13 +86,22 @@ async function request<T>(
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
   } catch {
+    if (method === "GET" && transientAttempt < TRANSIENT_GET_RETRY_LIMIT) {
+      await sleep(400 * (transientAttempt + 1));
+      return request<T>(method, path, body, retried, transientAttempt + 1);
+    }
     throw new ApiError(0, "Unable to reach the server. The request may be blocked by your connection or allowed domain settings.");
+  }
+
+  if (method === "GET" && TRANSIENT_RETRYABLE_STATUSES.has(res.status) && transientAttempt < TRANSIENT_GET_RETRY_LIMIT) {
+    await sleep(400 * (transientAttempt + 1));
+    return request<T>(method, path, body, retried, transientAttempt + 1);
   }
 
   // Auto-refresh on 401 (token expired)
   if (res.status === 401 && !retried) {
     const refreshed = await tryRefresh();
-    if (refreshed) return request<T>(method, path, body, true);
+    if (refreshed) return request<T>(method, path, body, true, transientAttempt);
     auth.clear();
     window.location.reload();
     throw new ApiError(401, "Session expired.");
