@@ -9,6 +9,14 @@ import { normalizeWorkingDays } from "../lib/business-schedule.js";
 
 const router = Router();
 
+const touchUserPresence = async (userId: string) => {
+  if (!userId) return;
+  await supabase
+    .from("users")
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq("id", userId);
+};
+
 // ── POST /api/auth/register ───────────────────────────────
 // Creates the first user (Owner) and their organization.
 const RegisterSchema = z.object({
@@ -125,6 +133,7 @@ router.post("/login", async (req, res) => {
 
   supabase.from("login_audit").insert({ email, success: true, ip: req.ip ?? null })
     .then(({ error: auditErr }) => { if (auditErr) logger.warn("login_audit insert failed", { error: auditErr.message }); });
+  touchUserPresence(profile.id).catch(() => {});
   logger.info("login success", { userId: profile.id, email, role: profile.role });
 
   res.json({
@@ -162,6 +171,7 @@ router.post("/refresh", async (req, res) => {
 // Includes the org's cache_version so the frontend can auto-purge stale
 // localStorage when an Owner/Admin has bumped the version.
 router.get("/me", requireAuth, async (req, res) => {
+  touchUserPresence(req.user!.id).catch(() => {});
   const { data: org } = await supabase
     .from("organizations")
     .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end")
@@ -182,6 +192,17 @@ router.get("/me", requireAuth, async (req, res) => {
     workingDayStart: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
     workingDayEnd: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00"
   });
+});
+
+// ── POST /api/auth/presence ───────────────────────────────
+// Lightweight heartbeat so Owner can see Active / Offline / Last seen.
+router.post("/presence", requireAuth, async (req, res) => {
+  try {
+    await touchUserPresence(req.user!.id);
+    res.json({ ok: true, lastSeenAt: new Date().toISOString() });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to update presence." });
+  }
 });
 
 // ── PATCH /api/auth/org-branding ──────────────────────────
@@ -253,7 +274,7 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 router.get("/team", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at, round_robin_position")
+    .select("id, name, email, phone, role, active, created_at, round_robin_position, last_seen_at")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
   if (error) { res.status(500).json({ error: error.message }); return; }

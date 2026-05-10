@@ -188,7 +188,8 @@ export const authApi = {
     post<{ message: string }>(
       "/api/auth/set-password",
       password === undefined ? { password: passwordOrUserId } : { userId: passwordOrUserId, password }
-    )
+    ),
+  presence: () => post<{ ok: boolean; lastSeenAt: string }>("/api/auth/presence", {})
 };
 
 // ── Users ────────────────────────────────────────────────

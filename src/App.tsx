@@ -76,6 +76,7 @@ import {
   PieChart,
   BarChart3,
   FileText,
+  Wifi,
   Smartphone,
   Laptop,
   Apple
@@ -337,6 +338,7 @@ type ManagedUser = {
   role: EditableUserRole;
   active: boolean;
   created: string;
+  lastSeenAt?: string;
   permissions?: UserPermission[];
   // Owner-granted page-level overrides on top of the role's defaults.
   extraPages?: ActivePage[];
@@ -895,6 +897,8 @@ const primaryPricing = (product: Product) =>
   ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
 const activeProductPackages = (product: Product) => product.packages.filter((item) => item.active).sort((a, b) => a.displayOrder - b.displayOrder);
+const persistedActiveProductPackages = (product: { packages: { id: string; active: boolean; displayOrder: number }[] }) =>
+  product.packages.filter((item) => item.active && !isTemporaryPackageId(item.id)).sort((a, b) => a.displayOrder - b.displayOrder);
 const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources"> => {
   const normalized = source.toLowerCase();
 
@@ -1054,6 +1058,39 @@ const formatMoment = (value?: string | Date | null) => {
     return formatDateOnly(value);
   }
   return formatDateTime(value);
+};
+const USER_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
+const userPresenceState = (user: Pick<ManagedUser, "active" | "lastSeenAt">): "Active" | "Offline" | "Inactive" => {
+  if (!user.active) return "Inactive";
+  if (!user.lastSeenAt) return "Offline";
+  const seen = new Date(user.lastSeenAt).getTime();
+  if (Number.isNaN(seen)) return "Offline";
+  return Date.now() - seen <= USER_ACTIVE_WINDOW_MS ? "Active" : "Offline";
+};
+const userPresenceMeta = (user: Pick<ManagedUser, "active" | "lastSeenAt">) => {
+  const presence = userPresenceState(user);
+  if (presence === "Active") {
+    return {
+      label: "Active",
+      tone: "bg-emerald-100 text-emerald-700",
+      dot: "bg-emerald-500",
+      lastSeen: "Active now"
+    };
+  }
+  if (presence === "Inactive") {
+    return {
+      label: "Inactive",
+      tone: "bg-gray-100 text-gray-500",
+      dot: "bg-gray-400",
+      lastSeen: user.lastSeenAt ? formatMoment(user.lastSeenAt) : "Never seen"
+    };
+  }
+  return {
+    label: "Offline",
+    tone: "bg-amber-100 text-amber-700",
+    dot: "bg-amber-500",
+    lastSeen: user.lastSeenAt ? formatMoment(user.lastSeenAt) : "Never seen"
+  };
 };
 const padTimePart = (value: number) => String(value).padStart(2, "0");
 const nextTimeValue = () => {
@@ -1711,6 +1748,49 @@ if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)
 
 export function App({ onLogout }: { onLogout?: () => void }) {
   const authUser = auth.getUser();
+  useEffect(() => {
+    if (!authUser?.id || !auth.isLoggedIn()) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const HEARTBEAT_MS = 60_000;
+
+    const ping = () => {
+      if (cancelled || document.visibilityState === "hidden") {
+        return;
+      }
+      authApi.presence().catch(() => {});
+    };
+
+    const schedule = () => {
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(ping, HEARTBEAT_MS);
+    };
+
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") {
+        ping();
+        schedule();
+      } else if (timer) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    ping();
+    schedule();
+    window.addEventListener("focus", ping);
+    document.addEventListener("visibilitychange", handleVisible);
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener("focus", ping);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, [authUser?.id]);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [hashRoute, setHashRoute] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
@@ -2739,6 +2819,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const [generatedProductId, setGeneratedProductId] = useState("");
   const [generatedEmbedProductIds, setGeneratedEmbedProductIds] = useState<string[]>([]);
+  const [embedSyncingProductIds, setEmbedSyncingProductIds] = useState<string[]>([]);
   const [embedCurrencyByProduct, setEmbedCurrencyByProduct] = useState<Record<string, ProductCurrencyCode>>({});
   const [embedRedirectUrls, setEmbedRedirectUrls] = useState<Record<string, string>>({});
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
@@ -3267,7 +3348,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const filteredUsersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / USER_PAGE));
   const clampedUserPage = Math.min(userPage, filteredUsersTotalPages);
   const pagedFilteredUsers = filteredUsers.slice((clampedUserPage - 1) * USER_PAGE, clampedUserPage * USER_PAGE);
+  const ownerCanSeeUserPresence = realRole === "Owner";
   const activeUserCount = users.filter((user) => user.active).length;
+  const onlineUserCount = users.filter((user) => userPresenceState(user) === "Active").length;
   const adminUserCount = users.filter((user) => user.role === "Admin" || user.role === "Owner").length;
   const managerUserCount = users.filter((user) => user.role === "Manager").length;
   const salesUserCount = users.filter((user) => user.role === "Sales Rep").length;
@@ -3589,10 +3672,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWriteOffReason("");
     setWriteOffCustomReason("");
   }, [modal, adjustStockEntryId]);
-  const readyEmbedProducts = products.filter((product) => product.active && activeProductPackages(product).length > 0);
+  const readyEmbedProducts = products.filter((product) => product.active && !isTemporaryProductId(product.id) && persistedActiveProductPackages(product).length > 0);
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
-  const previewPackages = previewProduct ? activeProductPackages(previewProduct) : [];
+  const previewPackages = previewProduct ? persistedActiveProductPackages(previewProduct) : [];
   const publicEmbedParams = hashRoute.startsWith("#/order-form/embed")
     ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
     : null;
@@ -3686,6 +3769,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const productEmbedRedirect = (product: Product | undefined) => (product ? embedRedirectUrls[product.id] ?? "" : "");
   const generatedEmbedProducts = readyEmbedProducts.filter((product) => generatedEmbedProductIds.includes(product.id));
   const productEmbedCodeTab = (productId: string) => embedCodeTabsByProduct[productId] ?? "Direct Link";
+  const isEmbedSyncing = (productId: string) => embedSyncingProductIds.includes(productId);
   const enabledEmbedFeatures = [
     showEmailField ? "Email capture" : null,
     showWhatsappField ? `WhatsApp ${requireWhatsapp ? "required" : "optional"}` : null,
@@ -3764,6 +3848,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   })();
 </script>`;
+  };
+  const remapProductKeyedRecord = <T,>(value: Record<string, T>, tempId: string, savedId: string) => {
+    if (tempId === savedId || !Object.prototype.hasOwnProperty.call(value, tempId)) {
+      return value;
+    }
+    const { [tempId]: tempValue, ...rest } = value;
+    if (Object.prototype.hasOwnProperty.call(rest, savedId) || tempValue === undefined) {
+      return rest;
+    }
+    return { ...rest, [savedId]: tempValue };
+  };
+  const replaceTemporaryProductId = (tempId: string, savedId: string) => {
+    if (!tempId || !savedId || tempId === savedId) {
+      return;
+    }
+    setProducts((prev) => prev.map((product) => product.id === tempId ? { ...product, id: savedId } : product));
+    setSelectedProductId((current) => current === tempId ? savedId : current);
+    setStockProductId((current) => current === tempId ? savedId : current);
+    setGeneratedProductId((current) => current === tempId ? savedId : current);
+    setGeneratedEmbedProductIds((prev) => Array.from(new Set(prev.map((id) => id === tempId ? savedId : id))));
+    setEmbedSyncingProductIds((prev) => Array.from(new Set(prev.map((id) => id === tempId ? savedId : id))));
+    setEmbedCurrencyByProduct((prev) => remapProductKeyedRecord(prev, tempId, savedId));
+    setEmbedRedirectUrls((prev) => remapProductKeyedRecord(prev, tempId, savedId));
+    setEmbedCodeTabsByProduct((prev) => remapProductKeyedRecord(prev, tempId, savedId));
+    setStockMovements((prev) => prev.map((movement) => movement.productId === tempId ? { ...movement, productId: savedId } : movement));
+  };
+  const ensureProductPublicEmbedReady = async (productId: string) => {
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const response = await productsApi.public(productId);
+        if (response?.product && persistedActiveProductPackages(response.product).length > 0) {
+          return;
+        }
+        throw new Error("This product is still syncing to the public order form.");
+      } catch (error: any) {
+        lastError = error;
+        if (attempt < 3) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+    }
+    throw lastError ?? new Error("This product is still syncing to the public order form.");
   };
   const salesRepUsers = users.filter((user) => user.role === "Sales Rep");
   const activeSalesRepUsers = salesRepUsers.filter((user) => user.active);
@@ -7132,6 +7259,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             role: u.role,
             active: u.active,
             created: u.createdAt ?? u.created_at ?? "",
+            lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
             roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
           })));
         }
@@ -8749,8 +8877,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`Product "${product.name}" created.`);
     productsApi.create({ name: product.name, sku: product.sku, description: product.description, reorderPoint: product.reorderPoint, active: product.active })
       .then((saved: any) => {
-        setProducts((prev) => prev.map((p) => p.id === id ? { ...p, id: saved.id } : p));
-        setSelectedProductId(saved.id);
+        replaceTemporaryProductId(id, saved.id);
         // Persist the initial pricing the admin entered on the create form.
         // Pre-fix this never reached the DB — productsApi.create only
         // creates the product row, and product_pricings stayed empty until
@@ -8957,7 +9084,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       active: clone.active
     }).then(async (saved: any) => {
       const savedId = saved?.id ?? newId;
-      setProducts((prev) => prev.map((product) => product.id === newId ? { ...product, id: savedId } : product));
+      replaceTemporaryProductId(newId, savedId);
       const pricingTasks = clone.pricings.map((pricing) =>
         productsApi.createPricing(savedId, {
           currency: pricing.currency,
@@ -9499,17 +9626,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const generateEmbedUrl = (productOverride?: Product) => {
+  const generateEmbedUrl = async (productOverride?: Product) => {
     const product = productOverride ?? generatedProduct ?? readyEmbedProducts[0];
     if (!product) {
       showToast("Create a product package first.");
       return;
     }
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Wait a moment before sharing its embed link.");
+      return;
+    }
+    if (persistedActiveProductPackages(product).length === 0) {
+      showToast("At least one package is still syncing. Wait a moment before sharing this order form.");
+      return;
+    }
+    if (isEmbedSyncing(product.id)) {
+      return;
+    }
 
-    setGeneratedProductId(product.id);
-    setGeneratedEmbedProductIds((value) => (value.includes(product.id) ? value : [...value, product.id]));
-    setEmbedCodeTabsByProduct((value) => ({ ...value, [product.id]: "Direct Link" }));
-    showToast(`${product.name} embed URL generated.`);
+    setEmbedSyncingProductIds((value) => value.includes(product.id) ? value : [...value, product.id]);
+    try {
+      await ensureProductPublicEmbedReady(product.id);
+      setGeneratedProductId(product.id);
+      setGeneratedEmbedProductIds((value) => (value.includes(product.id) ? value : [...value, product.id]));
+      setEmbedCodeTabsByProduct((value) => ({ ...value, [product.id]: "Direct Link" }));
+      showToast(`${product.name} embed URL generated.`);
+    } catch (error: any) {
+      showToast(error?.message ?? "This product is still syncing to the public order form. Please try again in a moment.");
+    } finally {
+      setEmbedSyncingProductIds((value) => value.filter((id) => id !== product.id));
+    }
   };
   const setProductEmbedCodeTab = (productId: string, tab: EmbedCodeTab) => {
     setEmbedCodeTabsByProduct((value) => ({ ...value, [productId]: tab }));
@@ -10938,7 +11084,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email === rep.email);
-          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? { ...u, id: saved.id, phone: saved.phone ?? rep.phone } : u));
+          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? {
+            ...u,
+            id: saved.id,
+            phone: saved.phone ?? rep.phone,
+            lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt
+          } : u));
         }).catch(() => {});
       })
       .catch((err: any) => {
@@ -12360,7 +12511,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email?.toLowerCase() === userEmail.trim().toLowerCase());
-          if (saved) setUsers((prev) => prev.map((u) => u.id === id ? { ...u, id: saved.id, phone: saved.phone ?? u.phone } : u));
+          if (saved) setUsers((prev) => prev.map((u) => u.id === id ? {
+            ...u,
+            id: saved.id,
+            phone: saved.phone ?? u.phone,
+            lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt
+          } : u));
         }).catch(() => {});
       })
       .catch((err: any) => {
@@ -17685,7 +17841,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Sales representatives table">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone ?? "", role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "" }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone ?? "", role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "", lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
                 {pagedSalesRepRows.length === 0 ? (
                   <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No sales representatives found</div>
@@ -22202,15 +22358,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : ""}>
-              <section className="grid grid-cols-1 lg:grid-cols-3 gap-4" aria-label="User summary">
+              <section className={`grid grid-cols-1 ${ownerCanSeeUserPresence ? "xl:grid-cols-4 lg:grid-cols-2" : "lg:grid-cols-3"} gap-4`} aria-label="User summary">
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
                   { title: "Active Users", value: String(activeUserCount), helper: `${users.length - activeUserCount} inactive`, icon: CheckCircle2, tone: "green" },
+                  ...(ownerCanSeeUserPresence ? [{ title: "Online Now", value: String(onlineUserCount), helper: "seen in last 5 mins", icon: Wifi, tone: "emerald" as const }] : []),
                   { title: "New Users (Month)", value: String(users.filter((u) => { if (!u.created) return false; const d = new Date(u.created); const now = new Date(); return !isNaN(d.getTime()) && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length), helper: "joined this month", icon: UserPlus, tone: "purple" },
                 ].map(({ title, value, helper, icon: Icon, tone }) => (
                   <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-2">
-                      <span className={`w-10 h-10 rounded-full flex items-center justify-center ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "green" ? "bg-green-50 text-green-500" : "bg-purple-50 text-purple-500"}`}><Icon className="w-5 h-5" /></span>
+                      <span className={`w-10 h-10 rounded-full flex items-center justify-center ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "green" ? "bg-green-50 text-green-500" : tone === "emerald" ? "bg-emerald-50 text-emerald-500" : "bg-purple-50 text-purple-500"}`}><Icon className="w-5 h-5" /></span>
                     </div>
                     <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h2>
                     <strong className="text-2xl font-bold text-gray-900 block my-1">{value}</strong>
@@ -22286,6 +22443,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
                       const isOwner = user.role === "Owner";
                       const isExpanded = expandedPermissionsUserId === user.id;
+                      const presence = userPresenceMeta(user);
                       return (
                         <article key={user.id} className="p-4 space-y-4">
                           <div className="flex items-start justify-between gap-3">
@@ -22299,7 +22457,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <span className={`role-pill shrink-0 ${isOwner ? "owner-pill" : ""}`}>{user.role}</span>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className={`grid gap-3 ${ownerCanSeeUserPresence ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2"}`}>
                             <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
                               <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Created</span>
                               <strong className="text-sm text-gray-900">{formatMoment(user.created) || "—"}</strong>
@@ -22314,12 +22472,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                               </button>
                             </div>
+                            {ownerCanSeeUserPresence && (
+                              <>
+                                <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Presence</span>
+                                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold ${presence.tone}`}>
+                                    <span className={`w-2 h-2 rounded-full ${presence.dot}`} />
+                                    {presence.label}
+                                  </span>
+                                </div>
+                                <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Last Seen</span>
+                                  <strong className="text-sm text-gray-900">{presence.lastSeen}</strong>
+                                </div>
+                              </>
+                            )}
                           </div>
 
                           <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
                             <div>
-                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Status</span>
-                              <strong className={`text-sm ${user.active ? "text-green-600" : "text-gray-500"}`}>{user.active ? "Active" : "Inactive"}</strong>
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Account</span>
+                              <strong className={`text-sm ${user.active ? "text-green-600" : "text-gray-500"}`}>{user.active ? "Enabled" : "Disabled"}</strong>
                             </div>
                             <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
                               <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
@@ -22357,19 +22530,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Name & Email", "Role", "Permissions", "Status", "Created", "Actions"].map((h) => (
+                        {[
+                          "Name & Email",
+                          "Role",
+                          "Permissions",
+                          ...(ownerCanSeeUserPresence ? ["Presence", "Last Seen"] : []),
+                          ownerCanSeeUserPresence ? "Account" : "Status",
+                          "Created",
+                          "Actions"
+                        ].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {filteredUsers.length === 0 ? (
-                        <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
+                        <tr><td colSpan={ownerCanSeeUserPresence ? 8 : 6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
                       ) : (
                         pagedFilteredUsers.map((user) => {
                           const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
+                          const presence = userPresenceMeta(user);
                           return (
                             <Fragment key={user.id}>
                               <tr className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
@@ -22392,12 +22574,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                                   </button>
                                 </td>
+                                {ownerCanSeeUserPresence && (
+                                  <>
+                                    <td className="px-4 py-4">
+                                      <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold ${presence.tone}`}>
+                                        <span className={`w-2 h-2 rounded-full ${presence.dot}`} />
+                                        {presence.label}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-4 text-gray-500 whitespace-nowrap">{presence.lastSeen}</td>
+                                  </>
+                                )}
                                 <td className="px-4 py-4">
                                   <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
                                     <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
                                       <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
                                     </span>
-                                    <strong className={user.active ? "text-green-600" : "text-gray-400"}>{user.active ? "Active" : "Inactive"}</strong>
+                                    <strong className={user.active ? "text-green-600" : "text-gray-400"}>{user.active ? "Enabled" : "Disabled"}</strong>
                                   </button>
                                 </td>
                                 <td className="px-4 py-4 text-gray-500">{formatMoment(user.created) || "—"}</td>
@@ -22419,7 +22612,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </tr>
                               {isExpanded && (
                                 <tr className="bg-blue-50/30 border-t border-blue-100">
-                                  <td colSpan={6} className="p-0">
+                                  <td colSpan={ownerCanSeeUserPresence ? 8 : 6} className="p-0">
                                     {renderUserPermissionsPanel(user)}
                                   </td>
                                 </tr>
@@ -23148,8 +23341,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
 
                       {readyEmbedProducts.map((product) => {
-                        const packages = activeProductPackages(product);
+                        const packages = persistedActiveProductPackages(product);
                         const productGenerated = generatedEmbedProductIds.includes(product.id);
+                        const productSyncing = isEmbedSyncing(product.id);
                         const embedUrl = buildEmbedUrl(product);
                         const iframeCode = buildIframeCode(product);
                         const selectedCodeTab = productEmbedCodeTab(product.id);
@@ -23185,7 +23379,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                       {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                     </select>
                                   </label>
-                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => generateEmbedUrl(product)}>Generate Embed URL</button>
+                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}>{productSyncing ? "Verifying..." : "Generate Embed URL"}</button>
                                 </>
                               ) : (
                                 <>
@@ -23235,7 +23429,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                         {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                       </select>
                                     </label>
-                                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors" onClick={() => generateEmbedUrl(product)}><RefreshCw className="w-3 h-3" /> Refresh</button>
+                                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
                                 </>
                               )}

@@ -112,6 +112,7 @@ export type ManagedUser = {
   role: EditableUserRole;
   active: boolean;
   created: string;
+  lastSeenAt?: string;
   permissions?: UserPermission[];
 };
 

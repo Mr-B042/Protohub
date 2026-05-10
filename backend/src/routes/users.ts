@@ -11,7 +11,7 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at")
+    .select("id, name, email, phone, role, active, created_at, last_seen_at")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
   if (error) { res.status(500).json({ error: error.message }); return; }
