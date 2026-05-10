@@ -897,7 +897,7 @@ const primaryPricing = (product: Product) =>
   ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
 const activeProductPackages = (product: Product) => product.packages.filter((item) => item.active).sort((a, b) => a.displayOrder - b.displayOrder);
-const persistedActiveProductPackages = (product: { packages: { id: string; active: boolean; displayOrder: number }[] }) =>
+const persistedActiveProductPackages = <T extends { id: string; active: boolean; displayOrder: number }>(product: { packages: T[] }) =>
   product.packages.filter((item) => item.active && !isTemporaryPackageId(item.id)).sort((a, b) => a.displayOrder - b.displayOrder);
 const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources"> => {
   const normalized = source.toLowerCase();
