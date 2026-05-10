@@ -2624,6 +2624,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
+    if (activePage !== "Settings" || settingsPanel !== "email") return;
     if (!authUser || !canManageMessagingSettings) {
       setEmailSettings(null);
       setEmailSettingsLoading(false);
@@ -2642,13 +2643,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setEmailTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
       })
       .catch((err: any) => {
-        if (!cancelled) showToast(`Failed to load email settings: ${err?.message ?? "please retry"}.`);
+        if (!cancelled) {
+          showToast(`Failed to load email settings: ${err?.message ?? "please retry"}.`);
+          window.setTimeout(() => {
+            if (!cancelled) {
+              emailSettingsApi.get()
+                .then((settings: EmailSettingsState) => {
+                  if (cancelled) return;
+                  setEmailSettings(settings);
+                  emailSettingsSnapshotRef.current = JSON.stringify(settings);
+                  const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultEmailTemplateKey;
+                  setEmailTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+                })
+                .catch(() => {});
+            }
+          }, 2500);
+        }
       })
       .finally(() => {
         if (!cancelled) setEmailSettingsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [authUser?.id, canManageMessagingSettings]);
+  }, [authUser?.id, canManageMessagingSettings, activePage, settingsPanel]);
 
   const loadEmailMessages = async (page = emailActivityPage, options: { quiet?: boolean } = {}) => {
     setEmailMessagesLoading(true);
@@ -2730,6 +2746,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
+    if (activePage !== "Settings" || settingsPanel !== "sms") return;
     if (!authUser || !canViewSmsHealth) {
       setSmsSettings(null);
       setSmsSettingsLoading(false);
@@ -2761,27 +2778,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         void hydrateSmsSupportData(settings, { quiet: true });
       })
       .catch((err: any) => {
-        if (!cancelled) showToast(`Failed to load SMS settings: ${err?.message ?? "please retry"}.`);
+        if (!cancelled) {
+          showToast(`Failed to load SMS settings: ${err?.message ?? "please retry"}.`);
+          window.setTimeout(() => {
+            if (!cancelled) {
+              smsSettingsApi.get()
+                .then((settings: SmsSettingsState) => {
+                  if (cancelled) return;
+                  setSmsSettings(settings);
+                  smsSettingsSnapshotRef.current = JSON.stringify(settings);
+                  const firstKey = Object.keys(settings.templates ?? {})[0] ?? defaultSmsTemplateKey;
+                  setSmsTemplateKey((current) => settings.templates?.[current] ? current : firstKey);
+                  void hydrateSmsSupportData(settings, { quiet: true });
+                })
+                .catch(() => {});
+            }
+          }, 2500);
+        }
       })
       .finally(() => {
         if (!cancelled) setSmsSettingsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [authUser?.id, canManageMessagingSettings, canViewSmsHealth]);
+  }, [authUser?.id, canManageMessagingSettings, canViewSmsHealth, activePage, settingsPanel]);
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
+    if (activePage !== "Settings" || settingsPanel !== "email") return;
     if (!canManageMessagingSettings) return;
     if (!emailSettings) return;
     void loadEmailMessages(emailActivityPage, { quiet: true });
-  }, [authUser?.id, canManageMessagingSettings, emailSettings, emailActivityPage]);
+  }, [authUser?.id, canManageMessagingSettings, emailSettings, emailActivityPage, activePage, settingsPanel]);
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
+    if (activePage !== "Settings" || settingsPanel !== "sms") return;
     if (!canManageMessagingSettings) return;
     if (!smsSettings) return;
     void loadSmsMessages(smsActivityPage, { quiet: true });
-  }, [authUser?.id, canManageMessagingSettings, smsSettings, smsActivityPage]);
+  }, [authUser?.id, canManageMessagingSettings, smsSettings, smsActivityPage, activePage, settingsPanel]);
 
   const saveEmbedSettings = async () => {
     setEmbedSettingsSaving(true);
