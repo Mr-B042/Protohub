@@ -7159,10 +7159,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.isLoggedIn()) { setDataLoading(false); return; }
     let cancelled = false;
+    let retryTimer: number | null = null;
+    let reconnectAttempts = 0;
+
+    const scheduleReconnect = () => {
+      if (cancelled || retryTimer) return;
+      const delay = Math.min(15000, 3000 * (reconnectAttempts + 1));
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (cancelled) return;
+        reconnectAttempts += 1;
+        void load();
+      }, delay);
+    };
 
     const load = async () => {
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       setDataLoading(true);
-      setDataError(null);
       // Owner-only / admin-only endpoints — backend enforces requireRole on
       // sales-teams, pay-structures, payroll, and penalties. Skipping them for
       // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
@@ -7391,7 +7407,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
           const criticalResults = [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts];
           if (criticalResults.every((r) => r.status === "rejected")) {
-            setDataError("Unable to reach the server. Please check your connection and refresh.");
+            setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
+            scheduleReconnect();
+          } else {
+            reconnectAttempts = 0;
+            setDataError(null);
           }
 
           hydrateProducts(apiProducts);
@@ -7473,7 +7493,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
         if (allResults.every((r) => r.status === "rejected")) {
-          setDataError("Unable to reach the server. Please check your connection and refresh.");
+          setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
+          scheduleReconnect();
+        } else {
+          reconnectAttempts = 0;
+          setDataError(null);
         }
 
         hydrateProducts(apiProducts);
@@ -7492,7 +7516,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         hydratePenalties(apiPenalties);
       } catch (_) {
         if (!cancelled) {
-          setDataError("Unable to reach the server. Showing cached data.");
+          setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
+          scheduleReconnect();
           if (fastBootDashboard) setDataLoading(false);
         }
       } finally {
@@ -7502,7 +7527,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     retryLoadData.current = load;
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
