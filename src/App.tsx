@@ -7964,10 +7964,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const showToast = (message: string) => setToast(message);
 
+  const normalizeWhatsAppPhone = (phone: string | null | undefined) => {
+    let clean = (phone ?? "").replace(/\D/g, "");
+    if (!clean) return null;
+    if (clean.startsWith("00")) clean = clean.slice(2);
+    if (clean.startsWith("234")) {
+      return clean.length >= 13 && clean.length <= 15 ? clean : null;
+    }
+    // Most workspace/customer numbers are Nigerian local mobiles entered as
+    // 080..., 070..., 090... or the same without the leading zero. Convert
+    // those to WhatsApp's required international format.
+    if (clean.startsWith("0") && clean.length === 11) {
+      return `234${clean.slice(1)}`;
+    }
+    if (!clean.startsWith("0") && clean.length === 10) {
+      return `234${clean}`;
+    }
+    return clean.length >= 11 && clean.length <= 15 ? clean : null;
+  };
+
   const buildWhatsAppUrl = (phone: string | null | undefined, message: string) => {
-    const clean = (phone ?? "").replace(/\D/g, "");
-    if (clean.length < 7) return null;
-    return `https://wa.me/${clean}?text=${encodeURIComponent(message)}`;
+    const normalized = normalizeWhatsAppPhone(phone);
+    if (!normalized) return null;
+    return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
   };
 
   const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
