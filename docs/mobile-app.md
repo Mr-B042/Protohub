@@ -49,22 +49,47 @@ npm run mobile:open:ios
 
 3. Run/sign from Android Studio or Xcode.
 
-## Important current limitation
+## Native push status
 
-This branch sets up the native shell only.
+The native shell now includes the native push bridge:
 
-Push notifications in the current production app still rely on browser web push. Native push for Android/iOS will need a separate feature branch that adds:
+- `@capacitor/push-notifications` in the app shell
+- backend device-token registration
+- Android delivery via Firebase Cloud Messaging
+- iOS delivery via Apple Push Notification service
+- native push diagnostics in `Settings -> Workspace -> Push Notifications`
 
-- `@capacitor/push-notifications`
-- APNs / Firebase configuration
-- backend device-token handling
-- app-side native push permission and registration flows
+## Still required before store-ready delivery
 
-## Recommended next branch
+You still need to provide the real platform credentials/files:
 
-Create a new branch from `develop` for native push, for example:
+### Android
+
+1. Put `google-services.json` in:
+
+```text
+android/app/google-services.json
+```
+
+2. Configure backend env:
 
 ```bash
-git checkout develop
-git checkout -b feature/native-push-bridge
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
 ```
+
+### iOS
+
+1. In Xcode, enable the `Push Notifications` capability for `ios/App/App.xcodeproj`
+2. Configure backend env:
+
+```bash
+APNS_KEY_ID=
+APNS_TEAM_ID=
+APNS_PRIVATE_KEY=
+APNS_BUNDLE_ID=com.protohub.app
+APNS_PRODUCTION=false
+```
+
+Without those credentials, the native app shell can register locally but the backend cannot deliver real mobile push.

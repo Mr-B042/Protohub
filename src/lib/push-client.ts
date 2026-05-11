@@ -121,6 +121,9 @@ export async function getPushStatus(): Promise<{
   count: number;
   configured: boolean;
   subscriptions: Array<{ id: string; endpoint: string; createdAt: string; host: string }>;
+  nativeConfigured?: boolean;
+  nativePlatforms?: { android: boolean; ios: boolean };
+  nativeDevices?: Array<{ id: string; platform: "android" | "ios"; token: string; tokenSuffix: string; createdAt: string; updatedAt: string }>;
 }> {
   try {
     const res = await fetch(`${BASE}/api/push/status`, {
@@ -271,8 +274,13 @@ export async function unsubscribeFromPush(): Promise<boolean> {
 /**
  * Send a real push notification to the current user for diagnostics.
  */
-export async function sendTestPush(body?: { title?: string; body?: string }): Promise<{ message: string }> {
-  const endpoint = await getCurrentPushEndpoint();
+export async function sendTestPush(body?: {
+  title?: string;
+  body?: string;
+  endpoint?: string | null;
+  nativeToken?: string | null;
+}): Promise<{ message: string }> {
+  const endpoint = body?.endpoint === undefined ? await getCurrentPushEndpoint() : body.endpoint;
   const res = await fetch(`${BASE}/api/push/test`, {
     method: "POST",
     headers: getAuthHeaders(),
