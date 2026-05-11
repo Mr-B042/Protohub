@@ -85,6 +85,7 @@ import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
 import { realtimeClient } from "./lib/realtime";
+import { isNativeShell, nativePlatform } from "./lib/native-shell";
 import {
   subscribeToPush,
   unsubscribeFromPush,
@@ -3222,8 +3223,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showPushBanner, setShowPushBanner] = useState(false);
   // PWA install
   const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(isNativeShell);
   const [installGuidePlatform, setInstallGuidePlatform] = useState<"android" | "ios" | "desktop">(() => {
+    if (isNativeShell) {
+      if (nativePlatform === "ios") return "ios";
+      if (nativePlatform === "android") return "android";
+    }
     if (typeof navigator === "undefined") return "android";
     const ua = navigator.userAgent;
     if (/iPad|iPhone|iPod/.test(ua)) return "ios";
@@ -3232,6 +3237,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (isNativeShell) {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+      return;
+    }
     // Already running in standalone (installed) — desktop & most mobile
     const standalone =
       window.matchMedia?.("(display-mode: standalone)").matches ||
@@ -3252,8 +3262,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       window.removeEventListener("appinstalled", onInstalled);
     };
   }, []);
-  const pushNeedsStandaloneInstall = installGuidePlatform === "ios" && !isInstalled;
+  const pushNeedsStandaloneInstall = !isNativeShell && installGuidePlatform === "ios" && !isInstalled;
   const refreshPushDiagnostics = async (respectBannerDismissal = true) => {
+    if (isNativeShell) {
+      setPushPermission("unsupported");
+      setPushServerConfigured(false);
+      setPushSubscriptionCount(0);
+      setPushCurrentDeviceLinked(false);
+      setPushSubscriptionHosts([]);
+      setPushSubscribed(false);
+      setShowPushBanner(false);
+      return;
+    }
     const perm = getPermissionState();
     setPushPermission(perm);
     const [{ configured, count, subscriptions }, browserSubscribed, currentEndpoint] = await Promise.all([
@@ -24658,8 +24678,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {settingsPanel === "workspace" && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
-                <p className="text-sm text-gray-500">Enable push alerts on this device — order events, low stock, waybill updates, and key operational alerts.</p>
-                {pushNeedsStandaloneInstall ? (
+                <p className="text-sm text-gray-500">
+                  {isNativeShell
+                    ? "This device is already running the native app shell. Browser service-worker push diagnostics do not apply here yet."
+                    : "Enable push alerts on this device — order events, low stock, waybill updates, and key operational alerts."}
+                </p>
+                {isNativeShell ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+                    <Smartphone className="w-5 h-5 text-[#1F8FE0] shrink-0 mt-0.5" />
+                    <div className="flex-1 text-sm">
+                      <p className="font-bold text-blue-900 m-0 mb-1">Native shell detected</p>
+                      <p className="text-blue-800 m-0 leading-relaxed">
+                        Protohub is running inside the Android/iOS app shell on this device. Native push token bridging is a separate follow-up feature; the current browser push troubleshooting buttons are intentionally hidden here.
+                      </p>
+                    </div>
+                  </div>
+                ) : pushNeedsStandaloneInstall ? (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div className="flex-1 text-sm">
@@ -24768,6 +24802,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       )}
                     </div>
                   </div>
+                  {!isNativeShell && <>
                   <hr className="border-gray-100" />
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
@@ -24817,6 +24852,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       >{pushTestLoading ? "Sending test push…" : "Send Test Push"}</button>
                     </div>
                   </div>
+                  </>}
                 </div>
               </section>
               )}
@@ -26091,7 +26127,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {settingsPanel === "workspace" && (
               <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Get the app</h2>
-                <p className="text-sm text-gray-500">Install {companyName || "Protohub"} as an app on your device. No app store, no separate download.</p>
+                <p className="text-sm text-gray-500">
+                  {isNativeShell
+                    ? `${companyName || "Protohub"} is already running inside the native mobile shell on this device.`
+                    : `Install ${companyName || "Protohub"} as an app on your device. No app store, no separate download.`}
+                </p>
 
                 {/* ── HERO ─────────────────────────────────────── */}
                 <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1F8FE0] via-[#1976d2] to-[#1F2937] shadow-xl">
@@ -26104,13 +26144,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         : <span className="text-4xl font-extrabold text-[#1F8FE0]">{(companyName || "P").charAt(0).toUpperCase()}</span>}
                     </div>
                     <div className="flex-1 min-w-0 text-white">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/70">Progressive web app</p>
-                      <h3 className="text-2xl sm:text-3xl font-extrabold mt-1 leading-tight">Install {companyName || "Protohub"}</h3>
-                      <p className="text-sm text-white/80 mt-1.5 max-w-md leading-relaxed">Same web app, same data — but launched from your home screen with its own icon and a full-screen window.</p>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/70">{isNativeShell ? "Native mobile shell" : "Progressive web app"}</p>
+                      <h3 className="text-2xl sm:text-3xl font-extrabold mt-1 leading-tight">{isNativeShell ? `${companyName || "Protohub"} is installed here` : `Install ${companyName || "Protohub"}`}</h3>
+                      <p className="text-sm text-white/80 mt-1.5 max-w-md leading-relaxed">
+                        {isNativeShell
+                          ? "This device is already using the Android/iOS shell around the Protohub web app. You can keep shipping product updates from the same codebase while preparing native push and store publishing next."
+                          : "Same web app, same data — but launched from your home screen with its own icon and a full-screen window."}
+                      </p>
                       <div className="flex items-center gap-2 mt-4 flex-wrap">
                         {isInstalled ? (
                           <span className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-emerald-500/20 text-emerald-100 border border-emerald-400/30 rounded-xl backdrop-blur">
-                            <CheckCircle2 className="w-4 h-4" /> Installed on this device
+                            <CheckCircle2 className="w-4 h-4" /> {isNativeShell ? "Native shell active on this device" : "Installed on this device"}
                           </span>
                         ) : installPrompt ? (
                           <button
@@ -26136,7 +26180,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <Smartphone className="w-4 h-4" /> Follow the steps below for your device
                           </span>
                         )}
-                        <span className="text-xs text-white/60 ml-1">Free · No app store · Updates instantly</span>
+                        <span className="text-xs text-white/60 ml-1">{isNativeShell ? "Shared web codebase · Android + iOS shell" : "Free · No app store · Updates instantly"}</span>
                       </div>
                     </div>
                   </div>
@@ -26168,6 +26212,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   })}
                 </div>
 
+                {!isNativeShell && (
+                <>
                 {/* ── PLATFORM TABS ───────────────────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="px-5 pt-5 pb-3">
@@ -26263,6 +26309,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     })()}
                   </div>
                 </div>
+                </>
+                )}
 
                 {/* ── WHAT CARRIES OVER + UNINSTALL ──────────── */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
