@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import { auth } from "./lib/auth";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
+import { bootstrapNativeShell, isNativeShell } from "./lib/native-shell";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
 
@@ -70,8 +71,13 @@ function Root() {
 
   useEffect(() => {
     if (hash.startsWith("#/order-form/embed")) return;
+    if (isNativeShell) return;
     void ensureServiceWorkerRegistration().catch(() => null);
   }, [hash]);
+
+  useEffect(() => {
+    void bootstrapNativeShell();
+  }, []);
 
   const handleLogin  = () => setLoggedIn(true);
   const handleLogout = () => { auth.clear(); setLoggedIn(false); };
