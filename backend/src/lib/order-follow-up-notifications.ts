@@ -14,8 +14,13 @@ type DueReminderOrder = {
   amount?: number | null;
   currency?: string | null;
   status: string;
+  outcome_code?: string | null;
+  outcome_category?: string | null;
   scheduled_date?: string | null;
   scheduled_at?: string | null;
+  next_action_type?: string | null;
+  next_action_at?: string | null;
+  next_action_note?: string | null;
   response?: string | null;
   notes?: unknown;
   timeline_notes?: unknown;
@@ -281,8 +286,9 @@ async function notifyScheduledReminder(orgId: string, order: DueReminderOrder, s
     [
       order.customer,
       orderDisplayName(order),
-      `scheduled for ${scheduledLabel}`,
-      order.response?.trim() || null,
+      order.next_action_type === "deliver" ? `delivery set for ${scheduledLabel}` : `follow-up at ${scheduledLabel}`,
+      order.outcome_code?.trim() || null,
+      order.next_action_note?.trim() || order.response?.trim() || null,
       formatNotificationMoney(order.amount, order.currency)
     ].filter(Boolean).join(" · ")
   );
@@ -318,7 +324,7 @@ export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
     const orgId = org.id as string;
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, scheduled_date, scheduled_at, response, notes, timeline_notes")
+      .select("id, org_id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status, outcome_code, outcome_category, scheduled_date, scheduled_at, next_action_type, next_action_at, next_action_note, response, notes, timeline_notes")
       .eq("org_id", orgId)
       .in("status", [...ACTIVE_ORDER_STATUSES])
       .limit(limitPerOrg);
@@ -329,9 +335,9 @@ export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
     }
 
     for (const order of (orders ?? []) as DueReminderOrder[]) {
-      const scheduledDue = dueIsoMoment(order.scheduled_at ?? order.scheduled_date ?? null, now);
+      const scheduledDue = dueIsoMoment(order.next_action_at ?? order.scheduled_at ?? order.scheduled_date ?? null, now);
       if (scheduledDue && withinReminderWindow(scheduledDue, now)) {
-        await notifyScheduledReminder(orgId, order, formatReminderLabel(order.scheduled_at ?? order.scheduled_date ?? scheduledDue));
+        await notifyScheduledReminder(orgId, order, formatReminderLabel(order.next_action_at ?? order.scheduled_at ?? order.scheduled_date ?? scheduledDue));
       }
 
       for (const note of normalizeTimelineReminderNotes(order)) {

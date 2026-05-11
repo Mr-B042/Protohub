@@ -154,6 +154,11 @@ const OrderSchema = z.object({
   preferredDelivery:   z.string().optional(),
   scheduledDate:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   scheduledAt:    z.string().min(1).max(80).optional(),
+  outcomeCode:    z.string().min(1).max(120).optional(),
+  outcomeCategory:z.string().min(1).max(80).optional(),
+  nextActionType: z.string().min(1).max(80).optional(),
+  nextActionAt:   z.string().min(1).max(80).optional(),
+  nextActionNote: z.string().min(1).max(500).optional(),
   date:           z.string().optional(),
   response:       z.string().optional(),
   notes:          z.array(TimelineNoteSchema).max(200).optional(),
@@ -263,6 +268,9 @@ router.post("/", async (req, res) => {
     scheduledAt: d.scheduledAt ?? null,
     timelineNotes
   });
+  const resolvedOutcomeCode = d.outcomeCode?.trim() || undefined;
+  const resolvedNextActionAt = d.nextActionAt ?? d.scheduledAt ?? null;
+  const resolvedNextActionType = d.nextActionType ?? (resolvedNextActionAt ? "deliver" : null);
   const baseInsert = {
     ...(d.id ? { id: d.id } : {}),
     org_id:          req.user!.orgId,
@@ -298,6 +306,12 @@ router.post("/", async (req, res) => {
     confirmation_checked: d.confirmationChecked ?? null,
     preferred_delivery:   d.preferredDelivery ?? null,
     scheduled_date:  d.scheduledDate ?? null,
+    call_outcome:    resolvedOutcomeCode ?? null,
+    outcome_code:    resolvedOutcomeCode ?? null,
+    outcome_category:d.outcomeCategory ?? null,
+    next_action_type:resolvedNextActionType,
+    next_action_at:  resolvedNextActionAt,
+    next_action_note:d.nextActionNote ?? null,
     notes:           legacyNotes,
     date:            d.date,
     response:        d.response,
@@ -388,7 +402,12 @@ router.post("/", async (req, res) => {
 // ── PATCH /api/orders/:id/status ──────────────────────────
 const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
-  callOutcome: z.string().optional(),
+  callOutcome: z.string().optional().nullable(),
+  outcomeCode: z.string().optional().nullable(),
+  outcomeCategory: z.string().optional().nullable(),
+  nextActionType: z.string().optional().nullable(),
+  nextActionAt: z.string().optional().nullable(),
+  nextActionNote: z.string().optional().nullable(),
   response:    z.string().optional(),
   deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   agentId:     z.string().uuid().optional().nullable(),
@@ -401,7 +420,7 @@ router.patch("/:id/status", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { status, callOutcome, response, deliveredDate, agentId, agentLocationId } = parsed.data;
+  const { status, callOutcome, outcomeCode, outcomeCategory, nextActionType, nextActionAt, nextActionNote, response, deliveredDate, agentId, agentLocationId } = parsed.data;
 
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
@@ -497,7 +516,16 @@ router.patch("/:id/status", async (req, res) => {
   }
 
   const updates: Record<string, unknown> = { status };
-  if (callOutcome)  updates.call_outcome    = callOutcome;
+  const outcomeCodeProvided = callOutcome !== undefined || outcomeCode !== undefined;
+  const resolvedOutcomeCodeForStatus = (outcomeCode ?? callOutcome ?? null)?.trim?.() || null;
+  if (outcomeCodeProvided) {
+    updates.call_outcome = resolvedOutcomeCodeForStatus;
+    updates.outcome_code = resolvedOutcomeCodeForStatus;
+  }
+  if (outcomeCategory !== undefined) updates.outcome_category = outcomeCategory?.trim?.() || null;
+  if (nextActionType !== undefined) updates.next_action_type = nextActionType?.trim?.() || null;
+  if (nextActionAt !== undefined) updates.next_action_at = nextActionAt?.trim?.() || null;
+  if (nextActionNote !== undefined) updates.next_action_note = nextActionNote?.trim?.() || null;
   if (response)     updates.response        = response;
   if (agentId !== undefined) updates.agent_id = agentId;
   if (agentLocationId !== undefined) updates.agent_location_id = agentLocationId;
@@ -787,6 +815,11 @@ const POST_TERMINAL_FIELDS = new Set([
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
   "call_outcome", "callOutcome",
+  "outcome_code", "outcomeCode",
+  "outcome_category", "outcomeCategory",
+  "next_action_type", "nextActionType",
+  "next_action_at", "nextActionAt",
+  "next_action_note", "nextActionNote",
   "delivered_date", "deliveredDate",
   "notes",
   "timeline_notes", "timelineNotes",
@@ -856,6 +889,11 @@ router.patch("/:id", async (req, res) => {
     agent_id:                  ["agent_id", "agentId"],
     agent_location_id:         ["agent_location_id", "agentLocationId"],
     call_outcome:              ["call_outcome", "callOutcome"],
+    outcome_code:              ["outcome_code", "outcomeCode"],
+    outcome_category:          ["outcome_category", "outcomeCategory"],
+    next_action_type:          ["next_action_type", "nextActionType"],
+    next_action_at:            ["next_action_at", "nextActionAt"],
+    next_action_note:          ["next_action_note", "nextActionNote"],
     delivered_date:            ["delivered_date", "deliveredDate"],
     scheduled_date:            ["scheduled_date", "scheduledDate"],
     scheduled_at:              ["scheduled_at", "scheduledAt"],
@@ -887,6 +925,21 @@ router.patch("/:id", async (req, res) => {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
     }
+  }
+  if (updates.outcome_code !== undefined && updates.call_outcome === undefined) {
+    updates.call_outcome = updates.outcome_code;
+  }
+  if (updates.call_outcome !== undefined && updates.outcome_code === undefined) {
+    updates.outcome_code = updates.call_outcome;
+  }
+  if (updates.scheduled_at !== undefined && updates.next_action_at === undefined) {
+    updates.next_action_at = updates.scheduled_at;
+    if (updates.next_action_type === undefined && updates.scheduled_at) {
+      updates.next_action_type = "deliver";
+    }
+  }
+  if (updates.next_action_at !== undefined && updates.scheduled_at === undefined && (updates.next_action_type === "deliver" || updates.next_action_type === undefined)) {
+    updates.scheduled_at = updates.next_action_at;
   }
   if (updates.scheduled_at !== undefined || updates.timeline_notes !== undefined) {
     updates.notes = serializePlannedOrderMetadata(current.notes, {

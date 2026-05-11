@@ -219,6 +219,17 @@ type WaybillRecord = {
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
+type OrderOutcomeCategory =
+  | "core_status"
+  | "success"
+  | "customer_unreachable"
+  | "customer_follow_up"
+  | "customer_declined"
+  | "logistics_blocker"
+  | "payment_hold"
+  | "dispatch"
+  | "other";
+type OrderNextActionType = "call" | "deliver" | "payment_check" | "confirm_stock" | "waybill" | "none";
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
 type EmailProviderName = "resend" | "mailjet";
 type SettingsPanel = "workspace" | "email" | "sms";
@@ -540,6 +551,11 @@ type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   callOutcome?: CallOutcome;
+  outcomeCode?: string;
+  outcomeCategory?: OrderOutcomeCategory;
+  nextActionType?: OrderNextActionType;
+  nextActionAt?: string;
+  nextActionNote?: string;
   upsellFromQty?: number;
   upsellToQty?: number;
   upsellNote?: string;
@@ -748,18 +764,78 @@ const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Sch
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
-const repCallOutcomeOptions = [
-  "Confirmed",
-  "No Answer",
-  "Wrong Number",
-  "Refused",
-  "Not Picking",
-  "Not Ready",
-  "Will Call Back",
-  "Scheduled Callback",
-  "Not Reached",
-  "Travelled"
+type OutcomeChipTone = "green" | "red" | "amber" | "blue" | "purple" | "gray" | "orange" | "teal";
+type OrderOutcomeChoice = {
+  key: string;
+  label: string;
+  group: "core" | "success" | "customer_unreachable" | "customer_follow_up" | "operational" | "closed_negative";
+  status: Exclude<OrderStatus, "All Orders">;
+  outcomeCode?: string;
+  outcomeCategory: OrderOutcomeCategory;
+  nextActionType?: OrderNextActionType;
+  requiresNextActionAt?: boolean;
+  response: string;
+  note: string;
+  tone: OutcomeChipTone;
+};
+const outcomeChipToneClasses: Record<OutcomeChipTone, { active: string; idle: string }> = {
+  green:  { active: "border-emerald-700 bg-emerald-700 text-white shadow-sm", idle: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+  red:    { active: "border-red-700 bg-red-700 text-white shadow-sm", idle: "border-red-200 bg-red-50 text-red-800 hover:bg-red-100" },
+  amber:  { active: "border-amber-600 bg-amber-600 text-white shadow-sm", idle: "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100" },
+  blue:   { active: "border-blue-700 bg-blue-700 text-white shadow-sm", idle: "border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100" },
+  purple: { active: "border-violet-700 bg-violet-700 text-white shadow-sm", idle: "border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100" },
+  gray:   { active: "border-slate-700 bg-slate-700 text-white shadow-sm", idle: "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100" },
+  orange: { active: "border-orange-500 bg-orange-300 text-orange-950 shadow-sm", idle: "border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" },
+  teal:   { active: "border-teal-700 bg-teal-700 text-white shadow-sm", idle: "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100" }
+};
+const orderOutcomeChoiceGroups = [
+  { key: "core", label: "Core Status" },
+  { key: "success", label: "Success" },
+  { key: "customer_unreachable", label: "Customer Unreachable" },
+  { key: "customer_follow_up", label: "Customer Follow-up" },
+  { key: "operational", label: "Operational Blocker" },
+  { key: "closed_negative", label: "Closed Negative" }
 ] as const;
+const orderOutcomeChoices: readonly OrderOutcomeChoice[] = [
+  { key: "Confirmed", label: "Confirmed", group: "core", status: "Confirmed", outcomeCategory: "core_status", response: "Confirmed by sales rep", note: "Order confirmed by sales rep.", tone: "green" },
+  { key: "In Process", label: "In Process", group: "core", status: "In Process", outcomeCategory: "core_status", response: "Call in process", note: "Order is in active processing.", tone: "gray" },
+  { key: "Dispatched", label: "Dispatched", group: "core", status: "Dispatched", outcomeCategory: "dispatch", nextActionType: "deliver", response: "Out for delivery", note: "Order moved into delivery flow.", tone: "blue" },
+  { key: "Delivered", label: "Delivered", group: "core", status: "Delivered", outcomeCategory: "success", response: "Delivered successfully", note: "Order delivered successfully.", tone: "green" },
+  { key: "Postponed", label: "Postponed", group: "core", status: "Postponed", outcomeCategory: "customer_follow_up", response: "Delivery postponed", note: "Delivery postponed.", tone: "amber" },
+  { key: "Failed", label: "Failed", group: "core", status: "Failed", outcomeCategory: "other", response: "Delivery failed", note: "Delivery failed.", tone: "red" },
+  { key: "Cancelled", label: "Cancelled", group: "core", status: "Cancelled", outcomeCategory: "customer_declined", response: "Cancelled", note: "Order cancelled.", tone: "red" },
+
+  { key: "Recovered Delivery", label: "Recovered Delivery", group: "success", status: "Delivered", outcomeCode: "Recovered Delivery", outcomeCategory: "success", response: "Recovered delivery confirmed", note: "Recovered delivery confirmed.", tone: "amber" },
+  { key: "Ready", label: "Ready", group: "success", status: "Confirmed", outcomeCode: "Ready", outcomeCategory: "customer_follow_up", nextActionType: "deliver", response: "Customer is ready", note: "Customer is ready to receive the order.", tone: "purple" },
+
+  { key: "Line Busy", label: "Line Busy", group: "customer_unreachable", status: "Postponed", outcomeCode: "Line Busy", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "Line busy", note: "Customer line was busy.", tone: "gray" },
+  { key: "No Answer", label: "No Answer", group: "customer_unreachable", status: "Postponed", outcomeCode: "No Answer", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "No answer", note: "Customer did not answer calls.", tone: "gray" },
+  { key: "Not Picking", label: "Not Picking", group: "customer_unreachable", status: "Postponed", outcomeCode: "Not Picking", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "Customer not picking calls", note: "Customer is not picking calls.", tone: "gray" },
+  { key: "Number not going", label: "Number not going", group: "customer_unreachable", status: "Failed", outcomeCode: "Number not going", outcomeCategory: "customer_unreachable", response: "Number not going", note: "Customer number is not going through.", tone: "gray" },
+  { key: "Wrong Number", label: "Wrong Number", group: "customer_unreachable", status: "Failed", outcomeCode: "Wrong Number", outcomeCategory: "customer_unreachable", response: "Wrong number", note: "Customer phone number is wrong or unreachable.", tone: "gray" },
+  { key: "Switched off", label: "Switched off", group: "customer_unreachable", status: "Postponed", outcomeCode: "Switched off", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "Phone switched off", note: "Customer phone is switched off.", tone: "gray" },
+  { key: "Not Reached", label: "Not Reached", group: "customer_unreachable", status: "Postponed", outcomeCode: "Not Reached", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "Customer not reached", note: "Customer could not be reached.", tone: "gray" },
+  { key: "Not Available", label: "Not Available", group: "customer_unreachable", status: "Postponed", outcomeCode: "Not Available", outcomeCategory: "customer_unreachable", nextActionType: "call", response: "Customer not available", note: "Customer is not available right now.", tone: "gray" },
+
+  { key: "Pending", label: "Pending", group: "customer_follow_up", status: "Postponed", outcomeCode: "Pending", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Pending follow-up", note: "Order is pending follow-up.", tone: "gray" },
+  { key: "Rescheduled", label: "Rescheduled", group: "customer_follow_up", status: "Postponed", outcomeCode: "Rescheduled", outcomeCategory: "customer_follow_up", nextActionType: "deliver", requiresNextActionAt: true, response: "Delivery rescheduled", note: "Customer requested a new delivery slot.", tone: "blue" },
+  { key: "Have questions to ask", label: "Have questions to ask", group: "customer_follow_up", status: "Postponed", outcomeCode: "Have questions to ask", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Customer has questions", note: "Customer has questions before confirming.", tone: "gray" },
+  { key: "Will get back to us", label: "Will get back to us", group: "customer_follow_up", status: "Postponed", outcomeCode: "Will get back to us", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Customer will get back to us", note: "Customer said they will get back to us.", tone: "gray" },
+  { key: "We should call back", label: "We should call back", group: "customer_follow_up", status: "Postponed", outcomeCode: "We should call back", outcomeCategory: "customer_follow_up", nextActionType: "call", requiresNextActionAt: true, response: "Call back requested", note: "Customer asked that we call back later.", tone: "gray" },
+  { key: "Will Call Back", label: "Will Call Back", group: "customer_follow_up", status: "Postponed", outcomeCode: "Will Call Back", outcomeCategory: "customer_follow_up", nextActionType: "call", requiresNextActionAt: true, response: "Customer will call back", note: "Customer asked to call back later.", tone: "gray" },
+  { key: "Scheduled Callback", label: "Scheduled Callback", group: "customer_follow_up", status: "Postponed", outcomeCode: "Scheduled Callback", outcomeCategory: "customer_follow_up", nextActionType: "call", requiresNextActionAt: true, response: "Callback scheduled", note: "Customer requested a scheduled callback.", tone: "blue" },
+  { key: "Not Ready", label: "Not Ready", group: "customer_follow_up", status: "Postponed", outcomeCode: "Not Ready", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Customer not ready", note: "Customer is not ready yet and asked for later follow-up.", tone: "gray" },
+  { key: "Travelled", label: "Travelled", group: "customer_follow_up", status: "Postponed", outcomeCode: "Travelled", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Customer travelled", note: "Customer travelled and asked for later follow-up.", tone: "gray" },
+  { key: "Seat at home", label: "Seat at home", group: "customer_follow_up", status: "Postponed", outcomeCode: "Seat at home", outcomeCategory: "customer_follow_up", nextActionType: "call", response: "Seat at home", note: "Customer asked to stay home and continue later.", tone: "red" },
+
+  { key: "Waybill", label: "Waybill", group: "operational", status: "Dispatched", outcomeCode: "Waybill", outcomeCategory: "dispatch", nextActionType: "waybill", response: "Order sent via waybill", note: "Order has been moved into waybill flow.", tone: "blue" },
+  { key: "Out of Stock", label: "Out of Stock", group: "operational", status: "Failed", outcomeCode: "Out of Stock", outcomeCategory: "logistics_blocker", nextActionType: "confirm_stock", response: "Out of stock", note: "Product is out of stock for this order.", tone: "orange" },
+  { key: "out of coverage", label: "out of coverage", group: "operational", status: "Failed", outcomeCode: "out of coverage", outcomeCategory: "logistics_blocker", response: "Out of coverage", note: "Customer location is outside delivery coverage.", tone: "teal" },
+  { key: "Awaiting payment", label: "Awaiting payment", group: "operational", status: "Postponed", outcomeCode: "Awaiting payment", outcomeCategory: "payment_hold", nextActionType: "payment_check", requiresNextActionAt: true, response: "Awaiting payment", note: "Awaiting payment before delivery can continue.", tone: "purple" },
+
+  { key: "Refused", label: "Refused", group: "closed_negative", status: "Cancelled", outcomeCode: "Refused", outcomeCategory: "customer_declined", response: "Customer refused the order", note: "Customer refused the order.", tone: "red" }
+] as const;
+const orderOutcomeChoiceMap = new Map(orderOutcomeChoices.map((choice) => [choice.key, choice]));
 const allOrderStatuses: Exclude<OrderStatus, "All Orders">[] = ["New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const permissionDefs: { key: UserPermission; label: string; group: string }[] = [
   { key: "create_orders",       label: "Create Orders",       group: "Orders" },
@@ -1535,6 +1611,27 @@ const scheduledKeyForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "schedul
   order.scheduledAt ? normalizeDateKey(order.scheduledAt) : order.scheduledDate ? normalizeDateKey(order.scheduledDate) : "";
 const scheduleSummaryForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
   scheduledMomentForOrder(order) ? formatPlannedMoment(order.scheduledAt, order.scheduledDate) : "Not scheduled";
+const outcomeCodeForOrder = (order: Pick<TrackedOrder, "outcomeCode" | "callOutcome"> | null | undefined) =>
+  order?.outcomeCode?.trim() || order?.callOutcome?.trim() || "";
+const nextActionMomentForOrder = (order: Pick<TrackedOrder, "nextActionAt" | "scheduledAt" | "scheduledDate" | "nextActionType">) =>
+  order.nextActionAt ?? (order.nextActionType === "deliver" ? scheduledMomentForOrder(order) : undefined);
+const nextActionSummaryForOrder = (order: Pick<TrackedOrder, "nextActionAt" | "scheduledAt" | "scheduledDate" | "nextActionType" | "outcomeCode" | "callOutcome">) => {
+  const planned = nextActionMomentForOrder(order);
+  if (!planned) return "No next action set";
+  const baseLabel = formatPlannedMoment(order.nextActionAt ?? order.scheduledAt, order.nextActionAt ? undefined : order.scheduledDate);
+  const actionLabel =
+    order.nextActionType === "call"
+      ? "Call"
+      : order.nextActionType === "payment_check"
+        ? "Payment check"
+        : order.nextActionType === "confirm_stock"
+          ? "Stock check"
+          : order.nextActionType === "waybill"
+            ? "Waybill"
+            : "Delivery";
+  const outcomeLabel = outcomeCodeForOrder(order);
+  return outcomeLabel ? `${actionLabel} · ${outcomeLabel} · ${baseLabel}` : `${actionLabel} · ${baseLabel}`;
+};
 const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
   note.followUpAt ?? note.followUpDate;
 const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
@@ -1543,7 +1640,7 @@ const formatPlannedMoment = (plannedAt?: string, plannedDate?: string) =>
   plannedAt ? formatMoment(plannedAt) : plannedDate ? displayDateFromKey(plannedDate) : "";
 const CLOSED_ORDER_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["Delivered", "Cancelled", "Failed"]);
 type OrderFollowUpInsight = {
-  source: "schedule" | "timeline";
+  source: "next_action" | "schedule" | "timeline";
   label: string;
   dueAt?: string;
   dueDate?: string;
@@ -1574,9 +1671,23 @@ const followUpInsightsForOrder = (order: TrackedOrder): OrderFollowUpInsight[] =
 
   const now = Date.now();
   const entries: Array<OrderFollowUpInsight & { sortTime: number }> = [];
+  const nextActionMoment = nextActionMomentForOrder(order);
+  const nextActionTime = plannedMomentTimestamp(order.nextActionAt ?? order.scheduledAt, order.nextActionAt ? undefined : order.scheduledDate);
+  if (nextActionMoment && nextActionTime != null) {
+    entries.push({
+      source: "next_action",
+      label: nextActionSummaryForOrder(order),
+      dueAt: order.nextActionAt ?? order.scheduledAt,
+      dueDate: order.nextActionAt ? undefined : order.scheduledDate,
+      noteText: order.nextActionNote,
+      overdue: nextActionTime <= now,
+      dueSoon: nextActionTime > now && nextActionTime - now <= 2 * 60 * 60 * 1000,
+      sortTime: nextActionTime
+    });
+  }
   const scheduledAt = scheduledMomentForOrder(order);
   const scheduledTime = plannedMomentTimestamp(order.scheduledAt, order.scheduledDate);
-  if (scheduledAt && scheduledTime != null) {
+  if (scheduledAt && scheduledTime != null && (!order.nextActionAt || order.nextActionType === "deliver")) {
     entries.push({
       source: "schedule",
       label: scheduleSummaryForOrder(order),
@@ -2065,24 +2176,41 @@ const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
   return Object.values(details).some((value) => typeof value === "string" && value.trim().length > 0);
 };
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
-  const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
-  const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
-    ? value.scheduledAt
+  const order = snakeToCamel<any>(value);
+  const legacyMetadata = parseLegacyOrderMetadata(order?.notes ?? value?.notes);
+  const scheduledAt = typeof order?.scheduledAt === "string" && order.scheduledAt
+    ? order.scheduledAt
     : typeof value?.scheduled_at === "string" && value.scheduled_at
       ? value.scheduled_at
-    : legacyMetadata.scheduledAt;
-  const scheduledDate = typeof value?.scheduledDate === "string" && value.scheduledDate
-    ? normalizeDateKey(value.scheduledDate)
+      : legacyMetadata.scheduledAt;
+  const scheduledDate = typeof order?.scheduledDate === "string" && order.scheduledDate
+    ? normalizeDateKey(order.scheduledDate)
     : typeof value?.scheduled_date === "string" && value.scheduled_date
       ? normalizeDateKey(value.scheduled_date)
     : scheduledAt
       ? normalizeDateKey(scheduledAt)
       : undefined;
+  const nextActionType = typeof order?.nextActionType === "string" && order.nextActionType
+    ? order.nextActionType
+    : scheduledAt
+      ? "deliver"
+      : undefined;
+  const nextActionAt = typeof order?.nextActionAt === "string" && order.nextActionAt
+    ? order.nextActionAt
+    : nextActionType === "deliver"
+      ? scheduledAt
+      : undefined;
   return {
-    ...value,
+    ...order,
     scheduledAt,
     scheduledDate,
-    notes: orderNotesFor(value)
+    callOutcome: order.callOutcome ?? order.outcomeCode ?? undefined,
+    outcomeCode: order.outcomeCode ?? order.callOutcome ?? undefined,
+    outcomeCategory: typeof order?.outcomeCategory === "string" ? order.outcomeCategory : undefined,
+    nextActionType,
+    nextActionAt,
+    nextActionNote: typeof order?.nextActionNote === "string" ? order.nextActionNote : undefined,
+    notes: orderNotesFor(order)
   };
 };
 
@@ -2523,8 +2651,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([]);
   const [flagReasonDraft, setFlagReasonDraft] = useState("");
   const [flagTargetPhone, setFlagTargetPhone] = useState("");
-  const [callOutcomeDraft, setCallOutcomeDraft] = useState<string>("");
-  const [callOutcomeCustom, setCallOutcomeCustom] = useState("");
   const [deliveryDateDraft, setDeliveryDateDraft] = useState(todayKey());
   const [stockCounts, setStockCounts] = useState<StockCountSession[]>([]);
   const [activeStockCountId, setActiveStockCountId] = useState<string | null>(null);
@@ -3403,20 +3529,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<{ productId: string; quantity: number }[]>([]);
   const toggleOrderFormCrossSell = (productId: string) => setOrderFormCrossSells((prev) => prev.some((c) => c.productId === productId) ? prev.filter((c) => c.productId !== productId) : [...prev, { productId, quantity: 1 }]);
-  const hydrateCallOutcomeDraft = (outcome?: string | null) => {
-    const normalized = (outcome ?? "").trim();
-    if (!normalized) {
-      setCallOutcomeDraft("");
-      setCallOutcomeCustom("");
-      return;
+  const statusChoiceForModal = (status?: OrderStatusAction | null, outcome?: string | null) => {
+    const normalizedOutcome = (outcome ?? "").trim();
+    if (normalizedOutcome) {
+      const matched = orderOutcomeChoices.find((choice) => choice.outcomeCode === normalizedOutcome || choice.label === normalizedOutcome);
+      if (matched) return matched.key;
     }
-    if (repCallOutcomeOptions.includes(normalized as typeof repCallOutcomeOptions[number])) {
-      setCallOutcomeDraft(normalized);
-      setCallOutcomeCustom("");
-      return;
+    if (status === "Reschedule") return "Rescheduled";
+    const matchedStatus = orderOutcomeChoices.find((choice) => choice.label === status);
+    if (matchedStatus) return matchedStatus.key;
+    const matchedCore = orderOutcomeChoices.find((choice) => !choice.outcomeCode && choice.status === (status ?? "Confirmed"));
+    return matchedCore?.key ?? "Confirmed";
+  };
+  const selectedOutcomeChoiceSummary = (choice: OrderOutcomeChoice | undefined) => {
+    if (!choice) return "";
+    const coreLabel = choice.status;
+    if (choice.nextActionType === "deliver" && choice.requiresNextActionAt) {
+      return `${choice.label} will save as ${coreLabel} and require a delivery date/time.`;
     }
-    setCallOutcomeDraft("__custom__");
-    setCallOutcomeCustom(normalized);
+    if (choice.nextActionType === "call" && choice.requiresNextActionAt) {
+      return `${choice.label} will save as ${coreLabel} and require a callback date/time.`;
+    }
+    if (choice.nextActionType === "payment_check" && choice.requiresNextActionAt) {
+      return `${choice.label} will save as ${coreLabel} and remind the team to check payment.`;
+    }
+    if (choice.outcomeCode) {
+      return `${choice.label} will stay visible while the core status saves as ${coreLabel}.`;
+    }
+    return `${coreLabel} will be saved for this order.`;
   };
   const hydrateDeliveryDateDraft = (order?: TrackedOrder | null, fallback = todayKey()) => {
     setDeliveryDateDraft(order?.deliveredDate ? normalizeDateKey(order.deliveredDate) : fallback);
@@ -3838,10 +3978,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
   const [statusChangeDraft, setStatusChangeDraft] = useState<OrderStatusAction>("Confirmed");
+  const [statusChangeChoice, setStatusChangeChoice] = useState<string>("Confirmed");
   const [statusChangePreset, setStatusChangePreset] = useState<OrderStatusAction | null>(null);
   const [statusChangeReasonPreset, setStatusChangeReasonPreset] = useState("");
   const [statusChangeOutcomePreset, setStatusChangeOutcomePreset] = useState<string | null>(null);
   const [statusChangeReason, setStatusChangeReason] = useState("");
+  const activeStatusOutcomeChoice = orderOutcomeChoiceMap.get(statusChangeChoice) ?? orderOutcomeChoices[0];
   const [repScheduleDate, setRepScheduleDate] = useState(todayKey());
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
   const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
@@ -3944,14 +4086,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!selectedOrderId) {
       return;
     }
-    const plannedParts = splitMomentForInput(selectedOrder?.scheduledAt);
+    const plannedParts = splitMomentForInput(selectedOrder?.nextActionAt ?? selectedOrder?.scheduledAt);
     setCreateOrderAgentId(selectedOrder?.agentId ?? "");
     setOrderNoteDraft("");
     setOrderFollowUpDate("");
     setOrderFollowUpTime(nextTimeValue());
-    setOrderScheduleDate(plannedParts.date || (selectedOrder ? scheduledKeyForOrder(selectedOrder) : "") || todayKey());
+    setOrderScheduleDate(plannedParts.date || normalizeDateKey(selectedOrder?.nextActionAt) || (selectedOrder ? scheduledKeyForOrder(selectedOrder) : "") || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
-  }, [selectedOrderId, selectedOrder?.agentId, selectedOrder?.scheduledAt, selectedOrder?.scheduledDate]);
+  }, [selectedOrderId, selectedOrder?.agentId, selectedOrder?.nextActionAt, selectedOrder?.scheduledAt, selectedOrder?.scheduledDate]);
   useEffect(() => {
     if (modal !== "setRate" || !payRateUserId) {
       return;
@@ -4058,12 +4200,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const currentStatus = selectedOrder.status ?? "New";
-    const plannedParts = splitMomentForInput(selectedOrder.scheduledAt);
-    setStatusChangeDraft(statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus));
-    setStatusChangeReason(statusChangeReasonPreset);
-    hydrateCallOutcomeDraft(statusChangeOutcomePreset ?? selectedOrder.callOutcome);
+    const plannedParts = splitMomentForInput(selectedOrder.nextActionAt ?? selectedOrder.scheduledAt);
+    const choiceKey = statusChoiceForModal(
+      statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus),
+      statusChangeOutcomePreset ?? selectedOrder.outcomeCode ?? selectedOrder.callOutcome
+    );
+    const choice = orderOutcomeChoiceMap.get(choiceKey) ?? orderOutcomeChoices[0];
+    setStatusChangeChoice(choice.key);
+    setStatusChangeDraft(choice.status);
+    setStatusChangeReason(statusChangeReasonPreset || selectedOrder.nextActionNote || choice.note);
     hydrateDeliveryDateDraft(selectedOrder);
-    setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
+    setOrderScheduleDate(plannedParts.date || normalizeDateKey(selectedOrder.nextActionAt) || scheduledKeyForOrder(selectedOrder) || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
     setStatusChangePreset(null);
     setStatusChangeReasonPreset("");
@@ -10656,6 +10803,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ? {
               ...item,
               status: item.status === "New" || !item.status ? "Confirmed" : item.status,
+              outcomeCode: "Rescheduled",
+              outcomeCategory: "customer_follow_up",
+              nextActionType: "deliver",
+              nextActionAt: plannedMoment.iso,
+              nextActionNote: nextResponse,
+              callOutcome: "Rescheduled",
               scheduledDate: options.scheduledDate,
               scheduledAt: plannedMoment.iso,
               response: nextResponse,
@@ -10669,6 +10822,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const updates: Record<string, unknown> = {
       scheduled_date: options.scheduledDate,
       scheduled_at: plannedMoment.iso ?? null,
+      call_outcome: "Rescheduled",
+      outcome_code: "Rescheduled",
+      outcome_category: "customer_follow_up",
+      next_action_type: "deliver",
+      next_action_at: plannedMoment.iso ?? null,
+      next_action_note: nextResponse,
       response: nextResponse,
       timeline_notes: nextNotes
     };
@@ -10734,7 +10893,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     nextStatus: Exclude<OrderStatus, "All Orders">,
     reason?: string,
     skipApi = false,
-    deliveredDate?: string
+    deliveredDate?: string,
+    meta?: {
+      outcomeCode?: string | null;
+      outcomeCategory?: OrderOutcomeCategory | null;
+      nextActionType?: OrderNextActionType | null;
+      nextActionAt?: string | null;
+      nextActionNote?: string | null;
+      responseOverride?: string;
+    }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     if (!order) {
@@ -10785,6 +10952,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     const response =
+      meta?.responseOverride
+        ? meta.responseOverride
+        :
       isDeliveryDateOnly
         ? (order.response ?? "Delivered successfully")
         : nextStatus === "Delivered"
@@ -10799,9 +10969,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 ? "Call in process"
               : nextStatus === "Confirmed"
                 ? "Confirmed by sales rep"
-                : nextStatus === "Postponed"
-                  ? "Delivery postponed"
-                  : "Awaiting confirmation";
+              : nextStatus === "Postponed"
+                ? "Delivery postponed"
+                : "Awaiting confirmation";
+    const nextActionAt = meta?.nextActionAt ?? undefined;
+    const nextActionType = meta?.nextActionType ?? undefined;
+    const nextActionNote = meta?.nextActionNote ?? undefined;
+    const nextOutcomeCode = meta?.outcomeCode ?? (meta ? undefined : order.outcomeCode ?? order.callOutcome);
+    const nextOutcomeCategory = meta?.outcomeCategory ?? (meta ? undefined : order.outcomeCategory);
+    const nextScheduleAt = nextActionType === "deliver" ? nextActionAt : order.scheduledAt;
+    const nextScheduleDate = nextActionType === "deliver" && nextActionAt ? normalizeDateKey(nextActionAt) : order.scheduledDate;
     setTrackedOrders((value) =>
       value.map((item) =>
         item.id === orderId
@@ -10809,6 +10986,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ...item,
               status: nextStatus,
               response,
+              callOutcome: nextOutcomeCode || undefined,
+              outcomeCode: nextOutcomeCode || undefined,
+              outcomeCategory: nextOutcomeCategory || undefined,
+              nextActionType: nextActionType || undefined,
+              nextActionAt: nextActionAt || undefined,
+              nextActionNote: nextActionNote || undefined,
+              scheduledAt: nextScheduleAt,
+              scheduledDate: nextScheduleDate,
               deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.status === "Delivered" ? undefined : item.deliveredDate,
               stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
               notes: [
@@ -10833,7 +11018,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const orderSnapshot = order;
       const statusRequest = isDeliveryDateOnly
         ? ordersApi.update(orderId, { delivered_date: effectiveDeliveredDate })
-        : ordersApi.updateStatus(orderId, { status: nextStatus, reason, deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined });
+        : ordersApi.updateStatus(orderId, {
+            status: nextStatus,
+            reason,
+            deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined,
+            callOutcome: meta?.outcomeCode ?? undefined,
+            outcomeCode: meta?.outcomeCode ?? undefined,
+            outcomeCategory: meta?.outcomeCategory ?? undefined,
+            nextActionType: meta?.nextActionType ?? undefined,
+            nextActionAt: meta?.nextActionAt ?? undefined,
+            nextActionNote: meta?.nextActionNote ?? undefined
+          });
       statusRequest.catch((err: any) => {
         setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
         showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
@@ -11359,8 +11554,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRepOrderDetailId(order.id);
     setRepConsoleTab("Orders");
     setCreateOrderAgentId(order.agentId ?? "");
-    const plannedParts = splitMomentForInput(order.scheduledAt);
-    setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
+    const plannedParts = splitMomentForInput(order.nextActionAt ?? order.scheduledAt);
+    setRepScheduleDate(plannedParts.date || normalizeDateKey(order.nextActionAt) || scheduledKeyForOrder(order) || todayKey());
     setRepScheduleTime(plannedParts.time || nextTimeValue());
     setShowRepFollowUpField(false);
     setOrderFollowUpDate("");
@@ -11384,7 +11579,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedOrderId(order.id);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
-    setStatusChangeOutcomePreset(options?.callOutcome ?? order.callOutcome ?? "");
+    setStatusChangeOutcomePreset(options?.callOutcome ?? order.outcomeCode ?? order.callOutcome ?? "");
     setModal("changeOrderStatus");
     syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
   };
@@ -11393,49 +11588,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openRepStatusChangeModal(order, "Reschedule", { reason, callOutcome });
   };
 
+  const handleStatusChoiceSelect = (choiceKey: string) => {
+    const choice = orderOutcomeChoiceMap.get(choiceKey) ?? orderOutcomeChoices[0];
+    setStatusChangeChoice(choice.key);
+    setStatusChangeDraft(choice.status);
+    setStatusChangeReason(choice.note);
+  };
+
   const submitRepStatusChange = () => {
     if (!selectedOrder) return;
-    const isRescheduleAction = statusChangeDraft === "Reschedule";
+    const selectedChoice = orderOutcomeChoiceMap.get(statusChangeChoice) ?? orderOutcomeChoices[0];
+    const isRescheduleAction = selectedChoice.nextActionType === "deliver" && Boolean(selectedChoice.requiresNextActionAt);
     const requiresReason = !isRescheduleAction && ["Cancelled", "Failed", "Postponed"].includes(statusChangeDraft);
     if (requiresReason && !statusChangeReason.trim()) {
       showToast("A reason is required when cancelling, failing, or postponing an order.");
       return;
     }
-    if (isRescheduleAction && !isDateValue(orderScheduleDate)) {
-      showToast("Choose a valid rescheduled delivery date.");
+    if (selectedChoice.requiresNextActionAt && !isDateValue(orderScheduleDate)) {
+      showToast("Choose a valid next-action date.");
       return;
     }
-    if (isRescheduleAction && !isTimeValue(orderScheduleTime)) {
-      showToast("Choose a valid rescheduled delivery time.");
+    if (selectedChoice.requiresNextActionAt && !isTimeValue(orderScheduleTime)) {
+      showToast("Choose a valid next-action time.");
       return;
     }
-    if (statusChangeDraft === "Delivered" && !deliveryDateDraft) {
+    if (selectedChoice.status === "Delivered" && !deliveryDateDraft) {
       showToast("Choose the actual delivery date before saving.");
       return;
     }
-    const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
-    if (isRescheduleAction) {
-      const reasonText = statusChangeReason.trim();
-      const extras = [
-        reasonText ? `Note: ${reasonText}.` : "",
-        resolvedOutcome ? `Call outcome: ${resolvedOutcome}.` : ""
-      ].filter(Boolean).join(" ");
-      commitOrderSchedule(selectedOrder, {
-        scheduledDate: orderScheduleDate,
-        scheduledTime: orderScheduleTime,
-        by: currentRole === "Sales Rep" ? repScopeName : ownerName,
-        noteText: (label) => extras ? `Order rescheduled for ${label}. ${extras}` : `Order rescheduled for ${label}.`
-      });
-    } else {
-      updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim(), false, statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined);
-    }
-    if (resolvedOutcome || selectedOrder.callOutcome) {
-      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome || undefined } : o));
-      ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome || null }).catch(() => {});
-    }
+    const nextActionMoment = selectedChoice.requiresNextActionAt
+      ? combinePlannedMoment(orderScheduleDate, orderScheduleTime).iso ?? null
+      : null;
+    const effectiveReason = statusChangeReason.trim() || selectedChoice.note;
+    const responseOverride = selectedChoice.requiresNextActionAt && nextActionMoment
+      ? `${selectedChoice.label} · ${formatPlannedMoment(nextActionMoment, orderScheduleDate)}`
+      : selectedChoice.response;
+    updateOrderStatus(
+      selectedOrder.id,
+      selectedChoice.status,
+      effectiveReason,
+      false,
+      selectedChoice.status === "Delivered" ? deliveryDateDraft : undefined,
+      {
+        outcomeCode: selectedChoice.outcomeCode ?? null,
+        outcomeCategory: selectedChoice.outcomeCategory,
+        nextActionType: selectedChoice.nextActionType ?? null,
+        nextActionAt: nextActionMoment,
+        nextActionNote: effectiveReason,
+        responseOverride
+      }
+    );
     setStatusChangeReason("");
-    setCallOutcomeDraft("");
-    setCallOutcomeCustom("");
+    setStatusChangeChoice("Confirmed");
     setDeliveryDateDraft(todayKey());
     closeModal();
   };
@@ -13892,7 +14096,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedOrderId(orderId);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
-    setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
+    setStatusChangeOutcomePreset(options?.callOutcome ?? order?.outcomeCode ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
     syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
   };
@@ -14874,8 +15078,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {(() => {
               const latestNote = latestTimelineNoteForOrder(order);
               const nextFollowUp = nextFollowUpForOrder(order);
+              const visibleOutcome = outcomeCodeForOrder(order) || order.status || "New";
+              const nextActionLabel = nextActionSummaryForOrder(order);
               return (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Current Outcome</p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-bold text-gray-900 border border-gray-200">
+                        {visibleOutcome}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[11px] text-gray-500 m-0">
+                      Core status saves as <strong className="text-gray-700">{order.status ?? "New"}</strong>.
+                    </p>
+                  </article>
                   <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Latest Feedback</p>
                     <p className="mt-2 text-sm font-semibold text-gray-900 m-0">
@@ -14886,12 +15103,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </p>
                   </article>
                   <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Next Reminder</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Next Action</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
+                    <p className="mt-2 text-sm font-semibold text-gray-900 m-0">
+                      {nextActionLabel}
+                    </p>
                     <p className="mt-2 text-[11px] text-gray-500 m-0">
                       {nextFollowUp?.noteText
                         ? noteSnippet(nextFollowUp.noteText, 120)
@@ -28510,6 +28730,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
 	                  <div><h3 className="text-sm font-semibold text-gray-900">Communication Timeline</h3><p>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <article className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Outcome</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-900 m-0">{outcomeCodeForOrder(selectedOrder) || selectedOrder.status || "New"}</p>
+                      </article>
+                      <article className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Next Action</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-900 m-0">{nextActionSummaryForOrder(selectedOrder)}</p>
+                      </article>
+                    </div>
 	                  <div className="flex flex-col gap-2 max-h-44 overflow-y-auto">{orderNotesFor(selectedOrder).map((note) => <p key={note.id}><strong>{note.by}</strong> · {formatDateTime(note.date)}<br />{note.text}{followUpMomentForNote(note) ? ` · Follow-up ${formatPlannedMoment(note.followUpAt, note.followUpDate)}` : ""}</p>)}</div>
 	                  <label><span>Note</span><textarea value={orderNoteDraft} onChange={(event) => setOrderNoteDraft(event.target.value)} /></label>
 	                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -28533,26 +28763,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            {modal === "changeOrderStatus" && selectedOrder && (
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
-	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as OrderStatusAction)}>{statusChangeActions.map((status) => <option key={status}>{status}</option>)}</select></label>
-                  {statusChangeDraft === "Delivered" && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4 space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500 m-0">Selected Result</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-bold ${outcomeChipToneClasses[activeStatusOutcomeChoice.tone].active}`}>
+                          {activeStatusOutcomeChoice.label}
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">
+                          Core status: {activeStatusOutcomeChoice.status}
+                        </span>
+                        {activeStatusOutcomeChoice.nextActionType && activeStatusOutcomeChoice.nextActionType !== "none" && (
+                          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">
+                            Next action: {activeStatusOutcomeChoice.nextActionType.replace("_", " ")}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 m-0">{selectedOutcomeChoiceSummary(activeStatusOutcomeChoice)}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    {orderOutcomeChoiceGroups.map((group) => {
+                      const choices = orderOutcomeChoices.filter((choice) => choice.group === group.key);
+                      return (
+                        <section key={group.key} className="space-y-2">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500 m-0">{group.label}</p>
+                          <div className="flex flex-wrap gap-2">
+                            {choices.map((choice) => {
+                              const tone = outcomeChipToneClasses[choice.tone];
+                              const selected = activeStatusOutcomeChoice.key === choice.key;
+                              return (
+                                <button
+                                  key={choice.key}
+                                  type="button"
+                                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors ${selected ? tone.active : tone.idle}`}
+                                  onClick={() => handleStatusChoiceSelect(choice.key)}
+                                >
+                                  {choice.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                  {activeStatusOutcomeChoice.status === "Delivered" && (
                     <label>
                       <span>{selectedOrder.status === "Delivered" ? "Recorded Delivery Date" : "Actual Delivery Date"}</span>
                       <input type="date" value={deliveryDateDraft} onChange={(event) => setDeliveryDateDraft(event.target.value)} />
                     </label>
                   )}
-                  {statusChangeDraft === "Reschedule" && (
+                  {activeStatusOutcomeChoice.requiresNextActionAt && (
                     <div className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
                       <div>
-                        <p className="text-sm font-semibold text-gray-900 m-0">Reschedule delivery</p>
-                        <p className="text-xs text-gray-500 m-0 mt-1">Current slot: <strong className="text-gray-700">{scheduleSummaryForOrder(selectedOrder)}</strong></p>
+                        <p className="text-sm font-semibold text-gray-900 m-0">
+                          {activeStatusOutcomeChoice.nextActionType === "call"
+                            ? "Schedule callback"
+                            : activeStatusOutcomeChoice.nextActionType === "payment_check"
+                              ? "Schedule payment follow-up"
+                              : "Schedule next delivery slot"}
+                        </p>
+                        <p className="text-xs text-gray-500 m-0 mt-1">
+                          Current plan: <strong className="text-gray-700">{nextActionSummaryForOrder(selectedOrder)}</strong>
+                        </p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label>
-                          <span>New Date</span>
+                          <span>Date</span>
                           <input type="date" value={orderScheduleDate} onChange={(event) => setOrderScheduleDate(event.target.value)} />
                         </label>
                         <label>
-                          <span>New Time</span>
+                          <span>Time</span>
                           <input type="time" value={orderScheduleTime} onChange={(event) => setOrderScheduleTime(event.target.value)} />
                         </label>
                       </div>
@@ -28570,32 +28852,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                   )}
-	                <div>
-	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{repCallOutcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
-                    <div className="mt-2">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick actions</p>
-                      <div className="flex flex-wrap gap-2">
-                        {repCallOutcomeOptions.map((outcome) => (
-                          <button
-                            key={outcome}
-                            type="button"
-                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
-                            onClick={() => {
-                              setCallOutcomeDraft(outcome);
-                              setCallOutcomeCustom("");
-                            }}
-                          >
-                            {outcome}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-	                  {callOutcomeDraft === "__custom__" && (
-	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
-	                  )}
-	                </div>
-	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
-	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>{statusChangeDraft === "Reschedule" ? "Save Schedule" : "Change Status"}</button></div>
+	                <label>
+                    <span>{activeStatusOutcomeChoice.requiresNextActionAt ? "Internal Note" : "Reason / Internal Note"}</span>
+                    <textarea
+                      value={statusChangeReason}
+                      onChange={(event) => setStatusChangeReason(event.target.value)}
+                      placeholder={
+                        activeStatusOutcomeChoice.nextActionType === "call"
+                          ? "Customer asked to be called later, number was busy, no answer..."
+                          : activeStatusOutcomeChoice.nextActionType === "payment_check"
+                            ? "Waiting for customer transfer, payment receipt pending..."
+                            : activeStatusOutcomeChoice.nextActionType === "deliver"
+                              ? "Customer requested a different slot, dispatch moved to tomorrow..."
+                              : "Add context for the next teammate or for reporting..."
+                      }
+                    />
+                  </label>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>
+                      {activeStatusOutcomeChoice.requiresNextActionAt ? "Save Next Action" : "Save Status"}
+                    </button>
+                  </div>
 	              </div>
 	            )}
 
