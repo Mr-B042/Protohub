@@ -8,3 +8,5 @@ vite.config.d.ts
 .env.local
 backend/node_modules/
 backend/dist/
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist

@@ -1,3 +1,5 @@
+/// <reference types="@capacitor/push-notifications" />
+
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
@@ -15,6 +17,9 @@ const config: CapacitorConfig = {
       backgroundColor: '#0b1520',
       showSpinner: false,
       androidSplashResourceName: 'splash'
+    },
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "alert"]
     },
     StatusBar: {
       style: 'DARK',

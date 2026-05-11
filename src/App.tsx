@@ -87,6 +87,14 @@ import { snakeToCamel } from "./lib/normalize";
 import { realtimeClient } from "./lib/realtime";
 import { isNativeShell, nativePlatform } from "./lib/native-shell";
 import {
+  ensureNativePushRegistrationCurrent,
+  getCachedNativePushToken,
+  getNativePushPermissionState,
+  initializeNativePushBridge,
+  subscribeToNativePush,
+  unsubscribeFromNativePush
+} from "./lib/native-push";
+import {
   subscribeToPush,
   unsubscribeFromPush,
   ensureServiceWorkerRegistration,
@@ -3620,12 +3628,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const pushNeedsStandaloneInstall = !isNativeShell && installGuidePlatform === "ios" && !isInstalled;
   const refreshPushDiagnostics = async (respectBannerDismissal = true) => {
     if (isNativeShell) {
-      setPushPermission("unsupported");
-      setPushServerConfigured(false);
-      setPushSubscriptionCount(0);
-      setPushCurrentDeviceLinked(false);
-      setPushSubscriptionHosts([]);
-      setPushSubscribed(false);
+      const perm = await getNativePushPermissionState();
+      const status = await getPushStatus();
+      const token = getCachedNativePushToken();
+      const platformConfigured =
+        nativePlatform === "ios"
+          ? Boolean(status.nativePlatforms?.ios)
+          : nativePlatform === "android"
+            ? Boolean(status.nativePlatforms?.android)
+            : Boolean(status.nativeConfigured);
+      const nativeDevices = status.nativeDevices ?? [];
+      const linkedToThisDevice = token
+        ? nativeDevices.some((device) => device.token === token)
+        : false;
+      setPushPermission(perm);
+      setPushServerConfigured(platformConfigured);
+      setPushSubscriptionCount(nativeDevices.length);
+      setPushCurrentDeviceLinked(linkedToThisDevice);
+      setPushSubscriptionHosts(
+        [...new Set(nativeDevices.map((device) => (device.platform === "ios" ? "Apple APNs" : "Firebase Cloud Messaging")))]
+      );
+      setPushSubscribed(platformConfigured && perm === "granted" && linkedToThisDevice);
       setShowPushBanner(false);
       return;
     }
@@ -3651,18 +3674,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const [pushLoading, setPushLoading] = useState(false);
   const [pushTestLoading, setPushTestLoading] = useState(false);
-  const browserPushSupported = pushPermission !== "unsupported";
+  const browserPushSupported = isNativeShell ? true : pushPermission !== "unsupported";
   const pushBackgroundReady =
     browserPushSupported &&
     pushServerConfigured &&
     pushPermission === "granted" &&
     pushSubscribed &&
-    !pushNeedsStandaloneInstall;
+    (isNativeShell || !pushNeedsStandaloneInstall);
+  const nativeShellLabel = nativePlatform === "ios" ? "iPhone/iPad app shell" : "Android app shell";
   const pushStatusTone =
     pushBackgroundReady ? "emerald"
     : !pushServerConfigured ? "amber"
-    : pushNeedsStandaloneInstall ? "amber"
-    : pushPermission === "denied" || pushPermission === "unsupported" ? "red"
+    : !isNativeShell && pushNeedsStandaloneInstall ? "amber"
+    : pushPermission === "denied" || (!isNativeShell && pushPermission === "unsupported") ? "red"
     : "blue";
   const pushStatusPanelClasses =
     pushStatusTone === "emerald" ? "bg-emerald-50 border-emerald-200 text-emerald-900"
@@ -3671,23 +3695,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : "bg-blue-50 border-blue-200 text-blue-900";
   const pushStatusTitle =
     pushBackgroundReady ? "Background push is ready on this device"
-    : !pushServerConfigured ? "Push server is not configured on this environment"
-    : pushNeedsStandaloneInstall ? "Install to Home Screen is required on this iPhone/iPad"
+    : !pushServerConfigured ? (isNativeShell ? `Native push is not configured for this ${nativeShellLabel}` : "Push server is not configured on this environment")
+    : !isNativeShell && pushNeedsStandaloneInstall ? "Install to Home Screen is required on this iPhone/iPad"
     : pushPermission === "denied" ? "Notifications are blocked on this device"
-    : pushPermission === "unsupported" ? "This browser does not support web push"
-    : pushCurrentDeviceLinked ? "Subscription needs attention"
+    : !isNativeShell && pushPermission === "unsupported" ? "This browser does not support web push"
+    : pushCurrentDeviceLinked ? (isNativeShell ? "Native token needs attention" : "Subscription needs attention")
     : "This device is not subscribed yet";
   const pushStatusMessage =
     pushBackgroundReady ? "Lock your screen or close the app and supported push alerts should still arrive."
-    : !pushServerConfigured ? "This local/backend environment is missing VAPID push configuration, so only in-app notifications will show until the server is configured."
-    : pushNeedsStandaloneInstall ? "Open this site in Safari, use Share -> Add to Home Screen, then open it from the home-screen icon before enabling notifications."
-    : pushPermission === "denied" ? "Enable notifications again from your browser or device settings, then re-subscribe."
-    : pushPermission === "unsupported" ? "Use a browser/device combination that supports Service Workers, Push API, and Notifications."
-    : pushCurrentDeviceLinked ? "The browser has permission and this device is linked, but delivery still needs a live push check."
-    : pushSubscriptionCount > 0 ? "This account already has push linked on another browser or device, but not on this exact one. Force re-subscribe here to move delivery onto this device."
-    : installGuidePlatform === "ios"
+    : !pushServerConfigured
+      ? (isNativeShell
+          ? `This environment is missing ${nativePlatform === "ios" ? "APNs" : "Firebase Cloud Messaging"} credentials for native push, so the app can only catch up on in-app alerts after you open it.`
+          : "This local/backend environment is missing VAPID push configuration, so only in-app notifications will show until the server is configured.")
+    : !isNativeShell && pushNeedsStandaloneInstall ? "Open this site in Safari, use Share -> Add to Home Screen, then open it from the home-screen icon before enabling notifications."
+    : pushPermission === "denied"
+      ? (isNativeShell
+          ? "Enable notifications again from your device settings, then re-register the app token."
+          : "Enable notifications again from your browser or device settings, then re-subscribe.")
+    : !isNativeShell && pushPermission === "unsupported" ? "Use a browser/device combination that supports Service Workers, Push API, and Notifications."
+    : pushCurrentDeviceLinked
+      ? (isNativeShell
+          ? "The app has permission and this device token is linked, but delivery still needs a live native push check."
+          : "The browser has permission and this device is linked, but delivery still needs a live push check.")
+    : pushSubscriptionCount > 0
+      ? (isNativeShell
+          ? "This account already has native push linked on another device, but not on this exact one. Force re-register here to move delivery onto this device."
+          : "This account already has push linked on another browser or device, but not on this exact one. Force re-subscribe here to move delivery onto this device.")
+    : !isNativeShell && installGuidePlatform === "ios"
       ? "Once installed to the home screen, enable notifications there to receive lock-screen alerts."
-      : "Enable notifications on this device to receive lock-screen/background alerts where the browser supports it.";
+      : isNativeShell
+        ? "Enable notifications in the mobile app to receive lock-screen and background alerts."
+        : "Enable notifications on this device to receive lock-screen/background alerts where the browser supports it.";
   const emailSettingsDirty = emailSettings ? JSON.stringify(emailSettings) !== emailSettingsSnapshotRef.current : false;
   const saveEmailSettings = async () => {
     if (!emailSettings) return;
@@ -7180,10 +7218,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Check push notification status on mount
   useEffect(() => {
     void (async () => {
-      await ensureServiceWorkerRegistration().catch(() => null);
-      await ensurePushSubscriptionCurrent().catch(() => false);
+      if (isNativeShell) {
+        await initializeNativePushBridge({
+          onAction: (event) => {
+            const targetUrl = event.notification.data?.url || event.notification.link;
+            if (targetUrl) {
+              window.location.hash = targetUrl;
+            }
+          },
+          onToken: () => {
+            void refreshPushDiagnostics(false);
+          }
+        }).catch(() => null);
+        await ensureNativePushRegistrationCurrent().catch(() => false);
+      } else {
+        await ensureServiceWorkerRegistration().catch(() => null);
+        await ensurePushSubscriptionCurrent().catch(() => false);
+      }
       await refreshPushDiagnostics();
     })();
+    if (isNativeShell) {
+      return;
+    }
     // Listen for SW navigation messages (notification click)
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "NAVIGATE" && event.data.url) {
@@ -25198,7 +25254,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <h2 className="text-base font-bold text-gray-800">Push Notifications</h2>
                 <p className="text-sm text-gray-500">
                   {isNativeShell
-                    ? "This device is already running the native app shell. Browser service-worker push diagnostics do not apply here yet."
+                    ? "Enable real native push on this mobile device — order events, low stock, waybill updates, and other operational alerts should reach the lock screen even when the app is closed."
                     : "Enable push alerts on this device — order events, low stock, waybill updates, and key operational alerts."}
                 </p>
                 {isNativeShell ? (
@@ -25207,7 +25263,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="flex-1 text-sm">
                       <p className="font-bold text-blue-900 m-0 mb-1">Native shell detected</p>
                       <p className="text-blue-800 m-0 leading-relaxed">
-                        Protohub is running inside the Android/iOS app shell on this device. Native push token bridging is a separate follow-up feature; the current browser push troubleshooting buttons are intentionally hidden here.
+                        Protohub is running inside the {nativePlatform === "ios" ? "iOS" : "Android"} app shell on this device. Native push uses a device token instead of the browser service worker, so this panel now manages the mobile app token directly.
                       </p>
                     </div>
                   </div>
@@ -25254,9 +25310,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <p className="text-sm text-gray-500 mb-1">Enable notifications to stay updated on orders and operational alerts.</p>
                       <p className="text-xs text-gray-400 mb-3">
                         Permission: <span className={`font-medium ${pushPermission === "granted" ? "text-green-600" : pushPermission === "denied" ? "text-red-500" : "text-gray-500"}`}>{pushPermission}</span>
-                        {" · "}Subscription: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active on this device" : "Inactive on this device"}</span>
+                        {" · "}{isNativeShell ? "Token" : "Subscription"}: <span className={`font-medium ${pushSubscribed ? "text-green-600" : "text-gray-500"}`}>{pushSubscribed ? "Active on this device" : "Inactive on this device"}</span>
                         {" · "}Server: <span className={`font-medium ${pushServerConfigured ? "text-green-600" : "text-amber-600"}`}>{pushServerConfigured ? "Configured" : "Not configured"}</span>
-                        {" · "}Saved device/browser subscriptions: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
+                        {" · "}Saved {isNativeShell ? "native devices" : "device/browser subscriptions"}: <span className="font-medium text-gray-500">{pushSubscriptionCount}</span>
                       </p>
                       {pushSubscriptionHosts.length > 0 ? (
                         <p className="text-xs text-gray-400 mb-3">
@@ -25265,18 +25321,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ) : null}
                       {pushSubscriptionCount > 1 ? (
                         <p className="text-xs text-amber-600 font-medium mb-3">
-                          More than one push registration is saved on this account. That can happen when the same account enables notifications on multiple browsers/devices or when an older browser registration has not expired yet.
+                          More than one push registration is saved on this account. That can happen when the same account enables notifications on multiple devices or when an older registration has not expired yet.
                         </p>
                       ) : null}
-                      {installGuidePlatform === "ios" && pushSubscriptionHosts.some((host) => host.includes("fcm.googleapis.com")) ? (
+                      {!isNativeShell && installGuidePlatform === "ios" && pushSubscriptionHosts.some((host) => host.includes("fcm.googleapis.com")) ? (
                         <p className="text-xs text-amber-600 font-medium mb-3">
                           The saved push registration on this account is currently Chromium/FCM-based, not Apple Web Push. If this phone is an iPhone/iPad, open the Home Screen app on this device and use Force Re-subscribe here.
                         </p>
                       ) : null}
                       {pushPermission === "denied" ? (
-                        <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                        <p className="text-xs text-red-500 font-medium">
+                          {isNativeShell
+                            ? "Notifications blocked. Please enable them in your device settings."
+                            : "Notifications blocked. Please enable them in your browser settings."}
+                        </p>
                       ) : !pushServerConfigured ? (
-                        <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
+                        <p className="text-xs text-amber-600 font-medium">
+                          {isNativeShell
+                            ? `This environment cannot send real ${nativePlatform === "ios" ? "APNs" : "FCM"} notifications until the backend credentials are configured.`
+                            : "This environment cannot send real web push until the backend has valid VAPID keys configured."}
+                        </p>
                       ) : pushSubscribed ? (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
@@ -25284,9 +25348,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           onClick={async () => {
                             setPushLoading(true);
                             try {
-                              await unsubscribeFromPush();
+                              if (isNativeShell) {
+                                await unsubscribeFromNativePush();
+                              } else {
+                                await unsubscribeFromPush();
+                              }
                               await refreshPushDiagnostics(false);
-                              showToast("Push notifications disabled.");
+                              showToast(isNativeShell ? "Native push disabled on this device." : "Push notifications disabled.");
                             } catch (e: any) {
                               await refreshPushDiagnostics(false);
                               showToast(e.message || "Failed to unsubscribe.");
@@ -25304,9 +25372,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           onClick={async () => {
                             setPushLoading(true);
                             try {
-                              await subscribeToPush();
+                              if (isNativeShell) {
+                                await subscribeToNativePush();
+                              } else {
+                                await subscribeToPush();
+                              }
                               await refreshPushDiagnostics(false);
-                              showToast("Push notifications enabled!");
+                              showToast(isNativeShell ? "Native push enabled on this device." : "Push notifications enabled!");
                             } catch (e: any) {
                               await refreshPushDiagnostics(false);
                               showToast(e.message || "Failed to enable notifications.");
@@ -25320,31 +25392,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       )}
                     </div>
                   </div>
-                  {!isNativeShell && <>
                   <hr className="border-gray-100" />
                   <div>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
-                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
-                        onClick={async () => {
-                          if ("serviceWorker" in navigator) {
-                            const reg = await navigator.serviceWorker.getRegistration();
-                            if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
-                            else { showToast("No service worker registered."); }
-                          }
-                        }}
-                      >Update Service Worker</button>
+                    <div className={`grid grid-cols-1 ${isNativeShell ? "sm:grid-cols-2" : "sm:grid-cols-3"} gap-2`}>
+                      {!isNativeShell && (
+                        <button
+                          className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
+                          onClick={async () => {
+                            if ("serviceWorker" in navigator) {
+                              const reg = await navigator.serviceWorker.getRegistration();
+                              if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
+                              else { showToast("No service worker registered."); }
+                            }
+                          }}
+                        >Update Service Worker</button>
+                      )}
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
                         disabled={pushLoading}
                         onClick={async () => {
                           setPushLoading(true);
                           try {
-                            await unsubscribeFromPush();
-                            await subscribeToPush({ replaceOthers: true });
+                            if (isNativeShell) {
+                              await unsubscribeFromNativePush();
+                              await subscribeToNativePush({ replaceOthers: true });
+                            } else {
+                              await unsubscribeFromPush();
+                              await subscribeToPush({ replaceOthers: true });
+                            }
                             await refreshPushDiagnostics(false);
-                            showToast("Re-subscribed successfully!");
+                            showToast(isNativeShell ? "Native push re-registered successfully!" : "Re-subscribed successfully!");
                           } catch (e: any) {
                             await refreshPushDiagnostics(false);
                             showToast(e.message || "Re-subscribe failed.");
@@ -25352,15 +25430,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             setPushLoading(false);
                           }
                         }}
-                      >Force Re-subscribe</button>
+                      >{isNativeShell ? "Force Re-register" : "Force Re-subscribe"}</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
                         disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
                         onClick={async () => {
                           setPushTestLoading(true);
                           try {
-                            await sendTestPush();
-                            showToast("Test push queued. Lock the device and watch for the alert.");
+                            await sendTestPush(
+                              isNativeShell
+                                ? { nativeToken: getCachedNativePushToken() }
+                                : undefined
+                            );
+                            showToast(`Test push queued. ${isNativeShell ? "Lock the phone or close the app and watch for the alert." : "Lock the device and watch for the alert."}`);
                           } catch (e: any) {
                             showToast(e.message || "Test push failed.");
                           } finally {
@@ -25370,7 +25452,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       >{pushTestLoading ? "Sending test push…" : "Send Test Push"}</button>
                     </div>
                   </div>
-                  </>}
                 </div>
               </section>
               )}
