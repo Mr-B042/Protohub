@@ -1060,6 +1060,17 @@ const agentLocationStockQuantity = (
   return location.stock.find((row) => row.productId === productId)?.quantity ?? 0;
 };
 
+const totalAgentProductStock = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
+  productId: string | null | undefined
+) => {
+  if (!productId) return 0;
+  return agentLocationRows(agent).reduce(
+    (sum, location) => sum + Number(location.stock.find((row) => row.productId === productId)?.quantity ?? 0),
+    0
+  );
+};
+
 const agentLocationInventory = (
   agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
   products: Product[]
@@ -1157,6 +1168,125 @@ const agentOptionLabel = (
     return `${agent.name} · serves ${matchedState} (base ${base})`;
   }
   return `${agent.name} · ${matchedState || base || agentCoverageSummary(agent)}`;
+};
+
+type AgentOrderMatch = {
+  agent: DeliveryAgentRecord;
+  coverageMatch: DeliveryAgentCoverage | null;
+  locationMatch: DeliveryAgentLocation | null;
+  stockQty: number;
+  sameState: boolean;
+  sameCity: boolean;
+};
+
+const buildAgentOrderMatch = (
+  agent: DeliveryAgentRecord,
+  state?: string | null,
+  city?: string | null,
+  productId?: string | null
+): AgentOrderMatch => {
+  const wantedState = normalizeAgentState(state).toLowerCase();
+  const wantedCity = normalizeAgentCity(city).toLowerCase();
+  const coverageMatch = bestAgentCoverageMatch(agent, state, city);
+  const locationMatch = bestAgentLocationMatch(agent, state, city, productId);
+  const matchedState = normalizeAgentState(coverageMatch?.state).toLowerCase();
+  const matchedCity = normalizeAgentCity(coverageMatch?.city).toLowerCase();
+  const stockQty = productId
+    ? locationMatch?.id
+      ? agentLocationStockQuantity(agent, locationMatch.id, productId)
+      : totalAgentProductStock(agent, productId)
+    : 0;
+  return {
+    agent,
+    coverageMatch,
+    locationMatch,
+    stockQty,
+    sameState: Boolean(wantedState) && matchedState === wantedState,
+    sameCity: Boolean(wantedCity) && matchedCity === wantedCity
+  };
+};
+
+const compareAgentOrderMatches = (requiredQty: number) =>
+  (a: AgentOrderMatch, b: AgentOrderMatch) => {
+    if ((a.sameState ? 1 : 0) !== (b.sameState ? 1 : 0)) return (b.sameState ? 1 : 0) - (a.sameState ? 1 : 0);
+    if ((a.sameCity ? 1 : 0) !== (b.sameCity ? 1 : 0)) return (b.sameCity ? 1 : 0) - (a.sameCity ? 1 : 0);
+    const aEnough = a.stockQty >= requiredQty ? 1 : 0;
+    const bEnough = b.stockQty >= requiredQty ? 1 : 0;
+    if (aEnough !== bEnough) return bEnough - aEnough;
+    if (a.stockQty !== b.stockQty) return b.stockQty - a.stockQty;
+    if ((a.locationMatch?.isPrimary ? 1 : 0) !== (b.locationMatch?.isPrimary ? 1 : 0)) {
+      return (b.locationMatch?.isPrimary ? 1 : 0) - (a.locationMatch?.isPrimary ? 1 : 0);
+    }
+    return a.agent.name.localeCompare(b.agent.name);
+  };
+
+const agentCoverageDraftStates = (primaryBaseState: string, servedStates: string[]) =>
+  Array.from(
+    new Set(
+      [primaryBaseState, ...servedStates]
+        .map((state) => normalizeAgentState(state))
+        .filter(Boolean)
+    )
+  );
+
+const hydrateAgentFromApi = (saved: any, fallback?: DeliveryAgentRecord): DeliveryAgentRecord => {
+  const primaryBaseState = saved.primaryBaseState ?? saved.primary_base_state ?? saved.zone ?? fallback?.primaryBaseState ?? fallback?.zone ?? "";
+  const coverage = Array.isArray(saved.coverage)
+    ? saved.coverage.map((row: any) => ({
+        id: row.id,
+        state: row.state ?? "",
+        city: row.city ?? "",
+        coverageType: row.coverageType ?? row.coverage_type ?? "local_delivery",
+        priority: Number(row.priority ?? 100),
+        active: row.active !== false,
+        slaDays: Number(row.slaDays ?? row.sla_days ?? 1),
+        deliveryFeeRule: row.deliveryFeeRule ?? row.delivery_fee_rule ?? undefined,
+        notes: row.notes ?? undefined
+      }))
+    : (fallback?.coverage ?? []);
+  const locations = Array.isArray(saved.locations)
+    ? saved.locations.map((location: any) => ({
+        id: location.id,
+        name: location.name ?? "",
+        state: location.state ?? "",
+        city: location.city ?? "",
+        active: location.active !== false,
+        isPrimary: location.isPrimary === true || location.is_primary === true,
+        address: location.address ?? "",
+        phoneOverride: location.phoneOverride ?? location.phone_override ?? undefined,
+        notes: location.notes ?? undefined,
+        stock: Array.isArray(location.stock)
+          ? location.stock.map((row: any) => ({
+              productId: row.productId ?? row.product_id ?? "",
+              quantity: Number(row.quantity ?? 0),
+              defective: Number(row.defective ?? 0),
+              missing: Number(row.missing ?? 0)
+            }))
+          : []
+      }))
+    : (fallback?.locations ?? []);
+  return {
+    ...(fallback ?? {
+      id: saved.id ?? makeAgentId(),
+      name: saved.name ?? "",
+      phone: saved.phone ?? "",
+      zone: primaryBaseState,
+      created: saved.created ?? saved.createdAt ?? saved.created_at ?? nowIso(),
+      active: true
+    }),
+    id: saved.id ?? fallback?.id ?? makeAgentId(),
+    name: saved.name ?? fallback?.name ?? "",
+    phone: saved.phone ?? fallback?.phone ?? "",
+    whatsappPhone: saved.whatsappPhone ?? saved.whatsapp_phone ?? fallback?.whatsappPhone ?? undefined,
+    zone: primaryBaseState,
+    primaryBaseState,
+    coverage,
+    locations,
+    address: saved.address ?? fallback?.address ?? "",
+    active: typeof saved.active === "boolean" ? saved.active : (saved.status ?? (fallback?.active ? "Active" : "Inactive")) === "Active",
+    stockCapacity: Number(saved.stockCapacity ?? saved.stock_capacity ?? fallback?.stockCapacity ?? 1000),
+    created: saved.created ?? saved.createdAt ?? saved.created_at ?? fallback?.created ?? nowIso()
+  };
 };
 
 const primaryPricing = (product: Product) =>
@@ -4276,7 +4406,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const activeAgents = agents.filter((agent) => agent.active);
   const deliveryAgentOptions = ["All Agents", "Unassigned", ...agents.map((agent) => agent.name)];
-  const agentZoneOptions = ["All Zones", ...Array.from(new Set(agents.map((agent) => agent.zone).filter(Boolean)))];
+  const agentZoneOptions = ["All Zones", ...Array.from(new Set(agents.map((agent) => agentPrimaryBaseState(agent)).filter(Boolean)))];
   const agentStockValueFor = (agentId: string) =>
     agentStock
       .filter((stock) => stock.agentId === agentId)
@@ -4934,7 +5064,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const filteredAgentRows = agentRows.filter((row) => {
     const search = agentSearch.trim().toLowerCase();
     const matchesSearch = !search || `${row.agent.name} ${row.agent.phone}`.toLowerCase().includes(search);
-    const matchesZone = agentZone === "All Zones" || row.agent.zone === agentZone;
+    const matchesZone = agentZone === "All Zones" || agentPrimaryBaseState(row.agent) === agentZone;
     const matchesStatus = agentStatus === "All Status" || row.status === agentStatus;
     return matchesSearch && matchesZone && matchesStatus;
   });
@@ -10522,7 +10652,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           quantity: order.quantity ?? 1,
           waybillFee: 0,
           logisticsPartner: agent?.name ?? "Agent",
-          sendingState: agent?.zone ?? "",
+          sendingState: agent ? agentPrimaryBaseState(agent) : "",
           receivingState: customerLocation,
           fromAgentId: order.agentId,
           dateSent: todayKey(),
@@ -11769,10 +11899,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedAgentId("");
     setAgentName("");
     setAgentPhone("");
+    setAgentWhatsappPhone("");
     setAgentZoneInput("");
+    setAgentCoverageStatesInput([]);
     setAgentAddress("");
     setAgentActive(true);
     setAgentStockCapacity(1000);
+    setAssignStockLocationId("");
+    setReconcileLocationId("");
     setAssignStockProductId(products[0]?.id ?? "");
     setAssignStockQty("1");
     setReconcileProductId(products[0]?.id ?? "");
@@ -11798,12 +11932,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Agent name, phone number, and primary base state are required.");
       return;
     }
-    if (agents.some((a) => a.phone === agentPhone.trim())) {
+    const phoneDigits = agentPhone.replace(/\D/g, "");
+    if (agents.some((a) => a.phone.replace(/\D/g, "") === phoneDigits)) {
       showToast("An agent with this phone number already exists.");
       return;
     }
 
-    const coverageStates = Array.from(new Set([agentZoneInput.trim(), ...agentCoverageStatesInput.map((state) => state.trim()).filter(Boolean)]));
+    const coverageStates = agentCoverageDraftStates(agentZoneInput.trim(), agentCoverageStatesInput);
     const agent: DeliveryAgentRecord = {
       id: makeAgentId(),
       name: agentName.trim(),
@@ -11864,48 +11999,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       status: agent.active ? "Active" : "Inactive"
     })
       .then((saved: any) => {
-        setAgents((prev) => prev.map((a) => a.id === _agLocalId ? {
-          ...a,
-          id: saved.id,
-          zone: saved.primaryBaseState ?? saved.primary_base_state ?? saved.zone ?? a.zone,
-          primaryBaseState: saved.primaryBaseState ?? saved.primary_base_state ?? saved.zone ?? a.primaryBaseState,
-          whatsappPhone: saved.whatsappPhone ?? saved.whatsapp_phone ?? a.whatsappPhone,
-          coverage: Array.isArray(saved.coverage)
-            ? saved.coverage.map((row: any) => ({
-                id: row.id,
-                state: row.state ?? "",
-                city: row.city ?? "",
-                coverageType: row.coverageType ?? row.coverage_type ?? "local_delivery",
-                priority: Number(row.priority ?? 100),
-                active: row.active !== false,
-                slaDays: Number(row.slaDays ?? row.sla_days ?? 1),
-                deliveryFeeRule: row.deliveryFeeRule ?? row.delivery_fee_rule ?? undefined,
-                notes: row.notes ?? undefined
-              }))
-            : a.coverage
-          ,
-          locations: Array.isArray(saved.locations)
-            ? saved.locations.map((location: any) => ({
-                id: location.id,
-                name: location.name ?? "",
-                state: location.state ?? "",
-                city: location.city ?? "",
-                active: location.active !== false,
-                isPrimary: location.isPrimary === true || location.is_primary === true,
-                address: location.address ?? "",
-                phoneOverride: location.phoneOverride ?? location.phone_override ?? undefined,
-                notes: location.notes ?? undefined,
-                stock: Array.isArray(location.stock)
-                  ? location.stock.map((row: any) => ({
-                      productId: row.productId ?? row.product_id ?? "",
-                      quantity: Number(row.quantity ?? 0),
-                      defective: Number(row.defective ?? 0),
-                      missing: Number(row.missing ?? 0)
-                    }))
-                  : []
-              }))
-            : a.locations
-        } : a));
+        setAgents((prev) => prev.map((a) => a.id === _agLocalId ? hydrateAgentFromApi(saved, a) : a));
         setSelectedAgentId(saved.id);
       })
       .catch(() => {
@@ -12236,27 +12330,68 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("This agent is still syncing. Try again in a moment.");
       return;
     }
-    if (agents.some((a) => a.id !== selectedAgent.id && a.phone === agentPhone.trim())) {
+    const phoneDigits = agentPhone.replace(/\D/g, "");
+    if (agents.some((a) => a.id !== selectedAgent.id && a.phone.replace(/\D/g, "") === phoneDigits)) {
       showToast("Another agent already has this phone number.");
       return;
     }
 
     const _uaId = selectedAgent.id;
     const capacityVal = typeof agentStockCapacity === "number" && agentStockCapacity > 0 ? agentStockCapacity : 1000;
+    const coverageStates = agentCoverageDraftStates(agentZoneInput.trim(), agentCoverageStatesInput);
     const agentSnapshot = selectedAgent;
     setAgents((value) =>
       value.map((agent) =>
         agent.id === selectedAgent.id
-          ? { ...agent, name: agentName.trim(), phone: agentPhone.trim(), zone: agentZoneInput.trim(), address: (agentAddress ?? "").trim(), active: agentActive, stockCapacity: capacityVal }
+          ? {
+              ...agent,
+              name: agentName.trim(),
+              phone: agentPhone.trim(),
+              whatsappPhone: agentWhatsappPhone.trim() || undefined,
+              zone: agentZoneInput.trim(),
+              primaryBaseState: agentZoneInput.trim(),
+              coverage: coverageStates.map((state, index) => ({
+                state,
+                city: "",
+                coverageType: "local_delivery",
+                priority: index === 0 ? 0 : 100 + index,
+                active: true,
+                slaDays: 1
+              })),
+              address: (agentAddress ?? "").trim(),
+              active: agentActive,
+              stockCapacity: capacityVal
+            }
           : agent
       )
     );
     setModal(null);
     showToast(`${agentName.trim()} updated.`);
-    agentsApi.update(_uaId, { name: agentName.trim(), zone: agentZoneInput.trim(), phone: agentPhone.trim(), status: agentActive ? "Active" : "Inactive", stock_capacity: capacityVal }).catch((err: any) => {
-      setAgents((value) => value.map((a) => a.id === _uaId ? agentSnapshot : a));
-      showToast(`Failed to update ${agentSnapshot.name}: ${err?.message ?? "please retry"}.`);
-    });
+    agentsApi.update(_uaId, {
+      name: agentName.trim(),
+      primaryBaseState: agentZoneInput.trim(),
+      zone: agentZoneInput.trim(),
+      phone: agentPhone.trim(),
+      whatsappPhone: agentWhatsappPhone.trim() || undefined,
+      address: (agentAddress ?? "").trim(),
+      coverage: coverageStates.map((state, index) => ({
+        state,
+        city: "",
+        coverageType: "local_delivery",
+        priority: index === 0 ? 0 : 100 + index,
+        active: true,
+        slaDays: 1
+      })),
+      status: agentActive ? "Active" : "Inactive",
+      stock_capacity: capacityVal
+    })
+      .then((saved: any) => {
+        setAgents((value) => value.map((a) => a.id === _uaId ? hydrateAgentFromApi(saved, a) : a));
+      })
+      .catch((err: any) => {
+        setAgents((value) => value.map((a) => a.id === _uaId ? agentSnapshot : a));
+        showToast(`Failed to update ${agentSnapshot.name}: ${err?.message ?? "please retry"}.`);
+      });
   };
 
   const deleteSelectedAgent = () => {
@@ -12746,7 +12881,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const errs: Record<string, string> = {};
     if (!waybillPartner.trim()) errs.partner = "Logistics partner is required.";
     const toAgent = waybillToAgentId ? agents.find((a) => a.id === waybillToAgentId) : null;
-    const receivingState = toAgent?.zone ?? waybillToState.trim();
+    const receivingState = toAgent ? agentPrimaryBaseState(toAgent) : waybillToState.trim();
     if (!receivingState) errs.toState = "Receiving state is required.";
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
@@ -14073,9 +14208,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const agentsForOrder = (order: TrackedOrder) => {
-    const location = `${order.location ?? ""} ${order.city ?? ""} ${order.state ?? ""}`.toLowerCase();
-    const matchingAgents = activeAgents.filter((agent) => location.includes(agent.zone.toLowerCase()) || agent.zone.toLowerCase().includes(order.city?.toLowerCase() ?? ""));
-    return matchingAgents.length > 0 ? matchingAgents : activeAgents;
+    const requiredQty = quantityForOrder(order);
+    const candidates = activeAgents
+      .map((agent) => buildAgentOrderMatch(agent, order.state, order.city, order.productId))
+      .sort(compareAgentOrderMatches(requiredQty));
+    const matchingAgents = candidates.filter((candidate) => candidate.sameState).map((candidate) => candidate.agent);
+    return matchingAgents.length > 0 ? matchingAgents : candidates.map((candidate) => candidate.agent);
   };
 
   const statusCompletedAt = (order: TrackedOrder, status: Exclude<OrderStatus, "All Orders">) => {
@@ -14544,7 +14682,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   aria-label="Assign delivery agent"
                 >
                   <option value="">Unassigned</option>
-                  {agentsForOrder(order).map((agent) => { const rec = order.productId ? agentStock.find((s) => s.agentId === agent.id && s.productId === order.productId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = quantityForOrder(order); const stockTag = !order.productId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
+                  {agentsForOrder(order).map((agent) => { const match = buildAgentOrderMatch(agent, order.state, order.city, order.productId); const stockQty = match.stockQty; const needs = quantityForOrder(order); const stockTag = !order.productId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agentOptionLabel(agent, order.state, order.city)}{stockTag}</option>; })}
                 </select>
                 <button className="!min-h-0 w-full sm:w-auto px-4 py-2 bg-[#1F8FE0] text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shrink-0" onClick={() => saveOrderAgent(order)}>Assign Agent</button>
               </div>
@@ -19197,7 +19335,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                       <div className="flex items-center gap-4 flex-wrap mt-1.5 text-sm text-gray-600">
                         <span className="inline-flex items-center gap-1.5"><Phone className="w-4 h-4 text-gray-400" />{agent.phone}</span>
-                        <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-gray-400" />{agent.zone}</span>
+                        <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-gray-400" />{agentCoverageCompactLabel(agent)}</span>
                         <span className="inline-flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-gray-400" />Joined {formatMoment(agent.created) || "—"}</span>
                       </div>
                     </div>
@@ -26939,7 +27077,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="flex items-start justify-between gap-2">
                               <div>
                                 <h3 className="font-bold text-gray-900 text-sm">{row.agent.name}</h3>
-                                <p className="text-xs text-gray-500 mt-0.5">{row.agent.zone}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">{agentCoverageCompactLabel(row.agent)}</p>
                               </div>
                               <span className={`status-pill status-${slugify(row.status)}`}>{row.status}</span>
                             </div>
@@ -28119,7 +28257,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <div className="flex flex-col gap-2 sm:flex-row">
 	                    <select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)} aria-label="Delivery agent">
 	                      <option value="">Unassigned</option>
-	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const rec = orderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === orderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}
+	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const stockQty = selectedOrder ? buildAgentOrderMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId).stockQty : (orderProductId ? totalAgentProductStock(agent, orderProductId) : 0); const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{selectedOrder ? agentOptionLabel(agent, selectedOrder.state, selectedOrder.city) : `${agent.name} · ${agentCoverageCompactLabel(agent)}`}{stockTag}</option>; })}
 	                    </select>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
@@ -28311,26 +28449,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              const orderProductId = selectedOrder.productId;
 	              const orderQty = quantityForOrder(selectedOrder);
 	              const orderState = (selectedOrder.state ?? "").trim();
-	              // Build [{ agent, stockQty, sameState }]
-	              // Default view: only agents whose zone matches the order's delivery state.
-	              // User can flip a toggle to see all agents (e.g. for cross-state delivery).
-	              const allAgentRows = activeAgents.map((agent) => {
-	                const rec = orderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === orderProductId) : undefined;
-	                const stockQty = rec?.quantity ?? 0;
-	                const sameState = orderState !== "" && (agent.zone ?? "").trim().toLowerCase() === orderState.toLowerCase();
-	                return { agent, stockQty, sameState };
-	              });
+	              const allAgentRows = activeAgents
+                  .map((agent) => buildAgentOrderMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId))
+                  .sort(compareAgentOrderMatches(orderQty));
 	              const sameStateAgents  = allAgentRows.filter((r) => r.sameState);
 	              const otherStateAgents = allAgentRows.filter((r) => !r.sameState);
-	              // Sort within each group: enough-stock first, then by stock desc.
-	              const sortByStock = (a: typeof allAgentRows[number], b: typeof allAgentRows[number]) => {
-	                const aOk = a.stockQty >= orderQty ? 1 : 0;
-	                const bOk = b.stockQty >= orderQty ? 1 : 0;
-	                if (aOk !== bOk) return bOk - aOk;
-	                return b.stockQty - a.stockQty;
-	              };
-	              sameStateAgents.sort(sortByStock);
-	              otherStateAgents.sort(sortByStock);
 	              const visibleRows = sendToAgentShowAllStates || !orderState
 	                ? [...sameStateAgents, ...otherStateAgents]
 	                : sameStateAgents;
@@ -28366,6 +28489,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    ) : (
 	                      <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto">
 	                        {visibleRows.map(({ agent, stockQty, sameState }) => {
+                            const matchedLocation = bestAgentLocationMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId);
 	                          const ok = stockQty >= orderQty;
 	                          const empty = stockQty === 0;
 	                          const isSelected = createOrderAgentId === agent.id;
@@ -28383,7 +28507,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                                  <span className="text-sm font-bold text-gray-900 truncate">{agent.name}</span>
 	                                  {!sameState && orderState && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">⚠ different state</span>}
 	                                </div>
-	                                <span className="text-xs text-gray-500">Zone: {agent.zone || "—"}</span>
+	                                <span className="text-xs text-gray-500">
+                                    {agentCoverageLabel(agent)}
+                                    {matchedLocation ? ` · ${agentLocationLabel(matchedLocation)}` : ""}
+                                  </span>
 	                              </div>
 	                              <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${stockColor}`}>{stockLabel}</span>
 	                            </button>
@@ -28396,7 +28523,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <>
 	                      {!selectedAgentRow.sameState && orderState && (
 	                        <div className="px-3 py-2 rounded-lg text-xs leading-5 border bg-amber-50 border-amber-200 text-amber-900">
-	                          <strong>⚠ Different state.</strong> {selectedAgentRow.agent.name} is in <strong>{selectedAgentRow.agent.zone}</strong> but the customer is in <strong>{orderState}</strong>. The agent will need to ship cross-state — check that they actually serve this delivery.
+	                          <strong>⚠ Different state.</strong> {selectedAgentRow.agent.name} is based in <strong>{agentPrimaryBaseState(selectedAgentRow.agent) || "—"}</strong> while the customer is in <strong>{orderState}</strong>. The agent will need to ship cross-state — confirm this route works for the selected hub.
 	                        </div>
 	                      )}
 	                      <div className={`px-3 py-2 rounded-lg text-xs leading-5 border ${
@@ -28407,11 +28534,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            : "bg-rose-50 border-rose-200 text-rose-900"
 	                      }`}>
 	                        {selectedAgentRow.stockQty >= orderQty ? (
-	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}).</>
+	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}).</>
 	                        ) : selectedAgentRow.stockQty > 0 ? (
-	                          <><strong>⚠ Insufficient stock.</strong> {selectedAgentRow.agent.name} only has <strong>{selectedAgentRow.stockQty}</strong> in stock — this order needs <strong>{orderQty}</strong>. Use <em>Distribute Stock</em> to top them up first.</>
+	                          <><strong>⚠ Insufficient stock.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} only has <strong>{selectedAgentRow.stockQty}</strong> in stock — this order needs <strong>{orderQty}</strong>. Use <em>Distribute Stock</em> to top them up first.</>
 	                        ) : (
-	                          <><strong>⚠ No stock.</strong> {selectedAgentRow.agent.name} has <strong>0</strong> {selectedOrder.productName} in stock. They cannot fulfil this order until stock is distributed to them.</>
+	                          <><strong>⚠ No stock.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>0</strong> {selectedOrder.productName} in stock. They cannot fulfil this order until stock is distributed to them.</>
 	                        )}
 	                      </div>
 	                    </>
@@ -28743,7 +28870,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             return (
                               <tr key={`${stock.agentId}-${stock.productId}`}>
                                 <td>{agent?.name ?? "Unknown agent"}</td>
-                                <td>{agent?.zone ?? "-"}</td>
+                                <td>{agent ? agentCoverageCompactLabel(agent) : "-"}</td>
                                 <td>{stock.quantity}</td>
                                 <td>{stock.defective}</td>
                                 <td>{stock.missing}</td>
@@ -29400,6 +29527,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "agentDetails" && selectedAgent && (() => {
 	              const agentOrders = trackedOrders.filter((o) => o.agentId === selectedAgent.id);
+                const coverageStates = agentCoverageStates(selectedAgent);
+                const locationSummaries = agentLocationInventory(selectedAgent, products);
 	              const totalAssigned = agentOrders.length;
 	              const deliveredOrders = agentOrders.filter((o) => (o.status ?? "New") === "Delivered");
 	              const cancelledOrders = agentOrders.filter((o) => (o.status ?? "New") === "Cancelled");
@@ -29423,10 +29552,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <span className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-lg font-bold shrink-0">{userInitials(selectedAgent.name)}</span>
 	                  <div>
 	                    <h3 className="text-base font-bold text-gray-900">{selectedAgent.name}</h3>
-	                    <p className="text-sm text-gray-500">{selectedAgent.zone} · {selectedAgent.phone}</p>
+	                    <p className="text-sm text-gray-500">{agentCoverageLabel(selectedAgent)} · {selectedAgent.phone}</p>
+                      {selectedAgent.whatsappPhone && selectedAgent.whatsappPhone !== selectedAgent.phone && (
+                        <p className="text-xs text-gray-400 mt-1">WhatsApp: {selectedAgent.whatsappPhone}</p>
+                      )}
 	                  </div>
 	                  <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-bold ${selectedAgent.active ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-100 text-gray-500 border border-gray-200"}`}>{selectedAgent.active ? "Active" : "Inactive"}</span>
 	                </div>
+
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Served States</h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {coverageStates.length === 0 ? (
+                        <span className="text-xs text-gray-400 italic">No active coverage set</span>
+                      ) : coverageStates.map((state) => (
+                        <span key={state} className="inline-flex items-center px-2 py-1 rounded-full bg-blue-50 border border-blue-100 text-[11px] font-semibold text-[#1F8FE0]">
+                          {state}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
 
 	                {/* Performance Metrics */}
 	                <div>
@@ -29505,26 +29650,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </div>
 	                </div>
 
-	                {/* Stock breakdown */}
+	                {/* State hubs */}
 	                <div>
-	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Stock Breakdown</h4>
-	                  <div className="space-y-2 max-h-32 overflow-y-auto">
-	                    {agentStock.filter((stock) => stock.agentId === selectedAgent.id).length === 0 ? (
-	                      <p className="text-sm text-gray-400 italic">No stock assigned</p>
-	                    ) : agentStock.filter((stock) => stock.agentId === selectedAgent.id).map((stock) => {
-	                      const product = products.find((item) => item.id === stock.productId);
-	                      const pricing = product ? primaryPricing(product) : undefined;
-	                      const stockValue = stock.quantity * (pricing?.sellingPrice ?? 0);
-	                      return (
-	                        <div key={`${stock.agentId}-${stock.productId}`} className="flex items-center justify-between bg-white border border-gray-100 rounded-lg px-3 py-2">
-	                          <div>
-	                            <p className="text-sm font-semibold text-gray-900">{product?.name ?? "Unknown"}</p>
-	                            <p className="text-xs text-gray-500">Qty {stock.quantity} · Defective {stock.defective} · Missing {stock.missing}</p>
-	                          </div>
-	                          <span className="text-sm font-bold text-gray-700">{pricing ? formatProductMoney(stockValue, pricing.currency) : "—"}</span>
-	                        </div>
-	                      );
-	                    })}
+	                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">State Hubs</h4>
+	                  <div className="space-y-2 max-h-52 overflow-y-auto">
+	                    {locationSummaries.length === 0 ? (
+	                      <p className="text-sm text-gray-400 italic">No state hubs yet</p>
+	                    ) : locationSummaries.map((location) => (
+                        <div key={location.id || location.state} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">{agentLocationLabel(location)}</p>
+                              <p className="text-xs text-gray-500">
+                                {location.totalUnits} unit{location.totalUnits === 1 ? "" : "s"}
+                                {location.totalDefective > 0 ? ` · Defective ${location.totalDefective}` : ""}
+                                {location.totalMissing > 0 ? ` · Missing ${location.totalMissing}` : ""}
+                              </p>
+                            </div>
+                            <span className="text-xs font-bold text-gray-700">
+                              {formatMoney(location.totalValue)}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {location.items.length === 0 ? (
+                              <span className="text-[11px] text-gray-400 italic">No stock in this hub</span>
+                            ) : location.items.map((item) => (
+                              <span key={`${location.id}-${item.productId}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700">
+                                {item.productName}: {item.quantity}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
 	                  </div>
 	                </div>
 
@@ -29543,6 +29700,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              const curTotal = agentStock.filter((s) => s.agentId === selectedAgent.id).reduce((sum, s) => sum + s.quantity, 0);
 	              const avail = Math.max(0, cap - curTotal);
 	              const qtyNum = Math.max(1, Number(assignStockQty) || 1);
+                const agentLocations = agentLocationRows(selectedAgent);
+                const selectedLocation = findAgentLocation(selectedAgent, assignStockLocationId) ?? primaryAgentLocation(selectedAgent);
+                const locationStockQty = selectedLocation?.id && assignStockProductId
+                  ? agentLocationStockQuantity(selectedAgent, selectedLocation.id, assignStockProductId)
+                  : 0;
 	              const wouldExceed = curTotal + qtyNum > cap;
 	              return (
 	                <div className="modal-form">
@@ -29550,7 +29712,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                <div className={`text-xs font-semibold px-3 py-2 rounded-lg border ${wouldExceed ? "bg-red-50 border-red-200 text-red-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
 	                  Stock: {curTotal} / {cap} — {avail > 0 ? `${avail} available` : "at capacity"}
 	                </div>
+                  {agentLocations.length > 0 && (
+                    <label><span>State Hub</span><select value={selectedLocation?.id ?? ""} onChange={(event) => setAssignStockLocationId(event.target.value)}>{agentLocations.map((location) => <option key={location.id} value={location.id}>{agentLocationLabel(location)}{location.active ? "" : " · inactive"}</option>)}</select></label>
+                  )}
 	                <label><span>Product</span><select value={assignStockProductId} onChange={(event) => setAssignStockProductId(event.target.value)}>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · warehouse {product.warehouseStock}</option>)}</select></label>
+                  {selectedLocation && assignStockProductId && (
+                    <p className="text-xs text-gray-500 -mt-1">{agentLocationLabel(selectedLocation)} currently holds {locationStockQty} unit{locationStockQty === 1 ? "" : "s"} of this product.</p>
+                  )}
 	                <label><span>Quantity</span><input value={assignStockQty} onChange={(event) => setAssignStockQty(event.target.value)} inputMode="numeric" /></label>
 	                {wouldExceed && <p className="text-xs text-red-600 font-medium">This would exceed capacity by {curTotal + qtyNum - cap} units.</p>}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignStockToSelectedAgent}>Assign Stock</button></div>
@@ -29568,10 +29736,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </div>
 	                );
 	              }
+                const agentLocations = agentLocationRows(selectedAgent);
+                const selectedLocation = findAgentLocation(selectedAgent, reconcileLocationId) ?? primaryAgentLocation(selectedAgent);
 	              const currentRow = agentStockRows.find((s) => s.productId === reconcileProductId);
-	              const currentQuantity = currentRow?.quantity ?? 0;
-	              const runningDefective = currentRow?.defective ?? 0;
-	              const runningMissing = currentRow?.missing ?? 0;
+	              const currentQuantity = selectedLocation?.id ? agentLocationStockQuantity(selectedAgent, selectedLocation.id, reconcileProductId) : (currentRow?.quantity ?? 0);
+	              const locationStockRow = selectedLocation?.stock.find((row) => row.productId === reconcileProductId);
+	              const runningDefective = Number(locationStockRow?.defective ?? currentRow?.defective ?? 0);
+	              const runningMissing = Number(locationStockRow?.missing ?? currentRow?.missing ?? 0);
 	              const returnedNum = Math.max(0, Number(reconcileReturned) || 0);
 	              const defectiveNum = Math.max(0, Number(reconcileDefective) || 0);
 	              const missingNum = Math.max(0, Number(reconcileMissing) || 0);
@@ -29591,6 +29762,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Agent</p>
 	                      <p className="text-sm font-bold text-gray-900 mt-0.5">{selectedAgent.name}</p>
 	                    </div>
+                      {agentLocations.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">State Hub</p>
+                          <select className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={selectedLocation?.id ?? ""} onChange={(event) => setReconcileLocationId(event.target.value)}>
+                            {agentLocations.map((location) => <option key={location.id} value={location.id}>{agentLocationLabel(location)}</option>)}
+                          </select>
+                        </div>
+                      )}
 	                    <div>
 	                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Product</p>
 	                      {agentStockRows.length > 1 ? (
@@ -31298,8 +31477,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <select className={fieldCls("fromAgent")} value={waybillFromAgentId} onChange={(ev) => { setWaybillFromAgentId(ev.target.value); setWaybillErrors((prev) => ({ ...prev, fromAgent: "" })); }}>
                             <option value="">Select sending agent</option>
                             {agents.filter((a) => a.active).map((a) => {
-                              const bal = agentStock.find((s) => s.agentId === a.id && s.productId === waybillProductId)?.quantity ?? 0;
-                              return <option key={a.id} value={a.id}>{a.name} · {a.zone} · stock: {bal}</option>;
+                              const bal = waybillProductId ? totalAgentProductStock(a, waybillProductId) : 0;
+                              return <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)} · stock: {bal}</option>;
                             })}
                           </select>
                           <ErrMsg k="fromAgent" />
@@ -31314,11 +31493,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
-                      <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a?.zone ?? ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
+                      <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a ? agentPrimaryBaseState(a) : ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
                         <option value="">No specific agent (enter state below)</option>
                         {agents.filter((a) => a.active && a.id !== waybillFromAgentId).map((a) => {
-                          const bal = agentStock.find((s) => s.agentId === a.id && s.productId === waybillProductId)?.quantity ?? 0;
-                          return <option key={a.id} value={a.id}>{a.name} · {a.zone} · stock: {bal}</option>;
+                          const bal = waybillProductId ? totalAgentProductStock(a, waybillProductId) : 0;
+                          return <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)} · stock: {bal}</option>;
                         })}
                       </select>
                       {waybillToAgentId && toAgentBalance !== null && (
@@ -31387,11 +31566,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Receiving Agent <span className="font-normal text-gray-400">(optional)</span></label>
-                      <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a?.zone ?? ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
+                      <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a ? agentPrimaryBaseState(a) : ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
                         <option value="">No specific agent</option>
                         {agents.filter((a) => a.active).map((a) => {
-                          const bal = wbProduct ? (agentStock.find((s) => s.agentId === a.id && s.productId === wbProduct.id)?.quantity ?? 0) : 0;
-                          return <option key={a.id} value={a.id}>{a.name} · {a.zone} · stock: {bal}</option>;
+                          const bal = wbProduct ? totalAgentProductStock(a, wbProduct.id) : 0;
+                          return <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)} · stock: {bal}</option>;
                         })}
                       </select>
                       {waybillToAgentId && toAgentBalance !== null && (
