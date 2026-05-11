@@ -219,7 +219,7 @@ type WaybillRecord = {
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
-type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string };
+type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
 type EmailProviderName = "resend" | "mailjet";
 type SettingsPanel = "workspace" | "email" | "sms";
 type DisplayDensity = "compact" | "comfortable";
@@ -1541,6 +1541,90 @@ const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">
   note.followUpAt ? normalizeDateKey(note.followUpAt) : note.followUpDate ? normalizeDateKey(note.followUpDate) : "";
 const formatPlannedMoment = (plannedAt?: string, plannedDate?: string) =>
   plannedAt ? formatMoment(plannedAt) : plannedDate ? displayDateFromKey(plannedDate) : "";
+const CLOSED_ORDER_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["Delivered", "Cancelled", "Failed"]);
+type OrderFollowUpInsight = {
+  source: "schedule" | "timeline";
+  label: string;
+  dueAt?: string;
+  dueDate?: string;
+  noteText?: string;
+  overdue: boolean;
+  dueSoon: boolean;
+};
+const plannedMomentTimestamp = (plannedAt?: string, plannedDate?: string) => {
+  if (plannedAt) {
+    const parsed = new Date(plannedAt);
+    if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  }
+  if (plannedDate && /^\d{4}-\d{2}-\d{2}$/.test(plannedDate)) {
+    const parsed = new Date(`${plannedDate}T08:00:00`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  }
+  return null;
+};
+const noteSnippet = (text?: string, max = 96) => {
+  const value = (text ?? "").trim();
+  if (!value) return "";
+  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+};
+const latestTimelineNoteForOrder = (order: { notes?: unknown; timelineNotes?: unknown; timeline_notes?: unknown } | null | undefined) =>
+  orderNotesFor(order)[0];
+const followUpInsightsForOrder = (order: TrackedOrder): OrderFollowUpInsight[] => {
+  if (CLOSED_ORDER_STATUSES.has((order.status ?? "New") as Exclude<OrderStatus, "All Orders">)) return [];
+
+  const now = Date.now();
+  const entries: Array<OrderFollowUpInsight & { sortTime: number }> = [];
+  const scheduledAt = scheduledMomentForOrder(order);
+  const scheduledTime = plannedMomentTimestamp(order.scheduledAt, order.scheduledDate);
+  if (scheduledAt && scheduledTime != null) {
+    entries.push({
+      source: "schedule",
+      label: scheduleSummaryForOrder(order),
+      dueAt: order.scheduledAt,
+      dueDate: order.scheduledDate,
+      overdue: scheduledTime <= now,
+      dueSoon: scheduledTime > now && scheduledTime - now <= 2 * 60 * 60 * 1000,
+      sortTime: scheduledTime
+    });
+  }
+
+  for (const note of orderNotesFor(order)) {
+    const followUpTime = plannedMomentTimestamp(note.followUpAt, note.followUpDate);
+    if (followUpTime == null) continue;
+    entries.push({
+      source: "timeline",
+      label: formatPlannedMoment(note.followUpAt, note.followUpDate),
+      dueAt: note.followUpAt,
+      dueDate: note.followUpDate,
+      noteText: note.text,
+      overdue: followUpTime <= now,
+      dueSoon: followUpTime > now && followUpTime - now <= 2 * 60 * 60 * 1000,
+      sortTime: followUpTime
+    });
+  }
+
+  return entries
+    .sort((a, b) => a.sortTime - b.sortTime)
+    .map(({ sortTime: _sortTime, ...entry }) => entry);
+};
+const nextFollowUpForOrder = (order: TrackedOrder) => {
+  const entries = followUpInsightsForOrder(order);
+  if (entries.length === 0) return null;
+  const dueNow = entries.find((entry) => entry.overdue);
+  return dueNow ?? entries[0];
+};
+const followUpBadgeClass = (entry: OrderFollowUpInsight | null) => {
+  if (!entry) return "bg-gray-100 text-gray-500";
+  if (entry.overdue) return "bg-rose-100 text-rose-700";
+  if (entry.dueSoon) return "bg-amber-100 text-amber-700";
+  return "bg-blue-100 text-blue-700";
+};
+const followUpHeadline = (entry: OrderFollowUpInsight | null) => {
+  if (!entry) return "No follow-up set";
+  if (entry.overdue) return `Due now · ${entry.label}`;
+  if (entry.dueSoon) return `Due soon · ${entry.label}`;
+  return `Next · ${entry.label}`;
+};
 const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement[]) => {
   if (waybill.status === "In Transit") {
     return waybill.createdAt;
@@ -2538,6 +2622,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
+  const seenFollowUpNotificationIdsRef = useRef<Set<string>>(new Set());
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
@@ -6729,6 +6814,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const status = order.status ?? "New";
     return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && scheduledKeyForOrder(order) === scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
   });
+  const repFollowUpRows = repOrders
+    .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
+    .filter((entry) => !!entry.followUp)
+    .sort((a, b) => {
+      const aTime = plannedMomentTimestamp(a.followUp?.dueAt, a.followUp?.dueDate) ?? Number.MAX_SAFE_INTEGER;
+      const bTime = plannedMomentTimestamp(b.followUp?.dueAt, b.followUp?.dueDate) ?? Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
   const repProducts = [...products]
     .filter((product) => {
       const search = repProductSearch.trim().toLowerCase();
@@ -6759,7 +6852,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const seen = new Set<string>();
     const all = [
       ...repOrders.filter((order) => (order.status ?? "New") === "New").slice(0, 4).map((order) => ({ key: `new-${order.id}`, msg: `New order assigned: ${order.id} for ${order.customer}` })),
-      ...repOrders.filter((order) => orderNotesFor(order).some((note) => followUpKeyForNote(note) && followUpKeyForNote(note) <= todayKey())).slice(0, 4).map((order) => ({ key: `fu-${order.id}`, msg: `Follow-up due: ${order.id} for ${order.customer}` })),
+      ...repOrders
+        .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
+        .filter(({ followUp }) => !!followUp?.overdue)
+        .slice(0, 4)
+        .map(({ order, followUp }) => ({
+          key: `fu-${order.id}-${followUp?.label ?? ""}`,
+          msg: `Follow-up due: ${order.id} for ${order.customer}${followUp ? ` · ${followUp.label}` : ""}`
+        })),
       ...repScheduledOrders.slice(0, 4).map((order) => ({ key: `sched-${order.id}`, msg: `Delivery scheduled ${repScheduleRange.toLowerCase()}: ${order.id}` }))
     ];
     return all.filter(({ key }) => { if (seen.has(key)) return false; seen.add(key); return true; }).map(({ msg }) => msg);
@@ -8172,6 +8272,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       realtimeClient?.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+    if (seenFollowUpNotificationIdsRef.current.size === 0) {
+      for (const notification of systemNotifications) {
+        seenFollowUpNotificationIdsRef.current.add(notification.id);
+      }
+      return;
+    }
+
+    for (const notification of systemNotifications) {
+      if (seenFollowUpNotificationIdsRef.current.has(notification.id)) continue;
+      seenFollowUpNotificationIdsRef.current.add(notification.id);
+      if (notification.type !== "order_follow_up" || notification.read) continue;
+      showToast(notification.title ?? notification.message ?? "Follow-up due.");
+    }
+  }, [systemNotifications]);
 
   // ── Order polling — merge new + updated orders every 30s ────
   // Polls by updatedSince so STATUS changes / edits made by other reps come
@@ -14238,6 +14355,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="sm:hidden divide-y divide-gray-100">
           {orders.map((order) => {
             const status = order.status ?? "New";
+            const latestNote = latestTimelineNoteForOrder(order);
+            const nextFollowUp = nextFollowUpForOrder(order);
             return (
               <article key={order.id} className="px-4 py-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
@@ -14265,6 +14384,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <p className="font-semibold uppercase tracking-wide text-gray-400">Created</p>
                     <p className="mt-1 font-semibold text-gray-800">{formatOrderCreatedAt(order)}</p>
                     <p className="mt-1 text-[11px] text-gray-500 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Latest Feedback</p>
+                    <p className="mt-1 font-semibold text-gray-800">{latestNote ? noteSnippet(latestNote.text) : "No saved note yet"}</p>
+                    {latestNote && (
+                      <p className="mt-1 text-[11px] text-gray-500">{latestNote.by} · {formatMoment(latestNote.date)}</p>
+                    )}
+                  </div>
+                  <div className="col-span-2">
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Next Follow-up</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
+                        {followUpHeadline(nextFollowUp)}
+                      </span>
+                      {nextFollowUp?.noteText && (
+                        <span className="text-[11px] text-gray-500">{noteSnippet(nextFollowUp.noteText, 72)}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -14306,12 +14443,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ) : (
             orders.map((order) => {
               const status = order.status ?? "New";
+              const latestNote = latestTimelineNoteForOrder(order);
+              const nextFollowUp = nextFollowUpForOrder(order);
               return (
                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4 font-bold text-[#1F8FE0]">{order.id}</td>
                   <td className="px-4 py-4">
                     <div className="font-bold text-gray-900">{order.customer}</div>
                     <div className="text-xs text-gray-500">{order.phone}</div>
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      <span className="font-semibold text-gray-600">Latest:</span>{" "}
+                      {latestNote ? noteSnippet(latestNote.text, 76) : "No saved note yet"}
+                    </div>
                   </td>
                   <td className="px-4 py-4 text-center text-gray-500 text-xs font-medium">
                     {order.source ?? orderSourceFromUtm(order.utmSource)}
@@ -14320,7 +14463,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <span className={`status-pill status-${slugify(status)}`}>{status}</span>
                     <div className="text-[10px] text-gray-400 font-medium mt-1 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</div>
                   </td>
-                  <td className="px-4 py-4 text-center text-gray-600 font-medium">{responseTimeForOrder(order)}</td>
+                  <td className="px-4 py-4 text-center text-gray-600 font-medium">
+                    <div>{responseTimeForOrder(order)}</div>
+                    <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-1">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
+                        {followUpHeadline(nextFollowUp)}
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-4 py-4 text-gray-600 text-xs">
                     {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}
                   </td>
@@ -14721,6 +14871,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </button>
           </div>
           <div className="p-5 flex-1 flex flex-col space-y-4">
+            {(() => {
+              const latestNote = latestTimelineNoteForOrder(order);
+              const nextFollowUp = nextFollowUpForOrder(order);
+              return (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Latest Feedback</p>
+                    <p className="mt-2 text-sm font-semibold text-gray-900 m-0">
+                      {latestNote ? noteSnippet(latestNote.text, 120) : "No saved note yet."}
+                    </p>
+                    <p className="mt-2 text-[11px] text-gray-500 m-0">
+                      {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Add a note after every customer call so the next rep sees the context."}
+                    </p>
+                  </article>
+                  <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Next Reminder</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
+                        {followUpHeadline(nextFollowUp)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[11px] text-gray-500 m-0">
+                      {nextFollowUp?.noteText
+                        ? noteSnippet(nextFollowUp.noteText, 120)
+                        : "Set a follow-up date and time on any note that needs a callback reminder."}
+                    </p>
+                  </article>
+                </div>
+              );
+            })()}
             <div className="flex-1 overflow-y-auto max-h-[300px] space-y-4 pr-2 custom-scrollbar">
               {orderNotesFor(order).length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">No timeline entries yet.</p>
@@ -15185,6 +15365,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </section>
 
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-gray-900 m-0">Follow-up Queue</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">The latest customer feedback and the next callback time for each assigned order.</p>
+                </div>
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  {repFollowUpRows.filter((entry) => entry.followUp?.overdue).length} due now
+                </span>
+              </div>
+              {repFollowUpRows.length === 0 ? (
+                <div className="px-5 py-10 text-sm text-gray-400 text-center">No follow-up reminders set yet.</div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {repFollowUpRows.slice(0, 5).map(({ order, followUp }) => {
+                    const latestNote = latestTimelineNoteForOrder(order);
+                    return (
+                      <button
+                        key={`follow-up-${order.id}`}
+                        type="button"
+                        className="w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors"
+                        onClick={() => openRepOrderDetail(order)}
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>
+                              <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
+                            </div>
+                            <p className="mt-1 text-sm text-gray-600 m-0">
+                              {latestNote ? noteSnippet(latestNote.text, 120) : "No saved feedback note yet."}
+                            </p>
+                            <p className="mt-1 text-[11px] text-gray-400 m-0">
+                              {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Open the order and post a note after each customer call."}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-start gap-1 lg:items-end">
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(followUp ?? null)}`}>
+                              {followUpHeadline(followUp ?? null)}
+                            </span>
+                            {followUp?.noteText && (
+                              <span className="text-[11px] text-gray-500">{noteSnippet(followUp.noteText, 64)}</span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Assigned Orders</h2>
                 <div className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-50 p-1 rounded-lg w-full sm:w-auto">
@@ -15636,6 +15868,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             : notification.type === "order_cancelled" ? "Order Cancelled"
                             : notification.type === "order_failed" ? "Order Failed"
                             : notification.type === "order_rescheduled" ? "Order Rescheduled"
+                            : notification.type === "order_follow_up" ? "Follow-up Due"
                             : notification.type === "order_assigned" ? "Order Assigned"
                             : "Notification");
                         return (

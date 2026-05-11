@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cron from "node-cron";
 import { logger } from "./lib/logger.js";
+import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { supabase } from "./lib/supabase.js";
@@ -209,6 +210,16 @@ cron.schedule("*/15 * * * *", async () => {
     await syncDueFollowUpSms();
   } catch (e) {
     logger.error("cron: sms follow-up reminder sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Rep/order follow-up notifications — every 5 minutes ──
+cron.schedule("*/5 * * * *", async () => {
+  logger.info("cron: syncing due order follow-up notifications");
+  try {
+    await syncDueOrderFollowUpNotifications();
+  } catch (e) {
+    logger.error("cron: order follow-up notification sync crashed", { error: (e as Error).message });
   }
 });
 
