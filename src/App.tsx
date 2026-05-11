@@ -144,6 +144,7 @@ type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
+type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
@@ -204,6 +205,10 @@ type WaybillRecord = {
   receivingState: string;
   fromAgentId?: string;
   toAgentId?: string;
+  fromAgentLocationId?: string;
+  toAgentLocationId?: string;
+  sendingLocationName?: string;
+  receivingLocationName?: string;
   dateSent: string;
   dateReceived?: string;
   status: WaybillStatus;
@@ -575,11 +580,44 @@ type AbandonedCartRecord = {
   lastActivity: string;
   createdAt: string;
 };
+type DeliveryAgentCoverage = {
+  id?: string;
+  state: string;
+  city?: string;
+  coverageType: "local_delivery" | "interstate_delivery" | "pickup_hub";
+  priority: number;
+  active: boolean;
+  slaDays: number;
+  deliveryFeeRule?: string;
+  notes?: string;
+};
+type DeliveryAgentLocationStock = {
+  productId: string;
+  quantity: number;
+  defective: number;
+  missing: number;
+};
+type DeliveryAgentLocation = {
+  id: string;
+  name: string;
+  state: string;
+  city?: string;
+  active: boolean;
+  isPrimary: boolean;
+  address?: string;
+  phoneOverride?: string;
+  notes?: string;
+  stock: DeliveryAgentLocationStock[];
+};
 type DeliveryAgentRecord = {
   id: string;
   name: string;
   phone: string;
+  whatsappPhone?: string;
   zone: string;
+  primaryBaseState?: string;
+  coverage: DeliveryAgentCoverage[];
+  locations: DeliveryAgentLocation[];
   address: string;
   active: boolean;
   created: string;
@@ -709,6 +747,7 @@ const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "S
 const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
+const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
 const repCallOutcomeOptions = [
   "Confirmed",
   "No Answer",
@@ -891,6 +930,234 @@ const formatProductMoney = (amount: number, code: ProductCurrencyCode) =>
     currency: productCurrencies[code].currency,
     maximumFractionDigits: 0
   }).format(amount || 0);
+const formatFlexibleMoney = (amount: number, code?: string) => {
+  const normalized = (code || "NGN").toUpperCase();
+  if (normalized in productCurrencies) {
+    return formatProductMoney(amount, normalized as ProductCurrencyCode);
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: normalized,
+      maximumFractionDigits: 0
+    }).format(amount || 0);
+  } catch {
+    return `${normalized} ${Math.round(amount || 0).toLocaleString()}`;
+  }
+};
+
+const normalizeAgentState = (value?: string | null) => (value ?? "").trim();
+const normalizeAgentCity = (value?: string | null) => (value ?? "").trim();
+
+const agentPrimaryBaseState = (agent: Pick<DeliveryAgentRecord, "primaryBaseState" | "zone">) =>
+  normalizeAgentState(agent.primaryBaseState) || normalizeAgentState(agent.zone);
+
+const agentCoverageRows = (agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">): DeliveryAgentCoverage[] => {
+  const rows = Array.isArray(agent.coverage)
+    ? agent.coverage
+        .map((row) => ({
+          ...row,
+          state: normalizeAgentState(row.state),
+          city: normalizeAgentCity(row.city),
+          active: row.active !== false,
+          priority: Number.isFinite(row.priority) ? row.priority : 100,
+          slaDays: Number.isFinite(row.slaDays) ? row.slaDays : 1
+        }))
+        .filter((row) => row.state)
+    : [];
+  if (rows.length > 0) return rows;
+  const fallback = agentPrimaryBaseState(agent);
+  return fallback
+    ? [{ state: fallback, city: "", coverageType: "local_delivery", priority: 100, active: true, slaDays: 1 }]
+    : [];
+};
+
+const agentCoverageStates = (agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">) =>
+  Array.from(new Set(agentCoverageRows(agent).filter((row) => row.active !== false).map((row) => row.state))).sort((a, b) => a.localeCompare(b));
+
+const agentCoverageSummary = (agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">) => {
+  const states = agentCoverageStates(agent);
+  if (states.length === 0) return "No active coverage";
+  if (states.length === 1) return states[0];
+  return `${states[0]} +${states.length - 1} more`;
+};
+
+const agentCoverageLabel = (agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">) => {
+  const base = agentPrimaryBaseState(agent);
+  const states = agentCoverageStates(agent);
+  if (states.length === 0) return base || "No active coverage";
+  if (states.length === 1 && states[0].toLowerCase() === base.toLowerCase()) return base || states[0];
+  if (!base) return `Serves ${states.join(", ")}`;
+  return `${base} base · serves ${states.join(", ")}`;
+};
+
+const agentCoverageCompactLabel = (agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">) => {
+  const base = agentPrimaryBaseState(agent);
+  const summary = agentCoverageSummary(agent);
+  if (!base) return summary;
+  if (summary.toLowerCase() === base.toLowerCase()) return base;
+  return `${base} base · ${summary}`;
+};
+
+const agentLocationRows = (agent?: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | null): DeliveryAgentLocation[] => {
+  if (!agent) return [];
+  const rows = Array.isArray(agent.locations)
+    ? agent.locations
+        .map((location) => ({
+          ...location,
+          name: (location.name ?? "").trim(),
+          state: normalizeAgentState(location.state),
+          city: normalizeAgentCity(location.city),
+          active: location.active !== false,
+          isPrimary: location.isPrimary === true,
+          stock: Array.isArray(location.stock)
+            ? location.stock.map((row) => ({
+                productId: String(row.productId ?? ""),
+                quantity: Number(row.quantity ?? 0),
+                defective: Number(row.defective ?? 0),
+                missing: Number(row.missing ?? 0)
+              }))
+            : []
+        }))
+        .filter((location) => location.state)
+    : [];
+  if (rows.length > 0) return rows;
+  const fallbackState = agentPrimaryBaseState(agent);
+  return fallbackState ? [{
+    id: "",
+    name: `${fallbackState} Hub`,
+    state: fallbackState,
+    city: "",
+    active: true,
+    isPrimary: true,
+    address: agent.address ?? "",
+    stock: []
+  }] : [];
+};
+
+const primaryAgentLocation = (agent?: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | null) =>
+  agentLocationRows(agent).find((location) => location.isPrimary) ?? agentLocationRows(agent)[0] ?? null;
+
+const findAgentLocation = (agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null, locationId?: string | null) =>
+  locationId ? agentLocationRows(agent).find((location) => location.id === locationId) ?? null : null;
+
+const agentLocationLabel = (location?: Pick<DeliveryAgentLocation, "name" | "state" | "city" | "isPrimary"> | null) => {
+  if (!location) return "";
+  const state = normalizeAgentState(location.state);
+  const city = normalizeAgentCity(location.city);
+  if (location.name?.trim()) return city ? `${location.name} (${city}, ${state})` : location.name;
+  return city ? `${city}, ${state}` : `${state}${location.isPrimary ? " Hub" : ""}`;
+};
+
+const agentLocationStockQuantity = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
+  locationId: string | null | undefined,
+  productId: string | null | undefined
+) => {
+  if (!locationId || !productId) return 0;
+  const location = findAgentLocation(agent, locationId);
+  if (!location) return 0;
+  return location.stock.find((row) => row.productId === productId)?.quantity ?? 0;
+};
+
+const agentLocationInventory = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
+  products: Product[]
+) =>
+  agentLocationRows(agent).map((location) => {
+    const items = location.stock
+      .filter((row) => Number(row.quantity ?? 0) > 0 || Number(row.defective ?? 0) > 0 || Number(row.missing ?? 0) > 0)
+      .map((row) => {
+        const product = products.find((item) => item.id === row.productId);
+        const pricing = product ? primaryPricing(product) : undefined;
+        return {
+          productId: row.productId,
+          productName: product?.name ?? "Unknown product",
+          quantity: Number(row.quantity ?? 0),
+          defective: Number(row.defective ?? 0),
+          missing: Number(row.missing ?? 0),
+          value: Number(row.quantity ?? 0) * Number(pricing?.sellingPrice ?? 0),
+          currency: pricing?.currency ?? "NGN"
+        };
+      })
+      .sort((a, b) => b.quantity - a.quantity || a.productName.localeCompare(b.productName));
+
+    return {
+      ...location,
+      items,
+      totalUnits: items.reduce((sum, item) => sum + item.quantity, 0),
+      totalDefective: items.reduce((sum, item) => sum + item.defective, 0),
+      totalMissing: items.reduce((sum, item) => sum + item.missing, 0),
+      totalValue: items.reduce((sum, item) => sum + item.value, 0)
+    };
+  });
+
+const bestAgentLocationMatch = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "coverage" | "primaryBaseState" | "zone" | "address">,
+  state?: string | null,
+  city?: string | null,
+  productId?: string | null
+) => {
+  const wantedState = normalizeAgentState(state).toLowerCase();
+  const wantedCity = normalizeAgentCity(city).toLowerCase();
+  const locations = agentLocationRows(agent).filter((location) => location.active !== false);
+  if (locations.length === 0) return null;
+  const sorted = locations.slice().sort((a, b) => {
+    const aStateMatch = wantedState && normalizeAgentState(a.state).toLowerCase() === wantedState ? 1 : 0;
+    const bStateMatch = wantedState && normalizeAgentState(b.state).toLowerCase() === wantedState ? 1 : 0;
+    if (aStateMatch !== bStateMatch) return bStateMatch - aStateMatch;
+    const aCityMatch = wantedCity && normalizeAgentCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
+    const bCityMatch = wantedCity && normalizeAgentCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
+    if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
+    const aStock = productId ? agentLocationStockQuantity(agent, a.id, productId) : 0;
+    const bStock = productId ? agentLocationStockQuantity(agent, b.id, productId) : 0;
+    if ((aStock > 0 ? 1 : 0) !== (bStock > 0 ? 1 : 0)) return (bStock > 0 ? 1 : 0) - (aStock > 0 ? 1 : 0);
+    if ((a.isPrimary ? 1 : 0) !== (b.isPrimary ? 1 : 0)) return (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
+    return agentLocationLabel(a).localeCompare(agentLocationLabel(b));
+  });
+  return sorted[0] ?? null;
+};
+
+const bestAgentCoverageMatch = (
+  agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone">,
+  state?: string | null,
+  city?: string | null
+) => {
+  const wantedState = normalizeAgentState(state).toLowerCase();
+  const wantedCity = normalizeAgentCity(city).toLowerCase();
+  const rows = agentCoverageRows(agent).filter((row) => row.active !== false);
+  if (rows.length === 0) return null;
+
+  const stateMatches = wantedState
+    ? rows.filter((row) => normalizeAgentState(row.state).toLowerCase() === wantedState)
+    : [];
+  const candidates = (stateMatches.length > 0 ? stateMatches : rows).slice().sort((a, b) => {
+    const aCityMatch = wantedCity && normalizeAgentCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
+    const bCityMatch = wantedCity && normalizeAgentCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
+    if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
+    const aLocal = a.coverageType === "local_delivery" ? 1 : 0;
+    const bLocal = b.coverageType === "local_delivery" ? 1 : 0;
+    if (aLocal !== bLocal) return bLocal - aLocal;
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return a.slaDays - b.slaDays;
+  });
+
+  return candidates[0] ?? null;
+};
+
+const agentOptionLabel = (
+  agent: Pick<DeliveryAgentRecord, "name" | "coverage" | "primaryBaseState" | "zone">,
+  state?: string | null,
+  city?: string | null
+) => {
+  const base = agentPrimaryBaseState(agent);
+  const match = bestAgentCoverageMatch(agent, state, city);
+  const matchedState = normalizeAgentState(match?.state);
+  if (matchedState && base && matchedState.toLowerCase() !== base.toLowerCase()) {
+    return `${agent.name} · serves ${matchedState} (base ${base})`;
+  }
+  return `${agent.name} · ${matchedState || base || agentCoverageSummary(agent)}`;
+};
 
 const primaryPricing = (product: Product) =>
   // Prefer the row marked primary. Tolerate both `primary` (legacy) and
@@ -1136,6 +1403,8 @@ const scheduledMomentForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "sche
   order.scheduledAt ?? order.scheduledDate;
 const scheduledKeyForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
   order.scheduledAt ? normalizeDateKey(order.scheduledAt) : order.scheduledDate ? normalizeDateKey(order.scheduledDate) : "";
+const scheduleSummaryForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
+  scheduledMomentForOrder(order) ? formatPlannedMoment(order.scheduledAt, order.scheduledDate) : "Not scheduled";
 const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
   note.followUpAt ?? note.followUpDate;
 const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
@@ -2017,10 +2286,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentsPage, setAgentsPage] = useState(1);
   const [agentName, setAgentName] = useState("");
   const [agentPhone, setAgentPhone] = useState("");
+  const [agentWhatsappPhone, setAgentWhatsappPhone] = useState("");
   const [agentZoneInput, setAgentZoneInput] = useState("");
+  const [agentCoverageStatesInput, setAgentCoverageStatesInput] = useState<string[]>([]);
   const [agentAddress, setAgentAddress] = useState("");
   const [agentActive, setAgentActive] = useState(true);
   const [agentStockCapacity, setAgentStockCapacity] = useState<number | "">(1000);
+  const [assignStockLocationId, setAssignStockLocationId] = useState("");
+  const [reconcileLocationId, setReconcileLocationId] = useState("");
   const [timezoneSetting, setTimezoneSetting] = useState<string>(getStoredTimezone);
   const [workingScheduleEnabled, setWorkingScheduleEnabled] = useState(false);
   const [workingDaysSetting, setWorkingDaysSetting] = useState<WorkingDayName[]>([...DEFAULT_WORKING_DAYS]);
@@ -2056,7 +2329,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waybillPartner, setWaybillPartner] = useState("");
   const [waybillFromType, setWaybillFromType] = useState<"Warehouse" | "Agent">("Warehouse");
   const [waybillFromAgentId, setWaybillFromAgentId] = useState("");
+  const [waybillFromAgentLocationId, setWaybillFromAgentLocationId] = useState("");
   const [waybillToAgentId, setWaybillToAgentId] = useState("");
+  const [waybillToAgentLocationId, setWaybillToAgentLocationId] = useState("");
   const [waybillToState, setWaybillToState] = useState("");
   const [waybillDateSent, setWaybillDateSent] = useState(() => new Date().toISOString().slice(0, 10));
   const [waybillNote, setWaybillNote] = useState("");
@@ -3329,6 +3604,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [createOrderRepId, setCreateOrderRepId] = useState("auto");
   const [createOrderContext, setCreateOrderContext] = useState<CreateOrderContext>("admin");
   const [createOrderAgentId, setCreateOrderAgentId] = useState("");
+  const [createOrderScheduleEnabled, setCreateOrderScheduleEnabled] = useState(false);
   const [reassignRepId, setReassignRepId] = useState("");
   const [handoverReason, setHandoverReason] = useState("");
   const [orderNoteDraft, setOrderNoteDraft] = useState("");
@@ -3346,7 +3622,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleCustomDate, setRepScheduleCustomDate] = useState("");
   const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
-  const [statusChangeDraft, setStatusChangeDraft] = useState<Exclude<OrderStatus, "All Orders">>("Confirmed");
+  const [statusChangeDraft, setStatusChangeDraft] = useState<OrderStatusAction>("Confirmed");
+  const [statusChangePreset, setStatusChangePreset] = useState<OrderStatusAction | null>(null);
+  const [statusChangeReasonPreset, setStatusChangeReasonPreset] = useState("");
+  const [statusChangeOutcomePreset, setStatusChangeOutcomePreset] = useState<string | null>(null);
   const [statusChangeReason, setStatusChangeReason] = useState("");
   const [repScheduleDate, setRepScheduleDate] = useState(todayKey());
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
@@ -3541,7 +3820,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setReconcileNotes("");
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
-    setAgentZoneInput(agent.zone);
+    setAgentWhatsappPhone(agent.whatsappPhone ?? "");
+    setAgentZoneInput(agentPrimaryBaseState(agent));
+    setAgentCoverageStatesInput(agentCoverageStates(agent));
     setAgentAddress(agent.address ?? "");
     setAgentActive(agent.active);
     setAgentStockCapacity(agent.stockCapacity ?? 1000);
@@ -3562,10 +3843,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const currentStatus = selectedOrder.status ?? "New";
-    setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
-    setStatusChangeReason("");
-    hydrateCallOutcomeDraft(selectedOrder.callOutcome);
+    const plannedParts = splitMomentForInput(selectedOrder.scheduledAt);
+    setStatusChangeDraft(statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus));
+    setStatusChangeReason(statusChangeReasonPreset);
+    hydrateCallOutcomeDraft(statusChangeOutcomePreset ?? selectedOrder.callOutcome);
     hydrateDeliveryDateDraft(selectedOrder);
+    setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
+    setOrderScheduleTime(plannedParts.time || nextTimeValue());
+    setStatusChangePreset(null);
+    setStatusChangeReasonPreset("");
+    setStatusChangeOutcomePreset(null);
   }, [modal, selectedOrder]);
   useEffect(() => {
     if (modal !== "editOrderCustomer" || !selectedOrder) {
@@ -7327,6 +7614,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             receivingState:   w.receivingState ?? w.toLocation   ?? w.to_location   ?? "",
             fromAgentId:      w.fromAgentId ?? w.from_agent_id ?? undefined,
             toAgentId:        w.toAgentId   ?? w.agentId        ?? w.agent_id ?? undefined,
+            fromAgentLocationId: w.fromAgentLocationId ?? w.from_agent_location_id ?? undefined,
+            toAgentLocationId: w.toAgentLocationId ?? w.to_agent_location_id ?? undefined,
+            sendingLocationName: w.sendingLocationName ?? w.fromLocation ?? w.from_location ?? undefined,
+            receivingLocationName: w.receivingLocationName ?? w.toLocation ?? w.to_location ?? undefined,
             dateSent:         w.dateSent     ?? w.dispatchedDate ?? w.dispatched_date ?? "",
             dateReceived:     w.dateReceived ?? w.receivedDate   ?? w.received_date ?? undefined,
             status:           w.status ?? "In Transit",
@@ -10458,9 +10749,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("The selected agent is still syncing. Try again in a moment.");
       return;
     }
+    if (createOrderScheduleEnabled && !isDateValue(orderScheduleDate)) {
+      showToast("Choose a valid scheduled delivery date.");
+      return;
+    }
+    if (createOrderScheduleEnabled && !isTimeValue(orderScheduleTime)) {
+      showToast("Choose a valid scheduled delivery time.");
+      return;
+    }
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const amount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
+    const plannedMoment = createOrderScheduleEnabled
+      ? combinePlannedMoment(orderScheduleDate, orderScheduleTime)
+      : { date: undefined, iso: undefined };
+    const scheduleLabel = createOrderScheduleEnabled
+      ? formatPlannedMoment(plannedMoment.iso, orderScheduleDate)
+      : "";
+    const baseNotes = [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }];
+    const scheduledNotes = createOrderScheduleEnabled && scheduleLabel
+      ? [orderTimelineNote(`Delivery scheduled for ${scheduleLabel}.`, { by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() })]
+      : [];
     const draftOrder: Omit<TrackedOrder, "id"> = {
       productId: product.id,
       packageId: packageRecord?.id,
@@ -10529,6 +10838,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setCreateOrderAmount(String(order.amount ?? ""));
       setCreateOrderSource(order.source ?? orderSourceFromUtm(order.utmSource));
       setCreateOrderRepId(order.assignedRepId ?? "auto");
+      const plannedParts = splitMomentForInput(order.scheduledAt);
+      setCreateOrderScheduleEnabled(!!scheduledMomentForOrder(order));
+      setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
+      setOrderScheduleTime(plannedParts.time || nextTimeValue());
     }
     setModal(nextModal);
   };
@@ -10604,6 +10917,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreateOrderSource(selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource));
     setCreateOrderRepId(selectedOrder.assignedRepId ?? "auto");
     setCreateOrderAgentId(selectedOrder.agentId ?? "");
+    const plannedParts = splitMomentForInput(selectedOrder.scheduledAt);
+    setCreateOrderScheduleEnabled(!!scheduledMomentForOrder(selectedOrder));
+    setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
+    setOrderScheduleTime(plannedParts.time || nextTimeValue());
     setModal("editOrderItems");
   };
 
@@ -10635,6 +10952,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("The selected agent is still syncing. Try again in a moment.");
       return;
     }
+    if (createOrderScheduleEnabled && !isDateValue(orderScheduleDate)) {
+      showToast("Choose a valid scheduled delivery date.");
+      return;
+    }
+    if (createOrderScheduleEnabled && !isTimeValue(orderScheduleTime)) {
+      showToast("Choose a valid scheduled delivery time.");
+      return;
+    }
     const quantity = Math.max(1, Number(createOrderQuantity) || packageRecord?.quantity || 1);
     const pricing = primaryPricing(product);
     const autoAmount = packageRecord?.price ?? quantity * (pricing?.sellingPrice ?? 0);
@@ -10643,6 +10968,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const amount = createOrderAmount.trim() !== "" && !isNaN(parsedManual) && parsedManual >= 0
       ? parsedManual
       : autoAmount;
+    const plannedMoment = createOrderScheduleEnabled
+      ? combinePlannedMoment(orderScheduleDate, orderScheduleTime)
+      : { date: undefined, iso: undefined };
+    const nextResponse = createOrderScheduleEnabled
+      ? `Scheduled for ${formatPlannedMoment(plannedMoment.iso, orderScheduleDate)}`
+      : selectedOrder.response;
     const _soeId = selectedOrder.id;
     const orderSnapshot = selectedOrder;
     const nextNotes = [
@@ -10673,12 +11004,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               location: orderLocationFromFields(createOrderCity, createOrderState),
               assignedRepId: createOrderRepId === "auto" ? order.assignedRepId : createOrderRepId,
               agentId: createOrderAgentId || undefined,
+              scheduledDate: createOrderScheduleEnabled ? orderScheduleDate : undefined,
+              scheduledAt: createOrderScheduleEnabled ? plannedMoment.iso : undefined,
+              response: nextResponse,
               notes: nextNotes
             }
           : order
       )
     );
-    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null, timeline_notes: nextNotes }).catch((err: any) => {
+    ordersApi.update(_soeId, { customer: createOrderCustomer.trim(), phone: createOrderPhone.trim(), whatsapp: createOrderWhatsapp.trim(), address: createOrderAddress.trim(), city: createOrderCity.trim(), state: createOrderState.trim(), product_id: product.id, package_id: packageRecord?.id ?? null, product_name: product.name, package_name: packageRecord?.name ?? null, quantity, amount, source: createOrderSource, assigned_rep_id: createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId, agent_id: createOrderAgentId || null, scheduled_date: createOrderScheduleEnabled ? orderScheduleDate : null, scheduled_at: createOrderScheduleEnabled ? plannedMoment.iso : null, response: nextResponse, timeline_notes: nextNotes }).catch((err: any) => {
       setTrackedOrders((value) => value.map((o) => o.id === _soeId ? orderSnapshot : o));
       showToast(`Failed to save edits to ${_soeId}: ${err?.message ?? "please retry"}.`);
     });
@@ -10799,22 +11133,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setHashRoute(nextHash);
   };
 
-  const openRepStatusChangeModal = (order: TrackedOrder) => {
-    const currentStatus = order.status ?? "New";
+  const openRepStatusChangeModal = (order: TrackedOrder, presetStatus?: OrderStatusAction, options?: { callOutcome?: string; reason?: string }) => {
     setSelectedOrderId(order.id);
-    setStatusChangeDraft(currentStatus === "New" ? "Confirmed" : currentStatus);
-    setStatusChangeReason("");
-    hydrateCallOutcomeDraft(order.callOutcome);
-    hydrateDeliveryDateDraft(order);
+    setStatusChangePreset(presetStatus ?? null);
+    setStatusChangeReasonPreset(options?.reason ?? "");
+    setStatusChangeOutcomePreset(options?.callOutcome ?? order.callOutcome ?? "");
     setModal("changeOrderStatus");
     syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
   };
 
+  const openRepRescheduleModal = (order: TrackedOrder, reason = "", callOutcome?: string) => {
+    openRepStatusChangeModal(order, "Reschedule", { reason, callOutcome });
+  };
+
   const submitRepStatusChange = () => {
     if (!selectedOrder) return;
-    const requiresReason = ["Cancelled", "Failed", "Postponed"].includes(statusChangeDraft);
+    const isRescheduleAction = statusChangeDraft === "Reschedule";
+    const requiresReason = !isRescheduleAction && ["Cancelled", "Failed", "Postponed"].includes(statusChangeDraft);
     if (requiresReason && !statusChangeReason.trim()) {
       showToast("A reason is required when cancelling, failing, or postponing an order.");
+      return;
+    }
+    if (isRescheduleAction && !isDateValue(orderScheduleDate)) {
+      showToast("Choose a valid rescheduled delivery date.");
+      return;
+    }
+    if (isRescheduleAction && !isTimeValue(orderScheduleTime)) {
+      showToast("Choose a valid rescheduled delivery time.");
       return;
     }
     if (statusChangeDraft === "Delivered" && !deliveryDateDraft) {
@@ -10822,10 +11167,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
-    updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim(), false, statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined);
-    if (resolvedOutcome) {
-      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome } : o));
-      ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome }).catch(() => {});
+    if (isRescheduleAction) {
+      const reasonText = statusChangeReason.trim();
+      const extras = [
+        reasonText ? `Note: ${reasonText}.` : "",
+        resolvedOutcome ? `Call outcome: ${resolvedOutcome}.` : ""
+      ].filter(Boolean).join(" ");
+      commitOrderSchedule(selectedOrder, {
+        scheduledDate: orderScheduleDate,
+        scheduledTime: orderScheduleTime,
+        by: currentRole === "Sales Rep" ? repScopeName : ownerName,
+        noteText: (label) => extras ? `Order rescheduled for ${label}. ${extras}` : `Order rescheduled for ${label}.`
+      });
+    } else {
+      updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim(), false, statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined);
+    }
+    if (resolvedOutcome || selectedOrder.callOutcome) {
+      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome || undefined } : o));
+      ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome || null }).catch(() => {});
     }
     setStatusChangeReason("");
     setCallOutcomeDraft("");
@@ -11424,9 +11783,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal("addAgent");
   };
 
+  const toggleAgentCoverageState = (state: string) => {
+    const normalized = state.trim();
+    if (!normalized) return;
+    setAgentCoverageStatesInput((value) =>
+      value.includes(normalized)
+        ? value.filter((item) => item !== normalized)
+        : [...value, normalized]
+    );
+  };
+
   const createAgent = () => {
     if (!agentName.trim() || !agentPhone.trim() || !agentZoneInput.trim()) {
-      showToast("Agent name, phone number, and primary zone are required.");
+      showToast("Agent name, phone number, and primary base state are required.");
       return;
     }
     if (agents.some((a) => a.phone === agentPhone.trim())) {
@@ -11434,11 +11803,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const coverageStates = Array.from(new Set([agentZoneInput.trim(), ...agentCoverageStatesInput.map((state) => state.trim()).filter(Boolean)]));
     const agent: DeliveryAgentRecord = {
       id: makeAgentId(),
       name: agentName.trim(),
       phone: agentPhone.trim(),
+      whatsappPhone: agentWhatsappPhone.trim() || undefined,
       zone: agentZoneInput.trim(),
+      primaryBaseState: agentZoneInput.trim(),
+      coverage: coverageStates.map((state, index) => ({
+        state,
+        city: "",
+        coverageType: "local_delivery",
+        priority: index === 0 ? 0 : 100 + index,
+        active: true,
+        slaDays: 1
+      })),
+      locations: coverageStates.map((state, index) => ({
+        id: `${makeAgentId()}-${index}`,
+        name: `${state} Hub`,
+        state,
+        city: "",
+        active: true,
+        isPrimary: index === 0,
+        address: agentAddress.trim(),
+        stock: []
+      })),
       address: agentAddress.trim(),
       active: agentActive,
       created: nowIso()
@@ -11448,13 +11838,74 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedAgentId(agent.id);
     setAgentName("");
     setAgentPhone("");
+    setAgentWhatsappPhone("");
     setAgentZoneInput("");
+    setAgentCoverageStatesInput([]);
     setAgentAddress("");
     closeModal();
     showToast(`Agent "${agent.name}" created.`);
-    agentsApi.create({ name: agent.name, zone: agent.zone, phone: agent.phone, status: agent.active ? "Active" : "Inactive" })
+    agentsApi.create({
+      name: agent.name,
+      primaryBaseState: agent.primaryBaseState,
+      zone: agent.zone,
+      phone: agent.phone,
+      whatsappPhone: agent.whatsappPhone,
+      address: agent.address,
+      coverage: agent.coverage.map((row) => ({
+        state: row.state,
+        city: row.city,
+        coverageType: row.coverageType,
+        priority: row.priority,
+        active: row.active,
+        slaDays: row.slaDays,
+        deliveryFeeRule: row.deliveryFeeRule,
+        notes: row.notes
+      })),
+      status: agent.active ? "Active" : "Inactive"
+    })
       .then((saved: any) => {
-        setAgents((prev) => prev.map((a) => a.id === _agLocalId ? { ...a, id: saved.id } : a));
+        setAgents((prev) => prev.map((a) => a.id === _agLocalId ? {
+          ...a,
+          id: saved.id,
+          zone: saved.primaryBaseState ?? saved.primary_base_state ?? saved.zone ?? a.zone,
+          primaryBaseState: saved.primaryBaseState ?? saved.primary_base_state ?? saved.zone ?? a.primaryBaseState,
+          whatsappPhone: saved.whatsappPhone ?? saved.whatsapp_phone ?? a.whatsappPhone,
+          coverage: Array.isArray(saved.coverage)
+            ? saved.coverage.map((row: any) => ({
+                id: row.id,
+                state: row.state ?? "",
+                city: row.city ?? "",
+                coverageType: row.coverageType ?? row.coverage_type ?? "local_delivery",
+                priority: Number(row.priority ?? 100),
+                active: row.active !== false,
+                slaDays: Number(row.slaDays ?? row.sla_days ?? 1),
+                deliveryFeeRule: row.deliveryFeeRule ?? row.delivery_fee_rule ?? undefined,
+                notes: row.notes ?? undefined
+              }))
+            : a.coverage
+          ,
+          locations: Array.isArray(saved.locations)
+            ? saved.locations.map((location: any) => ({
+                id: location.id,
+                name: location.name ?? "",
+                state: location.state ?? "",
+                city: location.city ?? "",
+                active: location.active !== false,
+                isPrimary: location.isPrimary === true || location.is_primary === true,
+                address: location.address ?? "",
+                phoneOverride: location.phoneOverride ?? location.phone_override ?? undefined,
+                notes: location.notes ?? undefined,
+                stock: Array.isArray(location.stock)
+                  ? location.stock.map((row: any) => ({
+                      productId: row.productId ?? row.product_id ?? "",
+                      quantity: Number(row.quantity ?? 0),
+                      defective: Number(row.defective ?? 0),
+                      missing: Number(row.missing ?? 0)
+                    }))
+                  : []
+              }))
+            : a.locations
+        } : a));
         setSelectedAgentId(saved.id);
       })
       .catch(() => {
@@ -11467,18 +11918,46 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setSelectedAgentId(agent.id);
     setAssignStockProductId(products[0]?.id ?? "");
     setAssignStockQty("1");
+    setAssignStockLocationId(primaryAgentLocation(agent)?.id ?? "");
     setReconcileProductId(agentStock.find((stock) => stock.agentId === agent.id)?.productId ?? products[0]?.id ?? "");
     setReconcileReturned("0");
     setReconcileDefective("0");
     setReconcileMissing("0");
     setReconcileNotes("");
+    setReconcileLocationId(primaryAgentLocation(agent)?.id ?? "");
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
-    setAgentZoneInput(agent.zone);
+    setAgentWhatsappPhone(agent.whatsappPhone ?? "");
+    setAgentZoneInput(agentPrimaryBaseState(agent));
+    setAgentCoverageStatesInput(agentCoverageStates(agent));
     setAgentAddress(agent.address ?? "");
     setAgentActive(agent.active);
     setAgentStockCapacity(agent.stockCapacity ?? 1000);
     setModal(nextModal);
+  };
+
+  const adjustAgentLocationStock = (
+    agentId: string,
+    locationId: string,
+    productId: string,
+    updater: (current: DeliveryAgentLocationStock | null) => DeliveryAgentLocationStock | null
+  ) => {
+    setAgents((value) => value.map((agent) => {
+      if (agent.id !== agentId) return agent;
+      return {
+        ...agent,
+        locations: agentLocationRows(agent).map((location) => {
+          if (location.id !== locationId) return location;
+          const current = location.stock.find((row) => row.productId === productId) ?? null;
+          const next = updater(current);
+          const rest = location.stock.filter((row) => row.productId !== productId);
+          return {
+            ...location,
+            stock: next ? [...rest, next] : rest
+          };
+        })
+      };
+    }));
   };
 
   const assignStockToSelectedAgent = () => {
@@ -11502,6 +11981,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const targetLocation = findAgentLocation(selectedAgent, assignStockLocationId) ?? primaryAgentLocation(selectedAgent);
+    if (!targetLocation?.id) {
+      showToast("This agent has no stock hub yet.");
+      return;
+    }
+
     // Capacity check
     const capacity = selectedAgent.stockCapacity ?? 1000;
     const currentTotal = agentStock
@@ -11516,6 +12001,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Snapshot the three slices we mutate so a rejected assignStock can
     // restore them coherently (warehouse + agent stock + audit movement).
     const productSnapshot = product;
+    const agentSnapshot = selectedAgent;
     const existingAgentRow = agentStock.find((s) => s.agentId === selectedAgent.id && s.productId === product.id);
     const movementId = makeMovementId();
     setProducts((value) =>
@@ -11532,20 +12018,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       return [...value, { agentId: selectedAgent.id, productId: product.id, quantity, defective: 0, missing: 0 }];
     });
+    adjustAgentLocationStock(selectedAgent.id, targetLocation.id, product.id, (current) => ({
+      productId: product.id,
+      quantity: Number(current?.quantity ?? 0) + quantity,
+      defective: Number(current?.defective ?? 0),
+      missing: Number(current?.missing ?? 0)
+    }));
     setStockMovements((value) => [
-      { id: movementId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Distributed to Agent", qty: -quantity, balanceAfter: product.warehouseStock - quantity, agent: selectedAgent.name, by: ownerName, note: "Assigned from agent directory" },
+      { id: movementId, date: new Date().toISOString(), productId: product.id, productName: product.name, type: "Distributed to Agent", qty: -quantity, balanceAfter: product.warehouseStock - quantity, agent: selectedAgent.name, by: ownerName, note: `Assigned from warehouse to ${targetLocation.name}` },
       ...value
     ]);
     const _assAgId = selectedAgent.id;
     const _assProdId = product.id;
     const _assAgentName = selectedAgent.name;
+    const _assLocationId = targetLocation.id;
+    const _assLocationName = targetLocation.name;
     setAssignStockQty("1");
     closeModal();
-    showToast(`${quantity} ${product.name} assigned to ${selectedAgent.name}.`);
-    agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity }).catch((err: any) => {
+    showToast(`${quantity} ${product.name} assigned to ${selectedAgent.name} · ${targetLocation.name}.`);
+    agentsApi.assignStock(_assAgId, { productId: _assProdId, quantity, locationId: _assLocationId }).catch((err: any) => {
       // Restore product warehouse/agent counts; restore (or remove) the agent_stock row;
       // remove the audit movement we synthesized.
       setProducts((value) => value.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
+      setAgents((value) => value.map((a) => a.id === agentSnapshot.id ? agentSnapshot : a));
       setAgentStock((value) => {
         if (existingAgentRow) {
           return value.map((s) => s.agentId === _assAgId && s.productId === _assProdId ? existingAgentRow : s);
@@ -11578,8 +12073,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("This product is still syncing. Try again in a moment.");
       return;
     }
+    const targetLocation = findAgentLocation(selectedAgent, reconcileLocationId) ?? primaryAgentLocation(selectedAgent);
+    if (!targetLocation?.id) {
+      showToast("This agent has no stock hub yet.");
+      return;
+    }
     const currentStock = agentStock.find((stock) => stock.agentId === selectedAgent.id && stock.productId === reconcileProductId);
-    const currentQuantity = currentStock?.quantity ?? 0;
+    const currentQuantity = agentLocationStockQuantity(selectedAgent, targetLocation.id, reconcileProductId);
     const returned = Math.max(0, Number(reconcileReturned) || 0);
     const defective = Math.max(0, Number(reconcileDefective) || 0);
     const missing = Math.max(0, Number(reconcileMissing) || 0);
@@ -11886,8 +12386,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!waybillQty || Number(waybillQty) < 1) errs.qty = "Quantity must be at least 1.";
     if (!waybillPartner.trim()) errs.partner = "Logistics partner is required.";
     if (waybillFromType === "Agent" && !waybillFromAgentId) errs.fromAgent = "Select a sending agent.";
+    const fromAgent = waybillFromType === "Agent" ? agents.find((a) => a.id === waybillFromAgentId) : null;
+    const fromLocation = waybillFromType === "Agent"
+      ? (findAgentLocation(fromAgent, waybillFromAgentLocationId) ?? primaryAgentLocation(fromAgent))
+      : null;
     const toAgent = waybillToAgentId ? agents.find((ag) => ag.id === waybillToAgentId) : null;
-    const receivingState = toAgent?.zone ?? waybillToState.trim();
+    const toLocation = toAgent
+      ? (findAgentLocation(toAgent, waybillToAgentLocationId) ?? bestAgentLocationMatch(toAgent, waybillToState, undefined, waybillProductId) ?? primaryAgentLocation(toAgent))
+      : null;
+    const receivingState = toLocation?.state || waybillToState.trim();
+    if (waybillFromType === "Agent" && !fromLocation?.id) errs.fromAgent = "Select a sending hub.";
+    if (waybillToAgentId && !toLocation?.id) errs.toState = "Select a receiving hub.";
     if (!receivingState) errs.toState = "Receiving state is required.";
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
@@ -11903,15 +12412,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         return;
       }
     } else {
-      const agentRow = agentStock.find((s) => s.agentId === waybillFromAgentId && s.productId === waybillProductId);
-      if (!agentRow || agentRow.quantity < qty) {
-        setWaybillErrors({ qty: `Not enough agent stock. Available: ${agentRow?.quantity ?? 0}` });
+      const available = fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0;
+      if (!available || available < qty) {
+        setWaybillErrors({ qty: `Not enough hub stock. Available: ${available}` });
         return;
       }
     }
 
-    const fromAgent = waybillFromType === "Agent" ? agents.find((a) => a.id === waybillFromAgentId) : null;
-    const sendingState = waybillFromType === "Warehouse" ? "Lagos" : (fromAgent?.zone ?? "");
+    const sendingState = waybillFromType === "Warehouse" ? "Lagos" : (fromLocation?.state || (fromAgent ? agentPrimaryBaseState(fromAgent) : ""));
+    const sendingLocationName = waybillFromType === "Warehouse" ? "Warehouse (Lagos)" : (fromLocation?.name || sendingState);
+    const receivingLocationName = toLocation?.name || receivingState;
 
     const record: WaybillRecord = {
       id: `WB-${Date.now().toString(36).toUpperCase()}`,
@@ -11923,7 +12433,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       sendingState,
       receivingState,
       fromAgentId: waybillFromType === "Agent" ? waybillFromAgentId : undefined,
+      fromAgentLocationId: waybillFromType === "Agent" ? fromLocation?.id : undefined,
       toAgentId: waybillToAgentId || undefined,
+      toAgentLocationId: waybillToAgentLocationId || toLocation?.id || undefined,
+      sendingLocationName,
+      receivingLocationName,
       dateSent: waybillDateSent,
       status: "In Transit",
       note: waybillNote.trim() || undefined,
@@ -11931,9 +12445,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       createdAt: new Date().toISOString(),
     };
 
+    const fromAgentSnapshot = fromAgent ? { ...fromAgent } : null;
     if (waybillFromType === "Warehouse") {
       setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock - qty } : p));
     } else {
+      if (fromLocation?.id) {
+        adjustAgentLocationStock(waybillFromAgentId, fromLocation.id, waybillProductId, (current) => ({
+          productId: waybillProductId,
+          quantity: Math.max(0, Number(current?.quantity ?? 0) - qty),
+          defective: Number(current?.defective ?? 0),
+          missing: Number(current?.missing ?? 0)
+        }));
+      }
       setAgentStock((prev) => prev.map((s) => s.agentId === waybillFromAgentId && s.productId === waybillProductId ? { ...s, quantity: s.quantity - qty } : s));
       setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, agentStock: Math.max(0, p.agentStock - qty) } : p));
     }
@@ -13109,18 +13632,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const openAdminOrderStatusRoute = (
     orderId: string,
-    presetStatus?: Exclude<OrderStatus, "All Orders">,
+    presetStatus?: OrderStatusAction,
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     setActivePage("Orders");
     setSelectedOrderId(orderId);
-    setStatusChangeDraft(presetStatus ?? ((order?.status ?? "New") === "New" ? "Confirmed" : (order?.status ?? "New")));
-    setStatusChangeReason(options?.reason ?? "");
-    hydrateCallOutcomeDraft(options?.callOutcome ?? order?.callOutcome);
-    hydrateDeliveryDateDraft(order);
+    setStatusChangePreset(presetStatus ?? null);
+    setStatusChangeReasonPreset(options?.reason ?? "");
+    setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
     syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
+  };
+
+  const openAdminOrderRescheduleRoute = (orderId: string, reason = "", callOutcome?: string) => {
+    openAdminOrderStatusRoute(orderId, "Reschedule", { reason, callOutcome });
   };
 
   const openAdminOrderOutcomeShortcut = (
@@ -13720,6 +14246,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </div>
       </header>
 
+      <section className="bg-white rounded-xl border border-blue-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/70 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 m-0">Scheduled Delivery</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <strong className="text-base text-gray-900">{scheduleSummaryForOrder(order)}</strong>
+              {(() => {
+                const scheduleKey = scheduledKeyForOrder(order);
+                const isOverdue = scheduleKey && scheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New");
+                const isToday = scheduleKey === todayKey();
+                if (isOverdue) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700">Overdue</span>;
+                if (isToday) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">Today</span>;
+                return null;
+              })()}
+            </div>
+            <p className="text-xs text-gray-500 m-0">Keep the promised slot clear here before dispatch or follow-up.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_auto] gap-2 w-full lg:w-auto lg:min-w-[420px]">
+            <input type="date" value={repScheduleDate} onChange={(event) => setRepScheduleDate(event.target.value)} />
+            <input type="time" value={repScheduleTime} onChange={(event) => setRepScheduleTime(event.target.value)} />
+            <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={saveRepScheduleDate}>
+              <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(order) ? "Reschedule" : "Schedule"}
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Main Grid: Customer Info & Order Items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Customer Info Card */}
@@ -14173,13 +14726,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
         </div>
         <div className="p-5 flex flex-wrap items-center gap-3">
-          <button className="flex-1 min-w-[140px] px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm" onClick={() => { openRepStatusChangeModal(order); setStatusChangeDraft("Postponed"); }}>
+          <button className="flex-1 min-w-[140px] px-4 py-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 transition-colors shadow-sm" onClick={() => openRepRescheduleModal(order)}>
+            Reschedule
+          </button>
+          <button className="flex-1 min-w-[140px] px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm" onClick={() => openRepStatusChangeModal(order, "Postponed")}>
             Postpone Order
           </button>
-          <button className="flex-1 min-w-[140px] px-4 py-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold hover:bg-red-100 transition-colors shadow-sm border border-red-100" onClick={() => { openRepStatusChangeModal(order); setStatusChangeDraft("Cancelled"); }}>
+          <button className="flex-1 min-w-[140px] px-4 py-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold hover:bg-red-100 transition-colors shadow-sm border border-red-100" onClick={() => openRepStatusChangeModal(order, "Cancelled")}>
             Cancel Order
           </button>
-          <button className="flex-2 min-w-[200px] px-4 py-3 bg-[#1F8FE0] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-md" onClick={() => { openRepStatusChangeModal(order); setStatusChangeDraft("Confirmed"); }}>
+          <button className="flex-2 min-w-[200px] px-4 py-3 bg-[#1F8FE0] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-md" onClick={() => openRepStatusChangeModal(order, "Confirmed")}>
             Confirm Order Now
           </button>
         </div>
@@ -14281,6 +14837,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="col-span-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
                   <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Location</span>
                   <span className="text-sm font-bold text-gray-900">{[order.city, order.state].filter(Boolean).join(", ") || "Not specified"}</span>
+                </div>
+                <div className="col-span-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <span className="block text-[10px] font-bold text-blue-700 uppercase tracking-widest mb-0.5">Scheduled Delivery</span>
+                      <span className="text-sm font-bold text-gray-900">{scheduleSummaryForOrder(order)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-bold hover:bg-blue-100 transition-colors"
+                      onClick={() => openRepRescheduleModal(order)}
+                    >
+                      <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(order) ? "Reschedule" : "Schedule"}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -19358,60 +19929,97 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {pagedAgentRows.length === 0 ? (
                     <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</div>
                   ) : (
-                    pagedAgentRows.map((row) => (
-                      <article key={row.agent.id} className="px-4 py-4 flex flex-col gap-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(row.agent.name)}</span>
-                            <div className="min-w-0">
-                              <div className="font-bold text-gray-900 truncate">{row.agent.name}</div>
-                              <div className="text-xs text-gray-500">{row.agent.phone}</div>
-                              <div className="text-xs text-gray-400">{row.agent.zone}</div>
+                    pagedAgentRows.map((row) => {
+                      const locationSummaries = agentLocationInventory(row.agent, products);
+                      return (
+                        <article key={row.agent.id} className="px-4 py-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(row.agent.name)}</span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900 truncate">{row.agent.name}</div>
+                                <div className="text-xs text-gray-500">{row.agent.phone}</div>
+                                <div className="text-xs text-gray-400">{agentCoverageCompactLabel(row.agent)}</div>
+                              </div>
+                            </div>
+                            <span className={`status-pill status-${slugify(row.status)} shrink-0`}>{row.status}</span>
+                          </div>
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Orders</span>
+                              <span className="text-gray-700">{row.totalOrders}</span>
+                              <span className="text-gray-500">{row.deliveries} delivered · {row.failed} failed</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery rate</span>
+                              <span className={`font-bold ${row.successRate >= 70 ? "text-green-700" : row.successRate >= 50 ? "text-amber-700" : row.totalOrders === 0 ? "text-gray-400" : "text-red-700"}`}>{row.successRate}%</span>
+                              <span className="text-gray-500">{row.deliveredUnits} units delivered</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Revenue</span>
+                              <span className="font-semibold text-gray-900">{formatMoney(row.revenue)}</span>
+                              <span className="text-gray-500">{row.pending} pending</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Stock value</span>
+                              <span className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</span>
+                              <span className="text-gray-500">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</span>
                             </div>
                           </div>
-                          <span className={`status-pill status-${slugify(row.status)} shrink-0`}>{row.status}</span>
-                        </div>
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Orders</span>
-                            <span className="text-gray-700">{row.totalOrders}</span>
-                            <span className="text-gray-500">{row.deliveries} delivered · {row.failed} failed</span>
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">States & Stock</span>
+                              <span className="text-[11px] text-gray-500">{locationSummaries.length} hub{locationSummaries.length === 1 ? "" : "s"}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {locationSummaries.length === 0 ? (
+                                <p className="text-xs text-gray-400 italic">No state hubs yet.</p>
+                              ) : locationSummaries.map((location) => (
+                                <div key={location.id || location.state} className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{agentLocationLabel(location)}</p>
+                                      <p className="text-[11px] text-gray-500">
+                                        {location.totalUnits} unit{location.totalUnits === 1 ? "" : "s"}
+                                        {location.totalDefective > 0 ? ` · Def ${location.totalDefective}` : ""}
+                                        {location.totalMissing > 0 ? ` · Miss ${location.totalMissing}` : ""}
+                                      </p>
+                                    </div>
+                                    <span className={`text-[11px] font-bold ${location.active ? "text-emerald-600" : "text-gray-400"}`}>{location.active ? "Active" : "Inactive"}</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {location.items.length === 0 ? (
+                                      <span className="text-[11px] text-gray-400 italic">No stock in this hub</span>
+                                    ) : location.items.map((item) => (
+                                      <span key={`${location.id}-${item.productId}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700">
+                                        {item.productName}: {item.quantity}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Delivery rate</span>
-                            <span className={`font-bold ${row.successRate >= 70 ? "text-green-700" : row.successRate >= 50 ? "text-amber-700" : row.totalOrders === 0 ? "text-gray-400" : "text-red-700"}`}>{row.successRate}%</span>
-                            <span className="text-gray-500">{row.deliveredUnits} units delivered</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                              <Eye className="w-4 h-4" /> Profile
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}>
+                              <PackagePlus className="w-4 h-4" /> Assign Stock
+                            </button>
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}>
+                              <RefreshCw className="w-4 h-4" /> Reconcile
+                            </button>
+                            <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}>
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}>
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Revenue</span>
-                            <span className="font-semibold text-gray-900">{formatMoney(row.revenue)}</span>
-                            <span className="text-gray-500">{row.pending} pending</span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Stock value</span>
-                            <span className="font-semibold text-gray-900">{formatMoney(row.stockValue)}</span>
-                            <span className="text-gray-500">Def {formatMoney(row.defectiveValue)} · Miss {formatMoney(row.missingValue)}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                            <Eye className="w-4 h-4" /> Profile
-                          </button>
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}>
-                            <PackagePlus className="w-4 h-4" /> Assign Stock
-                          </button>
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentReconcileRoute(row.agent.id)}>
-                            <RefreshCw className="w-4 h-4" /> Reconcile
-                          </button>
-                          <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Edit" aria-label="Edit" onClick={() => openAdminAgentEditRoute(row.agent.id)}>
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button className="!min-h-0 w-10 h-10 inline-flex items-center justify-center rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete" onClick={() => openAdminAgentDeleteRoute(row.agent.id)}>
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </article>
-                    ))
+                        </article>
+                      );
+                    })
                   )}
                 </div>
 
@@ -19419,14 +20027,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Agent Details", "Zone", "Status", "Orders", "Qty Delivered", "Delivery Rate", "Revenue", "Stock Value", "Actions"].map((h) => (
+                        {["Agent Details", "Coverage", "State Stock", "Status", "Orders", "Qty Delivered", "Delivery Rate", "Revenue", "Stock Value", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {pagedAgentRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
+                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No agents found</td></tr>
                       ) : (
                         pagedAgentRows.map((row) => (
                           <tr key={row.agent.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { openAdminAgentDetail(row.agent.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
@@ -19439,7 +20047,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 text-gray-700 text-xs font-medium">{row.agent.zone}</td>
+                            <td className="px-4 py-4 text-gray-700 text-xs font-medium">{agentCoverageCompactLabel(row.agent)}</td>
+                            <td className="px-4 py-4 min-w-[20rem]">
+                              <div className="space-y-2">
+                                {(() => {
+                                  const locationSummaries = agentLocationInventory(row.agent, products);
+                                  if (locationSummaries.length === 0) {
+                                    return <span className="text-xs text-gray-400 italic">No state hubs yet</span>;
+                                  }
+                                  return locationSummaries.map((location) => (
+                                    <div key={location.id || location.state} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-semibold text-gray-900">{agentLocationLabel(location)}</span>
+                                        <span className="text-[11px] font-medium text-gray-500">
+                                          {location.totalUnits} unit{location.totalUnits === 1 ? "" : "s"}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1 mt-1.5">
+                                        {location.items.length === 0 ? (
+                                          <span className="text-[11px] text-gray-400 italic">No stock</span>
+                                        ) : location.items.map((item) => (
+                                          <span key={`${location.id}-${item.productId}`} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white border border-blue-100 text-blue-700">
+                                            {item.productName}: {item.quantity}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
+                            </td>
                             <td className="px-4 py-4"><span className={`status-pill status-${slugify(row.status)}`}>{row.status}</span></td>
                             <td className="px-4 py-4">
                               <div className="font-semibold text-gray-900">{row.totalOrders}</div>
@@ -26799,6 +27436,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       )}
                     </section>
 
+                    {/* Scheduling */}
+                    <section className="space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Scheduling</h4>
+                      <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50/80 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900 m-0">Schedule delivery</p>
+                            <p className="text-[11px] text-gray-500 m-0 mt-0.5">Turn this on if the order already has a committed delivery slot.</p>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={createOrderScheduleEnabled}
+                            className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 mt-0.5 ${createOrderScheduleEnabled ? "bg-[#1F8FE0]" : "bg-gray-300"}`}
+                            onClick={() => setCreateOrderScheduleEnabled((value) => !value)}
+                          >
+                            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${createOrderScheduleEnabled ? "left-5" : "left-0.5"}`} />
+                          </button>
+                        </div>
+                        {createOrderScheduleEnabled && (
+                          <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem] gap-3">
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-semibold text-gray-700">Scheduled date</span>
+                              <input
+                                type="date"
+                                value={orderScheduleDate}
+                                onChange={(e) => setOrderScheduleDate(e.target.value)}
+                                className="px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                              <span className="text-xs font-semibold text-gray-700">Time</span>
+                              <input
+                                type="time"
+                                value={orderScheduleTime}
+                                onChange={(e) => setOrderScheduleTime(e.target.value)}
+                                className="px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+
                     {/* Order summary */}
                     <section className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-2">
                       <div className="flex items-center justify-between text-sm">
@@ -26875,6 +27556,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    })}
 	                  </div>
                     <div className="flex items-center gap-2 flex-wrap">
+	                  <button
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0"
+                        onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}
+                      >
+                        <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(selectedOrder) ? "Reschedule" : "Schedule Delivery"}
+                      </button>
 	                  {selectedOrder.status === "Delivered" && (
                         <button
                           className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-600 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
@@ -26980,6 +27667,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <div>
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Order Date</p>
 	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{formatOrderCreatedAt(selectedOrder)}</p>
+	                    </div>
+	                    <div>
+	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Scheduled Delivery</p>
+	                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+	                        <p className={`text-sm font-semibold m-0 ${scheduledMomentForOrder(selectedOrder) ? "text-gray-900" : "text-gray-500 italic"}`}>{scheduleSummaryForOrder(selectedOrder)}</p>
+	                        <button
+	                          type="button"
+	                          className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
+	                          onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}
+	                        >
+	                          {scheduledMomentForOrder(selectedOrder) ? "Edit" : "Add"}
+	                        </button>
+	                      </div>
 	                    </div>
                       {selectedOrder.status === "Delivered" && (
                         <div>
@@ -27449,6 +28149,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                </section>
 
 	                <section className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-gray-100">
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors" onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}>
+                      <CalendarDays className="w-4 h-4" /> Reschedule
+                    </button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Postponed")}>Postpone Order</button>
 	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Cancelled")}>Cancel Order</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Confirmed")}>Confirm Order</button>
@@ -27459,12 +28162,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            {modal === "changeOrderStatus" && selectedOrder && (
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
-	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as Exclude<OrderStatus, "All Orders">)}>{repChangeStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as OrderStatusAction)}>{statusChangeActions.map((status) => <option key={status}>{status}</option>)}</select></label>
                   {statusChangeDraft === "Delivered" && (
                     <label>
                       <span>{selectedOrder.status === "Delivered" ? "Recorded Delivery Date" : "Actual Delivery Date"}</span>
                       <input type="date" value={deliveryDateDraft} onChange={(event) => setDeliveryDateDraft(event.target.value)} />
                     </label>
+                  )}
+                  {statusChangeDraft === "Reschedule" && (
+                    <div className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900 m-0">Reschedule delivery</p>
+                        <p className="text-xs text-gray-500 m-0 mt-1">Current slot: <strong className="text-gray-700">{scheduleSummaryForOrder(selectedOrder)}</strong></p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label>
+                          <span>New Date</span>
+                          <input type="date" value={orderScheduleDate} onChange={(event) => setOrderScheduleDate(event.target.value)} />
+                        </label>
+                        <label>
+                          <span>New Time</span>
+                          <input type="time" value={orderScheduleTime} onChange={(event) => setOrderScheduleTime(event.target.value)} />
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {scheduleRanges.map((range) => (
+                          <button
+                            key={range}
+                            type="button"
+                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${orderScheduleDate === scheduleDateForRange(range) ? "border-blue-200 bg-blue-100 text-[#1F8FE0]" : "border-blue-100 bg-white text-blue-700 hover:bg-blue-100"}`}
+                            onClick={() => setOrderScheduleDate(scheduleDateForRange(range))}
+                          >
+                            {range}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
 	                <div>
 	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{repCallOutcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
@@ -27490,8 +28223,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
 	                  )}
 	                </div>
-	                <label><span>Reason for Status Change *</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder="Customer confirmed after call, no answer, requested later delivery..." /></label>
-	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>Change Status</button></div>
+	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>{statusChangeDraft === "Reschedule" ? "Save Schedule" : "Change Status"}</button></div>
 	              </div>
 	            )}
 
@@ -27541,8 +28274,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
 	                  </label>
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
-	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agent.name} · {agent.zone}{stockTag}</option>; })}</select></label>
+	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agentOptionLabel(agent, createOrderState, createOrderCity)}{stockTag}</option>; })}</select></label>
 	                </div>
+                  <div className="space-y-3 border border-gray-200 rounded-lg p-3 bg-gray-50/80">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="block text-sm font-semibold text-gray-900">Schedule delivery</span>
+                        <span className="block text-[11px] text-gray-500 mt-0.5">Optional. Save the promised delivery slot directly on the order.</span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={createOrderScheduleEnabled}
+                        className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 mt-0.5 ${createOrderScheduleEnabled ? "bg-[#1F8FE0]" : "bg-gray-300"}`}
+                        onClick={() => setCreateOrderScheduleEnabled((value) => !value)}
+                      >
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${createOrderScheduleEnabled ? "left-5" : "left-0.5"}`} />
+                      </button>
+                    </div>
+                    {createOrderScheduleEnabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label><span>Scheduled Date</span><input type="date" value={orderScheduleDate} onChange={(event) => setOrderScheduleDate(event.target.value)} /></label>
+                        <label><span>Scheduled Time</span><input type="time" value={orderScheduleTime} onChange={(event) => setOrderScheduleTime(event.target.value)} /></label>
+                      </div>
+                    )}
+                  </div>
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderDetail(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	            )}

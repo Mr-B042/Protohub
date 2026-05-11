@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { notifyWaybillEvent } from "../lib/waybill-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -65,6 +66,10 @@ const WaybillSchema = z.object({
   carrier:        z.string().optional(),
   trackingNumber: z.string().optional(),
   agentId:        z.string().uuid().optional(),
+  fromAgentId:    z.string().uuid().optional(),
+  toAgentId:      z.string().uuid().optional(),
+  fromAgentLocationId: z.string().uuid().optional(),
+  toAgentLocationId: z.string().uuid().optional(),
   notes:          z.string().optional(),
   dispatchedDate: z.string().optional()
 });
@@ -78,13 +83,86 @@ router.post("/",
       return;
     }
     const d = parsed.data;
+    const toAgentId = d.toAgentId ?? d.agentId ?? null;
+    const fromAgentId = d.fromAgentId ?? null;
+
+    if (d.fromAgentLocationId) {
+      const { data: locationCheck } = await supabase
+        .from("agent_locations")
+        .select("id, agent_id")
+        .eq("id", d.fromAgentLocationId)
+        .eq("org_id", req.user!.orgId)
+        .single();
+      if (!locationCheck || (fromAgentId && locationCheck.agent_id !== fromAgentId)) {
+        res.status(400).json({ error: "Sending agent location not found." });
+        return;
+      }
+    }
+    if (d.toAgentLocationId) {
+      const { data: locationCheck } = await supabase
+        .from("agent_locations")
+        .select("id, agent_id")
+        .eq("id", d.toAgentLocationId)
+        .eq("org_id", req.user!.orgId)
+        .single();
+      if (!locationCheck || (toAgentId && locationCheck.agent_id !== toAgentId)) {
+        res.status(400).json({ error: "Receiving agent location not found." });
+        return;
+      }
+    }
+
+    let sourceBalanceAfter = 0;
+    if (d.productId) {
+      if (d.fromAgentLocationId) {
+        const { data: locationStock } = await supabase
+          .from("agent_location_stock")
+          .select("quantity")
+          .eq("agent_location_id", d.fromAgentLocationId)
+          .eq("product_id", d.productId)
+          .single();
+        const available = locationStock?.quantity ?? 0;
+        if (available < d.quantity) {
+          res.status(400).json({ error: `Sending hub only has ${available} unit${available === 1 ? "" : "s"} available.` });
+          return;
+        }
+        sourceBalanceAfter = Math.max(0, available - d.quantity);
+        const { error: stockError } = await supabase
+          .from("agent_location_stock")
+          .update({ quantity: sourceBalanceAfter })
+          .eq("agent_location_id", d.fromAgentLocationId)
+          .eq("product_id", d.productId);
+        if (stockError) { res.status(500).json({ error: stockError.message }); return; }
+        if (fromAgentId) await syncAgentStockAggregate(req.user!.orgId, fromAgentId, d.productId);
+
+        const { data: product } = await supabase
+          .from("products").select("agent_stock").eq("id", d.productId).single();
+        if (product) {
+          await supabase.from("products").update({
+            agent_stock: Math.max(0, Number(product.agent_stock ?? 0) - d.quantity)
+          }).eq("id", d.productId);
+        }
+      } else {
+        const { data: product } = await supabase
+          .from("products").select("warehouse_stock").eq("id", d.productId).single();
+        const available = product?.warehouse_stock ?? 0;
+        if (available < d.quantity) {
+          res.status(400).json({ error: `Warehouse only has ${available} unit${available === 1 ? "" : "s"} available.` });
+          return;
+        }
+        sourceBalanceAfter = Math.max(0, available - d.quantity);
+        await supabase.from("products").update({ warehouse_stock: sourceBalanceAfter }).eq("id", d.productId);
+      }
+    }
+
     const { data, error } = await supabase
       .from("waybill_records")
       .insert({
         id: d.id, org_id: req.user!.orgId, product_id: d.productId,
         product_name: d.productName, quantity: d.quantity, waybill_fee: d.waybillFee,
         from_location: d.fromLocation, to_location: d.toLocation, carrier: d.carrier,
-        tracking_number: d.trackingNumber, agent_id: d.agentId, notes: d.notes,
+        tracking_number: d.trackingNumber, agent_id: toAgentId, from_agent_id: fromAgentId,
+        to_agent_id: toAgentId, from_agent_location_id: d.fromAgentLocationId ?? null,
+        to_agent_location_id: d.toAgentLocationId ?? null, notes: d.notes,
         dispatched_date: d.dispatchedDate, status: "In Transit"
       })
       .select().single();
@@ -101,9 +179,6 @@ router.post("/",
 
     // Auto-log "Waybill Out" stock movement
     if (d.productId) {
-      const { data: product } = await supabase
-        .from("products").select("warehouse_stock").eq("id", d.productId).single();
-      const balanceAfter = Math.max(0, (product?.warehouse_stock ?? 0) - d.quantity);
       await supabase.from("stock_movements").insert({
         id:            `MOV-${randomUUID()}`,
         org_id:        req.user!.orgId,
@@ -111,11 +186,13 @@ router.post("/",
         product_name:  d.productName,
         type:          "Waybill Out",
         qty:           d.quantity,
-        balance_after: balanceAfter,
-        agent_id:      d.agentId ?? null,
+        balance_after: sourceBalanceAfter,
+        agent_id:      toAgentId ?? fromAgentId ?? null,
         by_name:       req.user!.name,
         by_user_id:    req.user!.id,
         waybill_id:    d.id,
+        from_agent_location_id: d.fromAgentLocationId ?? null,
+        to_agent_location_id: d.toAgentLocationId ?? null,
         from_location: d.fromLocation ?? null,
         to_location:   d.toLocation ?? null,
         note:          `Waybill ${d.id} dispatched${d.carrier ? ` via ${d.carrier}` : ""}`
@@ -142,6 +219,10 @@ const WaybillPatchSchema = z.object({
   to_location:     z.string().max(120).optional(),
   from_location:   z.string().max(120).optional(),
   agent_id:        z.string().uuid().nullable().optional(),
+  from_agent_id:   z.string().uuid().nullable().optional(),
+  to_agent_id:     z.string().uuid().nullable().optional(),
+  from_agent_location_id: z.string().uuid().nullable().optional(),
+  to_agent_location_id: z.string().uuid().nullable().optional(),
   dispatched_date: z.string().optional(),
   notes:           z.string().max(500).nullable().optional(),
   tracking_number: z.string().max(120).optional()
@@ -220,17 +301,72 @@ router.patch("/:id/status",
     if (error) { res.status(500).json({ error: error.message }); return; }
 
     // Auto-log stock movement for terminal statuses
-    if (data && data.product_id && ["Received", "Returned", "Defective", "Missing"].includes(status)) {
+    if (data && data.product_id && ["Received", "Returned", "Cancelled", "Defective", "Missing"].includes(status)) {
       const movType = status === "Received" ? "Waybill In"
-        : status === "Returned" ? "Waybill In"
+        : status === "Returned" || status === "Cancelled" ? "Waybill In"
         : "Correction";
       const { data: product } = await supabase
-        .from("products").select("warehouse_stock").eq("id", data.product_id).single();
+        .from("products").select("warehouse_stock, agent_stock").eq("id", data.product_id).single();
+      let balanceAfter = 0;
       // "In" movements add stock back; "Correction" (Defective/Missing) removes it.
       const isInbound = movType === "Waybill In";
-      const balanceAfter = isInbound
-        ? (product?.warehouse_stock ?? 0) + data.quantity
-        : Math.max(0, (product?.warehouse_stock ?? 0) - data.quantity);
+      if (status === "Received") {
+        if (data.to_agent_location_id && data.to_agent_id) {
+          const { data: destStock } = await supabase
+            .from("agent_location_stock")
+            .select("quantity")
+            .eq("agent_location_id", data.to_agent_location_id)
+            .eq("product_id", data.product_id)
+            .single();
+          balanceAfter = (destStock?.quantity ?? 0) + data.quantity;
+          await supabase.from("agent_location_stock").upsert({
+            org_id: req.user!.orgId,
+            agent_id: data.to_agent_id,
+            agent_location_id: data.to_agent_location_id,
+            product_id: data.product_id,
+            quantity: balanceAfter
+          });
+          await syncAgentStockAggregate(req.user!.orgId, data.to_agent_id, data.product_id);
+          if (product) {
+            await supabase.from("products").update({
+              agent_stock: Number(product.agent_stock ?? 0) + data.quantity
+            }).eq("id", data.product_id);
+          }
+        } else {
+          balanceAfter = (product?.warehouse_stock ?? 0) + data.quantity;
+          await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", data.product_id);
+        }
+      } else if (status === "Cancelled") {
+        if (data.from_agent_location_id && data.from_agent_id) {
+          const { data: sourceStock } = await supabase
+            .from("agent_location_stock")
+            .select("quantity")
+            .eq("agent_location_id", data.from_agent_location_id)
+            .eq("product_id", data.product_id)
+            .single();
+          balanceAfter = (sourceStock?.quantity ?? 0) + data.quantity;
+          await supabase.from("agent_location_stock").upsert({
+            org_id: req.user!.orgId,
+            agent_id: data.from_agent_id,
+            agent_location_id: data.from_agent_location_id,
+            product_id: data.product_id,
+            quantity: balanceAfter
+          });
+          await syncAgentStockAggregate(req.user!.orgId, data.from_agent_id, data.product_id);
+          if (product) {
+            await supabase.from("products").update({
+              agent_stock: Number(product.agent_stock ?? 0) + data.quantity
+            }).eq("id", data.product_id);
+          }
+        } else {
+          balanceAfter = (product?.warehouse_stock ?? 0) + data.quantity;
+          await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", data.product_id);
+        }
+      } else {
+        balanceAfter = isInbound
+          ? (product?.warehouse_stock ?? 0) + data.quantity
+          : Math.max(0, (product?.warehouse_stock ?? 0) - data.quantity);
+      }
       await supabase.from("stock_movements").insert({
         id:            `MOV-${randomUUID()}`,
         org_id:        req.user!.orgId,
@@ -239,10 +375,12 @@ router.patch("/:id/status",
         type:          movType,
         qty:           data.quantity,
         balance_after: balanceAfter,
-        agent_id:      data.agent_id ?? null,
+        agent_id:      data.to_agent_id ?? data.from_agent_id ?? data.agent_id ?? null,
         by_name:       req.user!.name,
         by_user_id:    req.user!.id,
         waybill_id:    data.id,
+        from_agent_location_id: data.from_agent_location_id ?? null,
+        to_agent_location_id: data.to_agent_location_id ?? null,
         from_location: data.from_location ?? null,
         to_location:   data.to_location ?? null,
         note:          `Waybill ${data.id} marked ${status}${notes ? ` — ${notes}` : ""}`

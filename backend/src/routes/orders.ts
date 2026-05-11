@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
+import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
@@ -140,6 +142,8 @@ const OrderSchema = z.object({
   sourceCartId:   z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric (hyphens and underscores allowed)").optional(),
   location:       z.string().optional(),
   assignedRepId:  z.string().uuid().optional(),
+  agentId:        z.string().uuid().optional().nullable(),
+  agentLocationId:z.string().uuid().optional().nullable(),
   utmSource:      z.string().optional(),
   utmCampaign:    z.string().optional(),
   utmMedium:      z.string().optional(),
@@ -204,6 +208,56 @@ router.post("/", async (req, res) => {
     }
   }
 
+  if (d.agentId) {
+    const { data: agentCheck } = await supabase
+      .from("agents").select("id").eq("id", d.agentId).eq("org_id", req.user!.orgId).single();
+    if (!agentCheck) {
+      res.status(400).json({ error: "Agent not found in your organization." });
+      return;
+    }
+  }
+
+  if (d.agentLocationId) {
+    if (!d.agentId) {
+      res.status(400).json({ error: "Choose an agent before assigning a stock location." });
+      return;
+    }
+    const { data: locationCheck } = await supabase
+      .from("agent_locations")
+      .select("id")
+      .eq("id", d.agentLocationId)
+      .eq("agent_id", d.agentId)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (!locationCheck) {
+      res.status(400).json({ error: "Agent location not found in your organization." });
+      return;
+    }
+  }
+
+  const agentSnapshot = d.agentId
+    ? await buildAgentAssignmentSnapshot(req.user!.orgId, d.agentId, { state: d.state, city: d.city })
+    : {
+        agent_name_snapshot: null,
+        agent_phone_snapshot: null,
+        agent_base_state_snapshot: null,
+        agent_coverage_state_snapshot: null,
+        agent_coverage_city_snapshot: null
+      };
+  const agentLocationSnapshot = d.agentId
+    ? await buildAgentLocationSnapshot(req.user!.orgId, d.agentId, {
+        desiredState: d.state,
+        desiredCity: d.city,
+        productId: d.productId,
+        explicitLocationId: d.agentLocationId ?? null
+      })
+    : {
+        agent_location_id: null,
+        agent_location_name_snapshot: null,
+        agent_location_state_snapshot: null,
+        agent_location_city_snapshot: null
+      };
+
   const timelineNotes = d.timelineNotes ?? d.notes ?? [];
   const legacyNotes = serializePlannedOrderMetadata(null, {
     scheduledAt: d.scheduledAt ?? null,
@@ -232,6 +286,9 @@ router.post("/", async (req, res) => {
     source_cart_id:  d.sourceCartId ?? null,
     location:        d.location,
     assigned_rep_id: d.assignedRepId ?? req.user!.id,
+    agent_id:        d.agentId ?? null,
+    ...agentSnapshot,
+    ...agentLocationSnapshot,
     utm_source:      d.utmSource,
     utm_campaign:    d.utmCampaign,
     utm_medium:      d.utmMedium,
@@ -260,7 +317,7 @@ router.post("/", async (req, res) => {
   if (error && isMissingPlannedColumnsError(error)) {
     ({ data, error } = await supabase
       .from("orders")
-      .insert(baseInsert)
+      .insert(baseInsert as Record<string, unknown>)
       .select()
       .single());
   }
@@ -334,7 +391,8 @@ const StatusSchema = z.object({
   callOutcome: z.string().optional(),
   response:    z.string().optional(),
   deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  agentId:     z.string().uuid().optional().nullable()
+  agentId:     z.string().uuid().optional().nullable(),
+  agentLocationId: z.string().uuid().optional().nullable()
 });
 
 router.patch("/:id/status", async (req, res) => {
@@ -343,12 +401,12 @@ router.patch("/:id/status", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { status, callOutcome, response, deliveredDate, agentId } = parsed.data;
+  const { status, callOutcome, response, deliveredDate, agentId, agentLocationId } = parsed.data;
 
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date")
+    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -378,19 +436,52 @@ router.patch("/:id/status", async (req, res) => {
       return;
     }
   }
+  if (agentLocationId) {
+    const owningAgentId = agentId ?? existing?.agent_id;
+    if (!owningAgentId) {
+      res.status(400).json({ error: "Choose an agent before assigning a stock location." });
+      return;
+    }
+    const { data: locationCheck } = await supabase
+      .from("agent_locations").select("id")
+      .eq("id", agentLocationId)
+      .eq("agent_id", owningAgentId)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (!locationCheck) {
+      res.status(400).json({ error: "Agent location not found in your organization." });
+      return;
+    }
+  }
 
   // Resolve the effective agent (request may override)
   const effectiveAgentId = agentId !== undefined ? agentId : existing?.agent_id;
+  const effectiveAgentLocationId = agentLocationId !== undefined ? agentLocationId : existing?.agent_location_id;
   const orderQty = existing?.quantity ?? 1;
 
   // Pre-check: if marking Delivered and an agent is assigned, verify stock
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
-    const { data: agentStockRow } = await supabase
-      .from("agent_stock")
-      .select("quantity")
-      .eq("agent_id", effectiveAgentId)
-      .eq("product_id", existing.product_id)
-      .single();
+    const resolvedLocation = effectiveAgentLocationId
+      ? { id: effectiveAgentLocationId }
+      : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id
+        });
+
+    const { data: agentStockRow } = resolvedLocation?.id
+      ? await supabase
+          .from("agent_location_stock")
+          .select("quantity")
+          .eq("agent_location_id", resolvedLocation.id)
+          .eq("product_id", existing.product_id)
+          .single()
+      : await supabase
+          .from("agent_stock")
+          .select("quantity")
+          .eq("agent_id", effectiveAgentId)
+          .eq("product_id", existing.product_id)
+          .single();
 
     const available = agentStockRow?.quantity ?? 0;
     if (available < orderQty) {
@@ -399,7 +490,7 @@ router.patch("/:id/status", async (req, res) => {
         .from("agents").select("name").eq("id", effectiveAgentId).single();
       const agentName = agentRow?.name ?? effectiveAgentId;
       res.status(400).json({
-        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${existing.product_name}.`
+        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${existing.product_name} in the selected stock location.`
       });
       return;
     }
@@ -409,6 +500,37 @@ router.patch("/:id/status", async (req, res) => {
   if (callOutcome)  updates.call_outcome    = callOutcome;
   if (response)     updates.response        = response;
   if (agentId !== undefined) updates.agent_id = agentId;
+  if (agentLocationId !== undefined) updates.agent_location_id = agentLocationId;
+  if (effectiveAgentId) {
+    Object.assign(
+      updates,
+      await buildAgentAssignmentSnapshot(req.user!.orgId, effectiveAgentId, {
+        state: existing.state,
+        city: existing.city
+      })
+    );
+    Object.assign(
+      updates,
+      await buildAgentLocationSnapshot(req.user!.orgId, effectiveAgentId, {
+        desiredState: existing.state,
+        desiredCity: existing.city,
+        productId: existing.product_id,
+        explicitLocationId: effectiveAgentLocationId
+      })
+    );
+  } else if (agentId !== undefined) {
+    updates.agent_name_snapshot = null;
+    updates.agent_phone_snapshot = null;
+    updates.agent_base_state_snapshot = null;
+    updates.agent_coverage_state_snapshot = null;
+    updates.agent_coverage_city_snapshot = null;
+    updates.agent_location_id = null;
+    updates.agent_location_name_snapshot = null;
+    updates.agent_location_state_snapshot = null;
+    updates.agent_location_city_snapshot = null;
+  }
+
+  const watDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().split("T")[0];
 
   if (status === "Delivered") {
     if (deliveredDate) {
@@ -447,25 +569,46 @@ router.patch("/:id/status", async (req, res) => {
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
     const today = new Date().toISOString().split("T")[0];
+    const resolvedLocation = effectiveAgentLocationId
+      ? await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id,
+          explicitLocationId: effectiveAgentLocationId
+        })
+      : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id
+        });
 
-    // 1. Deduct agent stock
+    if (!resolvedLocation) {
+      res.status(400).json({ error: "No stock location is configured for this agent yet." });
+      return;
+    }
+
+    // 1. Deduct stock from the resolved agent location and sync the aggregate
     const { data: currentStock } = await supabase
-      .from("agent_stock")
+      .from("agent_location_stock")
       .select("quantity")
-      .eq("agent_id", effectiveAgentId)
+      .eq("agent_location_id", resolvedLocation.id)
       .eq("product_id", existing.product_id)
       .single();
-    const newAgentQty = Math.max(0, (currentStock?.quantity ?? 0) - orderQty);
-    await supabase.from("agent_stock")
-      .update({ quantity: newAgentQty })
-      .eq("agent_id", effectiveAgentId)
+    const newLocationQty = Math.max(0, (currentStock?.quantity ?? 0) - orderQty);
+    await supabase.from("agent_location_stock")
+      .update({ quantity: newLocationQty })
+      .eq("agent_location_id", resolvedLocation.id)
       .eq("product_id", existing.product_id);
+    await syncAgentStockAggregate(req.user!.orgId, effectiveAgentId, existing.product_id);
 
-    // Fetch agent name/zone for waybill
-    const { data: agentInfo } = await supabase
-      .from("agents").select("name, zone").eq("id", effectiveAgentId).single();
-    const agentName = agentInfo?.name ?? "Agent";
-    const agentZone = agentInfo?.zone ?? "";
+    const agentName = data.agent_name_snapshot ?? existing.agent_name_snapshot ?? "Agent";
+    const agentBaseState = data.agent_base_state_snapshot ?? existing.agent_base_state_snapshot ?? "";
+    const agentCoverageState = data.agent_coverage_state_snapshot ?? existing.agent_coverage_state_snapshot ?? "";
+    const agentLocationName = data.agent_location_name_snapshot ?? existing.agent_location_name_snapshot ?? resolvedLocation.name ?? "";
+    const originState = agentBaseState || agentCoverageState;
+    const serviceStateNote = agentCoverageState && agentCoverageState !== agentBaseState
+      ? ` · serving ${agentCoverageState}`
+      : "";
 
     // 2. Create waybill record (agent → customer)
     const waybillId = `WB-${Date.now()}`;
@@ -477,9 +620,11 @@ router.patch("/:id/status", async (req, res) => {
       product_name:    existing.product_name,
       quantity:        orderQty,
       waybill_fee:     0,
-      from_location:   agentZone,
+      from_location:   agentLocationName || originState,
       to_location:     `Customer:${req.params.id}`,
       agent_id:        effectiveAgentId,
+      from_agent_id:   effectiveAgentId,
+      from_agent_location_id: resolvedLocation.id,
       status:          "Received",
       dispatched_date: today,
       received_date:   today,
@@ -494,45 +639,69 @@ router.patch("/:id/status", async (req, res) => {
       product_name:  existing.product_name,
       type:          "Order Fulfilled",
       qty:           orderQty,
-      balance_after: newAgentQty,
+      balance_after: newLocationQty,
       agent_id:      effectiveAgentId,
       order_id:      req.params.id,
       by_name:       req.user!.name,
       by_user_id:    req.user!.id,
       waybill_id:    waybillId,
-      from_location: agentZone,
+      from_location: agentLocationName || originState,
       to_location:   customerLocation,
-      note:          `Delivered to ${existing.customer} — agent ${agentName} stock ${(currentStock?.quantity ?? 0)} → ${newAgentQty}`
+      from_agent_location_id: resolvedLocation.id,
+      note:          `Delivered to ${existing.customer} — agent ${agentName}${serviceStateNote} from ${agentLocationName || originState} stock ${(currentStock?.quantity ?? 0)} → ${newLocationQty}`
     });
   }
 
   // ── Un-delivery side-effects: restore agent stock, delete waybill, log reversal ──
   if (existing?.status === "Delivered" && status !== "Delivered" && existing?.stock_deducted && existing?.agent_id && existing?.product_id) {
     const orderQty = existing.quantity ?? 1;
-    const { data: currentStock } = await supabase
-      .from("agent_stock").select("quantity")
-      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id).single();
-    const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
-    await supabase.from("agent_stock")
-      .update({ quantity: restoredQty })
-      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id);
+    const reversalLocation = existing.agent_location_id
+      ? await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id,
+          explicitLocationId: existing.agent_location_id
+        })
+      : await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id
+        });
 
-    const { data: agentInfo } = await supabase
-      .from("agents").select("name").eq("id", existing.agent_id).single();
-    await supabase.from("stock_movements").insert({
-      id:            `MOV-${randomUUID()}`,
-      org_id:        req.user!.orgId,
-      product_id:    existing.product_id,
-      product_name:  existing.product_name,
-      type:          "Status Reversal",
-      qty:           orderQty,
-      balance_after: restoredQty,
-      agent_id:      existing.agent_id,
-      order_id:      req.params.id,
-      by_name:       req.user!.name,
-      by_user_id:    req.user!.id,
-      note:          `Delivery reversed — order ${req.params.id} changed to ${status} (agent ${agentInfo?.name ?? existing.agent_id} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
-    });
+    if (reversalLocation) {
+      const { data: currentStock } = await supabase
+        .from("agent_location_stock").select("quantity")
+        .eq("agent_location_id", reversalLocation.id).eq("product_id", existing.product_id).single();
+      const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
+      await supabase.from("agent_location_stock")
+        .upsert({
+          org_id: req.user!.orgId,
+          agent_id: existing.agent_id,
+          agent_location_id: reversalLocation.id,
+          product_id: existing.product_id,
+          quantity: restoredQty
+        });
+      await syncAgentStockAggregate(req.user!.orgId, existing.agent_id, existing.product_id);
+
+      const { data: agentInfo } = await supabase
+        .from("agents").select("name").eq("id", existing.agent_id).single();
+      await supabase.from("stock_movements").insert({
+        id:            `MOV-${randomUUID()}`,
+        org_id:        req.user!.orgId,
+        product_id:    existing.product_id,
+        product_name:  existing.product_name,
+        type:          "Status Reversal",
+        qty:           orderQty,
+        balance_after: restoredQty,
+        agent_id:      existing.agent_id,
+        order_id:      req.params.id,
+        by_name:       req.user!.name,
+        by_user_id:    req.user!.id,
+        to_agent_location_id: reversalLocation.id,
+        to_location:   reversalLocation.name,
+        note:          `Delivery reversed — order ${req.params.id} changed to ${status} (agent ${agentInfo?.name ?? existing.agent_id} at ${reversalLocation.name} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
+      });
+    }
 
     await supabase.from("waybill_records")
       .delete()
@@ -628,7 +797,11 @@ const MANUAL_BONUS_FIELDS = new Set([
 
 router.patch("/:id", async (req, res) => {
   const { data: current } = await supabase
-    .from("orders").select("status, notes").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+    .from("orders")
+    .select("status, notes, city, state, agent_id, agent_location_id, product_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
   if (!current) { res.status(404).json({ error: "Order not found." }); return; }
 
   const isTerminal = current.status === "Delivered" || current.status === "Cancelled";
@@ -678,6 +851,7 @@ router.patch("/:id", async (req, res) => {
     notes:                     ["notes"],
     assigned_rep_id:           ["assigned_rep_id", "assignedRepId"],
     agent_id:                  ["agent_id", "agentId"],
+    agent_location_id:         ["agent_location_id", "agentLocationId"],
     call_outcome:              ["call_outcome", "callOutcome"],
     delivered_date:            ["delivered_date", "deliveredDate"],
     scheduled_date:            ["scheduled_date", "scheduledDate"],
@@ -723,6 +897,20 @@ router.patch("/:id", async (req, res) => {
     const { data: agentCheck } = await supabase.from("agents").select("id").eq("id", updates.agent_id).eq("org_id", req.user!.orgId).single();
     if (!agentCheck) { res.status(400).json({ error: "Agent not found in your organization." }); return; }
   }
+  if (updates.agent_location_id) {
+    const owningAgentId = updates.agent_id === undefined ? current.agent_id : updates.agent_id;
+    if (!owningAgentId) {
+      res.status(400).json({ error: "Choose an agent before assigning a stock location." });
+      return;
+    }
+    const { data: locationCheck } = await supabase
+      .from("agent_locations").select("id")
+      .eq("id", updates.agent_location_id)
+      .eq("agent_id", owningAgentId)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (!locationCheck) { res.status(400).json({ error: "Agent location not found in your organization." }); return; }
+  }
   if (updates.assigned_rep_id) {
     const { data: repCheck } = await supabase.from("users").select("id").eq("id", updates.assigned_rep_id).eq("org_id", req.user!.orgId).single();
     if (!repCheck) { res.status(400).json({ error: "Rep not found in your organization." }); return; }
@@ -730,6 +918,39 @@ router.patch("/:id", async (req, res) => {
   if (updates.product_id) {
     const { data: productCheck } = await supabase.from("products").select("id").eq("id", updates.product_id).eq("org_id", req.user!.orgId).single();
     if (!productCheck) { res.status(400).json({ error: "Product not found in your organization." }); return; }
+  }
+  if (updates.agent_id !== undefined || updates.agent_location_id !== undefined || updates.city !== undefined || updates.state !== undefined || updates.product_id !== undefined) {
+    const effectiveAgentId = updates.agent_id === undefined
+      ? current.agent_id
+      : (updates.agent_id ? String(updates.agent_id) : null);
+    if (effectiveAgentId) {
+      Object.assign(
+        updates,
+        await buildAgentAssignmentSnapshot(req.user!.orgId, effectiveAgentId, {
+          state: (updates.state as string | undefined) ?? current.state ?? undefined,
+          city: (updates.city as string | undefined) ?? current.city ?? undefined
+        })
+      );
+      Object.assign(
+        updates,
+        await buildAgentLocationSnapshot(req.user!.orgId, effectiveAgentId, {
+          desiredState: (updates.state as string | undefined) ?? current.state ?? undefined,
+          desiredCity: (updates.city as string | undefined) ?? current.city ?? undefined,
+          productId: (updates.product_id as string | undefined) ?? current.product_id ?? undefined,
+          explicitLocationId: (updates.agent_location_id as string | null | undefined) ?? current.agent_location_id ?? undefined
+        })
+      );
+    } else {
+      updates.agent_name_snapshot = null;
+      updates.agent_phone_snapshot = null;
+      updates.agent_base_state_snapshot = null;
+      updates.agent_coverage_state_snapshot = null;
+      updates.agent_coverage_city_snapshot = null;
+      updates.agent_location_id = null;
+      updates.agent_location_name_snapshot = null;
+      updates.agent_location_state_snapshot = null;
+      updates.agent_location_city_snapshot = null;
+    }
   }
 
   let { data, error } = await supabase
@@ -772,7 +993,7 @@ router.patch("/:id", async (req, res) => {
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   // Fetch before deleting so we can log context and reverse side-effects
   const { data: existing } = await supabase
-    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, quantity, stock_deducted")
+    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city")
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
@@ -781,32 +1002,53 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   if (existing.status === "Delivered" && existing.stock_deducted && existing.agent_id && existing.product_id) {
     const orderQty = existing.quantity ?? 1;
 
-    // Restore agent stock
-    const { data: currentStock } = await supabase
-      .from("agent_stock").select("quantity")
-      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id).single();
-    const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
-    await supabase.from("agent_stock")
-      .update({ quantity: restoredQty })
-      .eq("agent_id", existing.agent_id).eq("product_id", existing.product_id);
+    const reversalLocation = existing.agent_location_id
+      ? await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id,
+          explicitLocationId: existing.agent_location_id
+        })
+      : await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
+          desiredState: existing.state,
+          desiredCity: existing.city,
+          productId: existing.product_id
+        });
 
-    // Log reversal stock movement
-    const { data: agentInfo } = await supabase
-      .from("agents").select("name").eq("id", existing.agent_id).single();
-    await supabase.from("stock_movements").insert({
-      id:            `MOV-${randomUUID()}`,
-      org_id:        req.user!.orgId,
-      product_id:    existing.product_id,
-      product_name:  existing.product_name,
-      type:          "Delete Reversal",
-      qty:           orderQty,
-      balance_after: restoredQty,
-      agent_id:      existing.agent_id,
-      order_id:      req.params.id,
-      by_name:       req.user!.name,
-      by_user_id:    req.user!.id,
-      note:          `Stock restored — order ${req.params.id} deleted (agent ${agentInfo?.name ?? existing.agent_id} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
-    });
+    if (reversalLocation) {
+      const { data: currentStock } = await supabase
+        .from("agent_location_stock").select("quantity")
+        .eq("agent_location_id", reversalLocation.id).eq("product_id", existing.product_id).single();
+      const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
+      await supabase.from("agent_location_stock")
+        .upsert({
+          org_id: req.user!.orgId,
+          agent_id: existing.agent_id,
+          agent_location_id: reversalLocation.id,
+          product_id: existing.product_id,
+          quantity: restoredQty
+        });
+      await syncAgentStockAggregate(req.user!.orgId, existing.agent_id, existing.product_id);
+
+      const { data: agentInfo } = await supabase
+        .from("agents").select("name").eq("id", existing.agent_id).single();
+      await supabase.from("stock_movements").insert({
+        id:            `MOV-${randomUUID()}`,
+        org_id:        req.user!.orgId,
+        product_id:    existing.product_id,
+        product_name:  existing.product_name,
+        type:          "Delete Reversal",
+        qty:           orderQty,
+        balance_after: restoredQty,
+        agent_id:      existing.agent_id,
+        order_id:      req.params.id,
+        by_name:       req.user!.name,
+        by_user_id:    req.user!.id,
+        to_agent_location_id: reversalLocation.id,
+        to_location:   reversalLocation.name,
+        note:          `Stock restored — order ${req.params.id} deleted (agent ${agentInfo?.name ?? existing.agent_id} at ${reversalLocation.name} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
+      });
+    }
 
     // Remove the auto-created waybill for this order
     await supabase.from("waybill_records")
