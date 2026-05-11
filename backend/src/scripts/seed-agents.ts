@@ -6,7 +6,7 @@
  *
  * Idempotent: uses upsert with ignoreDuplicates on (org_id, name).
  */
-import "dotenv/config";
+import "../lib/load-env.js";
 import { supabase } from "../lib/supabase.js";
 
 const ORG_ID = process.env.ORG_ID;

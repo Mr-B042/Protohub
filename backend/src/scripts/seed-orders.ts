@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../lib/load-env.js";
 import { sendInternalNewOrderEmail, sendNewOrderEmail, sendOrderAssignedEmail } from "../lib/mailer.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { supabase } from "../lib/supabase.js";
