@@ -781,12 +781,15 @@ router.get("/:id/audit", async (req, res) => {
 // Fields that may be written even after an order is Delivered/Cancelled.
 // Everything else is locked on terminal orders.
 const POST_TERMINAL_FIELDS = new Set([
+  "response",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
   "call_outcome", "callOutcome",
   "delivered_date", "deliveredDate",
+  "notes",
+  "timeline_notes", "timelineNotes",
 ]);
 
 const MANUAL_BONUS_FIELDS = new Set([
