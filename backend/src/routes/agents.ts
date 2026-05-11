@@ -269,7 +269,10 @@ router.post("/:id/stock",
       return;
     }
 
-    const locations = await loadAgentLocations(orgId, agentId);
+    let locations = await loadAgentLocations(orgId, agentId);
+    if (locations.length === 0) {
+      locations = await syncAgentLocationsFromCoverage(orgId, agentId);
+    }
     const targetLocation = (parsed.data.locationId
       ? locations.find((location) => location.id === parsed.data.locationId)
       : undefined) ?? locations.find((location) => location.is_primary) ?? locations[0];
@@ -371,7 +374,10 @@ router.post("/:id/reconcile",
       return;
     }
 
-    const locations = await loadAgentLocations(orgId, agentId);
+    let locations = await loadAgentLocations(orgId, agentId);
+    if (locations.length === 0) {
+      locations = await syncAgentLocationsFromCoverage(orgId, agentId);
+    }
     const targetLocation = (parsed.data.locationId
       ? locations.find((location) => location.id === parsed.data.locationId)
       : undefined) ?? locations.find((location) => location.is_primary) ?? locations[0];
