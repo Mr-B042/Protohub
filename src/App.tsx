@@ -760,6 +760,25 @@ const repCallOutcomeOptions = [
   "Not Reached",
   "Travelled"
 ] as const;
+const repCallOutcomesByStatus: Record<OrderStatusAction, readonly (typeof repCallOutcomeOptions)[number][]> = {
+  "New": [],
+  "Confirmed": ["Confirmed"],
+  "In Process": ["Confirmed"],
+  "Dispatched": [],
+  "Delivered": [],
+  "Cancelled": ["Refused"],
+  "Postponed": ["No Answer", "Not Picking", "Not Ready", "Will Call Back", "Scheduled Callback", "Not Reached", "Travelled"],
+  "Failed": ["Wrong Number"],
+  "Reschedule": ["Will Call Back", "Scheduled Callback", "Not Ready", "Travelled"]
+};
+const repCallOutcomeStatusHelper: Partial<Record<OrderStatusAction, string>> = {
+  "Confirmed": "Pick the matching call result for this confirmed order.",
+  "In Process": "Use an outcome only if you want the rep team to see the latest call result too.",
+  "Cancelled": "Keep the cancellation reason visible below the core status.",
+  "Postponed": "Choose why this order needs a follow-up or later delivery.",
+  "Failed": "Mark the main failure reason so the team can spot it quickly.",
+  "Reschedule": "Choose the follow-up reason, then pick the new date and time below."
+};
 const allOrderStatuses: Exclude<OrderStatus, "All Orders">[] = ["New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const permissionDefs: { key: UserPermission; label: string; group: string }[] = [
   { key: "create_orders",       label: "Create Orders",       group: "Orders" },
@@ -1337,6 +1356,65 @@ const statusBadgeClasses = (status: string): string => {
     "Failed":     "bg-orange-50 text-orange-900 border-orange-300",
   };
   return map[status] ?? "bg-stone-50 text-stone-700 border-stone-300";
+};
+const outcomeBadgeClasses = (outcome: string, status?: string): string => {
+  const normalized = outcome.trim().toLowerCase();
+
+  if (["confirmed", "recovered delivery"].includes(normalized)) {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+  if (["refused", "wrong number"].includes(normalized)) {
+    return "bg-rose-50 text-rose-700 border-rose-200";
+  }
+  if (["no answer", "not picking", "not reached", "line busy", "number not going", "switched off", "not available"].includes(normalized)) {
+    return "bg-slate-100 text-slate-700 border-slate-200";
+  }
+  if (["will call back", "scheduled callback", "not ready", "travelled", "we should call back", "will get back to us", "have questions to ask", "seat at home", "rescheduled", "pending", "ready"].includes(normalized)) {
+    return "bg-blue-50 text-blue-700 border-blue-200";
+  }
+  if (["awaiting payment"].includes(normalized)) {
+    return "bg-violet-50 text-violet-700 border-violet-200";
+  }
+  if (["out of stock"].includes(normalized)) {
+    return "bg-orange-50 text-orange-800 border-orange-200";
+  }
+  if (["out of coverage"].includes(normalized)) {
+    return "bg-cyan-50 text-cyan-800 border-cyan-200";
+  }
+  if (["waybill"].includes(normalized)) {
+    return "bg-amber-50 text-amber-800 border-amber-200";
+  }
+
+  return status ? statusBadgeClasses(status) : "bg-stone-50 text-stone-700 border-stone-300";
+};
+const renderOrderStatusSummary = (
+  order: Pick<TrackedOrder, "status" | "callOutcome">,
+  align: "left" | "center" | "right" = "left"
+) => {
+  const status = order.status ?? "New";
+  const outcome = (order.callOutcome ?? "").trim();
+  const alignClass =
+    align === "center"
+      ? "items-center text-center"
+      : align === "right"
+        ? "items-end text-right"
+        : "items-start text-left";
+
+  return (
+    <div className={`flex flex-col gap-1 ${alignClass}`}>
+      <span className={`inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap shadow-sm ${statusBadgeClasses(status)}`}>
+        {status}
+      </span>
+      {outcome ? (
+        <span className={`inline-flex max-w-[13rem] flex-wrap items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold leading-4 shadow-sm ${outcomeBadgeClasses(outcome, status)}`}>
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70 shrink-0" />
+          <span className="min-w-0 break-words text-left">
+            {outcome}
+          </span>
+        </span>
+      ) : null}
+    </div>
+  );
 };
 
 const revenueStatusColors: Record<Exclude<OrderStatus, "All Orders">, string> = {
@@ -2185,7 +2263,7 @@ const smsTriggerSections = [
   },
   {
     title: "Follow-up & Recovery SMS",
-    keys: ["order_rescheduled", "order_not_picking", "order_not_ready", "order_follow_up", "cart_follow_up"]
+    keys: ["order_rescheduled", "order_not_picking", "order_not_ready", "order_follow_up", "order_follow_up_rep", "cart_follow_up"]
   }
 ] as const;
 
@@ -2199,6 +2277,7 @@ const smsTriggerMeta: Record<string, { label: string; hint: string }> = {
   order_not_picking: { label: "Not picking reminder", hint: "Useful when calls are unanswered, switched off, or unreachable." },
   order_not_ready: { label: "Not ready reminder", hint: "Sent when the customer asks to be contacted later or is not ready yet." },
   order_follow_up: { label: "Due follow-up reminder", hint: "Automated reminder sent when a scheduled delivery time or timeline follow-up becomes due." },
+  order_follow_up_rep: { label: "Assigned rep SMS reminder", hint: "Automated SMS sent to the assigned call rep when a scheduled follow-up becomes due." },
   cart_assigned: { label: "Cart assigned to rep", hint: "Sent when an abandoned cart is assigned to a sales rep and Protohub wants the customer to have a direct contact." },
   cart_follow_up: { label: "Abandoned cart follow-up", hint: "Hourly automation that reaches back out to older unconverted carts with rep contact details." }
 };
@@ -10625,6 +10704,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     options: {
       scheduledDate: string;
       scheduledTime: string;
+      callOutcome?: string | null;
       by?: string;
       noteText?: (label: string) => string;
     }
@@ -10649,33 +10729,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ];
     const nextResponse = `Scheduled for ${scheduleLabel}`;
     const orderSnapshot = order;
+    const nextStatus: Exclude<OrderStatus, "All Orders"> = order.status === "New" || !order.status ? "Confirmed" : order.status;
 
     setTrackedOrders((value) =>
       value.map((item) =>
         item.id === order.id
           ? {
               ...item,
-              status: item.status === "New" || !item.status ? "Confirmed" : item.status,
-              scheduledDate: options.scheduledDate,
-              scheduledAt: plannedMoment.iso,
-              response: nextResponse,
-              notes: nextNotes
-            }
-          : item
+            status: nextStatus,
+            scheduledDate: options.scheduledDate,
+            scheduledAt: plannedMoment.iso,
+            response: nextResponse,
+            callOutcome: options.callOutcome === undefined ? item.callOutcome : options.callOutcome || undefined,
+            notes: nextNotes
+          }
+        : item
       )
     );
     showToast(`${order.id} scheduled for ${scheduleLabel}.`);
 
-    const updates: Record<string, unknown> = {
-      scheduled_date: options.scheduledDate,
-      scheduled_at: plannedMoment.iso ?? null,
+    const statusUpdates: Record<string, unknown> = {
+      status: nextStatus,
+      scheduledDate: options.scheduledDate,
+      scheduledAt: plannedMoment.iso ?? null,
       response: nextResponse,
-      timeline_notes: nextNotes
+      timelineNotes: nextNotes
     };
-    if (order.status === "New" || !order.status) {
-      updates.status = "Confirmed";
+    if (options.callOutcome !== undefined) {
+      statusUpdates.callOutcome = options.callOutcome;
     }
-    ordersApi.update(order.id, updates).catch((err: any) => {
+    ordersApi.updateStatus(order.id, statusUpdates).catch((err: any) => {
       setTrackedOrders((value) => value.map((item) => item.id === order.id ? orderSnapshot : item));
       showToast(`Failed to save schedule for ${order.id}: ${err?.message ?? "please retry"}.`);
     });
@@ -10734,7 +10817,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     nextStatus: Exclude<OrderStatus, "All Orders">,
     reason?: string,
     skipApi = false,
-    deliveredDate?: string
+    deliveredDate?: string,
+    callOutcome?: string | null
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
     if (!order) {
@@ -10809,6 +10893,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ...item,
               status: nextStatus,
               response,
+              callOutcome: callOutcome === undefined ? item.callOutcome : callOutcome || undefined,
               deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.status === "Delivered" ? undefined : item.deliveredDate,
               stockDeducted: isDeliveryDateOnly ? item.stockDeducted : nextStatus === "Delivered" ? true : order.status === "Delivered" ? false : item.stockDeducted,
               notes: [
@@ -10832,8 +10917,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!skipApi) {
       const orderSnapshot = order;
       const statusRequest = isDeliveryDateOnly
-        ? ordersApi.update(orderId, { delivered_date: effectiveDeliveredDate })
-        : ordersApi.updateStatus(orderId, { status: nextStatus, reason, deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined });
+        ? ordersApi.update(orderId, {
+            delivered_date: effectiveDeliveredDate,
+            ...(callOutcome !== undefined ? { call_outcome: callOutcome } : {})
+          })
+        : ordersApi.updateStatus(orderId, {
+            status: nextStatus,
+            reason,
+            deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined,
+            ...(callOutcome !== undefined ? { callOutcome } : {})
+          });
       statusRequest.catch((err: any) => {
         setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
         showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
@@ -10875,10 +10968,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const snapshots = new Map(trackedOrders.filter((o) => selectedOrderIds.has(o.id)).map((o) => [o.id, o]));
     // skipApi=true: optimistic local update only — bulk handler owns the
     // network round-trip in a single batch below.
-    ids.forEach((orderId) => updateOrderStatus(orderId, nextStatus, undefined, true));
+    ids.forEach((orderId) => updateOrderStatus(orderId, nextStatus, undefined, true, undefined, null));
     setSelectedOrderIds(new Set());
     const results = await Promise.allSettled(
-      ids.map((orderId) => ordersApi.updateStatus(orderId, { status: nextStatus }))
+      ids.map((orderId) => ordersApi.updateStatus(orderId, { status: nextStatus, callOutcome: null }))
     );
     // Per-id rollback for any rejected promise — fail-soft: succeeded orders
     // keep their new status, failed ones snap back to their pre-mutation form.
@@ -11414,6 +11507,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
+    const outcomePayload = resolvedOutcome || (selectedOrder.callOutcome ? null : undefined);
     if (isRescheduleAction) {
       const reasonText = statusChangeReason.trim();
       const extras = [
@@ -11423,15 +11517,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       commitOrderSchedule(selectedOrder, {
         scheduledDate: orderScheduleDate,
         scheduledTime: orderScheduleTime,
+        callOutcome: outcomePayload,
         by: currentRole === "Sales Rep" ? repScopeName : ownerName,
         noteText: (label) => extras ? `Order rescheduled for ${label}. ${extras}` : `Order rescheduled for ${label}.`
       });
     } else {
-      updateOrderStatus(selectedOrder.id, statusChangeDraft, statusChangeReason.trim(), false, statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined);
-    }
-    if (resolvedOutcome || selectedOrder.callOutcome) {
-      setTrackedOrders((prev) => prev.map((o) => o.id === selectedOrder.id ? { ...o, callOutcome: resolvedOutcome || undefined } : o));
-      ordersApi.update(selectedOrder.id, { call_outcome: resolvedOutcome || null }).catch(() => {});
+      updateOrderStatus(
+        selectedOrder.id,
+        statusChangeDraft,
+        statusChangeReason.trim(),
+        false,
+        statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined,
+        outcomePayload
+      );
     }
     setStatusChangeReason("");
     setCallOutcomeDraft("");
@@ -14365,7 +14463,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <p className="text-sm font-semibold text-gray-900 truncate">{order.customer}</p>
                     <p className="text-xs text-gray-500">{order.phone}</p>
                   </div>
-                  <span className={`status-pill shrink-0 status-${slugify(status)}`}>{status}</span>
+                  <div className="shrink-0">
+                    {renderOrderStatusSummary(order, "right")}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
@@ -14460,7 +14560,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {order.source ?? orderSourceFromUtm(order.utmSource)}
                   </td>
                   <td className="px-4 py-4 text-center">
-                    <span className={`status-pill status-${slugify(status)}`}>{status}</span>
+                    {renderOrderStatusSummary(order, "center")}
                     <div className="text-[10px] text-gray-400 font-medium mt-1 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</div>
                   </td>
                   <td className="px-4 py-4 text-center text-gray-600 font-medium">
@@ -14784,7 +14884,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="text-base font-bold text-gray-900">Status Workflow</h2>
-          <span className={`status-pill status-${slugify(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+          {renderOrderStatusSummary(order, "right")}
         </div>
           <div className="p-6">
           <div className="grid grid-cols-2 sm:flex sm:items-center sm:justify-between relative gap-x-3 gap-y-4">
@@ -17442,7 +17542,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
                               <span className="text-base font-bold text-[#1F8FE0] truncate">{order.id}</span>
                             </div>
-                            <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${statusBadgeClasses(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+                            {renderOrderStatusSummary(order, "right")}
                           </div>
                           <div className="min-w-0">
                             <p className="font-semibold text-sm text-gray-900 m-0 truncate">{order.customer}</p>
@@ -17497,7 +17597,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <td className="px-3 sm:px-6 py-3 sm:py-4 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(order.amount, order.currency)}</td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">{renderDeliveryFeeCell(order)}</td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${statusBadgeClasses(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+                              {renderOrderStatusSummary(order)}
                             </td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4">
                               <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openAdminOrderDetail(order.id)}>
@@ -17773,7 +17873,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
                               <span className="text-xl font-bold text-[#1F8FE0] leading-none">#{order.id}</span>
                             </div>
-                            <span className={`status-pill status-${slugify(status)} shrink-0`}>{status}</span>
+                            <div className="shrink-0">
+                              {renderOrderStatusSummary(order, "right")}
+                            </div>
                           </div>
                           <div>
                             <div className="font-bold text-gray-900 text-base">{order.customer}</div>
@@ -17891,7 +17993,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 })()}
                               </td>
                               <td className="px-4 py-3.5">
-                                <span className={`status-pill status-${slugify(status)}`}>{status}</span>
+                                {renderOrderStatusSummary(order)}
                               </td>
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 {(() => {
@@ -18462,7 +18564,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <div className={`text-xs font-medium ${agentName === "Unassigned" ? "text-rose-500 italic" : "text-gray-500"}`}>{agentName}</div>
                               </td>
                               <td className="px-4 py-4">
-                                <span className={`status-pill status-${slugify(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+                                {renderOrderStatusSummary(order)}
                               </td>
                               <td className="px-4 py-4 text-right whitespace-nowrap">
                                 <div className={`font-bold ${isOverdue ? "text-rose-600" : isToday ? "text-emerald-600" : "text-[#1F8FE0]"}`}>{formatPlannedMoment(order.scheduledAt, order.scheduledDate)}</div>
@@ -18990,7 +19092,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{o.date}</td>
                                 <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
                                 <td className="px-5 py-3 text-gray-600">{o.source ?? orderSourceFromUtm(o.utmSource)}</td>
-                                <td className="px-5 py-3"><span className={`status-pill status-${slugify(o.status ?? "New")}`}>{o.status ?? "New"}</span></td>
+                                <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -20167,7 +20269,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-5 py-3 text-gray-700">{o.productName}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{o.date}</td>
                                 <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
-                                <td className="px-5 py-3"><span className={`status-pill status-${slugify(o.status ?? "New")}`}>{o.status ?? "New"}</span></td>
+                                <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -28014,7 +28116,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <div>
 	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Status</p>
 	                      <div className="mt-0.5">
-	                        <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${statusBadgeClasses(selectedOrder.status ?? "New")}`}>{selectedOrder.status ?? "New"}</span>
+	                        {renderOrderStatusSummary(selectedOrder)}
 	                      </div>
 	                    </div>
 	                    <div>
@@ -28432,7 +28534,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    <h3 className="text-base font-bold text-gray-900 mt-0.5">{selectedOrder.customer}</h3>
 	                    <p>{selectedOrder.phone} · {selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
 	                  </div>
-	                  <strong className={`status-pill status-${slugify(selectedOrder.status ?? "New")}`}>{selectedOrder.status ?? "New"}</strong>
+	                  <div className="shrink-0">
+	                    {renderOrderStatusSummary(selectedOrder, "right")}
+	                  </div>
 	                </section>
 
 	                <section className="grid grid-cols-2 sm:grid-cols-4 gap-2" aria-label="Order actions">
@@ -28532,8 +28636,88 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "changeOrderStatus" && selectedOrder && (
 	              <div className="modal-form">
+                  {(() => {
+                    const availableOutcomes = repCallOutcomesByStatus[statusChangeDraft] ?? [];
+                    const showEmptyOutcomeState = availableOutcomes.length === 0 && callOutcomeDraft !== "__custom__";
+                    return (
+                      <>
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
-	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as OrderStatusAction)}>{statusChangeActions.map((status) => <option key={status}>{status}</option>)}</select></label>
+                        <label>
+                          <span>New Status *</span>
+                          <select
+                            value={statusChangeDraft}
+                            onChange={(event) => {
+                              const nextStatus = event.target.value as OrderStatusAction;
+                              setStatusChangeDraft(nextStatus);
+                              const nextOptions = repCallOutcomesByStatus[nextStatus] ?? [];
+                              if (callOutcomeDraft && callOutcomeDraft !== "__custom__" && !nextOptions.includes(callOutcomeDraft as typeof repCallOutcomeOptions[number])) {
+                                setCallOutcomeDraft("");
+                                setCallOutcomeCustom("");
+                              }
+                            }}
+                          >
+                            {statusChangeActions.map((status) => <option key={status}>{status}</option>)}
+                          </select>
+                        </label>
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900 m-0">Outcome Status</p>
+                              <p className="text-xs text-gray-500 m-0 mt-1">
+                                {repCallOutcomeStatusHelper[statusChangeDraft] ?? "Add the visible call result directly under the core status."}
+                              </p>
+                            </div>
+                            {callOutcomeDraft && callOutcomeDraft !== "__custom__" && (
+                              <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 border border-gray-200">
+                                Selected: {callOutcomeDraft}
+                              </span>
+                            )}
+                          </div>
+                          {availableOutcomes.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-3">
+                              {availableOutcomes.map((outcome) => (
+                                <button
+                                  key={outcome}
+                                  type="button"
+                                  className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                                  onClick={() => {
+                                    setCallOutcomeDraft(outcome);
+                                    setCallOutcomeCustom("");
+                                  }}
+                                >
+                                  {outcome}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {showEmptyOutcomeState && (
+                            <p className="text-xs text-gray-500 m-0 mt-3">No quick outcome presets for this core status. Use a custom note only if you need one.</p>
+                          )}
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            <button
+                              type="button"
+                              className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === "__custom__" ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                              onClick={() => setCallOutcomeDraft("__custom__")}
+                            >
+                              Custom outcome
+                            </button>
+                            {(callOutcomeDraft || callOutcomeCustom) && (
+                              <button
+                                type="button"
+                                className="!min-h-0 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
+                                onClick={() => {
+                                  setCallOutcomeDraft("");
+                                  setCallOutcomeCustom("");
+                                }}
+                              >
+                                Clear outcome
+                              </button>
+                            )}
+                          </div>
+	                  {callOutcomeDraft === "__custom__" && (
+                            <input className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+	                  )}
+                        </div>
                   {statusChangeDraft === "Delivered" && (
                     <label>
                       <span>{selectedOrder.status === "Delivered" ? "Recorded Delivery Date" : "Actual Delivery Date"}</span>
@@ -28570,32 +28754,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                   )}
-	                <div>
-	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{repCallOutcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
-                    <div className="mt-2">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick actions</p>
-                      <div className="flex flex-wrap gap-2">
-                        {repCallOutcomeOptions.map((outcome) => (
-                          <button
-                            key={outcome}
-                            type="button"
-                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
-                            onClick={() => {
-                              setCallOutcomeDraft(outcome);
-                              setCallOutcomeCustom("");
-                            }}
-                          >
-                            {outcome}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-	                  {callOutcomeDraft === "__custom__" && (
-	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
-	                  )}
-	                </div>
 	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>{statusChangeDraft === "Reschedule" ? "Save Schedule" : "Change Status"}</button></div>
+                      </>
+                    );
+                  })()}
 	              </div>
 	            )}
 

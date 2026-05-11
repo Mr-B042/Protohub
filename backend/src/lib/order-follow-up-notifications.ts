@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
+import { sendAssignedRepFollowUpReminderSms } from "./sms.js";
 
 type DueReminderOrder = {
   id: string;
@@ -211,7 +212,9 @@ async function notifyRecipients(
   order: DueReminderOrder,
   title: string,
   message: string,
-  tag: string
+  tag: string,
+  fallbackScheduledLabel: string,
+  fallbackNoteText?: string
 ) {
   const recipients = await buildRecipients(orgId, order.assigned_rep_id);
   if (recipients.size === 0) return;
@@ -253,6 +256,24 @@ async function notifyRecipients(
     return;
   }
 
+  if (order.assigned_rep_id && recipients.get(order.assigned_rep_id) === "Sales Rep") {
+    await sendAssignedRepFollowUpReminderSms(orgId, order, {
+      dedupeKey: tag,
+      scheduledLabel: fallbackScheduledLabel,
+      noteText: fallbackNoteText,
+      metadata: {
+        directReminder: true
+      }
+    }).catch((smsError) => {
+      logger.warn("follow-up notification rep sms failed", {
+        orgId,
+        orderId: order.id,
+        recipientId: order.assigned_rep_id,
+        error: smsError instanceof Error ? smsError.message : String(smsError)
+      });
+    });
+  }
+
   await Promise.all(
     pushQueue.map(({ recipientId, role }) =>
       sendPushToUser(orgId, recipientId, {
@@ -263,14 +284,16 @@ async function notifyRecipients(
         tag,
         brandName: branding.brandName,
         brandLogo: branding.brandLogo
-      }).catch((pushError) => {
-        logger.warn("follow-up notification push failed", {
-          orgId,
-          orderId: order.id,
-          recipientId,
-          error: pushError instanceof Error ? pushError.message : String(pushError)
-        });
       })
+        .then(() => undefined)
+        .catch((pushError) => {
+          logger.warn("follow-up notification push failed", {
+            orgId,
+            orderId: order.id,
+            recipientId,
+            error: pushError instanceof Error ? pushError.message : String(pushError)
+          });
+        })
     )
   );
 }
@@ -286,7 +309,7 @@ async function notifyScheduledReminder(orgId: string, order: DueReminderOrder, s
       formatNotificationMoney(order.amount, order.currency)
     ].filter(Boolean).join(" · ")
   );
-  await notifyRecipients(orgId, order, title, message, `follow-up-scheduled-${order.id}-${scheduledLabel}`);
+  await notifyRecipients(orgId, order, title, message, `follow-up-scheduled-${order.id}-${scheduledLabel}`, scheduledLabel, order.response ?? undefined);
 }
 
 async function notifyTimelineReminder(orgId: string, order: DueReminderOrder, note: TimelineReminderNote, scheduledLabel: string) {
@@ -299,7 +322,7 @@ async function notifyTimelineReminder(orgId: string, order: DueReminderOrder, no
       note.text.trim() || null
     ].filter(Boolean).join(" · ")
   );
-  await notifyRecipients(orgId, order, title, message, `follow-up-note-${order.id}-${note.id}-${scheduledLabel}`);
+  await notifyRecipients(orgId, order, title, message, `follow-up-note-${order.id}-${note.id}-${scheduledLabel}`, scheduledLabel, note.text.trim() || undefined);
 }
 
 export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {

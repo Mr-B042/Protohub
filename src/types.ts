@@ -86,7 +86,7 @@ export type WaybillRecord = {
 
 export type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 export type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
-export type CallOutcome = "Confirmed" | "No Answer" | "Wrong Number" | "Refused" | "Scheduled Callback" | "Not Reached";
+export type CallOutcome = string;
 export type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info"; message: string; read: boolean; createdAt: string; productId?: string };
 export type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 export type CreateOrderContext = "admin" | "rep";

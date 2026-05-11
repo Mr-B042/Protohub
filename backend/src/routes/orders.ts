@@ -68,7 +68,7 @@ const serializePlannedOrderMetadata = (
   return Object.keys(payload).length > 0 ? JSON.stringify(payload) : null;
 };
 const isMissingPlannedColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /scheduled_at|timeline_notes/i.test(error?.message ?? "");
+  error?.code === "42703" || /scheduled_at|timeline_notes|confirmation_checked|preferred_delivery/i.test(error?.message ?? "");
 
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
@@ -303,6 +303,11 @@ router.post("/", async (req, res) => {
     response:        d.response,
     status:          "New"
   };
+  const legacyInsert = {
+    ...baseInsert
+  } as Record<string, unknown>;
+  delete legacyInsert.confirmation_checked;
+  delete legacyInsert.preferred_delivery;
 
   let { data, error } = await supabase
     .from("orders")
@@ -317,7 +322,7 @@ router.post("/", async (req, res) => {
   if (error && isMissingPlannedColumnsError(error)) {
     ({ data, error } = await supabase
       .from("orders")
-      .insert(baseInsert as Record<string, unknown>)
+      .insert(legacyInsert)
       .select()
       .single());
   }
@@ -388,9 +393,12 @@ router.post("/", async (req, res) => {
 // ── PATCH /api/orders/:id/status ──────────────────────────
 const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
-  callOutcome: z.string().optional(),
+  callOutcome: z.string().trim().min(1).max(120).nullable().optional(),
   response:    z.string().optional(),
   deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  scheduledAt: z.string().min(1).max(80).nullable().optional(),
+  timelineNotes: z.array(TimelineNoteSchema).max(200).optional(),
   agentId:     z.string().uuid().optional().nullable(),
   agentLocationId: z.string().uuid().optional().nullable()
 });
@@ -401,12 +409,12 @@ router.patch("/:id/status", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { status, callOutcome, response, deliveredDate, agentId, agentLocationId } = parsed.data;
+  const { status, callOutcome, response, deliveredDate, scheduledDate, scheduledAt, timelineNotes, agentId, agentLocationId } = parsed.data;
 
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot")
+    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -497,8 +505,22 @@ router.patch("/:id/status", async (req, res) => {
   }
 
   const updates: Record<string, unknown> = { status };
-  if (callOutcome)  updates.call_outcome    = callOutcome;
+  if (callOutcome !== undefined)  updates.call_outcome    = callOutcome || null;
   if (response)     updates.response        = response;
+  if (scheduledDate !== undefined) updates.scheduled_date = scheduledDate;
+  if (scheduledAt !== undefined) updates.scheduled_at = scheduledAt;
+  if (timelineNotes !== undefined) {
+    updates.timeline_notes = timelineNotes;
+    updates.notes = serializePlannedOrderMetadata(existing?.notes, {
+      scheduledAt: updates.scheduled_at as string | null | undefined,
+      timelineNotes
+    });
+  } else if (scheduledAt !== undefined) {
+    updates.notes = serializePlannedOrderMetadata(existing?.notes, {
+      scheduledAt: scheduledAt,
+      timelineNotes: undefined
+    });
+  }
   if (agentId !== undefined) updates.agent_id = agentId;
   if (agentLocationId !== undefined) updates.agent_location_id = agentLocationId;
   if (effectiveAgentId) {
@@ -555,13 +577,26 @@ router.patch("/:id/status", async (req, res) => {
     updates.remittance_status = "Pending";
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("orders")
     .update(updates)
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .select()
     .single();
+
+  if (error && isMissingPlannedColumnsError(error)) {
+    const legacyUpdates = { ...updates };
+    delete legacyUpdates.scheduled_at;
+    delete legacyUpdates.timeline_notes;
+    ({ data, error } = await supabase
+      .from("orders")
+      .update(legacyUpdates)
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single());
+  }
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
