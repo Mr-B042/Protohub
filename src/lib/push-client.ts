@@ -2,6 +2,8 @@
 import { auth } from "./auth";
 
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
+const SERVICE_WORKER_SCOPE = "/";
+const SERVICE_WORKER_URL = "/sw.js";
 
 function getAuthHeaders(): Record<string, string> {
   const token = auth.getAccessToken();
@@ -9,6 +11,65 @@ function getAuthHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
+}
+
+async function waitForActivatedRegistration(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
+  if (registration.active?.state === "activated") {
+    return registration;
+  }
+
+  const worker = registration.installing ?? registration.waiting ?? registration.active;
+  if (!worker) {
+    return navigator.serviceWorker.ready;
+  }
+
+  if (worker.state === "activated") {
+    return registration;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(() => {
+      worker.removeEventListener("statechange", handleStateChange);
+      resolve();
+    }, 10000);
+
+    const handleStateChange = () => {
+      if (worker.state === "activated" || worker.state === "redundant") {
+        window.clearTimeout(timeout);
+        worker.removeEventListener("statechange", handleStateChange);
+        resolve();
+      }
+    };
+
+    worker.addEventListener("statechange", handleStateChange);
+  });
+
+  try {
+    return await navigator.serviceWorker.ready;
+  } catch {
+    return registration;
+  }
+}
+
+export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return null;
+  }
+
+  try {
+    let registration = await navigator.serviceWorker.getRegistration(SERVICE_WORKER_SCOPE);
+    if (!registration) {
+      registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, {
+        scope: SERVICE_WORKER_SCOPE,
+        updateViaCache: "none"
+      });
+    }
+
+    await registration.update().catch(() => undefined);
+    return waitForActivatedRegistration(registration);
+  } catch {
+    return null;
+  }
 }
 
 async function saveSubscription(subscription: PushSubscription): Promise<void> {
@@ -121,7 +182,8 @@ export async function ensurePushSubscriptionCurrent(): Promise<boolean> {
     return false;
   }
 
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await ensureServiceWorkerRegistration();
+  if (!registration) return false;
   const vapidKey = await getVapidPublicKey();
   if (!vapidKey) return false;
   const desiredKey = urlBase64ToUint8Array(vapidKey);
@@ -172,6 +234,11 @@ export async function subscribeToPush(): Promise<boolean> {
     throw new Error("Push notifications not configured on this server.");
   }
 
+  const registration = await ensureServiceWorkerRegistration();
+  if (!registration) {
+    throw new Error("Service worker could not be registered on this device.");
+  }
+
   return ensurePushSubscriptionCurrent();
 }
 
@@ -181,7 +248,8 @@ export async function subscribeToPush(): Promise<boolean> {
 export async function unsubscribeFromPush(): Promise<boolean> {
   if (!("serviceWorker" in navigator)) return false;
 
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await ensureServiceWorkerRegistration();
+  if (!registration) return false;
   const subscription = await registration.pushManager.getSubscription();
 
   if (subscription) {
@@ -217,7 +285,8 @@ export async function sendTestPush(body?: { title?: string; body?: string }): Pr
 export async function isCurrentlySubscribed(): Promise<boolean> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await ensureServiceWorkerRegistration();
+    if (!registration) return false;
     const subscription = await registration.pushManager.getSubscription();
     return subscription !== null;
   } catch {
@@ -228,7 +297,8 @@ export async function isCurrentlySubscribed(): Promise<boolean> {
 export async function getCurrentPushEndpoint(): Promise<string | null> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await ensureServiceWorkerRegistration();
+    if (!registration) return null;
     const subscription = await registration.pushManager.getSubscription();
     return subscription?.endpoint ?? null;
   } catch {

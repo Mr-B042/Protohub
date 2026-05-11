@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import { auth } from "./lib/auth";
+import { ensureServiceWorkerRegistration } from "./lib/push-client";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
 
@@ -65,6 +66,11 @@ function Root() {
   useEffect(() => {
     if (hash.startsWith("#/order-form/embed")) return;
     void loadApp();
+  }, [hash]);
+
+  useEffect(() => {
+    if (hash.startsWith("#/order-form/embed")) return;
+    void ensureServiceWorkerRegistration().catch(() => null);
   }, [hash]);
 
   const handleLogin  = () => setLoggedIn(true);

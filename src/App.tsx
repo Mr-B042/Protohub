@@ -88,6 +88,7 @@ import { realtimeClient } from "./lib/realtime";
 import {
   subscribeToPush,
   unsubscribeFromPush,
+  ensureServiceWorkerRegistration,
   ensurePushSubscriptionCurrent,
   isCurrentlySubscribed,
   getCurrentPushEndpoint,
@@ -2180,8 +2181,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       brandName: companyName || "Protohub",
       logoUrl: companyLogo || ""
     };
-    void navigator.serviceWorker.ready
+    void ensureServiceWorkerRegistration()
       .then((registration) => {
+        if (!registration) return;
         const targets = [
           navigator.serviceWorker.controller,
           registration.active,
@@ -6501,6 +6503,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Check push notification status on mount
   useEffect(() => {
     void (async () => {
+      await ensureServiceWorkerRegistration().catch(() => null);
       await ensurePushSubscriptionCurrent().catch(() => false);
       await refreshPushDiagnostics();
     })();
