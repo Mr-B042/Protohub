@@ -3,7 +3,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
-import { getVapidPublicKey, isPushConfigured, sendPushToUser } from "../lib/push.js";
+import { getVapidPublicKey, isPushConfigured, sendPushToSubscriptions, sendPushToUser } from "../lib/push.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -26,12 +26,14 @@ const SubscribeSchema = z.object({
   keys: z.object({
     p256dh: z.string().min(1),
     auth: z.string().min(1)
-  })
+  }),
+  replaceOthers: z.boolean().optional()
 });
 
 const TestPushSchema = z.object({
   title: z.string().min(1).max(80).optional(),
-  body: z.string().min(1).max(240).optional()
+  body: z.string().min(1).max(240).optional(),
+  endpoint: z.string().url().optional()
 });
 
 router.post("/subscribe", async (req, res) => {
@@ -46,7 +48,7 @@ router.post("/subscribe", async (req, res) => {
     return;
   }
 
-  const { endpoint, keys } = parsed.data;
+  const { endpoint, keys, replaceOthers } = parsed.data;
 
   // Upsert by endpoint so the same browser/device registration gets reused
   // even if it is re-sent later or previously attached to a stale row.
@@ -97,6 +99,18 @@ router.post("/subscribe", async (req, res) => {
       });
     if (error) {
       res.status(500).json({ error: error.message });
+      return;
+    }
+  }
+
+  if (replaceOthers) {
+    const { error: pruneError } = await supabase
+      .from("push_subscriptions")
+      .delete()
+      .eq("user_id", req.user!.id)
+      .neq("endpoint", endpoint);
+    if (pruneError) {
+      res.status(500).json({ error: pruneError.message });
       return;
     }
   }
@@ -184,7 +198,8 @@ router.post("/test", async (req, res) => {
   const body = parsed.data.body ?? "Background notifications are working on this device.";
   try {
     const branding = await getOrgPushBranding(req.user!.orgId);
-    const result = await sendPushToUser(req.user!.orgId, req.user!.id, {
+    const endpoint = parsed.data.endpoint?.trim();
+    const payload = {
       title,
       body,
       kind: "test_push",
@@ -192,10 +207,27 @@ router.post("/test", async (req, res) => {
       tag: `protohub-test-${Date.now()}`,
       brandName: branding.brandName,
       brandLogo: branding.brandLogo
-    });
+    };
+    const result = endpoint
+      ? await (async () => {
+          const { data: subscriptions, error: subError } = await supabase
+            .from("push_subscriptions")
+            .select("id, endpoint, p256dh, auth")
+            .eq("org_id", req.user!.orgId)
+            .eq("user_id", req.user!.id)
+            .eq("endpoint", endpoint);
+          if (subError) throw new Error(subError.message);
+          if (!subscriptions?.length) {
+            throw new Error("This device is not the active saved push endpoint. Force Re-subscribe here and try again.");
+          }
+          return sendPushToSubscriptions(subscriptions, payload, `user ${req.user!.id} endpoint ${endpoint}`);
+        })()
+      : await sendPushToUser(req.user!.orgId, req.user!.id, payload);
     if (result.attempted === 0 || result.delivered === 0) {
       res.status(502).json({
-        error: "No active push deliveries succeeded for this account. Re-subscribe on this device and try again."
+        error: endpoint
+          ? "No active push deliveries succeeded for this exact device. Force Re-subscribe here and try again."
+          : "No active push deliveries succeeded for this account. Re-subscribe on this device and try again."
       });
       return;
     }

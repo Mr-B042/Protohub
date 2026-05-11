@@ -24152,7 +24152,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           setPushLoading(true);
                           try {
                             await unsubscribeFromPush();
-                            await subscribeToPush();
+                            await subscribeToPush({ replaceOthers: true });
                             await refreshPushDiagnostics(false);
                             showToast("Re-subscribed successfully!");
                           } catch (e: any) {

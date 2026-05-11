@@ -44,6 +44,13 @@ export type PushDeliveryStats = {
   failed: number;
 };
 
+type StoredPushSubscription = {
+  id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+};
+
 function pushTopicForPayload(payload: PushPayload): string {
   const raw = payload.tag ?? payload.kind ?? payload.title ?? "protohub";
   const sanitized = raw
@@ -65,18 +72,15 @@ async function getActiveUserIdsByRoles(orgId: string, roles: string[]): Promise<
 }
 
 /**
- * Send push notification to a specific user (all their subscriptions).
+ * Send push notification to a set of stored subscriptions.
  * Silently removes stale/expired subscriptions (410 Gone).
  */
-export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
+export async function sendPushToSubscriptions(
+  subscriptions: StoredPushSubscription[] | null | undefined,
+  payload: PushPayload,
+  logLabel = "subscriptions"
+): Promise<PushDeliveryStats> {
   if (!isPushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
-
-  const { data: subscriptions } = await supabase
-    .from("push_subscriptions")
-    .select("id, endpoint, p256dh, auth")
-    .eq("org_id", orgId)
-    .eq("user_id", userId);
-
   if (!subscriptions || subscriptions.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
 
   const message = JSON.stringify(payload);
@@ -113,9 +117,25 @@ export async function sendPushToUser(orgId: string, userId: string, payload: Pus
   const attempted = subscriptions.length;
   const delivered = attempted - failed;
   if (failed > 0) {
-    console.warn(`[push] ${failed}/${subscriptions.length} push deliveries failed for user ${userId}`);
+    console.warn(`[push] ${failed}/${subscriptions.length} push deliveries failed for ${logLabel}`);
   }
   return { attempted, delivered, failed };
+}
+
+/**
+ * Send push notification to a specific user (all their subscriptions).
+ * Silently removes stale/expired subscriptions (410 Gone).
+ */
+export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
+  if (!isPushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
+
+  const { data: subscriptions } = await supabase
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth")
+    .eq("org_id", orgId)
+    .eq("user_id", userId);
+
+  return sendPushToSubscriptions(subscriptions as StoredPushSubscription[] | null | undefined, payload, `user ${userId}`);
 }
 
 /**

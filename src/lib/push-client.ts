@@ -72,7 +72,11 @@ export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRe
   }
 }
 
-async function saveSubscription(subscription: PushSubscription): Promise<void> {
+type SaveSubscriptionOptions = {
+  replaceOthers?: boolean;
+};
+
+async function saveSubscription(subscription: PushSubscription, options: SaveSubscriptionOptions = {}): Promise<void> {
   const subJson = subscription.toJSON();
   const res = await fetch(`${BASE}/api/push/subscribe`, {
     method: "POST",
@@ -82,7 +86,8 @@ async function saveSubscription(subscription: PushSubscription): Promise<void> {
       keys: {
         p256dh: subJson.keys?.p256dh,
         auth: subJson.keys?.auth
-      }
+      },
+      replaceOthers: options.replaceOthers === true
     })
   });
 
@@ -173,7 +178,7 @@ async function removeServerSubscription(endpoint: string): Promise<void> {
   }).catch(() => undefined);
 }
 
-export async function ensurePushSubscriptionCurrent(): Promise<boolean> {
+export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOptions = {}): Promise<boolean> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     return false;
   }
@@ -208,7 +213,7 @@ export async function ensurePushSubscriptionCurrent(): Promise<boolean> {
     });
   }
 
-  await saveSubscription(subscription);
+  await saveSubscription(subscription, options);
   return true;
 }
 
@@ -216,7 +221,7 @@ export async function ensurePushSubscriptionCurrent(): Promise<boolean> {
  * Subscribe to push notifications.
  * Returns true on success, throws on failure.
  */
-export async function subscribeToPush(): Promise<boolean> {
+export async function subscribeToPush(options: SaveSubscriptionOptions = {}): Promise<boolean> {
   // 1. Check browser support
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     throw new Error("Push notifications are not supported in this browser.");
@@ -239,7 +244,7 @@ export async function subscribeToPush(): Promise<boolean> {
     throw new Error("Service worker could not be registered on this device.");
   }
 
-  return ensurePushSubscriptionCurrent();
+  return ensurePushSubscriptionCurrent(options);
 }
 
 /**
@@ -267,10 +272,14 @@ export async function unsubscribeFromPush(): Promise<boolean> {
  * Send a real push notification to the current user for diagnostics.
  */
 export async function sendTestPush(body?: { title?: string; body?: string }): Promise<{ message: string }> {
+  const endpoint = await getCurrentPushEndpoint();
   const res = await fetch(`${BASE}/api/push/test`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify(body ?? {})
+    body: JSON.stringify({
+      ...(body ?? {}),
+      ...(endpoint ? { endpoint } : {})
+    })
   });
   const data = await res.json().catch(() => ({ error: "Failed to send test push." }));
   if (!res.ok) {
