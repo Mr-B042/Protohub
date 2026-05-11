@@ -29256,6 +29256,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const phoneShort = phoneClean.length > 0 && phoneClean.length < 7;
                 const phoneDup = !!phoneClean && agents.some((a) => a.phone.replace(/\D/g, "") === phoneClean);
                 const canCreate = !!agentName.trim() && !!agentZoneInput.trim() && phoneClean.length >= 7 && !phoneDup;
+                const effectiveCoverageStates = Array.from(new Set([agentZoneInput.trim(), ...agentCoverageStatesInput])).filter(Boolean);
                 return (
                   <div className="px-6 py-5 flex flex-col gap-5">
                     <header className="flex items-start gap-4 pb-4 border-b border-gray-100">
@@ -29264,7 +29265,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3 className="text-base font-bold text-gray-900 m-0">Add a new delivery agent</h3>
-                        <p className="text-xs text-gray-500 m-0 mt-1">Agents fulfil orders in their zone, hold stock locally, and remit cash after delivery.</p>
+                        <p className="text-xs text-gray-500 m-0 mt-1">Agents keep one canonical profile, can serve multiple states, hold stock locally, and remit cash after delivery.</p>
                       </div>
                     </header>
 
@@ -29293,6 +29294,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           {phoneDup && <span className="text-[11px] text-red-600 font-medium">Another agent already uses this phone.</span>}
                           {!phoneDup && phoneShort && <span className="text-[11px] text-amber-600 font-medium">Phone looks short — double-check.</span>}
                         </label>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-xs font-semibold text-gray-700">WhatsApp phone <span className="text-gray-400 font-normal">(optional)</span></span>
+                          <input
+                            value={agentWhatsappPhone}
+                            onChange={(e) => setAgentWhatsappPhone(e.target.value)}
+                            inputMode="tel"
+                            className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
+                            placeholder="Defaults to primary phone if blank"
+                          />
+                        </label>
                       </div>
                     </section>
 
@@ -29300,15 +29311,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <section className="space-y-3">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Coverage</h4>
                       <label className="flex flex-col gap-1.5">
-                        <span className="text-xs font-semibold text-gray-700">Primary zone <span className="text-red-500">*</span></span>
+                        <span className="text-xs font-semibold text-gray-700">Primary base state <span className="text-red-500">*</span></span>
                         <input
                           value={agentZoneInput}
                           onChange={(e) => setAgentZoneInput(e.target.value)}
                           className="px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30 focus:border-[#1F8FE0]"
-                          placeholder="e.g. Lagos Island, Aba, Kano metro"
+                          placeholder="e.g. Lagos"
                         />
-                        <span className="text-[11px] text-gray-400">Where this agent operates. Used for waybill routing and order matching.</span>
+                        <span className="text-[11px] text-gray-400">This is the agent’s home base. It stays as the single canonical base even when they serve multiple states.</span>
                       </label>
+                      <div className="flex flex-col gap-2">
+                        <span className="text-xs font-semibold text-gray-700">Served states</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto rounded-md border border-gray-200 bg-white p-3">
+                          {nigeriaStates.map((state) => {
+                            const checked = effectiveCoverageStates.includes(state);
+                            return (
+                              <label key={state} className={`inline-flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs cursor-pointer ${checked ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 accent-[#1F8FE0]"
+                                  checked={checked}
+                                  onChange={() => toggleAgentCoverageState(state)}
+                                />
+                                <span>{state}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <span className="text-[11px] text-gray-400">One profile can cover many states. The same phone number and identity stay on the agent record.</span>
+                        {effectiveCoverageStates.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {effectiveCoverageStates.map((state) => (
+                              <span key={state} className="inline-flex items-center px-2 py-1 rounded-full bg-blue-50 border border-blue-100 text-[11px] font-semibold text-[#1F8FE0]">
+                                {state}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <label className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold text-gray-700">Address <span className="text-gray-400 font-normal">(optional)</span></span>
                         <textarea
@@ -29650,7 +29690,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "editAgent" && selectedAgent && (
 	              <div className="modal-form">
-	                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} /></label><label><span>Primary Zone</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} /></label><label><span>Address</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} /></label><label><span>Stock Capacity (max units this agent can hold)</span><input type="number" min={1} value={agentStockCapacity} onChange={(event) => setAgentStockCapacity(event.target.value === "" ? "" : Number(event.target.value))} /></label><div className="flex items-center justify-between py-1">
+	                <label><span>Full Name</span><input value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label><span>Phone Number</span><input value={agentPhone} onChange={(event) => setAgentPhone(event.target.value)} /></label><label><span>WhatsApp Phone</span><input value={agentWhatsappPhone} onChange={(event) => setAgentWhatsappPhone(event.target.value)} /></label><label><span>Primary Base State</span><input value={agentZoneInput} onChange={(event) => setAgentZoneInput(event.target.value)} /></label><label><span>Address</span><textarea value={agentAddress} onChange={(event) => setAgentAddress(event.target.value)} /></label><label><span>Stock Capacity (max units this agent can hold)</span><input type="number" min={1} value={agentStockCapacity} onChange={(event) => setAgentStockCapacity(event.target.value === "" ? "" : Number(event.target.value))} /></label>
+                  <div className="flex flex-col gap-2">
+                    <span>Served States</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-3">
+                      {nigeriaStates.map((state) => {
+                        const checked = Array.from(new Set([agentZoneInput.trim(), ...agentCoverageStatesInput])).filter(Boolean).includes(state);
+                        return (
+                          <label key={state} className="inline-flex items-center gap-2 text-xs">
+                            <input type="checkbox" checked={checked} onChange={() => toggleAgentCoverageState(state)} />
+                            <span>{state}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between py-1">
                   <div>
                     <span className="text-sm font-medium text-gray-700">Active Status</span>
                   </div>
