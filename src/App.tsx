@@ -748,6 +748,64 @@ const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Sch
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
+type StatusChoiceTone = "brown" | "green" | "red" | "slate" | "purple" | "blue" | "peach" | "teal" | "yellow" | "lavender" | "neutral";
+type StatusChangeChoice = {
+  key: string;
+  label: string;
+  status: OrderStatusAction;
+  reason: string;
+  tone: StatusChoiceTone;
+  callOutcome?: string;
+};
+const statusChoiceToneClasses: Record<StatusChoiceTone, { active: string; idle: string }> = {
+  brown:    { active: "border-amber-900 bg-amber-900 text-white shadow-sm", idle: "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100" },
+  green:    { active: "border-emerald-700 bg-emerald-700 text-white shadow-sm", idle: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+  red:      { active: "border-red-700 bg-red-700 text-white shadow-sm", idle: "border-red-200 bg-red-50 text-red-800 hover:bg-red-100" },
+  slate:    { active: "border-slate-700 bg-slate-700 text-white shadow-sm", idle: "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100" },
+  purple:   { active: "border-violet-700 bg-violet-700 text-white shadow-sm", idle: "border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100" },
+  blue:     { active: "border-blue-700 bg-blue-700 text-white shadow-sm", idle: "border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100" },
+  peach:    { active: "border-orange-400 bg-orange-200 text-orange-950 shadow-sm", idle: "border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100" },
+  teal:     { active: "border-teal-700 bg-teal-700 text-white shadow-sm", idle: "border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100" },
+  yellow:   { active: "border-amber-300 bg-amber-200 text-amber-950 shadow-sm", idle: "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100" },
+  lavender: { active: "border-fuchsia-300 bg-fuchsia-200 text-fuchsia-950 shadow-sm", idle: "border-fuchsia-100 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100" },
+  neutral:  { active: "border-gray-500 bg-gray-200 text-gray-900 shadow-sm", idle: "border-gray-200 bg-gray-50 text-gray-800 hover:bg-gray-100" }
+};
+const statusChangeChoices: readonly StatusChangeChoice[] = [
+  { key: "Confirmed", label: "Confirmed", status: "Confirmed" as const, reason: "Order confirmed by sales rep.", tone: "green" as const },
+  { key: "In Process", label: "In Process", status: "In Process" as const, reason: "Order is in active processing.", tone: "slate" as const },
+  { key: "Dispatched", label: "Waybill", status: "Dispatched" as const, callOutcome: "Waybill", reason: "Order has been moved into delivery/waybill flow.", tone: "yellow" as const },
+  { key: "Delivered", label: "Delivered", status: "Delivered" as const, reason: "Delivered successfully.", tone: "green" as const },
+  { key: "Recovered Delivery", label: "Recovered Delivery", status: "Delivered" as const, callOutcome: "Recovered Delivery", reason: "Recovered delivery confirmed.", tone: "brown" as const },
+  { key: "Failed", label: "Failed", status: "Failed" as const, reason: "Delivery failed.", tone: "red" as const },
+  { key: "Cancelled", label: "Cancelled", status: "Cancelled" as const, reason: "Order cancelled.", tone: "red" as const },
+  { key: "Pending", label: "Pending", status: "In Process" as const, callOutcome: "Pending", reason: "Order is still pending follow-up or fulfillment.", tone: "slate" as const },
+  { key: "Ready", label: "Ready", status: "Confirmed" as const, callOutcome: "Ready", reason: "Customer is ready to receive the order.", tone: "purple" as const },
+  { key: "Rescheduled", label: "Rescheduled", status: "Reschedule" as const, callOutcome: "Rescheduled", reason: "Customer requested a new delivery or callback slot.", tone: "blue" as const },
+  { key: "Postponed", label: "Postponed", status: "Postponed" as const, reason: "Delivery postponed.", tone: "blue" as const },
+  { key: "Out of Stock", label: "Out of Stock", status: "Failed" as const, callOutcome: "Out of Stock", reason: "Product is out of stock for this order.", tone: "peach" as const },
+  { key: "out of coverage", label: "out of coverage", status: "Failed" as const, callOutcome: "out of coverage", reason: "Customer location is outside delivery coverage.", tone: "teal" as const },
+  { key: "Awaiting payment", label: "Awaiting payment", status: "Postponed" as const, callOutcome: "Awaiting payment", reason: "Awaiting payment before delivery can continue.", tone: "lavender" as const },
+  { key: "Have questions to ask", label: "Have questions to ask", status: "Postponed" as const, callOutcome: "Have questions to ask", reason: "Customer has questions before confirming.", tone: "neutral" as const },
+  { key: "Will get back to us", label: "Will get back to us", status: "Postponed" as const, callOutcome: "Will get back to us", reason: "Customer said they will get back to us.", tone: "neutral" as const },
+  { key: "Line Busy", label: "Line Busy", status: "Postponed" as const, callOutcome: "Line Busy", reason: "Customer line was busy.", tone: "neutral" as const },
+  { key: "No Answer", label: "No Answer", status: "Postponed" as const, callOutcome: "No Answer", reason: "Customer did not answer calls.", tone: "neutral" as const },
+  { key: "Not Picking", label: "Not Picking", status: "Failed" as const, callOutcome: "Not Picking", reason: "Customer is not picking calls.", tone: "neutral" as const },
+  { key: "Number not going", label: "Number not going", status: "Failed" as const, callOutcome: "Number not going", reason: "Customer number is not going through.", tone: "neutral" as const },
+  { key: "Wrong Number", label: "Wrong Number", status: "Failed" as const, callOutcome: "Wrong Number", reason: "Customer phone number is wrong or unreachable.", tone: "neutral" as const },
+  { key: "Switched off", label: "Switched off", status: "Postponed" as const, callOutcome: "Switched off", reason: "Customer phone is switched off.", tone: "neutral" as const },
+  { key: "We should call back", label: "We should call back", status: "Postponed" as const, callOutcome: "We should call back", reason: "Customer asked that we call back later.", tone: "neutral" as const },
+  { key: "Will Call Back", label: "Will Call Back", status: "Postponed" as const, callOutcome: "Will Call Back", reason: "Customer asked to call back later.", tone: "neutral" as const },
+  { key: "Scheduled Callback", label: "Scheduled Callback", status: "Reschedule" as const, callOutcome: "Scheduled Callback", reason: "Customer requested a scheduled callback or delivery slot.", tone: "blue" as const },
+  { key: "Not Reached", label: "Not Reached", status: "Postponed" as const, callOutcome: "Not Reached", reason: "Customer could not be reached.", tone: "neutral" as const },
+  { key: "Not Available", label: "Not Available", status: "Postponed" as const, callOutcome: "Not Available", reason: "Customer is not available right now.", tone: "neutral" as const },
+  { key: "Not Ready", label: "Not Ready", status: "Postponed" as const, callOutcome: "Not Ready", reason: "Customer is not ready yet and asked for later follow-up.", tone: "neutral" as const },
+  { key: "Travelled", label: "Travelled", status: "Postponed" as const, callOutcome: "Travelled", reason: "Customer travelled and asked for a later follow-up.", tone: "neutral" as const },
+  { key: "Refused", label: "Refused", status: "Cancelled" as const, callOutcome: "Refused", reason: "Customer refused the order.", tone: "red" as const },
+  { key: "Seat at home", label: "Seat at home", status: "Postponed" as const, callOutcome: "Seat at home", reason: "Customer asked to stay home and continue later.", tone: "red" as const }
+] as const;
+const statusChangeChoiceMap = Object.fromEntries(
+  statusChangeChoices.map((choice) => [choice.key, choice])
+) as Record<string, StatusChangeChoice>;
 const repCallOutcomeOptions = [
   "Confirmed",
   "No Answer",
@@ -3418,6 +3476,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCallOutcomeDraft("__custom__");
     setCallOutcomeCustom(normalized);
   };
+  const statusSelectionForModal = (status?: OrderStatusAction | null, outcome?: string | null) => {
+    const normalizedOutcome = (outcome ?? "").trim();
+    if (normalizedOutcome) {
+      const matchingOutcome = statusChangeChoices.find(
+        (choice) => choice.callOutcome === normalizedOutcome || choice.label === normalizedOutcome
+      );
+      if (matchingOutcome) return matchingOutcome.key;
+    }
+    const fallbackStatus = status ?? "Confirmed";
+    const directLabelMatch = statusChangeChoices.find((choice) => choice.label === fallbackStatus);
+    if (directLabelMatch) return directLabelMatch.key;
+    const matchingStatus = statusChangeChoices.find((choice) => choice.status === fallbackStatus && !choice.callOutcome);
+    if (matchingStatus) return matchingStatus.key;
+    const looseStatusMatch = statusChangeChoices.find((choice) => choice.status === fallbackStatus);
+    return looseStatusMatch?.key ?? "Confirmed";
+  };
+  const statusSelectionSummary = (selection: string) => {
+    const choice = statusChangeChoiceMap[selection as keyof typeof statusChangeChoiceMap];
+    if (!choice) return "";
+    if (choice.status === "Reschedule") {
+      return `${choice.label} will open the date and time picker.`;
+    }
+    if (choice.callOutcome) {
+      return `${choice.label} will stay visible on the order and save as ${choice.status}.`;
+    }
+    return `${choice.status} will be saved for this order.`;
+  };
   const hydrateDeliveryDateDraft = (order?: TrackedOrder | null, fallback = todayKey()) => {
     setDeliveryDateDraft(order?.deliveredDate ? normalizeDateKey(order.deliveredDate) : fallback);
   };
@@ -3838,6 +3923,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
   const [statusChangeDraft, setStatusChangeDraft] = useState<OrderStatusAction>("Confirmed");
+  const [statusChangeSelection, setStatusChangeSelection] = useState<string>("Confirmed");
   const [statusChangePreset, setStatusChangePreset] = useState<OrderStatusAction | null>(null);
   const [statusChangeReasonPreset, setStatusChangeReasonPreset] = useState("");
   const [statusChangeOutcomePreset, setStatusChangeOutcomePreset] = useState<string | null>(null);
@@ -4060,8 +4146,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const currentStatus = selectedOrder.status ?? "New";
     const plannedParts = splitMomentForInput(selectedOrder.scheduledAt);
     setStatusChangeDraft(statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus));
+    const nextSelection = statusSelectionForModal(
+      statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus),
+      statusChangeOutcomePreset ?? selectedOrder.callOutcome
+    );
+    setStatusChangeSelection(nextSelection);
     setStatusChangeReason(statusChangeReasonPreset);
-    hydrateCallOutcomeDraft(statusChangeOutcomePreset ?? selectedOrder.callOutcome);
+    const selectedChoice = statusChangeChoiceMap[nextSelection as keyof typeof statusChangeChoiceMap];
+    if (selectedChoice?.callOutcome) {
+      hydrateCallOutcomeDraft(selectedChoice.callOutcome);
+    } else {
+      hydrateCallOutcomeDraft(statusChangePreset ? "" : null);
+    }
     hydrateDeliveryDateDraft(selectedOrder);
     setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
@@ -11393,6 +11489,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openRepStatusChangeModal(order, "Reschedule", { reason, callOutcome });
   };
 
+  const handleStatusChangeSelection = (selection: string) => {
+    setStatusChangeSelection(selection);
+    const choice = statusChangeChoiceMap[selection as keyof typeof statusChangeChoiceMap];
+    if (!choice) return;
+    setStatusChangeDraft(choice.status);
+    if (choice.callOutcome) {
+      hydrateCallOutcomeDraft(choice.callOutcome);
+    } else {
+      setCallOutcomeDraft("");
+      setCallOutcomeCustom("");
+    }
+    setStatusChangeReason(choice.reason);
+  };
+
   const submitRepStatusChange = () => {
     if (!selectedOrder) return;
     const isRescheduleAction = statusChangeDraft === "Reschedule";
@@ -11414,6 +11524,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const resolvedOutcome = callOutcomeDraft === "__custom__" ? callOutcomeCustom.trim() : callOutcomeDraft;
+    if (callOutcomeDraft === "__custom__" && !resolvedOutcome) {
+      showToast("Write the custom outcome before saving.");
+      return;
+    }
     if (isRescheduleAction) {
       const reasonText = statusChangeReason.trim();
       const extras = [
@@ -28533,7 +28647,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            {modal === "changeOrderStatus" && selectedOrder && (
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
-	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as OrderStatusAction)}>{statusChangeActions.map((status) => <option key={status}>{status}</option>)}</select></label>
+	                <div className="space-y-3">
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">Choose status *</span>
+                      {statusSelectionSummary(statusChangeSelection) && (
+                        <p className="mt-1 text-xs text-gray-500">{statusSelectionSummary(statusChangeSelection)}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {statusChangeChoices.map((choice) => {
+                        const tones = statusChoiceToneClasses[choice.tone];
+                        const isActive = statusChangeSelection === choice.key;
+                        return (
+                          <button
+                            key={choice.key}
+                            type="button"
+                            className={`!min-h-0 rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${isActive ? tones.active : tones.idle}`}
+                            onClick={() => handleStatusChangeSelection(choice.key)}
+                          >
+                            {choice.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   {statusChangeDraft === "Delivered" && (
                     <label>
                       <span>{selectedOrder.status === "Delivered" ? "Recorded Delivery Date" : "Actual Delivery Date"}</span>
@@ -28570,30 +28707,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     </div>
                   )}
-	                <div>
-	                  <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => { setCallOutcomeDraft(e.target.value); if (e.target.value !== "__custom__") setCallOutcomeCustom(""); }}><option value="">— Not recorded —</option>{repCallOutcomeOptions.map((o) => <option key={o} value={o}>{o}</option>)}<option value="__custom__">Other (write below)…</option></select></label>
-                    <div className="mt-2">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick actions</p>
-                      <div className="flex flex-wrap gap-2">
-                        {repCallOutcomeOptions.map((outcome) => (
-                          <button
-                            key={outcome}
-                            type="button"
-                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
-                            onClick={() => {
-                              setCallOutcomeDraft(outcome);
-                              setCallOutcomeCustom("");
-                            }}
-                          >
-                            {outcome}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-	                  {callOutcomeDraft === "__custom__" && (
-	                    <input className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
-	                  )}
-	                </div>
 	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>{statusChangeDraft === "Reschedule" ? "Save Schedule" : "Change Status"}</button></div>
 	              </div>
