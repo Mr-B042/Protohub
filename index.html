@@ -38,7 +38,13 @@
     <script type="module" src="/src/main.tsx"></script>
     <script>
       // Register service worker for push notifications + auto-update
-      if ("serviceWorker" in navigator) {
+      const isNativeCapacitorApp =
+        typeof window !== "undefined" &&
+        typeof window.Capacitor !== "undefined" &&
+        typeof window.Capacitor.isNativePlatform === "function" &&
+        window.Capacitor.isNativePlatform();
+
+      if ("serviceWorker" in navigator && !isNativeCapacitorApp) {
         window.addEventListener("load", () => {
           navigator.serviceWorker.register("/sw.js")
             .then((reg) => {
