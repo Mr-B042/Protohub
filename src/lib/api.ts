@@ -159,6 +159,21 @@ const post = <T>(path: string, body: unknown) => request<T>("POST",   path, body
 const patch = <T>(path: string, body: unknown) => request<T>("PATCH",  path, body);
 const del  = <T>(path: string)            => request<T>("DELETE", path);
 
+export const bootstrapApi = {
+  load: () => get<{
+    generatedAt: string;
+    critical: {
+      products: any[] | null;
+      orders: { data: any[]; total: number; page: number; pageSize: number } | null;
+      expenses: any[] | null;
+      notifications: any[] | null;
+      carts: any[] | null;
+    };
+    failures: string[];
+    errors?: Record<string, string>;
+  }>("/api/bootstrap")
+};
+
 // ── Auth ──────────────────────────────────────────────────
 export const authApi = {
   register: (body: { orgName: string; name: string; email: string; password: string }) =>

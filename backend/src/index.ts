@@ -38,6 +38,7 @@ import salesTeamRoutes     from "./routes/sales-teams.js";
 import penaltyRoutes       from "./routes/penalties.js";
 import pushRoutes          from "./routes/push.js";
 import userRoutes          from "./routes/users.js";
+import bootstrapRoutes     from "./routes/bootstrap.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -156,6 +157,7 @@ app.use("/api/auth/register", authRateLimit);
 app.use("/api/auth/refresh",  authRateLimit);
 app.use("/api/auth",          authRoutes);
 app.use("/api/products",      productRoutes);
+app.use("/api/bootstrap",     bootstrapRoutes);
 app.use("/api/orders",        orderRoutes);
 app.use("/api/agents",        agentRoutes);
 app.use("/api/stock",         stockRoutes);

@@ -99,7 +99,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
+  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bootstrapApi
 } from "./lib/api";
 import {
   Line,
@@ -7489,6 +7489,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // and merge it into state (API data wins over localStorage cache).
   const retryLoadData = useRef<() => void>(() => {});
   const lastAutoResyncAt = useRef(0);
+  const criticalDataVisibleRef = useRef(false);
+  const criticalBootstrapFailureCount = useRef(0);
+  useEffect(() => {
+    criticalDataVisibleRef.current = [
+      products.length,
+      trackedOrders.length,
+      expenses.length,
+      systemNotifications.length,
+      abandonedCarts.length
+    ].some((count) => count > 0);
+  }, [products.length, trackedOrders.length, expenses.length, systemNotifications.length, abandonedCarts.length]);
+
   useEffect(() => {
     if (!auth.isLoggedIn()) { setDataLoading(false); return; }
     let cancelled = false;
@@ -7525,6 +7537,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
         isAdmin ? p() : Promise.resolve(skipped as Skipped);
+      const fulfilled = <T,>(value: T): PromiseFulfilledResult<T> => ({ status: "fulfilled", value });
 
       const hydrateProducts = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -7730,46 +7743,68 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       };
+      const resetCriticalBootstrapError = () => {
+        criticalBootstrapFailureCount.current = 0;
+        reconnectAttempts = 0;
+        setDataError(null);
+      };
+      const handleCriticalBootstrapFailure = () => {
+        criticalBootstrapFailureCount.current += 1;
+        const shouldShowBanner =
+          criticalDataVisibleRef.current || criticalBootstrapFailureCount.current > 1;
+        if (shouldShowBanner) {
+          setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
+        } else {
+          setDataError(null);
+        }
+        scheduleReconnect();
+      };
+      const loadSecondaryData = () => Promise.allSettled([
+        agentsApi.list(),
+        stockApi.movements({ limit: "500" }),
+        waybillsApi.list(),
+        stockApi.countSessions(),
+        teamApi.list(),
+        ifAdmin(() => salesTeamsApi.list()),
+        ifAdmin(() => payStructuresApi.list()),
+        ifAdmin(() => payrollApi.list()),
+        ifAdmin(() => penaltiesApi.list())
+      ]);
       try {
+        const bootstrap = await bootstrapApi.load();
+        if (cancelled) return;
+
+        const criticalFailures = Array.isArray(bootstrap.failures) ? bootstrap.failures : [];
+        const criticalAllFailed = criticalFailures.length >= 5;
+
+        if (criticalAllFailed) {
+          handleCriticalBootstrapFailure();
+          if (fastBootDashboard) setDataLoading(false);
+          return;
+        }
+
+        resetCriticalBootstrapError();
+
+        if (Array.isArray(bootstrap.critical.products)) {
+          hydrateProducts(fulfilled(bootstrap.critical.products));
+        }
+        if (bootstrap.critical.orders && Array.isArray(bootstrap.critical.orders.data)) {
+          hydrateOrders(fulfilled(bootstrap.critical.orders));
+        }
+        if (Array.isArray(bootstrap.critical.expenses)) {
+          hydrateExpenses(fulfilled(bootstrap.critical.expenses));
+        }
+        if (Array.isArray(bootstrap.critical.notifications)) {
+          hydrateNotifications(fulfilled(bootstrap.critical.notifications));
+        }
+        if (Array.isArray(bootstrap.critical.carts)) {
+          hydrateCarts(fulfilled(bootstrap.critical.carts));
+        }
+
         if (fastBootDashboard) {
-          const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
-            productsApi.list(),
-            ordersApi.list({ limit: "5000" }),
-            expensesApi.list(),
-            notificationsApi.list(),
-            cartsApi.list()
-          ]);
-
-          if (cancelled) return;
-
-          const criticalResults = [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts];
-          if (criticalResults.every((r) => r.status === "rejected")) {
-            setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
-            scheduleReconnect();
-          } else {
-            reconnectAttempts = 0;
-            setDataError(null);
-          }
-
-          hydrateProducts(apiProducts);
-          hydrateOrders(apiOrders);
-          hydrateExpenses(apiExpenses);
-          hydrateNotifications(apiNotifications);
-          hydrateCarts(apiCarts);
-
           if (!cancelled) setDataLoading(false);
 
-          void Promise.allSettled([
-            agentsApi.list(),
-            stockApi.movements({ limit: "500" }),
-            waybillsApi.list(),
-            stockApi.countSessions(),
-            teamApi.list(),
-            ifAdmin(() => salesTeamsApi.list()),
-            ifAdmin(() => payStructuresApi.list()),
-            ifAdmin(() => payrollApi.list()),
-            ifAdmin(() => penaltiesApi.list())
-          ]).then(([
+          void loadSecondaryData().then(([
             apiAgents,
             apiMovements,
             apiWaybills,
@@ -7795,66 +7830,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
 
         const [
-          apiProducts,
-          apiOrders,
           apiAgents,
           apiMovements,
-          apiExpenses,
           apiWaybills,
-          apiNotifications,
           apiStockCounts,
           apiTeam,
-          apiCarts,
           apiSalesTeams,
           apiPayStructures,
           apiPayrollRuns,
           apiPenalties
-        ] = await Promise.allSettled([
-          productsApi.list(),
-          ordersApi.list({ limit: "5000" }),
-          agentsApi.list(),
-          stockApi.movements({ limit: "500" }),
-          expensesApi.list(),
-          waybillsApi.list(),
-          notificationsApi.list(),
-          stockApi.countSessions(),
-          teamApi.list(),
-          cartsApi.list(),
-          ifAdmin(() => salesTeamsApi.list()),
-          ifAdmin(() => payStructuresApi.list()),
-          ifAdmin(() => payrollApi.list()),
-          ifAdmin(() => penaltiesApi.list())
-        ]);
+        ] = await loadSecondaryData();
 
         if (cancelled) return;
 
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
-        if (allResults.every((r) => r.status === "rejected")) {
-          setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
-          scheduleReconnect();
-        } else {
-          reconnectAttempts = 0;
-          setDataError(null);
-        }
-
-        hydrateProducts(apiProducts);
-        hydrateOrders(apiOrders);
         hydrateAgents(apiAgents);
         hydrateMovements(apiMovements);
-        hydrateExpenses(apiExpenses);
         hydrateWaybills(apiWaybills);
-        hydrateNotifications(apiNotifications);
         hydrateStockCounts(apiStockCounts);
         hydrateTeam(apiTeam);
-        hydrateCarts(apiCarts);
         hydrateSalesTeams(apiSalesTeams);
         hydratePayStructures(apiPayStructures);
         hydratePayrollRuns(apiPayrollRuns);
         hydratePenalties(apiPenalties);
       } catch (_) {
         if (!cancelled) {
-          setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
-          scheduleReconnect();
+          handleCriticalBootstrapFailure();
           if (fastBootDashboard) setDataLoading(false);
         }
       } finally {
