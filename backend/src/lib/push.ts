@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import "./load-env.js";
 import admin from "firebase-admin";
 import apn from "apn";
 import webpush from "web-push";
