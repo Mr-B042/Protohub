@@ -27,6 +27,14 @@ npm run mobile:open:android
 npm run mobile:open:ios
 ```
 
+`mobile:build` is production-safe on purpose:
+
+- it uses Vite mode `mobile-production`
+- it reads `.env.mobile-production`
+- it does **not** inherit the repo's normal `.env.local` localhost API setting
+
+That keeps Android/iOS test builds pointed at the real production API unless you intentionally create a different mobile-only mode.
+
 `mobile:doctor` checks:
 
 - Android `google-services.json`
