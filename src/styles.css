@@ -7898,9 +7898,6 @@ html.dark,
 .dark .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4); }
 .dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }
 
-/* Status pills — keep saturated tints but adjust for dark */
-.dark .status-pill { filter: brightness(0.95) saturate(1.1); }
-
 /* Recharts — make axes and tooltips legible */
 .dark .recharts-text { fill: hsl(215 14% 65%) !important; }
 .dark .recharts-cartesian-axis-line,
@@ -8034,6 +8031,20 @@ html.dark,
   color: hsl(var(--text-faint));
 }
 
+.dark .modal-form input:not([type="checkbox"]),
+.dark .modal-form textarea,
+.dark .modal-form select {
+  background: hsl(210 36% 11%);
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.dark .modal-form input:not([type="checkbox"])::placeholder,
+.dark .modal-form textarea::placeholder {
+  color: hsl(var(--text-faint));
+}
+
 .dark .modal-form p,
 .dark .dashboard-math-panel p,
 .dark .rep-kpi-card p,
@@ -8063,7 +8074,74 @@ html.dark,
 
 .dark .status-pill {
   border: 1px solid hsl(var(--border));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  background: hsl(210 34% 15%);
+  color: hsl(var(--foreground));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 22px rgba(2, 6, 23, 0.24);
+}
+
+.dark .status-delivered {
+  background: rgba(52, 211, 153, 0.18);
+  border-color: rgba(110, 231, 183, 0.3);
+  color: #d1fae5;
+}
+
+.dark .status-cancelled,
+.dark .status-failed {
+  background: rgba(251, 113, 133, 0.18);
+  border-color: rgba(251, 113, 133, 0.32);
+  color: #ffe4e6;
+}
+
+.dark .status-dispatched,
+.dark .status-confirmed,
+.dark .status-in-process {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(253, 224, 71, 0.32);
+  color: #fef3c7;
+}
+
+.dark .status-postponed {
+  background: rgba(96, 165, 250, 0.2);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #dbeafe;
+}
+
+.dark .status-new {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.32);
+  color: #e0f2fe;
+}
+
+.dark .status-pending,
+.dark .status-ready,
+.dark .status-rescheduled,
+.dark .status-awaiting-payment,
+.dark .status-have-questions-to-ask,
+.dark .status-will-get-back-to-us,
+.dark .status-line-busy,
+.dark .status-no-answer,
+.dark .status-not-picking,
+.dark .status-number-not-going,
+.dark .status-wrong-number,
+.dark .status-switched-off,
+.dark .status-we-should-call-back,
+.dark .status-will-call-back,
+.dark .status-scheduled-callback,
+.dark .status-not-reached,
+.dark .status-not-available,
+.dark .status-not-ready,
+.dark .status-travelled,
+.dark .status-refused,
+.dark .status-seat-at-home,
+.dark .status-out-of-stock,
+.dark .status-out-of-coverage,
+.dark .status-waybill,
+.dark .status-recovered-delivery {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 22px rgba(2, 6, 23, 0.24);
 }
 
 .dark .code-tabs {

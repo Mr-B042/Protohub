@@ -1344,48 +1344,55 @@ const orderLocationFromFields = (city: string, state: string) => {
   return matchedLocation || city.trim() || state.trim() || "Lagos";
 };
 
+const statusBadgeBaseClasses =
+  "border shadow-[0_1px_0_rgba(255,255,255,0.82)_inset,0_8px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_1px_0_rgba(255,255,255,0.05)_inset,0_12px_28px_rgba(2,6,23,0.34)]";
+const outcomeBadgeBaseClasses =
+  "border shadow-[0_1px_0_rgba(255,255,255,0.88)_inset,0_6px_14px_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_10px_22px_rgba(2,6,23,0.26)]";
+
 const statusBadgeClasses = (status: string): string => {
   const map: Record<string, string> = {
-    "New":        "bg-blue-50 text-blue-700 border-blue-200",
-    "Confirmed":  "bg-amber-50 text-amber-800 border-amber-400",
-    "In Process": "bg-amber-50 text-amber-800 border-amber-400",
-    "Dispatched": "bg-purple-50 text-purple-800 border-purple-300",
-    "Delivered":  "bg-green-50 text-green-800 border-green-400",
-    "Cancelled":  "bg-red-50 text-red-800 border-red-300",
-    "Postponed":  "bg-stone-50 text-stone-700 border-stone-300",
-    "Failed":     "bg-orange-50 text-orange-900 border-orange-300",
+    "New": `${statusBadgeBaseClasses} bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-400/22 dark:text-sky-50 dark:border-sky-300/38`,
+    "Confirmed": `${statusBadgeBaseClasses} bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-400/22 dark:text-amber-50 dark:border-amber-300/38`,
+    "In Process": `${statusBadgeBaseClasses} bg-orange-50 text-orange-900 border-orange-200 dark:bg-orange-400/22 dark:text-orange-50 dark:border-orange-300/38`,
+    "Dispatched": `${statusBadgeBaseClasses} bg-violet-50 text-violet-800 border-violet-200 dark:bg-violet-400/22 dark:text-violet-50 dark:border-violet-300/38`,
+    "Delivered": `${statusBadgeBaseClasses} bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-400/22 dark:text-emerald-50 dark:border-emerald-300/38`,
+    "Cancelled": `${statusBadgeBaseClasses} bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-400/22 dark:text-rose-50 dark:border-rose-300/38`,
+    "Postponed": `${statusBadgeBaseClasses} bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-400/24 dark:text-blue-50 dark:border-blue-300/40`,
+    "Failed": `${statusBadgeBaseClasses} bg-red-50 text-red-800 border-red-200 dark:bg-red-400/22 dark:text-red-50 dark:border-red-300/38`,
   };
-  return map[status] ?? "bg-stone-50 text-stone-700 border-stone-300";
+  return map[status] ?? `${statusBadgeBaseClasses} bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-400/12 dark:text-slate-100 dark:border-slate-300/24`;
 };
 const outcomeBadgeClasses = (outcome: string, status?: string): string => {
   const normalized = outcome.trim().toLowerCase();
 
   if (["confirmed", "recovered delivery"].includes(normalized)) {
-    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    return `${outcomeBadgeBaseClasses} bg-emerald-50/95 text-emerald-800 border-emerald-200 dark:bg-emerald-950/85 dark:text-emerald-200 dark:border-emerald-500/42`;
   }
   if (["refused", "wrong number"].includes(normalized)) {
-    return "bg-rose-50 text-rose-700 border-rose-200";
+    return `${outcomeBadgeBaseClasses} bg-rose-50/95 text-rose-800 border-rose-200 dark:bg-rose-950/85 dark:text-rose-200 dark:border-rose-500/42`;
   }
   if (["no answer", "not picking", "not reached", "line busy", "number not going", "switched off", "not available"].includes(normalized)) {
-    return "bg-slate-100 text-slate-700 border-slate-200";
+    return `${outcomeBadgeBaseClasses} bg-slate-100/95 text-slate-700 border-slate-200 dark:bg-slate-900/85 dark:text-slate-200 dark:border-slate-500/38`;
   }
   if (["will call back", "scheduled callback", "not ready", "travelled", "we should call back", "will get back to us", "have questions to ask", "seat at home", "rescheduled", "pending", "ready"].includes(normalized)) {
-    return "bg-blue-50 text-blue-700 border-blue-200";
+    return `${outcomeBadgeBaseClasses} bg-blue-50/95 text-blue-800 border-blue-200 dark:bg-sky-950/85 dark:text-sky-200 dark:border-sky-500/42`;
   }
   if (["awaiting payment"].includes(normalized)) {
-    return "bg-violet-50 text-violet-700 border-violet-200";
+    return `${outcomeBadgeBaseClasses} bg-violet-50/95 text-violet-800 border-violet-200 dark:bg-violet-950/85 dark:text-violet-200 dark:border-violet-500/42`;
   }
   if (["out of stock"].includes(normalized)) {
-    return "bg-orange-50 text-orange-800 border-orange-200";
+    return `${outcomeBadgeBaseClasses} bg-orange-50/95 text-orange-900 border-orange-200 dark:bg-orange-950/85 dark:text-orange-200 dark:border-orange-500/42`;
   }
   if (["out of coverage"].includes(normalized)) {
-    return "bg-cyan-50 text-cyan-800 border-cyan-200";
+    return `${outcomeBadgeBaseClasses} bg-cyan-50/95 text-cyan-800 border-cyan-200 dark:bg-cyan-950/85 dark:text-cyan-200 dark:border-cyan-500/42`;
   }
   if (["waybill"].includes(normalized)) {
-    return "bg-amber-50 text-amber-800 border-amber-200";
+    return `${outcomeBadgeBaseClasses} bg-amber-50/95 text-amber-900 border-amber-200 dark:bg-amber-950/85 dark:text-amber-200 dark:border-amber-500/42`;
   }
 
-  return status ? statusBadgeClasses(status) : "bg-stone-50 text-stone-700 border-stone-300";
+  return status
+    ? `${statusBadgeClasses(status)} dark:opacity-95`
+    : `${outcomeBadgeBaseClasses} bg-slate-50/95 text-slate-700 border-slate-200 dark:bg-slate-900/85 dark:text-slate-200 dark:border-slate-500/38`;
 };
 const renderOrderStatusSummary = (
   order: Pick<TrackedOrder, "status" | "callOutcome">,
@@ -1402,18 +1409,69 @@ const renderOrderStatusSummary = (
 
   return (
     <div className={`flex flex-col gap-1 ${alignClass}`}>
-      <span className={`inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap shadow-sm ${statusBadgeClasses(status)}`}>
+      <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)}`}>
         {status}
       </span>
       {outcome ? (
-        <span className={`inline-flex max-w-[13rem] flex-wrap items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold leading-4 shadow-sm ${outcomeBadgeClasses(outcome, status)}`}>
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-70 shrink-0" />
+        <span className={`inline-flex max-w-[13rem] flex-wrap items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[10px] font-semibold leading-4 ${outcomeBadgeClasses(outcome, status)}`}>
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-75 shrink-0" />
           <span className="min-w-0 break-words text-left">
             {outcome}
           </span>
         </span>
       ) : null}
     </div>
+  );
+};
+
+const orderPanelClass =
+  "bg-white rounded-xl border border-gray-200 shadow-sm dark:bg-[#101a24] dark:border-slate-800/90 dark:shadow-[0_18px_40px_rgba(2,6,23,0.34)]";
+const orderPanelMutedClass =
+  "bg-gray-50 border border-gray-100 dark:bg-[#16212c] dark:border-slate-800/80";
+const orderPanelInfoClass =
+  "bg-blue-50/70 border border-blue-100 dark:bg-[#13283d] dark:border-sky-900/50";
+const orderBorderClass = "border-gray-100 dark:border-slate-800/80";
+const orderTableHeaderClass =
+  "bg-gray-50 border-b border-gray-200 text-gray-500 dark:bg-[#16212c] dark:border-slate-800/90 dark:text-slate-400";
+const orderTitleTextClass = "text-gray-900 dark:text-slate-100";
+const orderBodyTextClass = "text-gray-700 dark:text-slate-200";
+const orderMutedTextClass = "text-gray-500 dark:text-slate-400";
+const orderFaintTextClass = "text-gray-400 dark:text-slate-500";
+const orderSecondaryButtonClass =
+  "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-200 dark:hover:bg-[#1a2834]";
+const orderGhostButtonClass =
+  "text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-[#1a2834]";
+const orderDangerButtonClass =
+  "border border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-500/35 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10";
+const orderInputClass =
+  "border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-100 dark:placeholder:text-slate-500";
+const orderNoteCardClass =
+  "rounded-[22px] border border-gray-200 bg-white px-4 py-4 sm:px-5 sm:py-5 shadow-sm dark:bg-[#0b141d] dark:border-slate-800/90 dark:shadow-[0_18px_40px_rgba(2,6,23,0.3)]";
+const orderNoteMetaClass = "text-[12px] sm:text-[13px] font-semibold tracking-[0.01em] text-gray-500 dark:text-slate-400";
+const orderNoteBodyClass = "mt-3 text-[16px] sm:text-[18px] leading-7 sm:leading-8 font-medium text-gray-900 dark:text-slate-100 whitespace-pre-wrap break-words";
+
+const renderOrderNoteCard = (note: OrderNote, options?: { compact?: boolean }) => {
+  const compact = options?.compact ?? false;
+  return (
+    <article
+      key={note.id}
+      className={`${orderNoteCardClass} ${compact ? "px-3.5 py-3.5 sm:px-4 sm:py-4 rounded-[20px]" : ""}`}
+    >
+      <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${orderNoteMetaClass}`}>
+        <Clock className="h-3.5 w-3.5 shrink-0" />
+        <span>{formatDateTime(note.date)}</span>
+        {note.by ? <span className={orderFaintTextClass}>• {note.by}</span> : null}
+      </div>
+      <p className={compact ? "mt-2.5 text-[15px] sm:text-[16px] leading-6 sm:leading-7 font-medium text-gray-900 dark:text-slate-100 whitespace-pre-wrap break-words" : orderNoteBodyClass}>
+        {note.text}
+      </p>
+      {followUpMomentForNote(note) && (
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[12px] font-semibold text-sky-700 dark:border-sky-500/30 dark:bg-sky-950/80 dark:text-sky-200">
+          <Clock className="h-3.5 w-3.5" />
+          <span>Follow-up · {formatPlannedMoment(note.followUpAt, note.followUpDate)}</span>
+        </div>
+      )}
+    </article>
   );
 };
 
@@ -2110,24 +2168,27 @@ const renderPublicFormSubmissionDetails = (order: TrackedOrder) => {
   if (!sections.length) return null;
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
       {sections.map((section) => (
         <div
           key={section.title}
-          className={`rounded-2xl border border-gray-200 bg-gray-50/70 p-4 sm:p-5 ${
+          className={`rounded-[28px] border border-gray-200 bg-white px-5 py-5 shadow-sm dark:border-slate-800/90 dark:bg-[#0a131c] dark:shadow-[0_24px_50px_rgba(2,6,23,0.34)] ${
             section.fullWidth ? "xl:col-span-2" : ""
           }`}
         >
-          <p className="m-0 mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">
+          <p className={`m-0 mb-5 text-[17px] sm:text-[19px] font-semibold tracking-[-0.02em] ${orderTitleTextClass}`}>
             {section.title}
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
             {section.rows.map((row) => (
-              <div key={`${section.title}-${row.label}`} className={row.wide ? "md:col-span-2" : ""}>
-                <p className="m-0 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">
+              <div
+                key={`${section.title}-${row.label}`}
+                className={row.wide ? "md:col-span-2" : ""}
+              >
+                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>
                   {row.label}
                 </p>
-                <p className="m-0 mt-1 text-sm sm:text-[15px] font-semibold leading-6 text-gray-900 break-words whitespace-pre-wrap">
+                <p className={`m-0 mt-2 text-[16px] sm:text-[17px] font-semibold leading-7 tracking-[-0.01em] break-words whitespace-pre-wrap ${orderTitleTextClass}`}>
                   {row.value}
                 </p>
               </div>
@@ -14450,18 +14511,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       {orders.length === 0 ? (
         <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">{emptyLabel}</div>
       ) : (
-        <div className="sm:hidden divide-y divide-gray-100">
+        <div className="sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
           {orders.map((order) => {
             const status = order.status ?? "New";
             const latestNote = latestTimelineNoteForOrder(order);
             const nextFollowUp = nextFollowUpForOrder(order);
             return (
-              <article key={order.id} className="px-4 py-4 space-y-3">
+              <article key={order.id} className="px-4 py-4 space-y-3 bg-white dark:bg-[#101a24]">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-sm font-bold text-[#1F8FE0]">{order.id}</h3>
-                    <p className="text-sm font-semibold text-gray-900 truncate">{order.customer}</p>
-                    <p className="text-xs text-gray-500">{order.phone}</p>
+                    <p className={`text-sm font-semibold truncate ${orderTitleTextClass}`}>{order.customer}</p>
+                    <p className={`text-xs ${orderMutedTextClass}`}>{order.phone}</p>
                   </div>
                   <div className="shrink-0">
                     {renderOrderStatusSummary(order, "right")}
@@ -14469,50 +14530,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Source</p>
-                    <p className="mt-1 font-semibold text-gray-800">{order.source ?? orderSourceFromUtm(order.utmSource)}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Source</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{order.source ?? orderSourceFromUtm(order.utmSource)}</p>
                   </div>
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Response</p>
-                    <p className="mt-1 font-semibold text-gray-800">{responseTimeForOrder(order)}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Response</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{responseTimeForOrder(order)}</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Location</p>
-                    <p className="mt-1 font-semibold text-gray-800">{order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Location</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Created</p>
-                    <p className="mt-1 font-semibold text-gray-800">{formatOrderCreatedAt(order)}</p>
-                    <p className="mt-1 text-[11px] text-gray-500 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Created</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatOrderCreatedAt(order)}</p>
+                    <p className={`mt-1 text-[11px] uppercase tracking-tight ${orderMutedTextClass}`}>{order.response ?? "Awaiting confirmation"}</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Latest Feedback</p>
-                    <p className="mt-1 font-semibold text-gray-800">{latestNote ? noteSnippet(latestNote.text) : "No saved note yet"}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Latest Feedback</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{latestNote ? noteSnippet(latestNote.text) : "No saved note yet"}</p>
                     {latestNote && (
-                      <p className="mt-1 text-[11px] text-gray-500">{latestNote.by} · {formatMoment(latestNote.date)}</p>
+                      <p className={`mt-1 text-[11px] ${orderMutedTextClass}`}>{latestNote.by} · {formatMoment(latestNote.date)}</p>
                     )}
                   </div>
                   <div className="col-span-2">
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Next Follow-up</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Next Follow-up</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
                       {nextFollowUp?.noteText && (
-                        <span className="text-[11px] text-gray-500">{noteSnippet(nextFollowUp.noteText, 72)}</span>
+                        <span className={`text-[11px] ${orderMutedTextClass}`}>{noteSnippet(nextFollowUp.noteText, 72)}</span>
                       )}
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
-                    className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    className={`!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${orderSecondaryButtonClass}`}
                     onClick={() => openWhatsAppForOrder(order)}
                   >
                     <WhatsAppIcon className="w-4 h-4 text-[#25D366]" /> WhatsApp
                   </button>
                   <button
-                    className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    className={`!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${orderSecondaryButtonClass}`}
                     onClick={() => openRepOrderDetail(order)}
                   >
                     <Eye className="w-4 h-4" /> Details
@@ -14526,18 +14587,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       <div className="hidden sm:block overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-gray-50 border-b border-gray-200 text-left">
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Order #</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Customer Name</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Source</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Status</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Response</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Location</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Created</th>
-            <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right">Actions</th>
+          <tr className={`text-left ${orderTableHeaderClass}`}>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider ${orderFaintTextClass}`}>Order #</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider ${orderFaintTextClass}`}>Customer Name</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-center ${orderFaintTextClass}`}>Source</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-center ${orderFaintTextClass}`}>Status</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-center ${orderFaintTextClass}`}>Response</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider ${orderFaintTextClass}`}>Location</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider ${orderFaintTextClass}`}>Created</th>
+            <th className={`px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-right ${orderFaintTextClass}`}>Actions</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
           {orders.length === 0 ? (
             <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">{emptyLabel}</td></tr>
           ) : (
@@ -14546,24 +14607,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const latestNote = latestTimelineNoteForOrder(order);
               const nextFollowUp = nextFollowUpForOrder(order);
               return (
-                <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors">
                   <td className="px-4 py-4 font-bold text-[#1F8FE0]">{order.id}</td>
                   <td className="px-4 py-4">
-                    <div className="font-bold text-gray-900">{order.customer}</div>
-                    <div className="text-xs text-gray-500">{order.phone}</div>
-                    <div className="mt-1 text-[11px] text-gray-500">
-                      <span className="font-semibold text-gray-600">Latest:</span>{" "}
+                    <div className={`font-bold ${orderTitleTextClass}`}>{order.customer}</div>
+                    <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
+                    <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
+                      <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span>{" "}
                       {latestNote ? noteSnippet(latestNote.text, 76) : "No saved note yet"}
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-center text-gray-500 text-xs font-medium">
+                  <td className={`px-4 py-4 text-center text-xs font-medium ${orderMutedTextClass}`}>
                     {order.source ?? orderSourceFromUtm(order.utmSource)}
                   </td>
                   <td className="px-4 py-4 text-center">
                     {renderOrderStatusSummary(order, "center")}
-                    <div className="text-[10px] text-gray-400 font-medium mt-1 uppercase tracking-tight">{order.response ?? "Awaiting confirmation"}</div>
+                    <div className={`text-[10px] font-medium mt-1 uppercase tracking-tight ${orderFaintTextClass}`}>{order.response ?? "Awaiting confirmation"}</div>
                   </td>
-                  <td className="px-4 py-4 text-center text-gray-600 font-medium">
+                  <td className={`px-4 py-4 text-center font-medium ${orderBodyTextClass}`}>
                     <div>{responseTimeForOrder(order)}</div>
                     <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-1">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
@@ -14571,14 +14632,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-gray-600 text-xs">
+                  <td className={`px-4 py-4 text-xs ${orderMutedTextClass}`}>
                     {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}
                   </td>
-                  <td className="px-4 py-4 text-gray-500 text-xs">{formatOrderCreatedAt(order)}</td>
+                  <td className={`px-4 py-4 text-xs ${orderMutedTextClass}`}>{formatOrderCreatedAt(order)}</td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        className="p-1.5 text-gray-400 hover:text-[#25D366] rounded-md hover:bg-green-50 transition-colors"
+                        className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-500/10 transition-colors text-gray-400 dark:text-slate-400 hover:text-[#25D366]"
                         title="Open WhatsApp"
                         aria-label={`WhatsApp ${order.id}`}
                         onClick={() => openWhatsAppForOrder(order)}
@@ -14586,7 +14647,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <WhatsAppIcon className="w-4 h-4" />
                       </button>
                       <button 
-                        className="px-3 py-1.5 text-xs font-bold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1.5" 
+                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors flex items-center gap-1.5 ${orderSecondaryButtonClass}`} 
                         onClick={() => openRepOrderDetail(order)}
                       >
                         <Eye className="w-3.5 h-3.5" /> Details
@@ -14634,12 +14695,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </div>
       </header>
 
-      <section className="bg-white rounded-xl border border-blue-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-blue-100 bg-blue-50/70 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <section className={`${orderPanelClass} overflow-hidden`}>
+        <div className={`px-5 py-4 border-b ${orderPanelInfoClass} flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between`}>
           <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 m-0">Scheduled Delivery</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-sky-200 m-0">Scheduled Delivery</p>
             <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-base text-gray-900">{scheduleSummaryForOrder(order)}</strong>
+              <strong className={`text-base ${orderTitleTextClass}`}>{scheduleSummaryForOrder(order)}</strong>
               {(() => {
                 const scheduleKey = scheduledKeyForOrder(order);
                 const isOverdue = scheduleKey && scheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New");
@@ -14649,7 +14710,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 return null;
               })()}
             </div>
-            <p className="text-xs text-gray-500 m-0">Keep the promised slot clear here before dispatch or follow-up.</p>
+            <p className={`text-xs m-0 ${orderMutedTextClass}`}>Keep the promised slot clear here before dispatch or follow-up.</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_auto] gap-2 w-full lg:w-auto lg:min-w-[420px]">
             <input type="date" value={repScheduleDate} onChange={(event) => setRepScheduleDate(event.target.value)} />
@@ -14664,40 +14725,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       {/* Main Grid: Customer Info & Order Items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Customer Info Card */}
-        <article className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-base font-bold text-gray-900">Customer Info</h2>
+        <article className={`${orderPanelClass} overflow-hidden`}>
+          <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
+            <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Customer Info</h2>
           </div>
           <div className="p-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
               <div>
-                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Name</span>
-                <strong className="text-sm text-gray-900">{order.customer}</strong>
+                <span className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${orderFaintTextClass}`}>Name</span>
+                <strong className={`text-sm ${orderTitleTextClass}`}>{order.customer}</strong>
               </div>
               <div>
-                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Phone</span>
-                <strong className="text-sm text-gray-900">{order.phone}</strong>
+                <span className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${orderFaintTextClass}`}>Phone</span>
+                <strong className={`text-sm ${orderTitleTextClass}`}>{order.phone}</strong>
               </div>
               <div className="sm:col-span-2">
-                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Shipping Address</span>
-                <strong className="text-sm text-gray-900">{order.address || "No address"}</strong>
+                <span className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${orderFaintTextClass}`}>Shipping Address</span>
+                <strong className={`text-sm ${orderTitleTextClass}`}>{order.address || "No address"}</strong>
               </div>
               <div>
-                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">City</span>
-                <strong className="text-sm text-gray-900">{order.city || "-"}</strong>
+                <span className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${orderFaintTextClass}`}>City</span>
+                <strong className={`text-sm ${orderTitleTextClass}`}>{order.city || "-"}</strong>
               </div>
               <div>
-                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">State</span>
-                <strong className="text-sm text-gray-900">{order.state || "-"}</strong>
+                <span className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${orderFaintTextClass}`}>State</span>
+                <strong className={`text-sm ${orderTitleTextClass}`}>{order.state || "-"}</strong>
               </div>
             </div>
           </div>
         </article>
 
         {/* Order Items Card */}
-        <article className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-base font-bold text-gray-900">Order Items</h2>
+        <article className={`${orderPanelClass} overflow-hidden`}>
+          <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
+            <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Order Items</h2>
           </div>
           <div className="sm:hidden divide-y divide-gray-100">
             <article className="px-4 py-4 space-y-3">
@@ -14963,10 +15024,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </article>
 
         {/* Communication Timeline Card */}
-        <article className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="text-base font-bold text-gray-900">Timeline & Notes</h2>
-            <button className="text-[10px] font-bold text-[#1F8FE0] uppercase tracking-wider hover:underline" onClick={() => setShowRepFollowUpField((value) => !value)}>
+        <article className={`${orderPanelClass} overflow-hidden flex flex-col`}>
+          <div className={`px-5 py-4 border-b ${orderBorderClass} flex items-center justify-between`}>
+            <h2 className={`text-lg font-bold ${orderTitleTextClass}`}>Timeline & Notes</h2>
+            <button className="text-[10px] font-bold text-[#1F8FE0] dark:text-sky-300 uppercase tracking-[0.16em] hover:underline" onClick={() => setShowRepFollowUpField((value) => !value)}>
               + Schedule Follow-up
             </button>
           </div>
@@ -14976,23 +15037,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const nextFollowUp = nextFollowUpForOrder(order);
               return (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Latest Feedback</p>
-                    <p className="mt-2 text-sm font-semibold text-gray-900 m-0">
+                  <article className={`${orderPanelMutedClass} rounded-[20px] p-4`}>
+                    <p className={`text-[10px] font-bold uppercase tracking-[0.18em] m-0 ${orderFaintTextClass}`}>Latest Feedback</p>
+                    <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>
                       {latestNote ? noteSnippet(latestNote.text, 120) : "No saved note yet."}
                     </p>
-                    <p className="mt-2 text-[11px] text-gray-500 m-0">
+                    <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
                       {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Add a note after every customer call so the next rep sees the context."}
                     </p>
                   </article>
-                  <article className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 m-0">Next Reminder</p>
+                  <article className={`${orderPanelMutedClass} rounded-[20px] p-4`}>
+                    <p className={`text-[10px] font-bold uppercase tracking-[0.18em] m-0 ${orderFaintTextClass}`}>Next Reminder</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
-                    <p className="mt-2 text-[11px] text-gray-500 m-0">
+                    <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
                       {nextFollowUp?.noteText
                         ? noteSnippet(nextFollowUp.noteText, 120)
                         : "Set a follow-up date and time on any note that needs a callback reminder."}
@@ -15003,32 +15064,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             })()}
             <div className="flex-1 overflow-y-auto max-h-[300px] space-y-4 pr-2 custom-scrollbar">
               {orderNotesFor(order).length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">No timeline entries yet.</p>
+                <p className={`text-sm text-center py-8 ${orderFaintTextClass}`}>No timeline entries yet.</p>
               ) : (
-                orderNotesFor(order).map((note) => (
-                  <div key={note.id} className="relative pl-4 border-l-2 border-gray-100">
-                    <div className="absolute -left-[5px] top-1 w-2 h-2 rounded-full bg-gray-200"></div>
-                    <div className="flex items-center justify-between mb-1">
-                      <strong className="text-xs font-bold text-gray-900">{note.by}</strong>
-                      <span className="text-[10px] text-gray-400 font-medium">
-                        {formatMoment(note.date)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600 leading-relaxed">{note.text}</p>
-                    {followUpMomentForNote(note) && (
-                      <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-[#1F8FE0] rounded text-[10px] font-bold uppercase tracking-wide">
-                        <Clock className="w-3 h-3" /> Follow-up {formatPlannedMoment(note.followUpAt, note.followUpDate)}
-                      </div>
-                    )}
-                  </div>
-                ))
+                orderNotesFor(order).map((note) => renderOrderNoteCard(note, { compact: true }))
               )}
             </div>
             
-            <div className="space-y-3 pt-4 border-t border-gray-100 mt-auto">
+            <div className={`space-y-3 pt-4 border-t ${orderBorderClass} mt-auto`}>
               {showRepFollowUpField && (
                 <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Follow-up Date &amp; Time</span>
+                  <span className={`text-[10px] font-bold uppercase tracking-wide ${orderFaintTextClass}`}>Follow-up Date &amp; Time</span>
                   <div className="flex flex-col sm:flex-row gap-2">
                     <input type="date" className="w-full h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} />
                     <input type="time" className="w-full sm:w-36 h-9 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" value={orderFollowUpTime} onChange={(event) => setOrderFollowUpTime(event.target.value)} />
@@ -15198,17 +15243,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         {/* Order card or empty state */}
         {!order ? (
-          <div className="flex flex-col items-center justify-center py-16 bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className={`flex flex-col items-center justify-center py-16 ${orderPanelClass}`}>
             <CheckCircle2 className="w-12 h-12 text-green-400 mb-3" />
-            <h2 className="text-lg font-bold text-gray-800 mb-1">Queue clear</h2>
-            <p className="text-sm text-gray-500">No orders to call right now.</p>
+            <h2 className={`text-lg font-bold mb-1 ${orderTitleTextClass}`}>Queue clear</h2>
+            <p className={`text-sm ${orderMutedTextClass}`}>No orders to call right now.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className={`${orderPanelClass} overflow-hidden`}>
             {/* Order ID + time */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
-              <span className="text-sm font-bold text-gray-900">{order.id}</span>
-              <span className="flex items-center gap-1.5 text-xs font-bold text-orange-600 bg-orange-50 px-2.5 py-1 rounded-full">
+            <div className={`flex items-center justify-between px-5 py-4 border-b ${orderBorderClass} bg-gray-50 dark:bg-[#16212c]`}>
+              <span className={`text-sm font-bold ${orderTitleTextClass}`}>{order.id}</span>
+              <span className="flex items-center gap-1.5 text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-500/12 dark:text-orange-200 px-2.5 py-1 rounded-full">
                 <Clock className="w-3.5 h-3.5" /> {timeSinceCreated(order)} ago
               </span>
             </div>
@@ -15216,7 +15261,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="p-5 space-y-5">
               {/* Customer contact */}
               <div className="space-y-3">
-                <h3 className="text-lg font-bold text-gray-900">{order.customer}</h3>
+                <h3 className={`text-lg font-bold ${orderTitleTextClass}`}>{order.customer}</h3>
                 <div className="flex flex-wrap gap-2">
                   <a
                     href={`tel:${order.phone}`}
@@ -15236,35 +15281,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {/* Order details */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Product</span>
-                  <span className="text-sm font-bold text-gray-900">{order.productName}</span>
+                <div className={`p-3 rounded-lg ${orderPanelMutedClass}`}>
+                  <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Product</span>
+                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{order.productName}</span>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Package</span>
-                  <span className="text-sm font-bold text-gray-900">{order.packageName}{order.quantity ? ` (Qty: ${order.quantity})` : ""}</span>
+                <div className={`p-3 rounded-lg ${orderPanelMutedClass}`}>
+                  <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Package</span>
+                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{order.packageName}{order.quantity ? ` (Qty: ${order.quantity})` : ""}</span>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Amount</span>
-                  <span className="text-sm font-bold text-gray-900">{formatProductMoney(order.amount, order.currency)}</span>
+                <div className={`p-3 rounded-lg ${orderPanelMutedClass}`}>
+                  <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Amount</span>
+                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{formatProductMoney(order.amount, order.currency)}</span>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Source</span>
-                  <span className="text-sm font-bold text-gray-900">{order.source ?? orderSourceFromUtm(order.utmSource)}</span>
+                <div className={`p-3 rounded-lg ${orderPanelMutedClass}`}>
+                  <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Source</span>
+                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{order.source ?? orderSourceFromUtm(order.utmSource)}</span>
                 </div>
-                <div className="col-span-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Location</span>
-                  <span className="text-sm font-bold text-gray-900">{[order.city, order.state].filter(Boolean).join(", ") || "Not specified"}</span>
+                <div className={`col-span-2 p-3 rounded-lg ${orderPanelMutedClass}`}>
+                  <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Location</span>
+                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{[order.city, order.state].filter(Boolean).join(", ") || "Not specified"}</span>
                 </div>
-                <div className="col-span-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <div className={`col-span-2 p-3 rounded-lg ${orderPanelInfoClass}`}>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
-                      <span className="block text-[10px] font-bold text-blue-700 uppercase tracking-widest mb-0.5">Scheduled Delivery</span>
-                      <span className="text-sm font-bold text-gray-900">{scheduleSummaryForOrder(order)}</span>
+                      <span className="block text-[10px] font-bold text-blue-700 dark:text-sky-200 uppercase tracking-widest mb-0.5">Scheduled Delivery</span>
+                      <span className={`text-sm font-bold ${orderTitleTextClass}`}>{scheduleSummaryForOrder(order)}</span>
                     </div>
                     <button
                       type="button"
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-bold hover:bg-blue-100 transition-colors"
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 dark:bg-[#16212c] dark:border-sky-500/30 dark:text-sky-200 text-xs font-bold hover:bg-blue-100 dark:hover:bg-sky-500/10 transition-colors"
                       onClick={() => openRepRescheduleModal(order)}
                     >
                       <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(order) ? "Reschedule" : "Schedule"}
@@ -15275,9 +15320,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {/* Note field */}
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Note (optional)</label>
+                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${orderMutedTextClass}`}>Note (optional)</label>
                 <textarea
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none resize-none"
+                  className={`w-full rounded-lg px-3 py-2 text-sm outline-none resize-none ${orderInputClass}`}
                   rows={2}
                   placeholder="Add a note about this call..."
                   value={callQueueNote}
@@ -17856,7 +17901,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 )}
 
                 {/* Mobile card list (sm and below) */}
-                <div className="block sm:hidden divide-y divide-gray-100">
+                <div className="block sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
                   {filteredOrderRows.length === 0 ? (
                     <div className="px-5 py-12 text-center text-sm text-gray-400">No orders found</div>
                   ) : (
@@ -17867,10 +17912,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
-                        <article key={order.id} className="p-4 flex flex-col gap-3">
+                        <article key={order.id} className="p-4 flex flex-col gap-3 bg-white dark:bg-[#101a24]">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Order</span>
+                              <span className={`text-[10px] font-bold uppercase tracking-wider ${orderFaintTextClass}`}>Order</span>
                               <span className="text-xl font-bold text-[#1F8FE0] leading-none">#{order.id}</span>
                             </div>
                             <div className="shrink-0">
@@ -17878,13 +17923,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           </div>
                           <div>
-                            <div className="font-bold text-gray-900 text-base">{order.customer}</div>
-                            <div className="text-xs text-gray-500">{order.phone}</div>
+                            <div className={`font-bold text-base ${orderTitleTextClass}`}>{order.customer}</div>
+                            <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
                           </div>
-                          <div className="flex items-center gap-3 flex-wrap text-xs text-gray-600">
+                          <div className={`flex items-center gap-3 flex-wrap text-xs ${orderMutedTextClass}`}>
                             <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-gray-200" />{source}</span>
-                            <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-gray-400" />{location}</span>
-                            <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-gray-400" />{formatOrderCreatedAt(order)}</span>
+                            <span className="inline-flex items-center gap-1"><MapPin className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{location}</span>
+                            <span className="inline-flex items-center gap-1"><CalendarDays className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{formatOrderCreatedAt(order)}</span>
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
                           </div>
                           <div className="grid grid-cols-2 gap-2 pt-1">
@@ -17902,14 +17947,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </button>
                             {!isTerminal && (
                               <button
-                                className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
                               >
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
                             <button
-                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold border border-red-200 bg-white text-red-600 rounded-lg hover:bg-red-50 transition-colors ${isTerminal ? "col-span-2" : ""}`}
+                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
                               onClick={() => openAdminOrderDeleteRoute(order.id)}
                             >
                               <Trash2 className="w-4 h-4" /> Delete
@@ -17925,8 +17970,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm sticky-col-first">
                     <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 sticky left-0 z-20 border-r border-gray-200">
+                      <tr className={`text-left ${orderTableHeaderClass}`}>
+                        <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
                           <input
                             type="checkbox"
                             className="rounded border-gray-300"
@@ -17944,17 +17989,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             }}
                           />
                         </th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Order ID</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Customer Name</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Source</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Status</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Response</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Location</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-left">Date</th>
-                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap text-right">Actions</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Status</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Response</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Location</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Date</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-right ${orderFaintTextClass}`}>Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
                       ) : (
@@ -17964,8 +18009,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           const isTerminal = status === "Delivered" || status === "Cancelled";
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
-                            <tr key={order.id} className={`group hover:bg-gray-50 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50" : ""}`}>
-                              <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 group-hover:bg-gray-50 ${selectedOrderIds.has(order.id) ? "bg-blue-50" : "bg-white"}`}>
+                            <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
+                              <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
                                 <input
                                   type="checkbox"
                                   className="rounded border-gray-300"
@@ -17980,7 +18025,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 />
                               </td>
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
-                              <td className="px-4 py-3.5 font-semibold text-gray-900 text-sm whitespace-nowrap">{order.customer}</td>
+                              <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
                               <td className="px-4 py-3.5">
                                 {(() => {
                                   const s = (source ?? "").toLowerCase();
@@ -17989,7 +18034,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   if (s.includes("instagram")) return <Instagram className={`${cls} text-pink-500`} aria-label="Instagram" />;
                                   if (s.includes("youtube")) return <Youtube className={`${cls} text-red-500`} aria-label="YouTube" />;
                                   if (s.includes("whatsapp")) return <WhatsAppIcon className={`${cls} text-[#25D366]`} aria-label="WhatsApp" />;
-                                  return <Globe className={`${cls} text-gray-400`} aria-label={source} />;
+                                  return <Globe className={`${cls} ${orderFaintTextClass}`} aria-label={source} />;
                                 })()}
                               </td>
                               <td className="px-4 py-3.5">
@@ -18000,12 +18045,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   void responseTick;
                                   const rt = responseTimeColor(order, status);
                                   return rt.label === "—"
-                                    ? <span className="text-gray-300">—</span>
+                                    ? <span className="text-gray-300 dark:text-slate-600">—</span>
                                     : <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${rt.cls}`}>{rt.label}</span>;
                                 })()}
                               </td>
-                              <td className="px-4 py-3.5 text-sm text-gray-600 whitespace-nowrap">{location}</td>
-                              <td className="px-4 py-3.5 text-sm text-gray-600 whitespace-nowrap">{formatOrderCreatedAt(order)}</td>
+                              <td className={`px-4 py-3.5 text-sm whitespace-nowrap ${orderMutedTextClass}`}>{location}</td>
+                              <td className={`px-4 py-3.5 text-sm whitespace-nowrap ${orderMutedTextClass}`}>{formatOrderCreatedAt(order)}</td>
                               <td className="px-4 py-3.5">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
@@ -18023,7 +18068,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   </button>
                                   {!isTerminal && (
                                     <button
-                                      className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                                      className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
                                       onClick={() => openAdminOrderEditRoute(order.id)}
                                     >
@@ -18031,7 +18076,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     </button>
                                   )}
                                   <button
-                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
                                     title="Delete"
                                     onClick={() => openAdminOrderDeleteRoute(order.id)}
                                   >
@@ -18048,7 +18093,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
 
                 {/* Pagination */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] text-xs text-gray-500 dark:text-slate-400">
                   <span>
                     {filteredOrderRows.length === 0
                       ? "0 orders"
@@ -18057,7 +18102,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {ordersTotalPages > 1 && (
                     <div className="flex items-center gap-1">
                       <button
-                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        className={`!min-h-0 px-2.5 py-1 rounded-md disabled:opacity-40 disabled:pointer-events-none transition-colors ${orderSecondaryButtonClass}`}
                         disabled={ordersPageClamped <= 1}
                         onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
                       >
@@ -18072,15 +18117,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         }, [])
                         .map((p, idx) =>
                           p === "…"
-                            ? <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 select-none">…</span>
+                            ? <span key={`ellipsis-${idx}`} className={`px-1 select-none ${orderFaintTextClass}`}>…</span>
                             : <button
                                 key={p}
-                                className={`!min-h-0 w-7 h-7 rounded-md border text-xs font-semibold transition-colors ${ordersPageClamped === p ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-100"}`}
+                                className={`!min-h-0 w-7 h-7 rounded-md border text-xs font-semibold transition-colors ${ordersPageClamped === p ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : orderSecondaryButtonClass}`}
                                 onClick={() => setOrdersPage(p as number)}
                               >{p}</button>
                         )}
                       <button
-                        className="!min-h-0 px-2.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        className={`!min-h-0 px-2.5 py-1 rounded-md disabled:opacity-40 disabled:pointer-events-none transition-colors ${orderSecondaryButtonClass}`}
                         disabled={ordersPageClamped >= ordersTotalPages}
                         onClick={() => setOrdersPage((p) => Math.min(ordersTotalPages, p + 1))}
                       >
@@ -27470,10 +27515,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-2 sm:p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 shrink-0">
-              <h2 id="modal-title" className="text-base font-semibold text-gray-900">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
+          <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
+              <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
                 {modal === "notifications" && "Notifications"}
@@ -27533,7 +27578,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {modal === "stockCountEntry" && "Enter Stock Counts"}
                 {modal === "adjustStockCount" && "Adjust Stock — Write-off Reason"}
 	              </h2>
-              <button className="!min-h-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-label="Close dialog" onClick={closeModal}><X className="w-5 h-5" /></button>
+              <button className="!min-h-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-[#1a2834] transition-colors" aria-label="Close dialog" onClick={closeModal}><X className="w-5 h-5" /></button>
             </div>
 
             {modal === "createTeam" && (
@@ -28074,11 +28119,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	
 	                {/* Cleanup banner: delivered without an agent (legacy data) */}
 	                {(selectedOrder.status === "Delivered" && !selectedOrder.agentId) && (
-	                  <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
+	                  <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 dark:bg-amber-500/12 dark:border-amber-500/30">
 	                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
 	                    <div className="flex-1 min-w-0">
-	                      <p className="text-sm font-bold text-amber-900 m-0">This order was delivered without an agent assigned</p>
-	                      <p className="text-xs text-amber-800 mt-0.5 leading-5">No agent received the stock or generated a waybill. Pick the agent who actually delivered it so your stock and waybill audit trails stay accurate.</p>
+	                      <p className="text-sm font-bold text-amber-900 dark:text-amber-100 m-0">This order was delivered without an agent assigned</p>
+	                      <p className="text-xs text-amber-800 dark:text-amber-200 mt-0.5 leading-5">No agent received the stock or generated a waybill. Pick the agent who actually delivered it so your stock and waybill audit trails stay accurate.</p>
 	                      <button
 	                        type="button"
 	                        className="!min-h-0 mt-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-amber-600 rounded-md hover:bg-amber-700"
@@ -28089,38 +28134,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                )}
 
 	                {/* Section 1: Customer Information */}
-	                <section>
-	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Customer Information</h3>
+	                  <section>
+	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Customer Information</h3>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Name</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedOrder.customer}</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Name</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.customer}</p>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Phone</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedOrder.phone}</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Phone</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.phone}</p>
 	                    </div>
 	                    {selectedOrder.whatsapp && (
 	                      <div>
-	                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">WhatsApp</p>
-	                        <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedOrder.whatsapp}</p>
+	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>WhatsApp</p>
+	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.whatsapp}</p>
 	                      </div>
 	                    )}
 	                  </div>
 	                </section>
 	
 	                {/* Section 2: Order Information */}
-	                <section>
-	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Information</h3>
+	                  <section>
+	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Order Information</h3>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Status</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
 	                      <div className="mt-0.5">
 	                        {renderOrderStatusSummary(selectedOrder)}
 	                      </div>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Source</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Source</p>
 	                      <div className="flex items-center gap-1.5 mt-0.5">
 	                        {(() => {
 	                          const src = selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource);
@@ -28130,24 +28175,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          if (src === "Website") return <Globe className="w-4 h-4 shrink-0 text-gray-500" />;
 	                          return <Tag className="w-4 h-4 shrink-0 text-gray-500" />;
 	                        })()}
-	                        <span className="text-sm font-semibold text-gray-900">{selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource)}</span>
+	                        <span className={`text-sm font-semibold ${orderTitleTextClass}`}>{selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource)}</span>
 	                      </div>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Location</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Location</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Order Date</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{formatOrderCreatedAt(selectedOrder)}</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Order Date</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{formatOrderCreatedAt(selectedOrder)}</p>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Scheduled Delivery</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Scheduled Delivery</p>
 	                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-	                        <p className={`text-sm font-semibold m-0 ${scheduledMomentForOrder(selectedOrder) ? "text-gray-900" : "text-gray-500 italic"}`}>{scheduleSummaryForOrder(selectedOrder)}</p>
+	                        <p className={`text-sm font-semibold m-0 ${scheduledMomentForOrder(selectedOrder) ? orderTitleTextClass : `${orderMutedTextClass} italic`}`}>{scheduleSummaryForOrder(selectedOrder)}</p>
 	                        <button
 	                          type="button"
-	                          className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
+	                          className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-200 rounded hover:bg-blue-50 dark:text-sky-200 dark:border-sky-500/30 dark:hover:bg-sky-500/10"
 	                          onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}
 	                        >
 	                          {scheduledMomentForOrder(selectedOrder) ? "Edit" : "Add"}
@@ -28156,12 +28201,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    </div>
                       {selectedOrder.status === "Delivered" && (
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Delivered Date</p>
+	                          <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Delivered Date</p>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <p className="text-sm font-semibold text-gray-900 m-0">{formatDateTime(selectedOrder.deliveredDate)}</p>
+	                            <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>{formatDateTime(selectedOrder.deliveredDate)}</p>
 	                            <button
 	                              type="button"
-	                              className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
+	                              className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50 dark:text-emerald-200 dark:border-emerald-500/30 dark:hover:bg-emerald-500/10"
 	                              onClick={() => {
 	                                openAdminOrderStatusRoute(selectedOrder.id, "Delivered");
 	                              }}
@@ -28172,38 +28217,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </div>
                       )}
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Assigned To</p>
-	                      <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned To</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
 	                    </div>
 	                    <div>
-	                      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Agent</p>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Agent</p>
 	                      {agentNameForOrder(selectedOrder) === "Unassigned" ? (
 	                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-	                          <p className="text-sm font-semibold italic text-red-500 m-0">Unassigned</p>
+	                          <p className="text-sm font-semibold italic text-red-500 dark:text-red-300 m-0">Unassigned</p>
 	                          <button
 	                            type="button"
-	                            className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-white bg-[#1F8FE0] rounded hover:opacity-90"
+	                          className="!min-h-0 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-white bg-[#1F8FE0] rounded hover:opacity-90"
 	                            onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}
 	                          >Assign agent →</button>
 	                        </div>
 	                      ) : (
-	                        <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{agentNameForOrder(selectedOrder)}</p>
+	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{agentNameForOrder(selectedOrder)}</p>
 	                      )}
 	                    </div>
 	                    {(selectedOrder.preferredDelivery || selectedOrder.deliveryWindow) && (
 	                      <div className="col-span-2">
-	                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Preferred Delivery</p>
-	                        <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedOrder.preferredDelivery ?? selectedOrder.deliveryWindow}</p>
+	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Preferred Delivery</p>
+	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.preferredDelivery ?? selectedOrder.deliveryWindow}</p>
 	                      </div>
 	                    )}
 	                    {/* Delivery fee — Call Rep / Admin / Owner can set this so the
 	                        cost is tracked and auto-booked to the Expense board. */}
 	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep") && (
 	                      <div className="col-span-2">
-	                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400 m-0">Delivery fee</p>
+	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Delivery fee</p>
 	                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-	                          <div className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg bg-white">
-	                            <span className="text-xs font-bold text-gray-500">{selectedOrder.currency || "₦"}</span>
+	                          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg ${orderSecondaryButtonClass}`}>
+	                            <span className={`text-xs font-bold ${orderMutedTextClass}`}>{selectedOrder.currency || "₦"}</span>
 	                            <input
 	                              type="number"
 	                              min={0}
@@ -28222,7 +28267,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                                syncOrderDeliveryExpense(updated);
 	                                showToast(`Delivery fee for ${selectedOrder.id} set to ${formatProductMoney(fee, selectedOrder.currency)}.`);
 	                              }}
-	                              className="!min-h-0 w-24 text-sm font-bold text-gray-900 bg-transparent focus:outline-none"
+	                              className={`!min-h-0 w-24 text-sm font-bold bg-transparent focus:outline-none ${orderTitleTextClass}`}
 	                            />
 	                          </div>
 	                          {(selectedOrder.logisticsCost ?? 0) > 0 && (
@@ -28241,27 +28286,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            </span>
 	                          )}
 	                        </div>
-	                        <p className="text-[11px] text-gray-400 mt-1">Auto-books to the Expense board. Booked as <strong>Failed Delivery</strong> if the order ends Failed or Cancelled.</p>
+	                        <p className={`text-[11px] mt-1 ${orderFaintTextClass}`}>Auto-books to the Expense board. Booked as <strong>Failed Delivery</strong> if the order ends Failed or Cancelled.</p>
 	                      </div>
 	                    )}
 	                  </div>
 	                </section>
 
-	                {/* Section 2b: Form Submission Details (public embed form orders) */}
-	                {hasPublicFormSubmissionDetails(selectedOrder) && (
-	                  <section>
-	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
-	                    {renderPublicFormSubmissionDetails(selectedOrder)}
-	                  </section>
-	                )}
-
 	                {/* Section 3: Delivery Address */}
-	                <section>
-	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Delivery Address</h3>
-	                  <div className="border border-gray-200 rounded-lg p-3 text-sm text-gray-700 bg-gray-50/50">
-	                    {selectedOrder.address || "No address provided"}{(selectedOrder.city || selectedOrder.state) ? `, ${[selectedOrder.city, selectedOrder.state].filter(Boolean).join(", ")}` : ""}
-	                  </div>
-	                </section>
+	                  <section>
+	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Delivery Address</h3>
+	                    <div className={`rounded-lg p-3 text-sm ${orderBodyTextClass} ${orderPanelMutedClass}`}>
+	                      {selectedOrder.address || "No address provided"}{(selectedOrder.city || selectedOrder.state) ? `, ${[selectedOrder.city, selectedOrder.state].filter(Boolean).join(", ")}` : ""}
+	                    </div>
+	                  </section>
 	
 	                {/* Section 4: Order Items */}
 	                <section>
@@ -28408,7 +28445,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	
 	                {/* Section 5: Order Timeline */}
 	                <section>
-	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-4">Order Timeline</h3>
+	                  <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-4 ${orderTitleTextClass}`}>Order Timeline</h3>
 	                  {(() => {
 	                    const s = selectedOrder.status ?? "New";
 	                    const isCancelled = s === "Cancelled";
@@ -28442,12 +28479,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                              </div>
 	                              <div className="flex-1 pt-1">
 	                                <div className="flex items-center justify-between gap-2 flex-wrap">
-	                                  <p className="text-sm font-medium text-gray-900 m-0">{step.label}</p>
+	                                  <p className={`text-[15px] sm:text-base font-semibold m-0 ${orderTitleTextClass}`}>{step.label}</p>
 	                                  {step.timestamp && (isDone || isActive) && (
-	                                    <span className="text-xs text-gray-500 font-medium whitespace-nowrap">{formatDateTime(step.timestamp)}</span>
+	                                    <span className={`text-[12px] sm:text-[13px] font-medium whitespace-nowrap ${orderMutedTextClass}`}>{formatDateTime(step.timestamp)}</span>
 	                                  )}
 	                                </div>
-	                                {isActive && <span className="inline-flex items-center border border-gray-200 rounded-full px-2 py-0.5 text-xs font-medium text-gray-500 mt-1">Current Status</span>}
+	                                {isActive && <span className={`inline-flex items-center border rounded-full px-2 py-0.5 text-[12px] font-medium mt-1 ${orderSecondaryButtonClass}`}>Current Status</span>}
 	                              </div>
 	                            </div>
 	                          );
@@ -28459,12 +28496,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            </div>
 	                            <div className="flex-1 pt-1">
 	                              <div className="flex items-center justify-between gap-2 flex-wrap">
-	                                <p className="text-sm font-medium text-red-600 m-0">Cancelled</p>
+	                                <p className="text-[15px] sm:text-base font-semibold text-red-600 dark:text-red-300 m-0">Cancelled</p>
 	                                {auditByStatus.get("Cancelled") && (
-	                                  <span className="text-xs text-red-500 font-medium whitespace-nowrap">{formatDateTime(auditByStatus.get("Cancelled"))}</span>
+	                                  <span className="text-[12px] sm:text-[13px] text-red-500 dark:text-red-300 font-medium whitespace-nowrap">{formatDateTime(auditByStatus.get("Cancelled"))}</span>
 	                                )}
 	                              </div>
-	                              <span className="inline-flex items-center border border-red-200 rounded-full px-2 py-0.5 text-xs font-medium text-red-500 mt-1">Current Status</span>
+	                              <span className="inline-flex items-center border border-red-200 dark:border-red-500/35 rounded-full px-2 py-0.5 text-[12px] font-medium text-red-500 dark:text-red-300 mt-1">Current Status</span>
 	                            </div>
 	                          </div>
 	                        )}
@@ -28476,17 +28513,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {/* Section 6: Notes — only when notes exist */}
 	                {orderNotesFor(selectedOrder).length > 0 && (
 	                  <section>
-	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Notes</h3>
+	                    <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Notes</h3>
 	                    <div className="flex flex-col gap-3">
-	                      {orderNotesFor(selectedOrder).map((note) => (
-	                        <div key={note.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50/50 space-y-1">
-	                          <div className="flex items-center gap-1.5 text-xs text-gray-400">
-	                            <Clock className="w-3.5 h-3.5" />
-	                            <span>{note.by} · {formatDateTime(note.date)}</span>
-	                          </div>
-	                          <p className="text-sm text-gray-700 m-0">{note.text}{followUpMomentForNote(note) ? ` · Follow-up: ${formatPlannedMoment(note.followUpAt, note.followUpDate)}` : ""}</p>
-	                        </div>
-	                      ))}
+	                      {orderNotesFor(selectedOrder).map((note) => renderOrderNoteCard(note))}
 	                    </div>
 	                  </section>
 	                )}
@@ -28495,26 +28524,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {/* Status Audit Timeline */}
 	                {orderAuditLog.length > 0 && (
 	                  <section>
-	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Status History</h3>
-	                    <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
+	                    <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Status History</h3>
+	                    <div className="flex flex-col gap-3 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
 	                      {orderAuditLog.map((entry) => (
-	                        <div key={entry.id} className="flex items-start gap-2 text-xs text-gray-600">
+	                        <div key={entry.id} className={`flex items-start gap-2.5 text-[15px] sm:text-base ${orderBodyTextClass}`}>
 	                          <span className="mt-0.5 w-2 h-2 rounded-full bg-[#1F8FE0] shrink-0" />
 	                          <div>
-	                            <span className="font-semibold text-gray-900">{entry.from_status ?? "New"} → {entry.to_status}</span>
-	                            {entry.note && <span className="text-gray-500"> · {entry.note}</span>}
-	                            <div className="text-gray-400 mt-0.5">{formatDateTime(entry.created_at)}</div>
+	                            <span className={`font-semibold ${orderTitleTextClass}`}>{entry.from_status ?? "New"} → {entry.to_status}</span>
+	                            {entry.note && <span className={`font-medium ${orderMutedTextClass}`}> · {entry.note}</span>}
+	                            <div className={`text-[12px] sm:text-[13px] mt-1 ${orderFaintTextClass}`}>{formatDateTime(entry.created_at)}</div>
 	                          </div>
 	                        </div>
 	                      ))}
 	                    </div>
 	                  </section>
 	                )}
-	
+
 	                {/* Section 7: Form Submission Details */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
-	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Form Submission Details</h3>
+	                    <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Form Submission Details</h3>
 	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
@@ -28612,23 +28641,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </div>
 	                </section>
 
-	                <section className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
-	                  <div><h3 className="text-sm font-semibold text-gray-900">Communication Timeline</h3><p>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
-	                  <div className="flex flex-col gap-2 max-h-44 overflow-y-auto">{orderNotesFor(selectedOrder).map((note) => <p key={note.id}><strong>{note.by}</strong> · {formatDateTime(note.date)}<br />{note.text}{followUpMomentForNote(note) ? ` · Follow-up ${formatPlannedMoment(note.followUpAt, note.followUpDate)}` : ""}</p>)}</div>
+	                <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-3`}>
+	                  <div><h3 className={`text-sm font-semibold ${orderTitleTextClass}`}>Communication Timeline</h3><p className={orderMutedTextClass}>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
+	                  <div className="flex flex-col gap-3 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
+                      {orderNotesFor(selectedOrder).length === 0 ? (
+                        <p className={`text-sm ${orderFaintTextClass}`}>No notes yet.</p>
+                      ) : (
+                        orderNotesFor(selectedOrder).map((note) => renderOrderNoteCard(note, { compact: true }))
+                      )}
+                    </div>
 	                  <label><span>Note</span><textarea value={orderNoteDraft} onChange={(event) => setOrderNoteDraft(event.target.value)} /></label>
 	                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
 	                    <label><span>Follow-up Date</span><input type="date" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} /></label>
 	                    <label><span>Follow-up Time</span><input type="time" value={orderFollowUpTime} onChange={(event) => setOrderFollowUpTime(event.target.value)} /></label>
 	                  </div>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={addOrderNote}>Add Note</button>
+	                  <button className={`!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${orderSecondaryButtonClass}`} onClick={addOrderNote}>Add Note</button>
 	                </section>
 
-	                <section className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-gray-100">
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors" onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}>
+	                <section className={`flex flex-wrap items-center justify-end gap-2 pt-2 border-t ${orderBorderClass}`}>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 dark:text-sky-200 dark:border-sky-500/40 text-sm font-medium hover:bg-blue-50 dark:hover:bg-sky-500/10 transition-colors" onClick={() => openAdminOrderRescheduleRoute(selectedOrder.id)}>
                       <CalendarDays className="w-4 h-4" /> Reschedule
                     </button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Postponed")}>Postpone Order</button>
-	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Cancelled")}>Cancel Order</button>
+	                  <button className={`!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${orderSecondaryButtonClass}`} onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Postponed")}>Postpone Order</button>
+	                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-300 text-sm font-medium hover:bg-red-100 dark:hover:bg-red-500/18 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Cancelled")}>Cancel Order</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id, "Confirmed")}>Confirm Order</button>
 	                </section>
 	              </div>
@@ -28659,16 +28694,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             {statusChangeActions.map((status) => <option key={status}>{status}</option>)}
                           </select>
                         </label>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+                        <div className={`${orderPanelMutedClass} rounded-xl p-4`}>
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <p className="text-sm font-semibold text-gray-900 m-0">Outcome Status</p>
-                              <p className="text-xs text-gray-500 m-0 mt-1">
+                              <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Outcome Status</p>
+                              <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>
                                 {repCallOutcomeStatusHelper[statusChangeDraft] ?? "Add the visible call result directly under the core status."}
                               </p>
                             </div>
                             {callOutcomeDraft && callOutcomeDraft !== "__custom__" && (
-                              <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 border border-gray-200">
+                              <span className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${orderSecondaryButtonClass}`}>
                                 Selected: {callOutcomeDraft}
                               </span>
                             )}
@@ -28679,7 +28714,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <button
                                   key={outcome}
                                   type="button"
-                                  className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                                  className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === outcome ? "border-blue-200 bg-blue-50 text-[#1F8FE0] dark:border-sky-500/35 dark:bg-sky-500/12 dark:text-sky-100" : orderSecondaryButtonClass}`}
                                   onClick={() => {
                                     setCallOutcomeDraft(outcome);
                                     setCallOutcomeCustom("");
@@ -28691,12 +28726,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           )}
                           {showEmptyOutcomeState && (
-                            <p className="text-xs text-gray-500 m-0 mt-3">No quick outcome presets for this core status. Use a custom note only if you need one.</p>
+                            <p className={`text-xs m-0 mt-3 ${orderMutedTextClass}`}>No quick outcome presets for this core status. Use a custom note only if you need one.</p>
                           )}
                           <div className="flex flex-wrap gap-2 mt-3">
                             <button
                               type="button"
-                              className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === "__custom__" ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                              className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${callOutcomeDraft === "__custom__" ? "border-blue-200 bg-blue-50 text-[#1F8FE0] dark:border-sky-500/35 dark:bg-sky-500/12 dark:text-sky-100" : orderSecondaryButtonClass}`}
                               onClick={() => setCallOutcomeDraft("__custom__")}
                             >
                               Custom outcome
@@ -28704,7 +28739,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             {(callOutcomeDraft || callOutcomeCustom) && (
                               <button
                                 type="button"
-                                className="!min-h-0 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
+                                className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${orderSecondaryButtonClass}`}
                                 onClick={() => {
                                   setCallOutcomeDraft("");
                                   setCallOutcomeCustom("");
@@ -28715,7 +28750,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             )}
                           </div>
 	                  {callOutcomeDraft === "__custom__" && (
-                            <input className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
+                            <input className={`mt-3 w-full rounded-lg px-3 py-2 text-sm ${orderInputClass}`} placeholder="e.g. Customer asked for Tuesday callback, out of town, store closed…" value={callOutcomeCustom} onChange={(e) => setCallOutcomeCustom(e.target.value)} autoFocus />
 	                  )}
                         </div>
                   {statusChangeDraft === "Delivered" && (
@@ -28725,10 +28760,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </label>
                   )}
                   {statusChangeDraft === "Reschedule" && (
-                    <div className="space-y-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
+                    <div className={`${orderPanelInfoClass} rounded-xl p-4 space-y-3`}>
                       <div>
-                        <p className="text-sm font-semibold text-gray-900 m-0">Reschedule delivery</p>
-                        <p className="text-xs text-gray-500 m-0 mt-1">Current slot: <strong className="text-gray-700">{scheduleSummaryForOrder(selectedOrder)}</strong></p>
+                        <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Reschedule delivery</p>
+                        <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>Current slot: <strong className={orderBodyTextClass}>{scheduleSummaryForOrder(selectedOrder)}</strong></p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label>
@@ -28745,7 +28780,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <button
                             key={range}
                             type="button"
-                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${orderScheduleDate === scheduleDateForRange(range) ? "border-blue-200 bg-blue-100 text-[#1F8FE0]" : "border-blue-100 bg-white text-blue-700 hover:bg-blue-100"}`}
+                            className={`!min-h-0 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${orderScheduleDate === scheduleDateForRange(range) ? "border-blue-200 bg-blue-100 text-[#1F8FE0] dark:border-sky-500/35 dark:bg-sky-500/18 dark:text-sky-100" : "border-blue-100 bg-white text-blue-700 hover:bg-blue-100 dark:border-sky-500/25 dark:bg-[#16212c] dark:text-sky-200 dark:hover:bg-sky-500/10"}`}
                             onClick={() => setOrderScheduleDate(scheduleDateForRange(range))}
                           >
                             {range}
