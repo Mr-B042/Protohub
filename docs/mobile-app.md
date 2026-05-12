@@ -27,6 +27,14 @@ npm run mobile:open:android
 npm run mobile:open:ios
 ```
 
+`mobile:doctor` checks:
+
+- Android `google-services.json`
+- Firebase backend env readiness
+- iOS bundle id alignment
+- iOS push entitlement wiring
+- APNs backend env readiness
+
 ## Day-to-day flow
 
 1. Build the web app and sync it into the native shells:
@@ -71,7 +79,19 @@ You still need to provide the real platform credentials/files:
 android/app/google-services.json
 ```
 
-2. Configure backend env:
+2. Configure backend env with either:
+
+```bash
+FIREBASE_SERVICE_ACCOUNT_JSON_PATH=/absolute/path/to/firebase-service-account.json
+```
+
+or:
+
+```bash
+FIREBASE_SERVICE_ACCOUNT_JSON_BASE64=
+```
+
+or the individual fields:
 
 ```bash
 FIREBASE_PROJECT_ID=
@@ -81,8 +101,21 @@ FIREBASE_PRIVATE_KEY=
 
 ### iOS
 
-1. In Xcode, enable the `Push Notifications` capability for `ios/App/App.xcodeproj`
-2. Configure backend env:
+1. The repo now includes `ios/App/App/App.entitlements` and push capability wiring.
+2. In Xcode, set your real Apple signing team for `ios/App/App.xcodeproj`
+3. Configure backend env with either:
+
+```bash
+APNS_PRIVATE_KEY_PATH=/absolute/path/to/AuthKey_XXXXXXXXXX.p8
+```
+
+or:
+
+```bash
+APNS_PRIVATE_KEY_BASE64=
+```
+
+or the inline key below:
 
 ```bash
 APNS_KEY_ID=
@@ -93,3 +126,10 @@ APNS_PRODUCTION=false
 ```
 
 Without those credentials, the native app shell can register locally but the backend cannot deliver real mobile push.
+
+## Notes about portability
+
+- `npm run mobile:sync` now normalizes both:
+  - iOS Swift package paths
+  - Android Capacitor plugin paths
+- That keeps both native projects portable across machines instead of baking one developer's absolute `node_modules` path into the checked-in shell.

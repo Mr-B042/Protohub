@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import admin from "firebase-admin";
 import apn from "apn";
 import webpush from "web-push";
@@ -20,13 +21,82 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 }
 
 // ── Native Push (Android FCM / iOS APNs) ─────────────────
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID ?? "";
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL ?? "";
-const FIREBASE_PRIVATE_KEY = (process.env.FIREBASE_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+function readTextFileIfExists(filePath: string): string {
+  try {
+    return filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8").trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function decodeBase64(value: string): string {
+  try {
+    return value ? Buffer.from(value, "base64").toString("utf8").trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeMultilineSecret(value: string): string {
+  return value.replace(/\\n/g, "\n").trim();
+}
+
+function readSecretValue(raw: string, base64: string, filePath: string): string {
+  const fromFile = readTextFileIfExists(filePath);
+  if (fromFile) return normalizeMultilineSecret(fromFile);
+  const fromBase64 = decodeBase64(base64);
+  if (fromBase64) return normalizeMultilineSecret(fromBase64);
+  return normalizeMultilineSecret(raw);
+}
+
+type FirebaseServiceAccount = {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+};
+
+function readFirebaseServiceAccount(): FirebaseServiceAccount | null {
+  const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON ?? "";
+  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 ?? "";
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_PATH ?? "";
+  const fromFile = readTextFileIfExists(serviceAccountPath);
+  const fromBase64 = decodeBase64(serviceAccountBase64);
+  const source = fromFile || fromBase64 || serviceAccountRaw;
+
+  if (source) {
+    try {
+      const parsed = JSON.parse(source);
+      return {
+        projectId: String(parsed.project_id ?? ""),
+        clientEmail: String(parsed.client_email ?? ""),
+        privateKey: normalizeMultilineSecret(String(parsed.private_key ?? ""))
+      };
+    } catch (error: any) {
+      console.warn(`[push] failed to parse FIREBASE service account JSON: ${error?.message ?? error}`);
+    }
+  }
+
+  return null;
+}
+
+const firebaseServiceAccount = readFirebaseServiceAccount();
+const FIREBASE_PROJECT_ID = firebaseServiceAccount?.projectId || process.env.FIREBASE_PROJECT_ID || "";
+const FIREBASE_CLIENT_EMAIL = firebaseServiceAccount?.clientEmail || process.env.FIREBASE_CLIENT_EMAIL || "";
+const FIREBASE_PRIVATE_KEY =
+  firebaseServiceAccount?.privateKey ||
+  readSecretValue(
+    process.env.FIREBASE_PRIVATE_KEY ?? "",
+    process.env.FIREBASE_PRIVATE_KEY_BASE64 ?? "",
+    process.env.FIREBASE_PRIVATE_KEY_PATH ?? ""
+  );
 
 const APNS_KEY_ID = process.env.APNS_KEY_ID ?? "";
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID ?? "";
-const APNS_PRIVATE_KEY = (process.env.APNS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+const APNS_PRIVATE_KEY = readSecretValue(
+  process.env.APNS_PRIVATE_KEY ?? "",
+  process.env.APNS_PRIVATE_KEY_BASE64 ?? "",
+  process.env.APNS_PRIVATE_KEY_PATH ?? ""
+);
 const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID ?? "";
 const APNS_PRODUCTION =
   /^(1|true|yes)$/i.test(process.env.APNS_PRODUCTION ?? "") ||
