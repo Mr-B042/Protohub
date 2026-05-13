@@ -265,7 +265,10 @@ export const ordersApi = {
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/orders/${id}/status`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
-  audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`)
+  audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
+  followUpTasks: (id: string) => get<any[]>(`/api/orders/${id}/follow-up-tasks`),
+  contactAttempts: (id: string) => get<any[]>(`/api/orders/${id}/contact-attempts`),
+  logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
 // ── Agents ────────────────────────────────────────────────
@@ -432,6 +435,10 @@ export const payStructuresApi = {
 // ── Sales Teams ──────────────────────────────────────────
 export const salesTeamsApi = {
   list: () => get<any[]>("/api/sales-teams"),
+  performance: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return get<{ rows: any[]; summary: any }>(`/api/sales-teams/performance${qs}`);
+  },
   create: (body: unknown) => post<any>("/api/sales-teams", body),
   update: (id: string, body: unknown) => patch<any>(`/api/sales-teams/${id}`, body),
   delete: (id: string) => del<void>(`/api/sales-teams/${id}`)

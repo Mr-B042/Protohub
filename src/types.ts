@@ -312,6 +312,12 @@ export type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   callOutcome?: CallOutcome;
+  buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
+  followUpAttemptCount?: number;
+  lastContactAttemptAt?: string;
+  lastContactAttemptOutcome?: string;
+  nextFollowUpAt?: string;
+  overdueFollowUpCount?: number;
   upsellFromQty?: number;
   upsellToQty?: number;
   upsellNote?: string;
@@ -330,6 +336,40 @@ export type OrderNote = {
   by: string;
   date: string;
   followUpDate?: string;
+  followUpAt?: string;
+};
+
+export type FollowUpTask = {
+  id: string;
+  orderId: string;
+  assignedRepId?: string;
+  taskType: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  priority: "same_day" | "normal" | "low_intent";
+  status: "open" | "due" | "overdue" | "completed" | "cancelled";
+  effectiveStatus?: "open" | "due" | "overdue" | "completed" | "cancelled";
+  dueAt: string;
+  slaMinutes?: number;
+  note?: string;
+  sourceKind?: string;
+  sourceRef?: string;
+  completedAt?: string;
+  createdAt?: string;
+};
+
+export type OrderContactAttempt = {
+  id: string;
+  orderId: string;
+  taskId?: string;
+  repId?: string;
+  attemptedAt: string;
+  channel: "call" | "whatsapp" | "sms" | "manual";
+  attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
+  outcomeCode: string;
+  outcomeNote?: string;
+  customerReached?: boolean;
+  nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  nextActionAt?: string;
+  promiseWindow?: "same_day" | "tomorrow" | "later";
 };
 
 export type AbandonedCartRecord = {

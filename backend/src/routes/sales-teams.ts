@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { buildManagerPerformance } from "../lib/manager-performance.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -15,6 +16,122 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false });
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
+});
+
+const PerformanceQuerySchema = z.object({
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  productIds: z.string().optional()
+});
+
+router.get("/performance", async (req, res) => {
+  const parsed = PerformanceQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const productIds = (parsed.data.productIds ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const { data: teams, error: teamsError } = await supabase
+    .from("sales_teams")
+    .select("id, name, lead_id, product_ids, member_ids")
+    .eq("org_id", req.user!.orgId)
+    .order("created_at", { ascending: false });
+  if (teamsError) { res.status(500).json({ error: teamsError.message }); return; }
+
+  const { data: users, error: usersError } = await supabase
+    .from("users")
+    .select("id, name, active")
+    .eq("org_id", req.user!.orgId);
+  if (usersError) { res.status(500).json({ error: usersError.message }); return; }
+
+  let ordersQuery = supabase
+    .from("orders")
+    .select("id, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, notes, timeline_notes")
+    .eq("org_id", req.user!.orgId);
+
+  if (parsed.data.dateFrom) {
+    ordersQuery = ordersQuery.gte("created_at", `${parsed.data.dateFrom}T00:00:00.000Z`);
+  }
+  if (parsed.data.dateTo) {
+    ordersQuery = ordersQuery.lte("created_at", `${parsed.data.dateTo}T23:59:59.999Z`);
+  }
+  if (productIds.length > 0) {
+    ordersQuery = ordersQuery.in("product_id", productIds);
+  }
+
+  const { data: orders, error: ordersError } = await ordersQuery;
+  if (ordersError) { res.status(500).json({ error: ordersError.message }); return; }
+
+  const orderIds = (orders ?? []).map((order) => order.id);
+  const tasksQuery = supabase
+    .from("follow_up_tasks")
+    .select("id, order_id, status, due_at, sla_minutes, completed_at")
+    .eq("org_id", req.user!.orgId);
+  const attemptsQuery = supabase
+    .from("order_contact_attempts")
+    .select("id, order_id, rep_id, attempted_at, outcome_code")
+    .eq("org_id", req.user!.orgId);
+
+  const { data: tasks, error: tasksError } = orderIds.length > 0
+    ? await tasksQuery.in("order_id", orderIds)
+    : { data: [], error: null };
+  if (tasksError) { res.status(500).json({ error: tasksError.message }); return; }
+
+  const { data: attempts, error: attemptsError } = orderIds.length > 0
+    ? await attemptsQuery.in("order_id", orderIds)
+    : { data: [], error: null };
+  if (attemptsError) { res.status(500).json({ error: attemptsError.message }); return; }
+
+  const result = buildManagerPerformance(
+    (teams ?? []).map((team) => ({
+      id: team.id,
+      name: team.name,
+      leadId: team.lead_id ?? undefined,
+      productIds: Array.isArray(team.product_ids) ? team.product_ids : [],
+      memberIds: Array.isArray(team.member_ids) ? team.member_ids : []
+    })),
+    (users ?? []).map((user) => ({
+      id: user.id,
+      name: user.name,
+      active: !!user.active
+    })),
+    (orders ?? []).map((order) => ({
+      id: order.id,
+      assignedRepId: order.assigned_rep_id ?? undefined,
+      productId: order.product_id ?? undefined,
+      status: order.status ?? undefined,
+      callOutcome: order.call_outcome ?? undefined,
+      buyerHealth: order.buyer_health ?? undefined,
+      createdAt: order.created_at ?? undefined,
+      date: order.date ?? undefined,
+      scheduledDate: order.scheduled_date ?? undefined,
+      scheduledAt: order.scheduled_at ?? undefined,
+      notes: order.notes,
+      timeline_notes: order.timeline_notes
+    })),
+    (tasks ?? []).map((task) => ({
+      id: task.id,
+      orderId: task.order_id,
+      status: task.status,
+      dueAt: task.due_at,
+      slaMinutes: task.sla_minutes,
+      completedAt: task.completed_at
+    })),
+    (attempts ?? []).map((attempt) => ({
+      id: attempt.id,
+      orderId: attempt.order_id,
+      repId: attempt.rep_id ?? undefined,
+      attemptedAt: attempt.attempted_at,
+      outcomeCode: attempt.outcome_code
+    }))
+  );
+
+  res.json(result);
 });
 
 // ── POST /api/sales-teams ────────────────────────────────

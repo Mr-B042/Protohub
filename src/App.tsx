@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Archive,
   Bell,
+  BellRing,
   Check,
   ChevronRight,
   CalendarDays,
@@ -57,6 +58,7 @@ import {
   TrendingUp,
   Music2,
   Globe,
+  Gauge,
   AlertTriangle,
   Clapperboard,
   CircleX,
@@ -141,7 +143,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -540,6 +542,12 @@ type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   callOutcome?: CallOutcome;
+  buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
+  followUpAttemptCount?: number;
+  lastContactAttemptAt?: string;
+  lastContactAttemptOutcome?: string;
+  nextFollowUpAt?: string;
+  overdueFollowUpCount?: number;
   upsellFromQty?: number;
   upsellToQty?: number;
   upsellNote?: string;
@@ -559,6 +567,37 @@ type OrderNote = {
   date: string;
   followUpDate?: string;
   followUpAt?: string;
+};
+type FollowUpTask = {
+  id: string;
+  orderId: string;
+  assignedRepId?: string;
+  taskType: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  priority: "same_day" | "normal" | "low_intent";
+  status: "open" | "due" | "overdue" | "completed" | "cancelled";
+  effectiveStatus?: "open" | "due" | "overdue" | "completed" | "cancelled";
+  dueAt: string;
+  slaMinutes?: number;
+  note?: string;
+  sourceKind?: string;
+  sourceRef?: string;
+  completedAt?: string;
+  createdAt?: string;
+};
+type OrderContactAttempt = {
+  id: string;
+  orderId: string;
+  taskId?: string;
+  repId?: string;
+  attemptedAt: string;
+  channel: "call" | "whatsapp" | "sms" | "manual";
+  attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
+  outcomeCode: string;
+  outcomeNote?: string;
+  customerReached?: boolean;
+  nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  nextActionAt?: string;
+  promiseWindow?: "same_day" | "tomorrow" | "later";
 };
 type AbandonedCartRecord = {
   id: string;
@@ -1761,6 +1800,85 @@ const followUpHeadline = (entry: OrderFollowUpInsight | null) => {
   if (entry.dueSoon) return `Due soon · ${entry.label}`;
   return `Next · ${entry.label}`;
 };
+const activeFollowUpTaskForOrder = (tasks: FollowUpTask[]) =>
+  [...tasks]
+    .sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime())
+    .find((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status));
+const latestContactAttemptForOrder = (attempts: OrderContactAttempt[]) => attempts[0];
+const followUpTaskToneClass = (task?: FollowUpTask | null) => {
+  if (!task) return "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200";
+  const effective = task.effectiveStatus ?? task.status;
+  if (effective === "overdue") return "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200";
+  if (effective === "due") return "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200";
+  if (task.priority === "same_day") return "bg-blue-100 text-blue-700 dark:bg-sky-500/15 dark:text-sky-200";
+  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200";
+};
+const buyerHealthToneClass = (value?: TrackedOrder["buyerHealth"]) => {
+  if (value === "not_serious_candidate") return "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200";
+  if (value === "at_risk") return "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200";
+  if (value === "watch") return "bg-blue-100 text-blue-700 dark:bg-sky-500/15 dark:text-sky-200";
+  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200";
+};
+const buyerHealthLabel = (value?: TrackedOrder["buyerHealth"]) => {
+  if (value === "not_serious_candidate") return "Not Serious Candidate";
+  if (value === "at_risk") return "At Risk";
+  if (value === "watch") return "Watch";
+  return "Healthy";
+};
+const humanizeFollowUpTaskType = (value?: FollowUpTask["taskType"]) => {
+  if (value === "payment_check") return "Payment Check";
+  if (value === "delivery_confirmation") return "Delivery Confirmation";
+  if (value === "waybill_follow_up") return "Waybill Follow-up";
+  return "Callback";
+};
+const percentOf = (part: number, total: number) => (total <= 0 ? 0 : Math.round((part / total) * 100));
+const statusForOrder = (order: Pick<TrackedOrder, "status">) => (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
+const MANAGER_OPEN_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["New", "Confirmed", "In Process", "Dispatched", "Postponed"]);
+const MANAGER_WORKED_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed", "Cancelled", "Failed"]);
+const orderCreatedTimestamp = (order: Pick<TrackedOrder, "createdAt" | "date">) => {
+  const parsed = new Date(order.createdAt ?? order.date);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+};
+const ageInDaysForOrder = (order: Pick<TrackedOrder, "createdAt" | "date">) => {
+  const createdAt = orderCreatedTimestamp(order);
+  if (createdAt == null) return 0;
+  return Math.max(0, (Date.now() - createdAt) / (24 * 60 * 60 * 1000));
+};
+const managerScoreMeta = (score: number, hasActivity = true) => {
+  if (!hasActivity) {
+    return {
+      label: "No Activity",
+      tone: "bg-gray-50 text-gray-600 border-gray-200",
+      meter: "bg-gray-300"
+    };
+  }
+  if (score >= 85) {
+    return {
+      label: "Excellent",
+      tone: "bg-emerald-50 text-emerald-700 border-emerald-100",
+      meter: "bg-emerald-500"
+    };
+  }
+  if (score >= 70) {
+    return {
+      label: "Strong",
+      tone: "bg-blue-50 text-blue-700 border-blue-100",
+      meter: "bg-blue-500"
+    };
+  }
+  if (score >= 55) {
+    return {
+      label: "Stable",
+      tone: "bg-amber-50 text-amber-700 border-amber-100",
+      meter: "bg-amber-500"
+    };
+  }
+  return {
+    label: "Needs Attention",
+    tone: "bg-rose-50 text-rose-700 border-rose-100",
+    meter: "bg-rose-500"
+  };
+};
 const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement[]) => {
   if (waybill.status === "In Transit") {
     return waybill.createdAt;
@@ -1808,6 +1926,31 @@ const isInPeriod = (dateKey: string | undefined, activePeriod: Period, range: Da
   }
 
   return value.slice(0, 4) === today.slice(0, 4);
+};
+
+const periodBoundsForQuery = (activePeriod: Period, range: DateRange) => {
+  const now = new Date();
+  const today = formatDateKey(now);
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay());
+
+  if (activePeriod === "Custom") {
+    return range.start && range.end ? { dateFrom: range.start, dateTo: range.end } : null;
+  }
+
+  if (activePeriod === "Today") {
+    return { dateFrom: today, dateTo: today };
+  }
+
+  if (activePeriod === "This Week") {
+    return { dateFrom: formatDateKey(weekStart), dateTo: today };
+  }
+
+  if (activePeriod === "This Month") {
+    return { dateFrom: `${today.slice(0, 7)}-01`, dateTo: today };
+  }
+
+  return { dateFrom: `${today.slice(0, 4)}-01-01`, dateTo: today };
 };
 
 const daysInPeriodSoFar = (activePeriod: Period, range: DateRange) => {
@@ -2224,6 +2367,39 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     notes: orderNotesFor(value)
   };
 };
+
+const normalizeFollowUpTask = (value: any): FollowUpTask => ({
+  id: value.id,
+  orderId: value.orderId ?? value.order_id,
+  assignedRepId: value.assignedRepId ?? value.assigned_rep_id ?? undefined,
+  taskType: (value.taskType ?? value.task_type ?? "callback") as FollowUpTask["taskType"],
+  priority: (value.priority ?? "normal") as FollowUpTask["priority"],
+  status: (value.status ?? "open") as FollowUpTask["status"],
+  effectiveStatus: (value.effectiveStatus ?? value.effective_status ?? value.status ?? "open") as FollowUpTask["effectiveStatus"],
+  dueAt: value.dueAt ?? value.due_at,
+  slaMinutes: typeof (value.slaMinutes ?? value.sla_minutes) === "number" ? (value.slaMinutes ?? value.sla_minutes) : undefined,
+  note: value.note ?? undefined,
+  sourceKind: value.sourceKind ?? value.source_kind ?? undefined,
+  sourceRef: value.sourceRef ?? value.source_ref ?? undefined,
+  completedAt: value.completedAt ?? value.completed_at ?? undefined,
+  createdAt: value.createdAt ?? value.created_at ?? undefined
+});
+
+const normalizeContactAttempt = (value: any): OrderContactAttempt => ({
+  id: value.id,
+  orderId: value.orderId ?? value.order_id,
+  taskId: value.taskId ?? value.task_id ?? undefined,
+  repId: value.repId ?? value.rep_id ?? undefined,
+  attemptedAt: value.attemptedAt ?? value.attempted_at,
+  channel: (value.channel ?? "manual") as OrderContactAttempt["channel"],
+  attemptType: (value.attemptType ?? value.attempt_type ?? "fresh_follow_up") as OrderContactAttempt["attemptType"],
+  outcomeCode: value.outcomeCode ?? value.outcome_code ?? "",
+  outcomeNote: value.outcomeNote ?? value.outcome_note ?? undefined,
+  customerReached: typeof (value.customerReached ?? value.customer_reached) === "boolean" ? (value.customerReached ?? value.customer_reached) : undefined,
+  nextActionType: (value.nextActionType ?? value.next_action_type ?? undefined) as OrderContactAttempt["nextActionType"],
+  nextActionAt: value.nextActionAt ?? value.next_action_at ?? undefined,
+  promiseWindow: (value.promiseWindow ?? value.promise_window ?? undefined) as OrderContactAttempt["promiseWindow"]
+});
 
 const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
   const cart = snakeToCamel<any>(value);
@@ -3944,6 +4120,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repDetailShowAll, setRepDetailShowAll] = useState(false);
   const [salesProductIds, setSalesProductIds] = useState<Set<string>>(new Set());
   const [showSalesProductFilter, setShowSalesProductFilter] = useState(false);
+  const [managerPerformanceRemote, setManagerPerformanceRemote] = useState<{ rows: any[]; summary: any } | null>(null);
+  const [managerPerformanceLoading, setManagerPerformanceLoading] = useState(false);
+  const [orderFollowUpTasksByOrder, setOrderFollowUpTasksByOrder] = useState<Record<string, FollowUpTask[]>>({});
+  const [orderContactAttemptsByOrder, setOrderContactAttemptsByOrder] = useState<Record<string, OrderContactAttempt[]>>({});
+  const [orderFollowUpLoading, setOrderFollowUpLoading] = useState(false);
   const [createOrderCustomer, setCreateOrderCustomer] = useState("");
   const [createOrderPhone, setCreateOrderPhone] = useState("");
   const [createOrderWhatsapp, setCreateOrderWhatsapp] = useState("");
@@ -3965,6 +4146,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderNoteDraft, setOrderNoteDraft] = useState("");
   const [orderFollowUpDate, setOrderFollowUpDate] = useState("");
   const [orderFollowUpTime, setOrderFollowUpTime] = useState(() => nextTimeValue());
+  const [followUpAttemptChannel, setFollowUpAttemptChannel] = useState<OrderContactAttempt["channel"]>("call");
+  const [followUpAttemptType, setFollowUpAttemptType] = useState<OrderContactAttempt["attemptType"]>("scheduled_callback");
+  const [followUpAttemptOutcome, setFollowUpAttemptOutcome] = useState("");
+  const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
+  const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
+  const [followUpNextActionEnabled, setFollowUpNextActionEnabled] = useState(false);
+  const [followUpNextActionType, setFollowUpNextActionType] = useState<FollowUpTask["taskType"]>("callback");
+  const [followUpNextActionDate, setFollowUpNextActionDate] = useState("");
+  const [followUpNextActionTime, setFollowUpNextActionTime] = useState(() => nextTimeValue());
+  const [followUpNextActionNote, setFollowUpNextActionNote] = useState("");
   const [callQueueIndex, setCallQueueIndex] = useState(0);
   const [callQueueNote, setCallQueueNote] = useState("");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
@@ -4029,6 +4220,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (typeof window === "undefined") return false;
     return window.location.hash.startsWith("#/order-form/embed");
   });
+  const [dataRefreshing, setDataRefreshing] = useState(false);
+  const [hasCompletedInitialDataLoad, setHasCompletedInitialDataLoad] = useState(() => !auth.isLoggedIn());
+  const hasCompletedInitialDataLoadRef = useRef(!auth.isLoggedIn());
   const [dataError, setDataError] = useState<string | null>(null);
   const [ordersCappedWarning, setOrdersCappedWarning] = useState<string | null>(null);
   const [penaltyTargetRepId, setPenaltyTargetRepId] = useState<string>("");
@@ -4073,6 +4267,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
+  const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
+  const selectedOrderContactAttempts = selectedOrder ? (orderContactAttemptsByOrder[selectedOrder.id] ?? []) : [];
+  const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
+  const selectedOrderLatestAttempt = latestContactAttemptForOrder(selectedOrderContactAttempts);
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
   const canDeleteAbandonedCarts = (() => {
     const role = auth.getUser()?.role;
@@ -4092,6 +4290,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setOrderScheduleDate(plannedParts.date || (selectedOrder ? scheduledKeyForOrder(selectedOrder) : "") || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
   }, [selectedOrderId, selectedOrder?.agentId, selectedOrder?.scheduledAt, selectedOrder?.scheduledDate]);
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    if (
+      modal !== "orderDetails"
+      && modal !== "orderWorkflow"
+      && !repOrderDetailId
+      && modal !== "logFollowUpAttempt"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setOrderFollowUpLoading(true);
+    Promise.all([
+      ordersApi.followUpTasks(selectedOrderId),
+      ordersApi.contactAttempts(selectedOrderId)
+    ])
+      .then(([tasks, attempts]) => {
+        if (cancelled) return;
+        setOrderFollowUpTasksByOrder((value) => ({
+          ...value,
+          [selectedOrderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
+        }));
+        setOrderContactAttemptsByOrder((value) => ({
+          ...value,
+          [selectedOrderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOrderFollowUpTasksByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
+        setOrderContactAttemptsByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
+      })
+      .finally(() => {
+        if (!cancelled) setOrderFollowUpLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrderId, modal, repOrderDetailId]);
   useEffect(() => {
     if (modal !== "setRate" || !payRateUserId) {
       return;
@@ -5252,6 +5491,123 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const teamForRep = (rep: ManagedUser) => salesTeams.find((t) => t.memberIds.includes(rep.id)) ?? undefined;
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
+  const managerPerformanceRowsLocal = salesTeams.map((team) => {
+    const memberIds = new Set(team.memberIds);
+    const teamProductScope = new Set(team.productIds);
+    const lead = users.find((user) => user.id === team.leadId);
+    const members = salesRepUsers.filter((user) => memberIds.has(user.id));
+    const teamOrders = trackedOrders.filter((order) =>
+      order.assignedRepId
+      && memberIds.has(order.assignedRepId)
+      && isInPeriod(orderCreatedKey(order), salesPeriod, salesDateRange)
+      && matchesProductFilter(order.productId, order.productName, salesProductIds)
+      && (teamProductScope.size === 0 || (order.productId ? teamProductScope.has(order.productId) : false))
+    );
+    const deliveredOrders = teamOrders.filter((order) => statusForOrder(order) === "Delivered");
+    const workedOrders = teamOrders.filter((order) => MANAGER_WORKED_STATUSES.has(statusForOrder(order)));
+    const followUpEntries = teamOrders
+      .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
+      .filter((entry) => entry.followUp);
+    const overdueFollowUps = followUpEntries.filter((entry) => entry.followUp?.overdue).length;
+    const dueSoonFollowUps = followUpEntries.filter((entry) => entry.followUp?.dueSoon).length;
+    const activePipeline = teamOrders.filter((order) => MANAGER_OPEN_STATUSES.has(statusForOrder(order)));
+    const pipelineAtRisk = activePipeline.filter((order) => {
+      const status = statusForOrder(order);
+      const ageDays = ageInDaysForOrder(order);
+      const followUp = nextFollowUpForOrder(order);
+      if (followUp?.overdue) return true;
+      if (status === "Postponed" && !followUp) return true;
+      if (status === "Dispatched" && ageDays >= 3) return true;
+      if ((status === "New" || status === "Confirmed" || status === "In Process") && ageDays >= 2 && !followUp) return true;
+      return false;
+    }).length;
+    const memberPerformance = members.map((member) => {
+      const repOrders = teamOrders.filter((order) => order.assignedRepId === member.id);
+      const repDelivered = repOrders.filter((order) => statusForOrder(order) === "Delivered").length;
+      return {
+        member,
+        orders: repOrders.length,
+        delivered: repDelivered,
+        deliveryRate: percentOf(repDelivered, repOrders.length)
+      };
+    });
+    const activeMemberPerformance = memberPerformance.filter((row) => row.orders > 0);
+    const memberRates = activeMemberPerformance.map((row) => row.deliveryRate);
+    const bestRate = memberRates.length > 0 ? Math.max(...memberRates) : 100;
+    const worstRate = memberRates.length > 0 ? Math.min(...memberRates) : 100;
+    const consistencyGap = activeMemberPerformance.length <= 1 ? 0 : bestRate - worstRate;
+    const deliveryRate = percentOf(deliveredOrders.length, teamOrders.length);
+    const confirmedPathRate = percentOf(deliveredOrders.length, workedOrders.length);
+    const followUpCompliance = followUpEntries.length === 0 ? 100 : percentOf(followUpEntries.length - overdueFollowUps, followUpEntries.length);
+    const pipelineHealth = activePipeline.length === 0 ? 100 : percentOf(activePipeline.length - pipelineAtRisk, activePipeline.length);
+    const teamConsistency = Math.max(0, Math.round(activeMemberPerformance.length <= 1 ? 100 : 100 - consistencyGap));
+    const hasActivity = teamOrders.length > 0;
+    const score = hasActivity
+      ? Math.round(
+          deliveryRate * 0.6
+          + followUpCompliance * 0.15
+          + pipelineHealth * 0.1
+          + teamConsistency * 0.1
+          + confirmedPathRate * 0.05
+        )
+      : 0;
+    const blockerCounts = new Map<string, number>();
+    teamOrders.forEach((order) => {
+      const outcome = (order.callOutcome ?? "").trim();
+      if (!outcome) return;
+      blockerCounts.set(outcome, (blockerCounts.get(outcome) ?? 0) + 1);
+    });
+    const blockers = [...blockerCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([label, count]) => ({ label, count }));
+
+    return {
+      team,
+      lead,
+      members,
+      memberPerformance,
+      orders: teamOrders.length,
+      delivered: deliveredOrders.length,
+      openOrders: activePipeline.length,
+      overdueFollowUps,
+      dueSoonFollowUps,
+      pipelineAtRisk,
+      deliveryRate,
+      confirmedPathRate,
+      followUpCompliance,
+      pipelineHealth,
+      teamConsistency,
+      hasActivity,
+      score,
+      bestRate,
+      worstRate,
+      blockers,
+      activeMembers: members.filter((member) => member.active).length
+    };
+  });
+  const activeManagerPerformanceRowsLocal = managerPerformanceRowsLocal.filter((row) => row.hasActivity);
+  const averageManagerScoreLocal = activeManagerPerformanceRowsLocal.length === 0 ? 0 : Math.round(activeManagerPerformanceRowsLocal.reduce((sum, row) => sum + row.score, 0) / activeManagerPerformanceRowsLocal.length);
+  const teamsNeedingAttentionLocal = activeManagerPerformanceRowsLocal.filter((row) => row.score < 55 || row.overdueFollowUps > 0).length;
+  const totalManagerOverdueFollowUpsLocal = managerPerformanceRowsLocal.reduce((sum, row) => sum + row.overdueFollowUps, 0);
+  const totalManagerOrdersLocal = managerPerformanceRowsLocal.reduce((sum, row) => sum + row.orders, 0);
+  const totalManagerDeliveredLocal = managerPerformanceRowsLocal.reduce((sum, row) => sum + row.delivered, 0);
+  const overallManagerDeliveryRateLocal = percentOf(totalManagerDeliveredLocal, totalManagerOrdersLocal);
+  const managerPerformanceRows = managerPerformanceRemote?.rows ?? managerPerformanceRowsLocal;
+  const averageManagerScore = managerPerformanceRemote?.summary?.averageScore ?? averageManagerScoreLocal;
+  const teamsNeedingAttention = managerPerformanceRemote?.summary?.teamsNeedingAttention ?? teamsNeedingAttentionLocal;
+  const totalManagerOverdueFollowUps = managerPerformanceRemote?.summary?.totalOverdueFollowUps ?? totalManagerOverdueFollowUpsLocal;
+  const overallManagerDeliveryRate = managerPerformanceRemote?.summary?.overallDeliveryRate ?? overallManagerDeliveryRateLocal;
+  const hasRenderableWorkspaceData = products.length > 0
+    || trackedOrders.length > 0
+    || agents.length > 0
+    || users.length > 0
+    || expenses.length > 0
+    || abandonedCarts.length > 0
+    || salesTeams.length > 0
+    || waybillRecords.length > 0;
+  const workspacePageBlockingLoad = dataLoading && !hasRenderableWorkspaceData;
+  const salesTeamsPageBlockingLoad = dataLoading && salesTeams.length === 0 && salesRepUsers.length === 0 && trackedOrders.length === 0;
   const agentRows = agents.map((agent) => {
     const assigned = trackedOrders.filter((order) =>
       order.agentId === agent.id
@@ -7860,7 +8216,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const retryLoadData = useRef<() => void>(() => {});
   const lastAutoResyncAt = useRef(0);
   useEffect(() => {
-    if (!auth.isLoggedIn()) { setDataLoading(false); return; }
+    if (!auth.isLoggedIn()) {
+      setDataLoading(false);
+      setDataRefreshing(false);
+      setHasCompletedInitialDataLoad(false);
+      hasCompletedInitialDataLoadRef.current = false;
+      return;
+    }
     let cancelled = false;
     let retryTimer: number | null = null;
     let reconnectAttempts = 0;
@@ -7881,7 +8243,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         window.clearTimeout(retryTimer);
         retryTimer = null;
       }
-      setDataLoading(true);
+      const isBlockingLoad = !hasCompletedInitialDataLoadRef.current;
+      if (isBlockingLoad) {
+        setDataLoading(true);
+      } else {
+        setDataRefreshing(true);
+      }
       // Owner-only / admin-only endpoints — backend enforces requireRole on
       // sales-teams, pay-structures, payroll, and penalties. Skipping them for
       // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
@@ -8127,7 +8494,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           hydrateNotifications(apiNotifications);
           hydrateCarts(apiCarts);
 
-          if (!cancelled) setDataLoading(false);
+          if (!cancelled) {
+            setDataLoading(false);
+            setDataRefreshing(false);
+            setHasCompletedInitialDataLoad(true);
+            hasCompletedInitialDataLoadRef.current = true;
+          }
 
           void Promise.allSettled([
             agentsApi.list(),
@@ -8225,10 +8597,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!cancelled) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
           scheduleReconnect();
-          if (fastBootDashboard) setDataLoading(false);
+          if (fastBootDashboard) {
+            setDataLoading(false);
+            setDataRefreshing(false);
+            setHasCompletedInitialDataLoad(true);
+            hasCompletedInitialDataLoadRef.current = true;
+          }
         }
       } finally {
-        if (!cancelled && !fastBootDashboard) setDataLoading(false);
+        if (!cancelled && !fastBootDashboard) {
+          setDataLoading(false);
+          setDataRefreshing(false);
+          setHasCompletedInitialDataLoad(true);
+          hasCompletedInitialDataLoadRef.current = true;
+        }
       }
     };
 
@@ -8242,10 +8624,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, []);
 
   useEffect(() => {
+    if (!dataLoading) return;
+    if (!hasRenderableWorkspaceData) return;
+    setDataLoading(false);
+    setDataRefreshing(true);
+    setHasCompletedInitialDataLoad(true);
+    hasCompletedInitialDataLoadRef.current = true;
+  }, [dataLoading, hasRenderableWorkspaceData]);
+
+  useEffect(() => {
     if (!auth.isLoggedIn()) return;
 
     const maybeResync = () => {
-      if (dataLoading) return;
+      if (dataLoading || dataRefreshing) return;
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
       if (now - lastAutoResyncAt.current < 45_000) return;
@@ -8273,7 +8664,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onOnline);
     };
-  }, [dataLoading]);
+  }, [dataLoading, dataRefreshing]);
+
+  const salesProductIdsKey = Array.from(salesProductIds).sort().join(",");
+  useEffect(() => {
+    const currentUser = auth.getUser();
+    const canViewManagerPerformance = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+    if (!canViewManagerPerformance || activePage !== "Sales Teams") return;
+
+    const bounds = periodBoundsForQuery(salesPeriod, salesDateRange);
+    if (!bounds) {
+      setManagerPerformanceRemote(null);
+      return;
+    }
+
+    let cancelled = false;
+    setManagerPerformanceLoading(true);
+    const params: Record<string, string> = { ...bounds };
+    if (salesProductIdsKey) params.productIds = salesProductIdsKey;
+
+    salesTeamsApi.performance(params)
+      .then((result) => {
+        if (!cancelled) setManagerPerformanceRemote(result);
+      })
+      .catch(() => {
+        if (!cancelled) setManagerPerformanceRemote(null);
+      })
+      .finally(() => {
+        if (!cancelled) setManagerPerformanceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, salesPeriod, salesDateRange.start, salesDateRange.end, salesProductIdsKey]);
 
   useEffect(() => {
     if (!auth.isLoggedIn() || !realtimeClient) return;
@@ -10666,6 +11090,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const hydrateTrackedOrderFromApi = (raw: any) => {
+    const normalized = normalizeTrackedOrder(raw);
+    setTrackedOrders((value) => value.map((order) => order.id === normalized.id ? { ...order, ...normalized } : order));
+    return normalized;
+  };
+
+  const refreshFollowUpRecordsForOrder = async (orderId: string) => {
+    const [tasks, attempts] = await Promise.all([
+      ordersApi.followUpTasks(orderId),
+      ordersApi.contactAttempts(orderId)
+    ]);
+    setOrderFollowUpTasksByOrder((value) => ({
+      ...value,
+      [orderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
+    }));
+    setOrderContactAttemptsByOrder((value) => ({
+      ...value,
+      [orderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
+    }));
+  };
+
   const repForNewRecord = () => {
     if (createOrderContext === "rep") {
       return selectedRepUser?.id ?? activeSalesRepUsers[0]?.id ?? salesRepUsers[0]?.id;
@@ -10819,10 +11264,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (options.callOutcome !== undefined) {
       statusUpdates.callOutcome = options.callOutcome;
     }
-    ordersApi.updateStatus(order.id, statusUpdates).catch((err: any) => {
-      setTrackedOrders((value) => value.map((item) => item.id === order.id ? orderSnapshot : item));
-      showToast(`Failed to save schedule for ${order.id}: ${err?.message ?? "please retry"}.`);
-    });
+    ordersApi.updateStatus(order.id, statusUpdates)
+      .then(async (updated: any) => {
+        if (updated?.id) hydrateTrackedOrderFromApi(updated);
+        await refreshFollowUpRecordsForOrder(order.id);
+      })
+      .catch((err: any) => {
+        setTrackedOrders((value) => value.map((item) => item.id === order.id ? orderSnapshot : item));
+        showToast(`Failed to save schedule for ${order.id}: ${err?.message ?? "please retry"}.`);
+      });
   };
 
   const restoreProductStockForOrder = (order: TrackedOrder) => {
@@ -10988,10 +11438,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : undefined,
             ...(callOutcome !== undefined ? { callOutcome } : {})
           });
-      statusRequest.catch((err: any) => {
-        setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
-        showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
-      });
+      statusRequest
+        .then(async (updated: any) => {
+          if (updated?.id) hydrateTrackedOrderFromApi(updated);
+          await refreshFollowUpRecordsForOrder(orderId);
+        })
+        .catch((err: any) => {
+          setTrackedOrders((value) => value.map((item) => item.id === orderId ? orderSnapshot : item));
+          showToast(`Failed to update ${orderId}: ${err?.message ?? "please retry"}.`);
+        });
     }
     // Re-sync the delivery-fee expense so a Failed/Cancelled flip turns the
     // line into a "Failed Delivery" expense, and a recovery flips it back.
@@ -11502,10 +11957,92 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setOrderFollowUpTime(nextTimeValue());
     setShowRepFollowUpField(false);
     showToast(`${selectedOrder.id} timeline updated.`);
-    ordersApi.update(selectedOrder.id, { response: nextResponse, timeline_notes: nextNotes }).catch((err: any) => {
-      setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
-      showToast(`Failed to save note for ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
-    });
+    ordersApi.update(selectedOrder.id, { response: nextResponse, timeline_notes: nextNotes })
+      .then(async (updated: any) => {
+        if (updated?.id) hydrateTrackedOrderFromApi(updated);
+        await refreshFollowUpRecordsForOrder(selectedOrder.id);
+      })
+      .catch((err: any) => {
+        setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
+        showToast(`Failed to save note for ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
+      });
+  };
+
+  const resetFollowUpAttemptDraft = (task?: FollowUpTask | null) => {
+    setFollowUpAttemptChannel("call");
+    setFollowUpAttemptType(task?.taskType === "delivery_confirmation" ? "delivery_confirmation" : "scheduled_callback");
+    setFollowUpAttemptOutcome("");
+    setFollowUpAttemptNote("");
+    setFollowUpAttemptTaskId(task?.id ?? "");
+    setFollowUpNextActionEnabled(false);
+    setFollowUpNextActionType("callback");
+    setFollowUpNextActionDate(task?.dueAt ? normalizeDateKey(task.dueAt) : todayKey());
+    setFollowUpNextActionTime(task?.dueAt ? splitMomentForInput(task.dueAt).time || nextTimeValue() : nextTimeValue());
+    setFollowUpNextActionNote("");
+  };
+
+  const openFollowUpAttemptModal = (order: TrackedOrder, task?: FollowUpTask | null) => {
+    setSelectedOrderId(order.id);
+    resetFollowUpAttemptDraft(task ?? (orderFollowUpTasksByOrder[order.id] ? activeFollowUpTaskForOrder(orderFollowUpTasksByOrder[order.id]) : null));
+    setModal("logFollowUpAttempt");
+  };
+
+  const submitFollowUpAttempt = async () => {
+    if (!selectedOrder) return;
+    if (!followUpAttemptOutcome.trim()) {
+      showToast("Pick the outcome of the follow-up attempt.");
+      return;
+    }
+    if (followUpNextActionEnabled && !isDateValue(followUpNextActionDate)) {
+      showToast("Choose a valid next follow-up date.");
+      return;
+    }
+    if (followUpNextActionEnabled && !isTimeValue(followUpNextActionTime)) {
+      showToast("Choose a valid next follow-up time.");
+      return;
+    }
+
+    const nextActionMoment = followUpNextActionEnabled
+      ? combinePlannedMoment(followUpNextActionDate, followUpNextActionTime)
+      : { iso: undefined };
+
+    try {
+      const attempt = normalizeContactAttempt(await ordersApi.logContactAttempt(selectedOrder.id, {
+        taskId: followUpAttemptTaskId || null,
+        channel: followUpAttemptChannel,
+        attemptType: followUpAttemptType,
+        outcomeCode: followUpAttemptOutcome.trim(),
+        outcomeNote: followUpAttemptNote.trim() || null,
+        nextActionType: followUpNextActionEnabled ? followUpNextActionType : null,
+        nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
+        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || followUpAttemptOutcome.trim()) : null
+      }));
+
+      const refreshedOrder = await ordersApi.list({ search: selectedOrder.id, limit: "1" });
+      const matched = (refreshedOrder.data as any[]).find((item) => item.id === selectedOrder.id);
+      if (matched) {
+        const normalized = normalizeTrackedOrder(matched);
+        setTrackedOrders((value) => value.map((order) => order.id === normalized.id ? normalized : order));
+      }
+
+      const [tasks, attempts] = await Promise.all([
+        ordersApi.followUpTasks(selectedOrder.id),
+        ordersApi.contactAttempts(selectedOrder.id)
+      ]);
+      setOrderFollowUpTasksByOrder((value) => ({
+        ...value,
+        [selectedOrder.id]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
+      }));
+      setOrderContactAttemptsByOrder((value) => ({
+        ...value,
+        [selectedOrder.id]: (attempts as any[]).map((entry) => normalizeContactAttempt(entry))
+      }));
+      setStatusChangeOutcomePreset(attempt.outcomeCode);
+      closeModal();
+      showToast(`${selectedOrder.id} follow-up logged.`);
+    } catch (err: any) {
+      showToast(err?.message ?? `Could not log the follow-up for ${selectedOrder.id}.`);
+    }
   };
 
   const openRepOrderDetail = (order: TrackedOrder) => {
@@ -14506,6 +15043,112 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return "Pending";
   };
 
+  const renderFollowUpWorkSection = (order: TrackedOrder, options?: { compact?: boolean }) => {
+    const tasks = orderFollowUpTasksByOrder[order.id] ?? [];
+    const attempts = orderContactAttemptsByOrder[order.id] ?? [];
+    const activeTask = activeFollowUpTaskForOrder(tasks);
+    const latestAttempt = latestContactAttemptForOrder(attempts);
+    const buyerHealth = order.buyerHealth ?? "healthy";
+
+    return (
+      <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-4`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Follow-up Control</h3>
+            <p className={`text-xs mt-1 mb-0 ${orderMutedTextClass}`}>Every due callback should end in a logged attempt, not just a reminder.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${buyerHealthToneClass(buyerHealth)}`}>
+              Buyer Health · {buyerHealthLabel(buyerHealth)}
+            </span>
+            <button
+              type="button"
+              className="!min-h-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#1F8FE0] text-white text-xs font-semibold hover:bg-[#1560a8] transition-colors"
+              onClick={() => openFollowUpAttemptModal(order, activeTask)}
+            >
+              <Phone className="w-3.5 h-3.5" /> Log Follow-up
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
+            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Next Action</p>
+            {activeTask ? (
+              <div className="mt-2 space-y-2">
+                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpTaskToneClass(activeTask)}`}>
+                  {humanizeFollowUpTaskType(activeTask.taskType)} · {activeTask.effectiveStatus ?? activeTask.status}
+                </span>
+                <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(activeTask.dueAt)}</p>
+                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{activeTask.note || "No task note saved yet."}</p>
+              </div>
+            ) : (
+              <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No active follow-up task.</p>
+            )}
+          </div>
+
+          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
+            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Latest Attempt</p>
+            {latestAttempt ? (
+              <div className="mt-2 space-y-2">
+                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                  {latestAttempt.outcomeCode}
+                </span>
+                <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(latestAttempt.attemptedAt)}</p>
+                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{latestAttempt.outcomeNote || `${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
+                {latestAttempt.nextActionAt && (
+                  <p className={`m-0 text-[11px] ${orderFaintTextClass}`}>Next {humanizeFollowUpTaskType(latestAttempt.nextActionType)} · {formatMoment(latestAttempt.nextActionAt)}</p>
+                )}
+              </div>
+            ) : (
+              <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No follow-up attempt logged yet.</p>
+            )}
+          </div>
+
+          <div className={`rounded-xl border ${orderBorderClass} p-3`}>
+            <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Attempt Discipline</p>
+            <div className="mt-2 space-y-2">
+              <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{attempts.length} logged attempt{attempts.length === 1 ? "" : "s"}</p>
+              <p className={`m-0 text-xs ${orderMutedTextClass}`}>{order.overdueFollowUpCount ?? 0} overdue reminder{(order.overdueFollowUpCount ?? 0) === 1 ? "" : "s"} · {tasks.filter((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status)).length} open task{tasks.filter((task) => !["completed", "cancelled"].includes(task.effectiveStatus ?? task.status)).length === 1 ? "" : "s"}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Attempt History</p>
+            {orderFollowUpLoading && selectedOrderId === order.id && (
+              <span className={`text-[11px] ${orderMutedTextClass}`}>Refreshing…</span>
+            )}
+          </div>
+          {attempts.length === 0 ? (
+            <p className={`m-0 text-sm ${orderMutedTextClass}`}>No follow-up attempts logged yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {attempts.slice(0, options?.compact ? 3 : 6).map((attempt) => (
+                <div key={attempt.id} className={`rounded-xl border ${orderBorderClass} px-3 py-2.5`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>{attempt.outcomeCode}</span>
+                      <span className={`text-[11px] ${orderMutedTextClass}`}>{attempt.channel} · {attempt.attemptType.replace(/_/g, " ")}</span>
+                    </div>
+                    <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
+                  </div>
+                  {attempt.outcomeNote && (
+                    <p className={`m-0 mt-2 text-sm ${orderBodyTextClass}`}>{attempt.outcomeNote}</p>
+                  )}
+                  {attempt.nextActionAt && (
+                    <p className={`m-0 mt-2 text-[11px] ${orderMutedTextClass}`}>Next {humanizeFollowUpTaskType(attempt.nextActionType)} · {formatMoment(attempt.nextActionAt)}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  };
+
   const renderRepOrderTable = (orders: TrackedOrder[], emptyLabel = "No orders found") => (
     <>
       {orders.length === 0 ? (
@@ -14721,6 +15364,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           </div>
         </div>
       </section>
+
+      {renderFollowUpWorkSection(order, { compact: true })}
 
       {/* Main Grid: Customer Info & Order Items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -17114,8 +17759,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </header>
 
               <DataErrorBanner />
-              {dataLoading && <TableSkeleton cols={4} rows={4} />}
-              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {workspacePageBlockingLoad && <TableSkeleton cols={4} rows={4} />}
+              <div className={workspacePageBlockingLoad ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Getting-started checklist — shown only for new accounts with no data */}
               {products.length === 0 && trackedOrders.length === 0 && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
@@ -19384,9 +20029,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </button>
               </header>
 
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="inline-flex rounded-lg bg-gray-100 p-1 overflow-x-auto">
+                    {periods.map((item) => (
+                      <button
+                        className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${salesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                        onClick={() => handleSalesPeriodChange(item)}
+                        key={item}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+                    <div className="relative">
+                      <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => setShowSalesDateRange((v) => !v)}>
+                        <CalendarDays className="w-4 h-4" /> {salesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                      </button>
+                      {showSalesDateRange && renderDateRangeCalendar("sales-team-date-range-panel", salesDateRange, setSalesDateRange, applySalesDateRange, () => setShowSalesDateRange(false))}
+                    </div>
+                    {renderProductFilter(salesProductIds, setSalesProductIds, showSalesProductFilter, setShowSalesProductFilter)}
+                  </div>
+                </div>
+                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
+              </div>
+
               <DataErrorBanner />
-              {dataLoading && <TableSkeleton cols={4} rows={4} />}
-              <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {salesTeamsPageBlockingLoad && <TableSkeleton cols={4} rows={4} />}
+              <div className={salesTeamsPageBlockingLoad ? "hidden" : "space-y-6 lg:space-y-8"}>
               {salesTeams.length === 0 && !dataLoading ? (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 gap-3">
                   <span className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><Users className="w-6 h-6" /></span>
@@ -19401,9 +20072,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Sales teams summary">
                 {[
                   { label: "Total Teams", value: salesTeams.length, helper: "active selling groups", icon: Users, tone: "blue" },
-                  { label: "Assigned Reps", value: assignedRepCount, helper: `of ${salesRepUsers.length} mapped to a team`, icon: UserRound, tone: "green" },
-                  { label: "Scoped Products", value: products.filter((p) => productTeamScope(p).length > 0).length, helper: "product-team links", icon: PackageCheck, tone: "orange" },
-                  { label: "All-Team Products", value: products.filter((p) => productTeamScope(p).length === 0).length, helper: "visible to every rep", icon: Boxes, tone: "purple" },
+                  { label: "Delivery Rate", value: `${overallManagerDeliveryRate}%`, helper: selectedSalesPeriodLabel, icon: TrendingUp, tone: "green" },
+                  { label: "Avg Manager Score", value: `${averageManagerScore}`, helper: "weighted team score", icon: Gauge, tone: "orange" },
+                  { label: "Overdue Follow-ups", value: totalManagerOverdueFollowUps, helper: teamsNeedingAttention > 0 ? `${teamsNeedingAttention} team${teamsNeedingAttention === 1 ? "" : "s"} need attention` : "all teams in a healthy range", icon: BellRing, tone: "purple" },
                 ].map(({ label, value, helper, icon: Icon, tone }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between mb-2">
@@ -19416,6 +20087,146 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <p className="text-[10px] text-gray-400 font-medium">{helper}</p>
                   </article>
                 ))}
+              </section>
+
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4" aria-label="Manager performance scorecards">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-800">Manager Performance</h2>
+                    <p className="text-xs text-gray-500">Weighted score based on delivery rate, follow-up discipline, pipeline health, team consistency, and confirmed-path conversion.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {managerPerformanceLoading && <span className="text-[11px] font-semibold text-[#1F8FE0]">Syncing backend score…</span>}
+                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-[0.18em]">60% Delivery · 15% Follow-up · 10% Pipeline · 10% Consistency · 5% Confirmed path</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {managerPerformanceRows.map((row) => {
+                    const meta = managerScoreMeta(row.score, row.hasActivity);
+                    return (
+                      <article key={row.team.id} className="rounded-2xl border border-gray-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
+                        <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-base font-bold text-gray-900">{row.team.name}</h3>
+                                <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${meta.tone}`}>{meta.label}</span>
+                              </div>
+                              <p className="text-sm text-gray-600">
+                                Lead: <span className="font-semibold text-gray-900">{row.lead?.name ?? "Unassigned"}</span>
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {row.members.length} rep{row.members.length === 1 ? "" : "s"} · {row.activeMembers} active · {row.team.productIds.length === 0 ? "All products" : `${row.team.productIds.length} scoped product${row.team.productIds.length === 1 ? "" : "s"}`}
+                              </p>
+                            </div>
+                            <div className="sm:text-right">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Manager Score</div>
+                              <div className="text-3xl font-black text-gray-900 leading-none mt-1">{row.score}</div>
+                              <div className="text-xs font-medium text-gray-500 mt-1">{row.hasActivity ? selectedSalesPeriodLabel : "No orders in scope yet"}</div>
+                            </div>
+                          </div>
+
+                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <div className={`h-full rounded-full ${meta.meter}`} style={{ width: `${row.score}%` }} />
+                          </div>
+
+                          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                            {[
+                              { label: "Delivery", value: row.hasActivity ? `${row.deliveryRate}%` : "—", helper: row.hasActivity ? `${row.delivered}/${row.orders || 0} delivered` : "No handled orders in this scope" },
+                              { label: "Follow-up", value: row.hasActivity ? `${row.followUpCompliance}%` : "—", helper: row.hasActivity ? `${row.overdueFollowUps} overdue · ${row.dueSoonFollowUps} due soon` : "No follow-up workload yet" },
+                              { label: "Pipeline", value: row.hasActivity ? `${row.pipelineHealth}%` : "—", helper: row.hasActivity ? `${row.pipelineAtRisk} at risk · ${row.openOrders} open` : "No active pipeline right now" },
+                              { label: "Consistency", value: row.hasActivity ? `${row.teamConsistency}%` : "—", helper: row.hasActivity ? `${row.bestRate}% best · ${row.worstRate}% lowest` : "Waiting for rep activity" },
+                              { label: "Confirmed path", value: row.hasActivity ? `${row.confirmedPathRate}%` : "—", helper: row.hasActivity ? "worked orders turning into delivery" : "No conversion path to score yet" }
+                            ].map((metric) => (
+                              <div key={metric.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{metric.label}</div>
+                                <div className="mt-2 text-lg font-bold text-gray-900">{metric.value}</div>
+                                <p className="mt-1 text-[11px] leading-4 text-gray-500">{metric.helper}</p>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-[1.25fr,0.75fr] gap-3">
+                            <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Buyer health</div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {[
+                                  { label: "Watch", value: row.watchOrders, tone: "bg-amber-50 text-amber-700 border-amber-200" },
+                                  { label: "At Risk", value: row.atRiskOrders, tone: "bg-red-50 text-red-700 border-red-200" },
+                                  { label: "Not Serious", value: row.notSeriousCandidates, tone: "bg-slate-100 text-slate-700 border-slate-200" }
+                                ].map((metric) => (
+                                  <div key={`${row.team.id}-${metric.label}`} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${metric.tone}`}>
+                                    {metric.label}: <span className="font-bold">{metric.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="mt-3 text-[11px] leading-4 text-gray-500">
+                                Same-day callback misses and weak intent patterns roll orders from watch to at risk before they become not-serious candidates.
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Action queue</div>
+                              <div className="mt-3 space-y-2">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-600">Overdue now</span>
+                                  <span className="font-bold text-red-600">{row.overdueFollowUps}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-600">Due soon</span>
+                                  <span className="font-bold text-amber-600">{row.dueSoonFollowUps}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-600">Open pipeline</span>
+                                  <span className="font-bold text-gray-900">{row.openOrders}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-600">At-risk pipeline</span>
+                                  <span className="font-bold text-[#1F8FE0]">{row.pipelineAtRisk}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-[1.25fr,0.75fr] gap-3">
+                            <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Rep coverage</div>
+                              {row.memberPerformance.length === 0 ? (
+                                <p className="mt-3 text-sm text-gray-500">No reps have been assigned to this team yet.</p>
+                              ) : (
+                                <div className="mt-3 space-y-2">
+                                  {row.memberPerformance.map((memberRow: any) => (
+                                    <div key={memberRow.member.id} className="flex items-center justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-gray-900 truncate">{memberRow.member.name}</p>
+                                        <p className="text-[11px] text-gray-500">{memberRow.orders} orders · {memberRow.delivered} delivered</p>
+                                      </div>
+                                      <span className="text-sm font-bold text-gray-900">{memberRow.deliveryRate}%</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Main blockers</div>
+                              {row.blockers.length === 0 ? (
+                                <p className="mt-3 text-sm text-gray-500">No repeated call outcomes in this period.</p>
+                              ) : (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {row.blockers.map((blocker: any) => (
+                                    <span key={`${row.team.id}-${blocker.label}`} className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700">
+                                      <span>{blocker.label}</span>
+                                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-gray-500">{blocker.count}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
               </section>
 
               <div className="space-y-4">
@@ -28509,6 +29320,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    );
 	                  })()}
 	                </section>
+
+                  {renderFollowUpWorkSection(selectedOrder)}
 	
 	                {/* Section 6: Notes — only when notes exist */}
 	                {orderNotesFor(selectedOrder).length > 0 && (
@@ -28640,6 +29453,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    {scheduleRanges.map((range) => <button key={range} className="!min-h-0 px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors" onClick={() => scheduleOrder(selectedOrder.id, range)}>{range}</button>)}
 	                  </div>
 	                </section>
+
+                  {renderFollowUpWorkSection(selectedOrder, { compact: true })}
 
 	                <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-3`}>
 	                  <div><h3 className={`text-sm font-semibold ${orderTitleTextClass}`}>Communication Timeline</h3><p className={orderMutedTextClass}>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
@@ -28796,6 +29611,108 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   })()}
 	              </div>
 	            )}
+
+              {modal === "logFollowUpAttempt" && selectedOrder && (
+                <div className="modal-form">
+                  <div className={`${orderPanelInfoClass} rounded-xl p-4 space-y-2`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Active Reminder</p>
+                        <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>{selectedOrderActiveFollowUpTask ? `${humanizeFollowUpTaskType(selectedOrderActiveFollowUpTask.taskType)} · ${formatMoment(selectedOrderActiveFollowUpTask.dueAt)}` : "No active task on this order — log the follow-up anyway and create the next action if needed."}</p>
+                      </div>
+                      <span className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${buyerHealthToneClass(selectedOrder.buyerHealth)}`}>
+                        {buyerHealthLabel(selectedOrder.buyerHealth)}
+                      </span>
+                    </div>
+                    {selectedOrderLatestAttempt && (
+                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {selectedOrderLatestAttempt.outcomeCode} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <label>
+                      <span>Channel</span>
+                      <select value={followUpAttemptChannel} onChange={(event) => setFollowUpAttemptChannel(event.target.value as OrderContactAttempt["channel"])}>
+                        <option value="call">Call</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="sms">SMS</option>
+                        <option value="manual">Manual</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Attempt Type</span>
+                      <select value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
+                        <option value="scheduled_callback">Scheduled Callback</option>
+                        <option value="fresh_follow_up">Fresh Follow-up</option>
+                        <option value="delivery_confirmation">Delivery Confirmation</option>
+                        <option value="payment_follow_up">Payment Follow-up</option>
+                        <option value="waybill_follow_up">Waybill Follow-up</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <label>
+                    <span>Outcome *</span>
+                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpAttemptOutcome(event.target.value)} placeholder="e.g. No Answer, Confirmed, Not Ready, Will Call Back..." />
+                  </label>
+
+                  <label>
+                    <span>What happened?</span>
+                    <textarea
+                      value={followUpAttemptNote}
+                      onChange={(event) => setFollowUpAttemptNote(event.target.value)}
+                      placeholder="Record what the customer said or what happened on this attempt."
+                    />
+                  </label>
+
+                  <div className={`${orderPanelMutedClass} rounded-xl p-4 space-y-3`}>
+                    <label className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={followUpNextActionEnabled}
+                        onChange={(event) => setFollowUpNextActionEnabled(event.target.checked)}
+                      />
+                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>Set the next follow-up action now</span>
+                    </label>
+                    {followUpNextActionEnabled && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <label>
+                            <span>Next Action</span>
+                            <select value={followUpNextActionType} onChange={(event) => setFollowUpNextActionType(event.target.value as FollowUpTask["taskType"])}>
+                              <option value="callback">Callback</option>
+                              <option value="payment_check">Payment Check</option>
+                              <option value="delivery_confirmation">Delivery Confirmation</option>
+                              <option value="waybill_follow_up">Waybill Follow-up</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span>Date</span>
+                            <input type="date" value={followUpNextActionDate} onChange={(event) => setFollowUpNextActionDate(event.target.value)} />
+                          </label>
+                          <label>
+                            <span>Time</span>
+                            <input type="time" value={followUpNextActionTime} onChange={(event) => setFollowUpNextActionTime(event.target.value)} />
+                          </label>
+                        </div>
+                        <label>
+                          <span>Next Action Note</span>
+                          <textarea
+                            value={followUpNextActionNote}
+                            onChange={(event) => setFollowUpNextActionNote(event.target.value)}
+                            placeholder="What exactly should happen on the next callback?"
+                          />
+                        </label>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitFollowUpAttempt}>Save Attempt</button>
+                  </div>
+                </div>
+              )}
 
 	            {modal === "editOrderCustomer" && selectedOrder && (
 	              <div className="modal-form">

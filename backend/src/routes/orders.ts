@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
@@ -387,6 +388,16 @@ router.post("/", async (req, res) => {
     });
   }
 
+  await syncOrderFollowUpTask({
+    orgId: req.user!.orgId,
+    orderId: data.id,
+    assignedRepId: data.assigned_rep_id ?? null,
+    status: data.status ?? null,
+    scheduledDate: d.scheduledDate ?? data.scheduled_date ?? null,
+    scheduledAt: d.scheduledAt ?? data.scheduled_at ?? null,
+    timelineNotes: Array.isArray(timelineNotes) && timelineNotes.length > 0 ? timelineNotes : data.timeline_notes
+  }).catch(() => undefined);
+
   res.status(201).json(data);
 });
 
@@ -600,6 +611,20 @@ router.patch("/:id/status", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  if (["Delivered", "Cancelled", "Failed"].includes(status)) {
+    await cancelActiveFollowUpTasksForOrder(req.user!.orgId, req.params.id, `Order moved to ${status}.`).catch(() => undefined);
+  } else {
+    await syncOrderFollowUpTask({
+      orgId: req.user!.orgId,
+      orderId: req.params.id,
+      assignedRepId: data.assigned_rep_id ?? null,
+      status: data.status ?? status,
+      scheduledDate: scheduledDate !== undefined ? scheduledDate : data.scheduled_date ?? null,
+      scheduledAt: scheduledAt !== undefined ? scheduledAt : data.scheduled_at ?? null,
+      timelineNotes: timelineNotes !== undefined ? timelineNotes : data.timeline_notes
+    }).catch(() => undefined);
+  }
 
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
@@ -1014,6 +1039,15 @@ router.patch("/:id", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+  await syncOrderFollowUpTask({
+    orgId: req.user!.orgId,
+    orderId: req.params.id,
+    assignedRepId: data.assigned_rep_id ?? null,
+    status: data.status ?? null,
+    scheduledDate: updates.scheduled_date !== undefined ? updates.scheduled_date as string | null : data.scheduled_date ?? null,
+    scheduledAt: updates.scheduled_at !== undefined ? updates.scheduled_at as string | null : data.scheduled_at ?? null,
+    timelineNotes: updates.timeline_notes !== undefined ? updates.timeline_notes : data.timeline_notes
+  }).catch(() => undefined);
   if (updates.delivered_date !== undefined) {
     await supabase.from("order_audit").insert({
       order_id:    req.params.id,
@@ -1025,6 +1059,114 @@ router.patch("/:id", async (req, res) => {
     });
   }
   res.json(data);
+});
+
+router.get("/:id/follow-up-tasks", async (req, res) => {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only view follow-up work on your own orders." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("follow_up_tasks")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("order_id", req.params.id)
+    .order("due_at", { ascending: false });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json((data ?? []).map((task) => ({
+    ...task,
+    effective_status: taskStatusFor(task)
+  })));
+});
+
+router.get("/:id/contact-attempts", async (req, res) => {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only view follow-up attempts on your own orders." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("order_contact_attempts")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("order_id", req.params.id)
+    .order("attempted_at", { ascending: false });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json(data ?? []);
+});
+
+const ContactAttemptSchema = z.object({
+  taskId: z.string().uuid().optional().nullable(),
+  channel: z.enum(["call", "whatsapp", "sms", "manual"]).default("call"),
+  attemptType: z.enum(["scheduled_callback", "fresh_follow_up", "delivery_confirmation", "payment_follow_up", "waybill_follow_up"]).default("scheduled_callback"),
+  outcomeCode: z.string().trim().min(1).max(120),
+  outcomeNote: z.string().trim().max(1000).optional().nullable(),
+  nextActionType: z.enum(["callback", "payment_check", "delivery_confirmation", "waybill_follow_up"]).optional().nullable(),
+  nextActionAt: z.string().min(1).max(80).optional().nullable(),
+  nextActionNote: z.string().trim().max(1000).optional().nullable()
+});
+
+router.post("/:id/contact-attempts", async (req, res) => {
+  const parsed = ContactAttemptSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only log follow-ups on your own orders." });
+    return;
+  }
+
+  try {
+    const attempt = await recordContactAttemptAndNextAction({
+      orgId: req.user!.orgId,
+      orderId: req.params.id,
+      repId: req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
+      actorName: req.user!.name,
+      channel: parsed.data.channel,
+      attemptType: parsed.data.attemptType,
+      outcomeCode: parsed.data.outcomeCode,
+      outcomeNote: parsed.data.outcomeNote ?? null,
+      taskId: parsed.data.taskId ?? null,
+      nextActionType: parsed.data.nextActionType ?? null,
+      nextActionAt: parsed.data.nextActionAt ?? null,
+      nextActionNote: parsed.data.nextActionNote ?? null
+    });
+    res.status(201).json(attempt);
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "Could not log this follow-up attempt." });
+  }
 });
 
 // ── DELETE /api/orders/:id ────────────────────────────────
