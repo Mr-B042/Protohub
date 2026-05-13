@@ -23,6 +23,7 @@ type OrderNoteRecord = {
 
 type OrderRecord = {
   id: string;
+  customer?: string | null;
   assignedRepId?: string | null;
   productId?: string | null;
   status?: string | null;
@@ -218,6 +219,44 @@ const nextFollowUpForOrder = (order: OrderRecord) => {
 };
 
 export type ManagerPerformanceRow = {
+  actionQueue: {
+    overdueNow: Array<{
+      id: string;
+      customer: string;
+      repName: string;
+      status: string;
+      callOutcome?: string | null;
+      buyerHealth?: string | null;
+      nextFollowUpAt?: string | null;
+    }>;
+    dueSoon: Array<{
+      id: string;
+      customer: string;
+      repName: string;
+      status: string;
+      callOutcome?: string | null;
+      buyerHealth?: string | null;
+      nextFollowUpAt?: string | null;
+    }>;
+    openPipeline: Array<{
+      id: string;
+      customer: string;
+      repName: string;
+      status: string;
+      callOutcome?: string | null;
+      buyerHealth?: string | null;
+      nextFollowUpAt?: string | null;
+    }>;
+    atRiskPipeline: Array<{
+      id: string;
+      customer: string;
+      repName: string;
+      status: string;
+      callOutcome?: string | null;
+      buyerHealth?: string | null;
+      nextFollowUpAt?: string | null;
+    }>;
+  };
   team: TeamRecord;
   lead?: UserRecord;
   members: UserRecord[];
@@ -265,6 +304,16 @@ export const buildManagerPerformance = (
   tasks: FollowUpTaskRecord[] = [],
   attempts: ContactAttemptRecord[] = []
 ): { rows: ManagerPerformanceRow[]; summary: ManagerPerformanceSummary } => {
+  const summarizeOrder = (order: OrderRecord, members: UserRecord[]) => ({
+    id: order.id,
+    customer: order.customer?.trim() || "Unnamed Customer",
+    repName: members.find((member) => member.id === order.assignedRepId)?.name ?? "Unassigned",
+    status: statusForOrder(order),
+    callOutcome: order.callOutcome ?? null,
+    buyerHealth: order.buyerHealth ?? null,
+    nextFollowUpAt: order.scheduledAt ?? order.scheduledDate ?? null
+  });
+
   const rows = teams.map((team) => {
     const memberIds = new Set(team.memberIds);
     const teamProductScope = new Set(team.productIds);
@@ -284,14 +333,26 @@ export const buildManagerPerformance = (
       .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
       .filter((entry) => entry.followUp);
     const dueTasks = teamTasks.filter((task) => taskDueNow(task));
+    const overdueTaskOrderIds = new Set(
+      teamTasks.filter((task) => taskOverdue(task)).map((task) => task.orderId)
+    );
+    const overdueFollowUpOrders = teamTasks.length > 0
+      ? teamOrders.filter((order) => overdueTaskOrderIds.has(order.id))
+      : followUpEntries.filter((entry) => entry.followUp?.overdue).map((entry) => entry.order);
     const overdueFollowUps = teamTasks.length > 0
       ? teamTasks.filter((task) => taskOverdue(task)).length
       : followUpEntries.filter((entry) => entry.followUp?.overdue).length;
+    const dueSoonTaskOrderIds = new Set(
+      teamTasks.filter((task) => taskDueSoon(task) && !taskOverdue(task)).map((task) => task.orderId)
+    );
+    const dueSoonOrders = teamTasks.length > 0
+      ? teamOrders.filter((order) => dueSoonTaskOrderIds.has(order.id))
+      : followUpEntries.filter((entry) => entry.followUp?.dueSoon).map((entry) => entry.order);
     const dueSoonFollowUps = teamTasks.length > 0
       ? teamTasks.filter((task) => taskDueSoon(task) && !taskOverdue(task)).length
       : followUpEntries.filter((entry) => entry.followUp?.dueSoon).length;
     const activePipeline = teamOrders.filter((order) => MANAGER_OPEN_STATUSES.has(statusForOrder(order)));
-    const pipelineAtRisk = activePipeline.filter((order) => {
+    const atRiskPipelineOrders = activePipeline.filter((order) => {
       if (order.buyerHealth === "at_risk" || order.buyerHealth === "not_serious_candidate") return true;
       const status = statusForOrder(order);
       const ageDays = ageInDaysForOrder(order);
@@ -303,7 +364,8 @@ export const buildManagerPerformance = (
       if (status === "Dispatched" && ageDays >= 3) return true;
       if ((status === "New" || status === "Confirmed" || status === "In Process") && ageDays >= 2 && !followUp) return true;
       return false;
-    }).length;
+    });
+    const pipelineAtRisk = atRiskPipelineOrders.length;
     const memberPerformance = members.map((member) => {
       const repOrders = teamOrders.filter((order) => order.assignedRepId === member.id);
       const repDelivered = repOrders.filter((order) => statusForOrder(order) === "Delivered").length;
@@ -357,6 +419,47 @@ export const buildManagerPerformance = (
 
     return {
       team,
+      actionQueue: {
+        overdueNow: overdueFollowUpOrders
+          .slice()
+          .sort((left, right) => {
+            const leftTime = plannedMomentTimestamp(left.scheduledAt, left.scheduledDate) ?? 0;
+            const rightTime = plannedMomentTimestamp(right.scheduledAt, right.scheduledDate) ?? 0;
+            return leftTime - rightTime;
+          })
+          .slice(0, 5)
+          .map((order) => summarizeOrder(order, members)),
+        dueSoon: dueSoonOrders
+          .slice()
+          .sort((left, right) => {
+            const leftTime = plannedMomentTimestamp(left.scheduledAt, left.scheduledDate) ?? Number.MAX_SAFE_INTEGER;
+            const rightTime = plannedMomentTimestamp(right.scheduledAt, right.scheduledDate) ?? Number.MAX_SAFE_INTEGER;
+            return leftTime - rightTime;
+          })
+          .slice(0, 5)
+          .map((order) => summarizeOrder(order, members)),
+        openPipeline: activePipeline
+          .slice()
+          .sort((left, right) => {
+            const leftTime = plannedMomentTimestamp(left.scheduledAt, left.scheduledDate) ?? new Date(left.createdAt ?? left.date ?? 0).getTime();
+            const rightTime = plannedMomentTimestamp(right.scheduledAt, right.scheduledDate) ?? new Date(right.createdAt ?? right.date ?? 0).getTime();
+            return leftTime - rightTime;
+          })
+          .slice(0, 5)
+          .map((order) => summarizeOrder(order, members)),
+        atRiskPipeline: atRiskPipelineOrders
+          .slice()
+          .sort((left, right) => {
+            const leftWeight = left.buyerHealth === "not_serious_candidate" ? 2 : left.buyerHealth === "at_risk" ? 1 : 0;
+            const rightWeight = right.buyerHealth === "not_serious_candidate" ? 2 : right.buyerHealth === "at_risk" ? 1 : 0;
+            if (leftWeight !== rightWeight) return rightWeight - leftWeight;
+            const leftTime = plannedMomentTimestamp(left.scheduledAt, left.scheduledDate) ?? new Date(left.createdAt ?? left.date ?? 0).getTime();
+            const rightTime = plannedMomentTimestamp(right.scheduledAt, right.scheduledDate) ?? new Date(right.createdAt ?? right.date ?? 0).getTime();
+            return leftTime - rightTime;
+          })
+          .slice(0, 5)
+          .map((order) => summarizeOrder(order, members))
+      },
       lead,
       members,
       memberPerformance,

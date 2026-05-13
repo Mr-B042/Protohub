@@ -5491,6 +5491,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const teamForRep = (rep: ManagedUser) => salesTeams.find((t) => t.memberIds.includes(rep.id)) ?? undefined;
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
+  const summarizeManagerQueueOrder = (order: TrackedOrder, members: ManagedUser[]) => ({
+    id: order.id,
+    customer: order.customer || "Unnamed Customer",
+    repName: members.find((member) => member.id === order.assignedRepId)?.name ?? "Unassigned",
+    status: statusForOrder(order),
+    callOutcome: order.callOutcome ?? undefined,
+    buyerHealth: order.buyerHealth,
+    nextFollowUpAt: order.nextFollowUpAt ?? scheduledMomentForOrder(order) ?? undefined
+  });
   const managerPerformanceRowsLocal = salesTeams.map((team) => {
     const memberIds = new Set(team.memberIds);
     const teamProductScope = new Set(team.productIds);
@@ -5508,19 +5517,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const followUpEntries = teamOrders
       .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
       .filter((entry) => entry.followUp);
-    const overdueFollowUps = followUpEntries.filter((entry) => entry.followUp?.overdue).length;
-    const dueSoonFollowUps = followUpEntries.filter((entry) => entry.followUp?.dueSoon).length;
+    const overdueFollowUpOrders = followUpEntries.filter((entry) => entry.followUp?.overdue).map((entry) => entry.order);
+    const dueSoonOrders = followUpEntries.filter((entry) => entry.followUp?.dueSoon).map((entry) => entry.order);
+    const overdueFollowUps = overdueFollowUpOrders.length;
+    const dueSoonFollowUps = dueSoonOrders.length;
     const activePipeline = teamOrders.filter((order) => MANAGER_OPEN_STATUSES.has(statusForOrder(order)));
-    const pipelineAtRisk = activePipeline.filter((order) => {
+    const atRiskPipelineOrders = activePipeline.filter((order) => {
       const status = statusForOrder(order);
       const ageDays = ageInDaysForOrder(order);
       const followUp = nextFollowUpForOrder(order);
+      if (order.buyerHealth === "at_risk" || order.buyerHealth === "not_serious_candidate") return true;
       if (followUp?.overdue) return true;
       if (status === "Postponed" && !followUp) return true;
       if (status === "Dispatched" && ageDays >= 3) return true;
       if ((status === "New" || status === "Confirmed" || status === "In Process") && ageDays >= 2 && !followUp) return true;
       return false;
-    }).length;
+    });
+    const pipelineAtRisk = atRiskPipelineOrders.length;
     const memberPerformance = members.map((member) => {
       const repOrders = teamOrders.filter((order) => order.assignedRepId === member.id);
       const repDelivered = repOrders.filter((order) => statusForOrder(order) === "Delivered").length;
@@ -5564,6 +5577,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     return {
       team,
+      actionQueue: {
+        overdueNow: overdueFollowUpOrders
+          .slice(0, 5)
+          .map((order) => summarizeManagerQueueOrder(order, members)),
+        dueSoon: dueSoonOrders
+          .slice(0, 5)
+          .map((order) => summarizeManagerQueueOrder(order, members)),
+        openPipeline: activePipeline
+          .slice(0, 5)
+          .map((order) => summarizeManagerQueueOrder(order, members)),
+        atRiskPipeline: atRiskPipelineOrders
+          .slice(0, 5)
+          .map((order) => summarizeManagerQueueOrder(order, members))
+      },
       lead,
       members,
       memberPerformance,
@@ -5583,7 +5610,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bestRate,
       worstRate,
       blockers,
-      activeMembers: members.filter((member) => member.active).length
+      activeMembers: members.filter((member) => member.active).length,
+      watchOrders: teamOrders.filter((order) => order.buyerHealth === "watch").length,
+      atRiskOrders: teamOrders.filter((order) => order.buyerHealth === "at_risk").length,
+      notSeriousCandidates: teamOrders.filter((order) => order.buyerHealth === "not_serious_candidate").length
     };
   });
   const activeManagerPerformanceRowsLocal = managerPerformanceRowsLocal.filter((row) => row.hasActivity);
@@ -20103,6 +20133,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   {managerPerformanceRows.map((row) => {
                     const meta = managerScoreMeta(row.score, row.hasActivity);
+                    const queueBuckets = [
+                      { key: "overdueNow", label: "Overdue now", value: row.overdueFollowUps, tone: "text-red-600", items: row.actionQueue?.overdueNow ?? [] },
+                      { key: "dueSoon", label: "Due soon", value: row.dueSoonFollowUps, tone: "text-amber-600", items: row.actionQueue?.dueSoon ?? [] },
+                      { key: "openPipeline", label: "Open pipeline", value: row.openOrders, tone: "text-gray-900", items: row.actionQueue?.openPipeline ?? [] },
+                      { key: "atRiskPipeline", label: "At-risk pipeline", value: row.pipelineAtRisk, tone: "text-[#1F8FE0]", items: row.actionQueue?.atRiskPipeline ?? [] }
+                    ];
                     return (
                       <article key={row.team.id} className="rounded-2xl border border-gray-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
                         <div className="flex flex-col gap-4">
@@ -20166,23 +20202,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                             <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Action queue</div>
-                              <div className="mt-3 space-y-2">
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-600">Overdue now</span>
-                                  <span className="font-bold text-red-600">{row.overdueFollowUps}</span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-600">Due soon</span>
-                                  <span className="font-bold text-amber-600">{row.dueSoonFollowUps}</span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-600">Open pipeline</span>
-                                  <span className="font-bold text-gray-900">{row.openOrders}</span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-600">At-risk pipeline</span>
-                                  <span className="font-bold text-[#1F8FE0]">{row.pipelineAtRisk}</span>
-                                </div>
+                              <div className="mt-3 space-y-3">
+                                {queueBuckets.map((bucket) => (
+                                  <div key={`${row.team.id}-${bucket.key}`} className="rounded-xl border border-gray-100 bg-slate-50/70 p-3">
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span className="text-gray-700 font-semibold">{bucket.label}</span>
+                                      <span className={`font-bold ${bucket.tone}`}>{bucket.value}</span>
+                                    </div>
+                                    {bucket.items.length === 0 ? (
+                                      <p className="mt-2 text-[11px] text-gray-400">No customers in this bucket.</p>
+                                    ) : (
+                                      <div className="mt-2 space-y-2">
+                                        {bucket.items.map((item: any) => (
+                                          <div key={`${bucket.key}-${item.id}`} className="rounded-lg bg-white px-3 py-2">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div className="min-w-0">
+                                                <p className="text-sm font-semibold text-gray-900 truncate">{item.customer}</p>
+                                                <p className="text-[11px] text-gray-500">{item.id} · {item.repName}</p>
+                                              </div>
+                                              <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] font-semibold ${buyerHealthToneClass(item.buyerHealth)}`}>
+                                                {buyerHealthLabel(item.buyerHealth)}
+                                              </span>
+                                            </div>
+                                            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
+                                              <span className="font-medium text-gray-700">{item.status}</span>
+                                              {item.callOutcome ? <span>Outcome: {item.callOutcome}</span> : null}
+                                              {item.nextFollowUpAt ? <span>Next: {formatMoment(item.nextFollowUpAt)}</span> : null}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           </div>

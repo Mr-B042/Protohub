@@ -51,7 +51,7 @@ router.get("/performance", async (req, res) => {
 
   let ordersQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, notes, timeline_notes")
+    .select("id, customer, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, notes, timeline_notes")
     .eq("org_id", req.user!.orgId);
 
   if (parsed.data.dateFrom) {
@@ -102,6 +102,7 @@ router.get("/performance", async (req, res) => {
     })),
     (orders ?? []).map((order) => ({
       id: order.id,
+      customer: order.customer ?? undefined,
       assignedRepId: order.assigned_rep_id ?? undefined,
       productId: order.product_id ?? undefined,
       status: order.status ?? undefined,
