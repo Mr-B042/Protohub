@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
+import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
@@ -68,7 +70,49 @@ const serializePlannedOrderMetadata = (
   return Object.keys(payload).length > 0 ? JSON.stringify(payload) : null;
 };
 const isMissingPlannedColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /scheduled_at|timeline_notes/i.test(error?.message ?? "");
+  error?.code === "42703" || /scheduled_at|timeline_notes|confirmation_checked|preferred_delivery/i.test(error?.message ?? "");
+
+const inventoryAvailabilityMap = async (
+  agentId: string,
+  locationId: string | null | undefined,
+  productIds: string[]
+) => {
+  if (productIds.length === 0) return new Map<string, number>();
+  const query = locationId
+    ? supabase
+        .from("agent_location_stock")
+        .select("product_id, quantity")
+        .eq("agent_location_id", locationId)
+        .in("product_id", productIds)
+    : supabase
+        .from("agent_stock")
+        .select("product_id, quantity")
+        .eq("agent_id", agentId)
+        .in("product_id", productIds);
+  const { data } = await query;
+  return new Map<string, number>(
+    (data ?? []).map((row: any) => [String(row.product_id), Number(row.quantity ?? 0)])
+  );
+};
+
+const applyLocationInventoryDelta = async (
+  orgId: string,
+  agentId: string,
+  agentLocationId: string,
+  line: OrderInventoryLine,
+  nextQuantity: number
+) => {
+  await supabase
+    .from("agent_location_stock")
+    .upsert({
+      org_id: orgId,
+      agent_id: agentId,
+      agent_location_id: agentLocationId,
+      product_id: line.productId,
+      quantity: nextQuantity
+    }, { onConflict: "agent_location_id,product_id" });
+  await syncAgentStockAggregate(orgId, agentId, line.productId);
+};
 
 // ── GET /api/orders ───────────────────────────────────────
 // Supports: ?status=Delivered&source=TikTok&search=Kemi&page=1&limit=25
@@ -167,6 +211,7 @@ router.post("/", async (req, res) => {
     return;
   }
   const d = parsed.data;
+  let packageComponentsSource: unknown = [];
 
   // Validate productId belongs to this org
   if (d.productId) {
@@ -182,7 +227,7 @@ router.post("/", async (req, res) => {
   if (d.packageId) {
     const { data: pkgCheck } = await supabase
       .from("product_packages")
-      .select("id, product_id")
+      .select("id, product_id, package_components")
       .eq("id", d.packageId)
       .single();
     if (!pkgCheck) {
@@ -196,6 +241,7 @@ router.post("/", async (req, res) => {
       res.status(400).json({ error: "Package does not belong to your organization." });
       return;
     }
+    packageComponentsSource = pkgCheck.package_components ?? [];
   }
 
   // Validate assignedRepId belongs to this org
@@ -257,6 +303,7 @@ router.post("/", async (req, res) => {
         agent_location_state_snapshot: null,
         agent_location_city_snapshot: null
       };
+  const packageComponentsSnapshot = await buildPackageComponentSnapshot(req.user!.orgId, packageComponentsSource);
 
   const timelineNotes = d.timelineNotes ?? d.notes ?? [];
   const legacyNotes = serializePlannedOrderMetadata(null, {
@@ -282,6 +329,7 @@ router.post("/", async (req, res) => {
     amount:          d.amount,
     original_amount: d.amount,
     currency:        d.currency,
+    package_components_snapshot: packageComponentsSnapshot,
     source:          d.source,
     source_cart_id:  d.sourceCartId ?? null,
     location:        d.location,
@@ -303,6 +351,11 @@ router.post("/", async (req, res) => {
     response:        d.response,
     status:          "New"
   };
+  const legacyInsert = {
+    ...baseInsert
+  } as Record<string, unknown>;
+  delete legacyInsert.confirmation_checked;
+  delete legacyInsert.preferred_delivery;
 
   let { data, error } = await supabase
     .from("orders")
@@ -317,7 +370,7 @@ router.post("/", async (req, res) => {
   if (error && isMissingPlannedColumnsError(error)) {
     ({ data, error } = await supabase
       .from("orders")
-      .insert(baseInsert as Record<string, unknown>)
+      .insert(legacyInsert)
       .select()
       .single());
   }
@@ -382,15 +435,28 @@ router.post("/", async (req, res) => {
     });
   }
 
+  await syncOrderFollowUpTask({
+    orgId: req.user!.orgId,
+    orderId: data.id,
+    assignedRepId: data.assigned_rep_id ?? null,
+    status: data.status ?? null,
+    scheduledDate: d.scheduledDate ?? data.scheduled_date ?? null,
+    scheduledAt: d.scheduledAt ?? data.scheduled_at ?? null,
+    timelineNotes: Array.isArray(timelineNotes) && timelineNotes.length > 0 ? timelineNotes : data.timeline_notes
+  }).catch(() => undefined);
+
   res.status(201).json(data);
 });
 
 // ── PATCH /api/orders/:id/status ──────────────────────────
 const StatusSchema = z.object({
   status:      z.enum(["New","Confirmed","In Process","Dispatched","Delivered","Cancelled","Postponed","Failed"]),
-  callOutcome: z.string().optional(),
+  callOutcome: z.string().trim().min(1).max(120).nullable().optional(),
   response:    z.string().optional(),
   deliveredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  scheduledAt: z.string().min(1).max(80).nullable().optional(),
+  timelineNotes: z.array(TimelineNoteSchema).max(200).optional(),
   agentId:     z.string().uuid().optional().nullable(),
   agentLocationId: z.string().uuid().optional().nullable()
 });
@@ -401,12 +467,12 @@ router.patch("/:id/status", async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { status, callOutcome, response, deliveredDate, agentId, agentLocationId } = parsed.data;
+  const { status, callOutcome, response, deliveredDate, scheduledDate, scheduledAt, timelineNotes, agentId, agentLocationId } = parsed.data;
 
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot")
+    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -426,6 +492,8 @@ router.patch("/:id/status", async (req, res) => {
   }
 
   const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered";
+  const inventoryLines = orderInventoryLinesFromRow(existing);
+  const inventoryProductId = primaryInventoryProductId(inventoryLines, existing.product_id);
 
   // Validate agentId belongs to this org
   if (agentId) {
@@ -460,45 +528,49 @@ router.patch("/:id/status", async (req, res) => {
   const orderQty = existing?.quantity ?? 1;
 
   // Pre-check: if marking Delivered and an agent is assigned, verify stock
-  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
+  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
     const resolvedLocation = effectiveAgentLocationId
       ? { id: effectiveAgentLocationId }
       : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id
+          productId: inventoryProductId
         });
-
-    const { data: agentStockRow } = resolvedLocation?.id
-      ? await supabase
-          .from("agent_location_stock")
-          .select("quantity")
-          .eq("agent_location_id", resolvedLocation.id)
-          .eq("product_id", existing.product_id)
-          .single()
-      : await supabase
-          .from("agent_stock")
-          .select("quantity")
-          .eq("agent_id", effectiveAgentId)
-          .eq("product_id", existing.product_id)
-          .single();
-
-    const available = agentStockRow?.quantity ?? 0;
-    if (available < orderQty) {
-      // Fetch agent name for a clear error message
+    const availability = await inventoryAvailabilityMap(
+      effectiveAgentId,
+      resolvedLocation?.id,
+      inventoryLines.map((line) => line.productId)
+    );
+    const shortfall = inventoryLines.find((line) => (availability.get(line.productId) ?? 0) < line.quantity);
+    if (shortfall) {
       const { data: agentRow } = await supabase
         .from("agents").select("name").eq("id", effectiveAgentId).single();
       const agentName = agentRow?.name ?? effectiveAgentId;
+      const available = availability.get(shortfall.productId) ?? 0;
       res.status(400).json({
-        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${existing.product_name} in the selected stock location.`
+        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${shortfall.productName}. This order needs ${shortfall.quantity}.`
       });
       return;
     }
   }
 
   const updates: Record<string, unknown> = { status };
-  if (callOutcome)  updates.call_outcome    = callOutcome;
+  if (callOutcome !== undefined)  updates.call_outcome    = callOutcome || null;
   if (response)     updates.response        = response;
+  if (scheduledDate !== undefined) updates.scheduled_date = scheduledDate;
+  if (scheduledAt !== undefined) updates.scheduled_at = scheduledAt;
+  if (timelineNotes !== undefined) {
+    updates.timeline_notes = timelineNotes;
+    updates.notes = serializePlannedOrderMetadata(existing?.notes, {
+      scheduledAt: updates.scheduled_at as string | null | undefined,
+      timelineNotes
+    });
+  } else if (scheduledAt !== undefined) {
+    updates.notes = serializePlannedOrderMetadata(existing?.notes, {
+      scheduledAt: scheduledAt,
+      timelineNotes: undefined
+    });
+  }
   if (agentId !== undefined) updates.agent_id = agentId;
   if (agentLocationId !== undefined) updates.agent_location_id = agentLocationId;
   if (effectiveAgentId) {
@@ -555,7 +627,7 @@ router.patch("/:id/status", async (req, res) => {
     updates.remittance_status = "Pending";
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("orders")
     .update(updates)
     .eq("id", req.params.id)
@@ -563,23 +635,50 @@ router.patch("/:id/status", async (req, res) => {
     .select()
     .single();
 
+  if (error && isMissingPlannedColumnsError(error)) {
+    const legacyUpdates = { ...updates };
+    delete legacyUpdates.scheduled_at;
+    delete legacyUpdates.timeline_notes;
+    ({ data, error } = await supabase
+      .from("orders")
+      .update(legacyUpdates)
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single());
+  }
+
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
 
+  if (["Delivered", "Cancelled", "Failed"].includes(status)) {
+    await cancelActiveFollowUpTasksForOrder(req.user!.orgId, req.params.id, `Order moved to ${status}.`).catch(() => undefined);
+  } else {
+    await syncOrderFollowUpTask({
+      orgId: req.user!.orgId,
+      orderId: req.params.id,
+      assignedRepId: data.assigned_rep_id ?? null,
+      status: data.status ?? status,
+      scheduledDate: scheduledDate !== undefined ? scheduledDate : data.scheduled_date ?? null,
+      scheduledAt: scheduledAt !== undefined ? scheduledAt : data.scheduled_at ?? null,
+      timelineNotes: timelineNotes !== undefined ? timelineNotes : data.timeline_notes
+    }).catch(() => undefined);
+  }
+
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
-  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && existing?.product_id) {
+  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
     const today = new Date().toISOString().split("T")[0];
     const resolvedLocation = effectiveAgentLocationId
       ? await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id,
+          productId: inventoryProductId,
           explicitLocationId: effectiveAgentLocationId
         })
       : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id
+          productId: inventoryProductId
         });
 
     if (!resolvedLocation) {
@@ -587,19 +686,11 @@ router.patch("/:id/status", async (req, res) => {
       return;
     }
 
-    // 1. Deduct stock from the resolved agent location and sync the aggregate
-    const { data: currentStock } = await supabase
-      .from("agent_location_stock")
-      .select("quantity")
-      .eq("agent_location_id", resolvedLocation.id)
-      .eq("product_id", existing.product_id)
-      .single();
-    const newLocationQty = Math.max(0, (currentStock?.quantity ?? 0) - orderQty);
-    await supabase.from("agent_location_stock")
-      .update({ quantity: newLocationQty })
-      .eq("agent_location_id", resolvedLocation.id)
-      .eq("product_id", existing.product_id);
-    await syncAgentStockAggregate(req.user!.orgId, effectiveAgentId, existing.product_id);
+    const stockMap = await inventoryAvailabilityMap(
+      effectiveAgentId,
+      resolvedLocation.id,
+      inventoryLines.map((line) => line.productId)
+    );
 
     const agentName = data.agent_name_snapshot ?? existing.agent_name_snapshot ?? "Agent";
     const agentBaseState = data.agent_base_state_snapshot ?? existing.agent_base_state_snapshot ?? "";
@@ -631,76 +722,75 @@ router.patch("/:id/status", async (req, res) => {
       notes:           `Auto-created on order delivery (${existing.customer})`
     });
 
-    // 3. Log stock movement
-    await supabase.from("stock_movements").insert({
-      id:            `MOV-${randomUUID()}`,
-      org_id:        req.user!.orgId,
-      product_id:    existing.product_id,
-      product_name:  existing.product_name,
-      type:          "Order Fulfilled",
-      qty:           orderQty,
-      balance_after: newLocationQty,
-      agent_id:      effectiveAgentId,
-      order_id:      req.params.id,
-      by_name:       req.user!.name,
-      by_user_id:    req.user!.id,
-      waybill_id:    waybillId,
-      from_location: agentLocationName || originState,
-      to_location:   customerLocation,
-      from_agent_location_id: resolvedLocation.id,
-      note:          `Delivered to ${existing.customer} — agent ${agentName}${serviceStateNote} from ${agentLocationName || originState} stock ${(currentStock?.quantity ?? 0)} → ${newLocationQty}`
-    });
+    for (const line of inventoryLines) {
+      const currentQty = stockMap.get(line.productId) ?? 0;
+      const nextQty = Math.max(0, currentQty - line.quantity);
+      await applyLocationInventoryDelta(req.user!.orgId, effectiveAgentId, resolvedLocation.id, line, nextQty);
+      await supabase.from("stock_movements").insert({
+        id:            `MOV-${randomUUID()}`,
+        org_id:        req.user!.orgId,
+        product_id:    line.productId,
+        product_name:  line.productName,
+        type:          "Order Fulfilled",
+        qty:           line.quantity,
+        balance_after: nextQty,
+        agent_id:      effectiveAgentId,
+        order_id:      req.params.id,
+        by_name:       req.user!.name,
+        by_user_id:    req.user!.id,
+        waybill_id:    waybillId,
+        from_location: agentLocationName || originState,
+        to_location:   customerLocation,
+        from_agent_location_id: resolvedLocation.id,
+        note:          `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted ${currentQty} → ${nextQty} by agent ${agentName}${serviceStateNote}`
+      });
+    }
   }
 
   // ── Un-delivery side-effects: restore agent stock, delete waybill, log reversal ──
-  if (existing?.status === "Delivered" && status !== "Delivered" && existing?.stock_deducted && existing?.agent_id && existing?.product_id) {
-    const orderQty = existing.quantity ?? 1;
+  if (existing?.status === "Delivered" && status !== "Delivered" && existing?.stock_deducted && existing?.agent_id && inventoryLines.length > 0) {
     const reversalLocation = existing.agent_location_id
       ? await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id,
+          productId: inventoryProductId,
           explicitLocationId: existing.agent_location_id
         })
       : await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id
+          productId: inventoryProductId
         });
 
     if (reversalLocation) {
-      const { data: currentStock } = await supabase
-        .from("agent_location_stock").select("quantity")
-        .eq("agent_location_id", reversalLocation.id).eq("product_id", existing.product_id).single();
-      const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
-      await supabase.from("agent_location_stock")
-        .upsert({
-          org_id: req.user!.orgId,
-          agent_id: existing.agent_id,
-          agent_location_id: reversalLocation.id,
-          product_id: existing.product_id,
-          quantity: restoredQty
-        });
-      await syncAgentStockAggregate(req.user!.orgId, existing.agent_id, existing.product_id);
-
+      const stockMap = await inventoryAvailabilityMap(
+        existing.agent_id,
+        reversalLocation.id,
+        inventoryLines.map((line) => line.productId)
+      );
       const { data: agentInfo } = await supabase
         .from("agents").select("name").eq("id", existing.agent_id).single();
-      await supabase.from("stock_movements").insert({
-        id:            `MOV-${randomUUID()}`,
-        org_id:        req.user!.orgId,
-        product_id:    existing.product_id,
-        product_name:  existing.product_name,
-        type:          "Status Reversal",
-        qty:           orderQty,
-        balance_after: restoredQty,
-        agent_id:      existing.agent_id,
-        order_id:      req.params.id,
-        by_name:       req.user!.name,
-        by_user_id:    req.user!.id,
-        to_agent_location_id: reversalLocation.id,
-        to_location:   reversalLocation.name,
-        note:          `Delivery reversed — order ${req.params.id} changed to ${status} (agent ${agentInfo?.name ?? existing.agent_id} at ${reversalLocation.name} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
-      });
+      for (const line of inventoryLines) {
+        const currentQty = stockMap.get(line.productId) ?? 0;
+        const restoredQty = currentQty + line.quantity;
+        await applyLocationInventoryDelta(req.user!.orgId, existing.agent_id, reversalLocation.id, line, restoredQty);
+        await supabase.from("stock_movements").insert({
+          id:            `MOV-${randomUUID()}`,
+          org_id:        req.user!.orgId,
+          product_id:    line.productId,
+          product_name:  line.productName,
+          type:          "Status Reversal",
+          qty:           line.quantity,
+          balance_after: restoredQty,
+          agent_id:      existing.agent_id,
+          order_id:      req.params.id,
+          by_name:       req.user!.name,
+          by_user_id:    req.user!.id,
+          to_agent_location_id: reversalLocation.id,
+          to_location:   reversalLocation.name,
+          note:          `Delivery reversed — ${line.productName}${line.isFreeGift ? " (gift)" : ""} restored ${currentQty} → ${restoredQty} for order ${req.params.id} (agent ${agentInfo?.name ?? existing.agent_id})`
+        });
+      }
     }
 
     await supabase.from("waybill_records")
@@ -922,6 +1012,23 @@ router.patch("/:id", async (req, res) => {
     const { data: productCheck } = await supabase.from("products").select("id").eq("id", updates.product_id).eq("org_id", req.user!.orgId).single();
     if (!productCheck) { res.status(400).json({ error: "Product not found in your organization." }); return; }
   }
+  if (updates.package_id) {
+    const { data: packageCheck } = await supabase
+      .from("product_packages")
+      .select("id, product_id, package_components")
+      .eq("id", updates.package_id)
+      .single();
+    if (!packageCheck) { res.status(400).json({ error: "Package not found." }); return; }
+    const { data: pkgProductCheck } = await supabase
+      .from("products")
+      .select("id")
+      .eq("id", packageCheck.product_id)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (!pkgProductCheck) { res.status(400).json({ error: "Package does not belong to your organization." }); return; }
+    updates.package_components_snapshot = await buildPackageComponentSnapshot(req.user!.orgId, packageCheck.package_components ?? []);
+    if (updates.product_id === undefined) updates.product_id = packageCheck.product_id;
+  }
   if (updates.agent_id !== undefined || updates.agent_location_id !== undefined || updates.city !== undefined || updates.state !== undefined || updates.product_id !== undefined) {
     const effectiveAgentId = updates.agent_id === undefined
       ? current.agent_id
@@ -979,6 +1086,15 @@ router.patch("/:id", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+  await syncOrderFollowUpTask({
+    orgId: req.user!.orgId,
+    orderId: req.params.id,
+    assignedRepId: data.assigned_rep_id ?? null,
+    status: data.status ?? null,
+    scheduledDate: updates.scheduled_date !== undefined ? updates.scheduled_date as string | null : data.scheduled_date ?? null,
+    scheduledAt: updates.scheduled_at !== undefined ? updates.scheduled_at as string | null : data.scheduled_at ?? null,
+    timelineNotes: updates.timeline_notes !== undefined ? updates.timeline_notes : data.timeline_notes
+  }).catch(() => undefined);
   if (updates.delivered_date !== undefined) {
     await supabase.from("order_audit").insert({
       order_id:    req.params.id,
@@ -992,65 +1108,171 @@ router.patch("/:id", async (req, res) => {
   res.json(data);
 });
 
+router.get("/:id/follow-up-tasks", async (req, res) => {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only view follow-up work on your own orders." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("follow_up_tasks")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("order_id", req.params.id)
+    .order("due_at", { ascending: false });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json((data ?? []).map((task) => ({
+    ...task,
+    effective_status: taskStatusFor(task)
+  })));
+});
+
+router.get("/:id/contact-attempts", async (req, res) => {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only view follow-up attempts on your own orders." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("order_contact_attempts")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("order_id", req.params.id)
+    .order("attempted_at", { ascending: false });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json(data ?? []);
+});
+
+const ContactAttemptSchema = z.object({
+  taskId: z.string().uuid().optional().nullable(),
+  channel: z.enum(["call", "whatsapp", "sms", "manual"]).default("call"),
+  attemptType: z.enum(["scheduled_callback", "fresh_follow_up", "delivery_confirmation", "payment_follow_up", "waybill_follow_up"]).default("scheduled_callback"),
+  outcomeCode: z.string().trim().min(1).max(120),
+  outcomeNote: z.string().trim().max(1000).optional().nullable(),
+  nextActionType: z.enum(["callback", "payment_check", "delivery_confirmation", "waybill_follow_up"]).optional().nullable(),
+  nextActionAt: z.string().min(1).max(80).optional().nullable(),
+  nextActionNote: z.string().trim().max(1000).optional().nullable()
+});
+
+router.post("/:id/contact-attempts", async (req, res) => {
+  const parsed = ContactAttemptSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only log follow-ups on your own orders." });
+    return;
+  }
+
+  try {
+    const attempt = await recordContactAttemptAndNextAction({
+      orgId: req.user!.orgId,
+      orderId: req.params.id,
+      repId: req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
+      actorName: req.user!.name,
+      channel: parsed.data.channel,
+      attemptType: parsed.data.attemptType,
+      outcomeCode: parsed.data.outcomeCode,
+      outcomeNote: parsed.data.outcomeNote ?? null,
+      taskId: parsed.data.taskId ?? null,
+      nextActionType: parsed.data.nextActionType ?? null,
+      nextActionAt: parsed.data.nextActionAt ?? null,
+      nextActionNote: parsed.data.nextActionNote ?? null
+    });
+    res.status(201).json(attempt);
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "Could not log this follow-up attempt." });
+  }
+});
+
 // ── DELETE /api/orders/:id ────────────────────────────────
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   // Fetch before deleting so we can log context and reverse side-effects
   const { data: existing } = await supabase
-    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city")
+    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city, package_components_snapshot, cross_sell_lines, free_gift_lines")
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
 
+  const inventoryLines = orderInventoryLinesFromRow(existing);
+  const inventoryProductId = primaryInventoryProductId(inventoryLines, existing.product_id);
+
   // Reverse stock deduction if order was Delivered with an agent
-  if (existing.status === "Delivered" && existing.stock_deducted && existing.agent_id && existing.product_id) {
-    const orderQty = existing.quantity ?? 1;
+  if (existing.status === "Delivered" && existing.stock_deducted && existing.agent_id && inventoryLines.length > 0) {
 
     const reversalLocation = existing.agent_location_id
       ? await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id,
+          productId: inventoryProductId,
           explicitLocationId: existing.agent_location_id
         })
       : await resolveAgentLocationForOrder(req.user!.orgId, existing.agent_id, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: existing.product_id
+          productId: inventoryProductId
         });
 
     if (reversalLocation) {
-      const { data: currentStock } = await supabase
-        .from("agent_location_stock").select("quantity")
-        .eq("agent_location_id", reversalLocation.id).eq("product_id", existing.product_id).single();
-      const restoredQty = (currentStock?.quantity ?? 0) + orderQty;
-      await supabase.from("agent_location_stock")
-        .upsert({
-          org_id: req.user!.orgId,
-          agent_id: existing.agent_id,
-          agent_location_id: reversalLocation.id,
-          product_id: existing.product_id,
-          quantity: restoredQty
-        });
-      await syncAgentStockAggregate(req.user!.orgId, existing.agent_id, existing.product_id);
-
+      const stockMap = await inventoryAvailabilityMap(
+        existing.agent_id,
+        reversalLocation.id,
+        inventoryLines.map((line) => line.productId)
+      );
       const { data: agentInfo } = await supabase
         .from("agents").select("name").eq("id", existing.agent_id).single();
-      await supabase.from("stock_movements").insert({
-        id:            `MOV-${randomUUID()}`,
-        org_id:        req.user!.orgId,
-        product_id:    existing.product_id,
-        product_name:  existing.product_name,
-        type:          "Delete Reversal",
-        qty:           orderQty,
-        balance_after: restoredQty,
-        agent_id:      existing.agent_id,
-        order_id:      req.params.id,
-        by_name:       req.user!.name,
-        by_user_id:    req.user!.id,
-        to_agent_location_id: reversalLocation.id,
-        to_location:   reversalLocation.name,
-        note:          `Stock restored — order ${req.params.id} deleted (agent ${agentInfo?.name ?? existing.agent_id} at ${reversalLocation.name} stock ${currentStock?.quantity ?? 0} → ${restoredQty})`
-      });
+      for (const line of inventoryLines) {
+        const currentQty = stockMap.get(line.productId) ?? 0;
+        const restoredQty = currentQty + line.quantity;
+        await applyLocationInventoryDelta(req.user!.orgId, existing.agent_id, reversalLocation.id, line, restoredQty);
+        await supabase.from("stock_movements").insert({
+          id:            `MOV-${randomUUID()}`,
+          org_id:        req.user!.orgId,
+          product_id:    line.productId,
+          product_name:  line.productName,
+          type:          "Delete Reversal",
+          qty:           line.quantity,
+          balance_after: restoredQty,
+          agent_id:      existing.agent_id,
+          order_id:      req.params.id,
+          by_name:       req.user!.name,
+          by_user_id:    req.user!.id,
+          to_agent_location_id: reversalLocation.id,
+          to_location:   reversalLocation.name,
+          note:          `Stock restored — ${line.productName}${line.isFreeGift ? " (gift)" : ""} returned because order ${req.params.id} was deleted (${currentQty} → ${restoredQty}, agent ${agentInfo?.name ?? existing.agent_id})`
+        });
+      }
     }
 
     // Remove the auto-created waybill for this order

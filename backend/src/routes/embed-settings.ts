@@ -68,12 +68,12 @@ const SettingsSchema = z.object({
   delivery_range_min_days:      z.number().int().min(0).max(365).optional(),
   delivery_range_max_days:      z.number().int().min(0).max(365).optional(),
   require_confirmation:         z.boolean().optional(),
-  confirmation_text:            z.string().min(1).max(500).optional(),
+  confirmation_text:            z.string().max(500).optional(),
   show_commitment:              z.boolean().optional(),
-  commitment_text:              z.string().min(1).max(500).optional(),
+  commitment_text:              z.string().max(500).optional(),
   allow_disagree:               z.boolean().optional(),
   form_order_summary_enabled:   z.boolean().optional(),
-  form_order_summary_title:     z.string().min(1).max(120).optional()
+  form_order_summary_title:     z.string().max(120).optional()
 });
 
 router.patch("/", requireRole("Owner", "Admin"), async (req, res) => {
@@ -82,7 +82,23 @@ router.patch("/", requireRole("Owner", "Admin"), async (req, res) => {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const payload = { org_id: req.user!.orgId, ...parsed.data };
+  const normalized = { ...parsed.data };
+  if (normalized.form_order_summary_title !== undefined) {
+    normalized.form_order_summary_title = normalized.form_order_summary_title.trim() || DEFAULTS.form_order_summary_title;
+  }
+  if (normalized.confirmation_text !== undefined) {
+    normalized.confirmation_text = normalized.confirmation_text.trim() || DEFAULTS.confirmation_text;
+  }
+  if (normalized.commitment_text !== undefined) {
+    normalized.commitment_text = normalized.commitment_text.trim() || DEFAULTS.commitment_text;
+  }
+  if (normalized.delivery_range_min_days !== undefined || normalized.delivery_range_max_days !== undefined) {
+    const minDays = Math.max(0, normalized.delivery_range_min_days ?? DEFAULTS.delivery_range_min_days);
+    const maxDays = Math.max(minDays, normalized.delivery_range_max_days ?? DEFAULTS.delivery_range_max_days);
+    normalized.delivery_range_min_days = minDays;
+    normalized.delivery_range_max_days = maxDays;
+  }
+  const payload = { org_id: req.user!.orgId, ...normalized };
   const { data, error } = await supabase
     .from("embed_settings")
     .upsert(payload, { onConflict: "org_id" })

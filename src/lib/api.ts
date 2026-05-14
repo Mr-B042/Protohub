@@ -52,6 +52,31 @@ class ApiError extends Error {
 }
 
 function extractErrorMessage(payload: any, fallback: string) {
+  const flattenFieldErrors = (value: unknown): string | null => {
+    if (!value || typeof value !== "object") return null;
+    const parts: string[] = [];
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (Array.isArray(entry)) {
+        const lines = entry
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          .map((item) => item.trim());
+        if (lines.length) parts.push(`${key}: ${lines.join(", ")}`);
+      } else if (typeof entry === "string" && entry.trim()) {
+        parts.push(`${key}: ${entry.trim()}`);
+      }
+    }
+    return parts.length ? parts.join(" • ") : null;
+  };
+
+  const structured = [
+    flattenFieldErrors(payload?.error),
+    flattenFieldErrors(payload?.message),
+    flattenFieldErrors(payload?.errors)
+  ];
+  for (const candidate of structured) {
+    if (candidate) return candidate;
+  }
+
   const direct = [
     payload?.error,
     payload?.message,
@@ -265,7 +290,10 @@ export const ordersApi = {
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/orders/${id}/status`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
-  audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`)
+  audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
+  followUpTasks: (id: string) => get<any[]>(`/api/orders/${id}/follow-up-tasks`),
+  contactAttempts: (id: string) => get<any[]>(`/api/orders/${id}/contact-attempts`),
+  logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
 // ── Agents ────────────────────────────────────────────────
@@ -419,6 +447,34 @@ export const publicOrdersApi = {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
       throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : "Order failed.");
     }
+    return snakeToCamel<{
+      id: string;
+      amount: number;
+      currency: string;
+      crossSellLines: any[];
+      upsellOffer?: {
+        companionId?: string;
+        productId: string;
+        packageId?: string;
+        packageName?: string;
+        packageQuantity?: number;
+        quantity: number;
+        unitPrice: number;
+        amount: number;
+      } | null;
+      upsellToken?: string | null;
+    }>(await res.json());
+  },
+  acceptUpsell: async (orderId: string, body: { token: string }) => {
+    const res = await fetch(`${BASE}/api/public/orders/${encodeURIComponent(orderId)}/upsell`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : "Upsell failed.");
+    }
     return snakeToCamel<{ id: string; amount: number; currency: string; crossSellLines: any[] }>(await res.json());
   }
 };
@@ -432,6 +488,11 @@ export const payStructuresApi = {
 // ── Sales Teams ──────────────────────────────────────────
 export const salesTeamsApi = {
   list: () => get<any[]>("/api/sales-teams"),
+  performance: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return get<{ rows: any[]; summary: any }>(`/api/sales-teams/performance${qs}`);
+  },
+  logManagerAction: (id: string, body: unknown) => post<any>(`/api/sales-teams/${id}/manager-actions`, body),
   create: (body: unknown) => post<any>("/api/sales-teams", body),
   update: (id: string, body: unknown) => patch<any>(`/api/sales-teams/${id}`, body),
   delete: (id: string) => del<void>(`/api/sales-teams/${id}`)

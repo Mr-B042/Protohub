@@ -7898,9 +7898,6 @@ html.dark,
 .dark .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4); }
 .dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }
 
-/* Status pills — keep saturated tints but adjust for dark */
-.dark .status-pill { filter: brightness(0.95) saturate(1.1); }
-
 /* Recharts — make axes and tooltips legible */
 .dark .recharts-text { fill: hsl(215 14% 65%) !important; }
 .dark .recharts-cartesian-axis-line,
@@ -8034,6 +8031,20 @@ html.dark,
   color: hsl(var(--text-faint));
 }
 
+.dark .modal-form input:not([type="checkbox"]),
+.dark .modal-form textarea,
+.dark .modal-form select {
+  background: hsl(210 36% 11%);
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.dark .modal-form input:not([type="checkbox"])::placeholder,
+.dark .modal-form textarea::placeholder {
+  color: hsl(var(--text-faint));
+}
+
 .dark .modal-form p,
 .dark .dashboard-math-panel p,
 .dark .rep-kpi-card p,
@@ -8063,7 +8074,74 @@ html.dark,
 
 .dark .status-pill {
   border: 1px solid hsl(var(--border));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  background: hsl(210 34% 15%);
+  color: hsl(var(--foreground));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 22px rgba(2, 6, 23, 0.24);
+}
+
+.dark .status-delivered {
+  background: rgba(52, 211, 153, 0.18);
+  border-color: rgba(110, 231, 183, 0.3);
+  color: #d1fae5;
+}
+
+.dark .status-cancelled,
+.dark .status-failed {
+  background: rgba(251, 113, 133, 0.18);
+  border-color: rgba(251, 113, 133, 0.32);
+  color: #ffe4e6;
+}
+
+.dark .status-dispatched,
+.dark .status-confirmed,
+.dark .status-in-process {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(253, 224, 71, 0.32);
+  color: #fef3c7;
+}
+
+.dark .status-postponed {
+  background: rgba(96, 165, 250, 0.2);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #dbeafe;
+}
+
+.dark .status-new {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.32);
+  color: #e0f2fe;
+}
+
+.dark .status-pending,
+.dark .status-ready,
+.dark .status-rescheduled,
+.dark .status-awaiting-payment,
+.dark .status-have-questions-to-ask,
+.dark .status-will-get-back-to-us,
+.dark .status-line-busy,
+.dark .status-no-answer,
+.dark .status-not-picking,
+.dark .status-number-not-going,
+.dark .status-wrong-number,
+.dark .status-switched-off,
+.dark .status-we-should-call-back,
+.dark .status-will-call-back,
+.dark .status-scheduled-callback,
+.dark .status-not-reached,
+.dark .status-not-available,
+.dark .status-not-ready,
+.dark .status-travelled,
+.dark .status-refused,
+.dark .status-seat-at-home,
+.dark .status-out-of-stock,
+.dark .status-out-of-coverage,
+.dark .status-waybill,
+.dark .status-recovered-delivery {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 22px rgba(2, 6, 23, 0.24);
 }
 
 .dark .code-tabs {
@@ -8349,6 +8427,117 @@ article.public-order-card.public-form-clean .primary-button {
   align-items: center;
   justify-content: center;
   text-align: center;
+}
+article.public-order-card.public-form-clean .public-order-submit-button {
+  position: relative;
+  overflow: hidden;
+  min-height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom-width: 3px;
+  border-bottom-color: rgba(7, 54, 118, 0.35);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, #3ca8ef 0%, #1f8fe0 54%, #117ed1 100%);
+  box-shadow:
+    0 16px 34px rgba(17, 126, 209, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  justify-content: space-between;
+  padding: 0 18px 0 22px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  isolation: isolate;
+  animation: publicOrderButtonFloat 2.8s ease-in-out infinite;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    filter 180ms ease;
+}
+article.public-order-card.public-form-clean .public-order-submit-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.18) 42%, rgba(255, 255, 255, 0.38) 50%, transparent 58%);
+  transform: translateX(-135%);
+  animation: publicOrderButtonShimmer 3.6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+article.public-order-card.public-form-clean .public-order-submit-button > * {
+  position: relative;
+  z-index: 1;
+}
+article.public-order-card.public-form-clean .public-order-submit-button__label {
+  flex: 1;
+  text-align: center;
+}
+article.public-order-card.public-form-clean .public-order-submit-button__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  font-size: 22px;
+  line-height: 1;
+  animation: publicOrderButtonArrow 1.15s ease-in-out infinite;
+}
+article.public-order-card.public-form-clean .public-order-submit-button:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow:
+    0 22px 40px rgba(17, 126, 209, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  filter: saturate(1.04);
+}
+article.public-order-card.public-form-clean .public-order-submit-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.995);
+  box-shadow:
+    0 10px 22px rgba(17, 126, 209, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+article.public-order-card.public-form-clean .public-order-submit-button:disabled {
+  animation: none;
+}
+article.public-order-card.public-form-clean .public-order-submit-button:disabled::before,
+article.public-order-card.public-form-clean .public-order-submit-button:disabled .public-order-submit-button__icon {
+  animation: none;
+}
+@keyframes publicOrderButtonFloat {
+  0%, 100% {
+    box-shadow:
+      0 16px 34px rgba(17, 126, 209, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 22px 42px rgba(17, 126, 209, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  }
+}
+@keyframes publicOrderButtonShimmer {
+  0%, 18% {
+    transform: translateX(-135%);
+  }
+  48%, 100% {
+    transform: translateX(140%);
+  }
+}
+@keyframes publicOrderButtonArrow {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  article.public-order-card.public-form-clean .public-order-submit-button,
+  article.public-order-card.public-form-clean .public-order-submit-button::before,
+  article.public-order-card.public-form-clean .public-order-submit-button__icon {
+    animation: none !important;
+  }
 }
 /* Clean form is always a single centered column — no side rail on any viewport.
    Summary rail (if enabled) stacks underneath the form, also centered. */

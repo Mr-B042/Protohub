@@ -14,6 +14,7 @@ export type SmsTrigger =
   | "order_not_picking"
   | "order_not_ready"
   | "order_follow_up"
+  | "order_follow_up_rep"
   | "cart_assigned"
   | "cart_follow_up";
 
@@ -27,6 +28,7 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
   order_not_picking: true,
   order_not_ready: true,
   order_follow_up: false,
+  order_follow_up_rep: true,
   cart_assigned: false,
   cart_follow_up: false
 };
@@ -58,6 +60,9 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   },
   order_follow_up: {
     body: "Hello {{customer}}, this is a follow-up on your order {{order_id}} for {{product_name}} valued at {{currency}} {{amount}}. Next follow-up: {{scheduled_date}}. {{note_text}}"
+  },
+  order_follow_up_rep: {
+    body: "Protohub reminder: follow up on order {{order_id}} for {{customer}} ({{phone}}) about {{product_name}} worth {{currency}} {{amount}}. Due: {{scheduled_date}}. Outcome: {{call_outcome}}. {{note_text}}"
   },
   cart_assigned: {
     body: "Hello {{customer}}, your Protohub request for {{product_name}} is now with our team. Estimated order value: {{currency}} {{amount}}. {{rep_contact}}"
@@ -811,12 +816,12 @@ type DueReminderOrder = {
   id: string;
   org_id: string;
   customer: string;
-  phone: string;
+  phone?: string | null;
   assigned_rep_id?: string | null;
   product_name: string;
   package_name?: string | null;
-  amount: number;
-  currency: string;
+  amount?: number | null;
+  currency?: string | null;
   status: string;
   scheduled_date?: string | null;
   scheduled_at?: string | null;
@@ -898,19 +903,24 @@ function withinReminderWindow(iso: string, now: Date, maxAgeHours = 36) {
   return ts <= now.getTime() && ts >= now.getTime() - maxAgeHours * 60 * 60 * 1000;
 }
 
-async function reminderAlreadyLogged(orgId: string, orderId: string, dedupeKey: string) {
+async function reminderAlreadyLogged(
+  orgId: string,
+  orderId: string,
+  dedupeKey: string,
+  trigger: SmsTrigger = "order_follow_up"
+) {
   const { data, error } = await supabase
     .from("sms_messages")
     .select("id")
     .eq("org_id", orgId)
     .eq("order_id", orderId)
-    .eq("trigger", "order_follow_up")
+    .eq("trigger", trigger)
     .neq("status", "failed")
     .contains("metadata", { dedupeKey })
     .limit(1);
 
   if (error) {
-    logger.warn("sms reminder dedupe check failed", { orgId, orderId, dedupeKey, error: error.message });
+    logger.warn("sms reminder dedupe check failed", { orgId, orderId, dedupeKey, trigger, error: error.message });
     return false;
   }
 
@@ -935,8 +945,8 @@ async function sendFollowUpReminderSms(
       order_id: order.id,
       customer: order.customer,
       product_name: orderDisplayName(order),
-      amount: String(order.amount),
-      currency: order.currency,
+      amount: typeof order.amount === "number" ? String(order.amount) : "0",
+      currency: order.currency ?? "NGN",
       from_status: order.status ?? "—",
       status: order.status ?? "—",
       scheduled_date: options.scheduledLabel,
@@ -947,7 +957,7 @@ async function sendFollowUpReminderSms(
       rep_phone: assignedRep?.phone ?? "",
       rep_contact: assignedRep?.contactLine ?? ""
     },
-    order.phone,
+    order.phone ?? "",
     {
       orderId: order.id,
       audience: "customer",
@@ -958,6 +968,59 @@ async function sendFollowUpReminderSms(
         assignedRepId: order.assigned_rep_id ?? null,
         assignedRepName: assignedRep?.name ?? null,
         assignedRepPhone: assignedRep?.phone ?? null,
+        dedupeKey: options.dedupeKey,
+        ...(options.metadata ?? {})
+      }
+    }
+  );
+}
+
+export async function sendAssignedRepFollowUpReminderSms(
+  orgId: string,
+  order: DueReminderOrder,
+  options: {
+    dedupeKey: string;
+    scheduledLabel: string;
+    noteText?: string;
+    metadata?: Record<string, unknown>;
+  }
+) {
+  const assignedRep = await loadAssignedRepContact(orgId, order.assigned_rep_id);
+  if (!assignedRep?.phone?.trim()) return null;
+  if (await reminderAlreadyLogged(orgId, order.id, options.dedupeKey, "order_follow_up_rep")) {
+    return null;
+  }
+
+  return dispatchSms(
+    orgId,
+    "order_follow_up_rep",
+    {
+      order_id: order.id,
+      customer: order.customer,
+      phone: order.phone ?? "No phone recorded",
+      product_name: orderDisplayName(order),
+      amount: typeof order.amount === "number" ? String(order.amount) : "0",
+      currency: order.currency ?? "NGN",
+      from_status: order.status ?? "—",
+      status: order.status ?? "—",
+      scheduled_date: options.scheduledLabel,
+      call_outcome: order.call_outcome ?? "—",
+      response: order.response ?? "Follow-up reminder",
+      note_text: options.noteText ?? "",
+      rep_name: assignedRep.name,
+      rep_phone: assignedRep.phone,
+      rep_contact: assignedRep.contactLine
+    },
+    assignedRep.phone,
+    {
+      orderId: order.id,
+      audience: "staff",
+      recipientName: assignedRep.name,
+      metadata: {
+        event: "order_follow_up_rep",
+        assignedRepId: order.assigned_rep_id ?? null,
+        assignedRepName: assignedRep.name,
+        assignedRepPhone: assignedRep.phone,
         dedupeKey: options.dedupeKey,
         ...(options.metadata ?? {})
       }

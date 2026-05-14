@@ -12,10 +12,12 @@
 
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
+import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -36,7 +38,9 @@ const submitRateLimit = rateLimit({
 });
 
 const CrossSellLineSchema = z.object({
+  companionId: z.string().min(1).max(120).optional(),
   productId: z.string().uuid(),
+  packageId: z.string().uuid().optional(),
   quantity:  z.number().int().min(1).max(50)
 });
 
@@ -65,15 +69,50 @@ const PublicOrderSchema = z.object({
 });
 
 type CompanionOverride = {
+  companionId?: string;
   productId: string;
+  packageId?: string;
   quantity: number;
-  pricingMode: "standard" | "fixed" | "free";
+  pricingMode: "standard" | "fixed" | "free" | "use_product_price";
   fixedPrice?: number;
+  stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions?: string[];
   autoInclude?: boolean;
+  placement?: "inline" | "upsell";
+  pitch?: string;
+  badgeText?: string;
+  headline?: string;
+  ctaText?: string;
+  declineText?: string;
+  embedHtml?: string;
+  priority?: number;
+  displayMode?: "compact" | "card";
 };
 
+type ResolvedLine = {
+  productId: string;
+  productName: string;
+  quantity: number;
+  amount: number;
+  packageId?: string;
+  packageName?: string;
+  packageQuantity?: number;
+  packageComponentsSnapshot?: Awaited<ReturnType<typeof buildPackageComponentSnapshot>>;
+};
+
+const PublicUpsellAcceptSchema = z.object({
+  token: z.string().min(24)
+});
+
 const ALLOWED_SOURCES = ["TikTok", "Facebook", "WhatsApp", "Website", "Direct"] as const;
+const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
+
+const normalizeStateName = (value: string | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
+  return (value ?? "").trim();
+};
+
 function sourceFromUtm(utm: string | undefined): typeof ALLOWED_SOURCES[number] {
   const s = (utm ?? "").toLowerCase();
   if (s.includes("tiktok"))   return "TikTok";
@@ -82,6 +121,115 @@ function sourceFromUtm(utm: string | undefined): typeof ALLOWED_SOURCES[number] 
   if (s.includes("direct"))   return "Direct";
   return "Website";
 }
+
+const stateAllowsCompanion = (companion: CompanionOverride, state: string | undefined) =>
+  (() => {
+    const mode = companion.stateFilterMode ?? "all";
+    const restrictions = companion.stateRestrictions ?? [];
+    if (mode === "all") return true;
+    if (!restrictions.length) return mode === "block";
+    if (!state) return false;
+    const normalizedState = normalizeStateName(state);
+    const restrictedStates = restrictions.map(normalizeStateName);
+    return mode === "block"
+      ? !restrictedStates.includes(normalizedState)
+      : restrictedStates.includes(normalizedState);
+  })();
+
+const companionUnitPrice = (
+  companion: CompanionOverride,
+  standardPrice: number
+) => {
+  if (companion.pricingMode === "free") return 0;
+  if (companion.pricingMode === "fixed") return Number(companion.fixedPrice ?? 0);
+  return standardPrice;
+};
+
+const packageOfferKey = (productId: string, packageId?: string | null) =>
+  `${productId}:${packageId ?? ""}`;
+
+const buildResolvedPackageSnapshot = async (
+  orgId: string,
+  targetPackage: ResolvedPackageRow,
+  productId: string,
+  productName: string,
+  bundleCount: number
+) => {
+  const normalizedBundleCount = Math.max(1, bundleCount);
+  const snapshot = await buildPackageComponentSnapshot(orgId, targetPackage.package_components ?? []);
+  if (snapshot.length > 0) {
+    return snapshot.map((line) => ({
+      ...line,
+      quantity: line.quantity * normalizedBundleCount,
+      sourceType: "cross_sell" as const
+    }));
+  }
+  return [{
+    productId,
+    productName,
+    quantity: Math.max(1, Number(targetPackage.quantity) || 1) * normalizedBundleCount,
+    isFreeGift: false,
+    sourceType: "cross_sell" as const
+  }];
+};
+
+type PublicUpsellTokenPayload = {
+  orderId: string;
+  orgId: string;
+  packageId: string;
+  companionId?: string;
+  productId: string;
+  companionPackageId?: string;
+  quantity: number;
+  amount: number;
+  issuedAt: number;
+};
+
+type ResolvedPackageRow = {
+  id: string;
+  product_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  package_components: unknown;
+  active: boolean;
+};
+
+const publicUpsellSecret = () =>
+  process.env.PUBLIC_ORDER_UPSELL_SECRET
+  || process.env.JWT_SECRET
+  || process.env.SUPABASE_JWT_SECRET
+  || process.env.SUPABASE_SERVICE_ROLE_KEY
+  || "protohub-public-upsell-dev";
+
+const encodeTokenPart = (value: string) => Buffer.from(value).toString("base64url");
+const decodeTokenPart = (value: string) => Buffer.from(value, "base64url").toString("utf8");
+
+const signPublicUpsellToken = (payload: PublicUpsellTokenPayload) => {
+  const encodedPayload = encodeTokenPart(JSON.stringify(payload));
+  const signature = createHmac("sha256", publicUpsellSecret()).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+};
+
+const verifyPublicUpsellToken = (token: string): PublicUpsellTokenPayload | null => {
+  const [encodedPayload, signature] = token.split(".");
+  if (!encodedPayload || !signature) return null;
+  const expected = createHmac("sha256", publicUpsellSecret()).update(encodedPayload).digest("base64url");
+  const expectedBuf = Buffer.from(expected);
+  const actualBuf = Buffer.from(signature);
+  if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) return null;
+  try {
+    const payload = JSON.parse(decodeTokenPart(encodedPayload)) as PublicUpsellTokenPayload;
+    if (!payload?.orderId || !payload?.orgId || !payload?.packageId || !payload?.productId) return null;
+    if (Date.now() - payload.issuedAt > PUBLIC_UPSELL_TTL_MS) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer/i.test(error?.message ?? "");
 
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
@@ -100,7 +248,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // 1. Resolve package → product → org
   const { data: pkg, error: pkgErr } = await supabase
     .from("product_packages")
-    .select("id, product_id, name, price, currency, quantity, companion_products, active")
+    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active")
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
@@ -140,6 +288,7 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   // 2. Recompute amount server-side. Never trust client amount.
   let amount = Number(pkg.price ?? 0);
+  const packageComponentsSnapshot = await buildPackageComponentSnapshot(product.org_id, pkg.package_components ?? []);
 
   const lines = d.crossSellLines ?? [];
   const allowedCrossSellIds: string[] = Array.isArray(product.cross_sell_product_ids)
@@ -153,7 +302,17 @@ router.post("/", submitRateLimit, async (req, res) => {
     ? (pkg.companion_products as CompanionOverride[])
     : [];
 
-  type ResolvedLine = { productId: string; productName: string; quantity: number; amount: number };
+  const targetPackageIds = Array.from(new Set([
+    ...lines.map((line) => line.packageId).filter(Boolean),
+    ...companions.map((companion) => companion.packageId).filter(Boolean)
+  ])) as string[];
+  const targetPackages = targetPackageIds.length
+    ? (await supabase
+        .from("product_packages")
+        .select("id, product_id, name, price, quantity, package_components, active")
+        .in("id", targetPackageIds)).data ?? []
+    : [];
+
   const resolved: ResolvedLine[] = [];
 
   // Look up all related product names + primary pricings in one go
@@ -172,13 +331,25 @@ router.post("/", submitRateLimit, async (req, res) => {
       continue;
     }
     const companion = companions.find((c) =>
-      c.productId === line.productId
-      && (!c.stateRestrictions?.length || (d.state && c.stateRestrictions.includes(d.state)))
+      (line.companionId
+        ? c.companionId === line.companionId
+        : c.productId === line.productId)
+      && stateAllowsCompanion(c, d.state)
     );
+    const targetPackageId = companion?.packageId ?? line.packageId;
+    const targetPackage = targetPackageId
+      ? (targetPackages.find((entry) => entry.id === targetPackageId) as ResolvedPackageRow | undefined)
+      : undefined;
+    if (targetPackage && (!targetPackage.active || targetPackage.product_id !== line.productId)) {
+      continue;
+    }
     let unitPrice = 0;
     if (companion) {
       if (companion.pricingMode === "free")        unitPrice = 0;
       else if (companion.pricingMode === "fixed")  unitPrice = Number(companion.fixedPrice ?? 0);
+      else if (targetPackage) {
+        unitPrice = Number(targetPackage.price ?? 0);
+      }
       else {
         const primary = xsPricings.find((p) => p.product_id === line.productId && p.is_primary)
                      ?? xsPricings.find((p) => p.product_id === line.productId);
@@ -190,7 +361,9 @@ router.post("/", submitRateLimit, async (req, res) => {
       const restriction = crossSellStateRestrictions[line.productId];
       if (restriction?.length && d.state && !restriction.includes(d.state)) continue;
       const override = crossSellOverrides[line.productId];
-      if (override !== undefined) {
+      if (targetPackage) {
+        unitPrice = Number(targetPackage.price ?? 0);
+      } else if (override !== undefined) {
         unitPrice = Number(override);
       } else {
         const primary = xsPricings.find((p) => p.product_id === line.productId && p.is_primary)
@@ -199,12 +372,19 @@ router.post("/", submitRateLimit, async (req, res) => {
       }
     }
     const lineTotal = unitPrice * line.quantity;
+    const packageComponentsSnapshot = targetPackage
+      ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, line.productId, xsProduct.name, line.quantity)
+      : undefined;
     amount += lineTotal;
     resolved.push({
       productId:   line.productId,
-      productName: xsProduct.name,
+      productName: targetPackage ? `${xsProduct.name} · ${targetPackage.name}` : xsProduct.name,
       quantity:    line.quantity,
-      amount:      lineTotal
+      amount:      lineTotal,
+      packageId:   targetPackage?.id,
+      packageName: targetPackage?.name,
+      packageQuantity: targetPackage?.quantity,
+      packageComponentsSnapshot
     });
   }
 
@@ -213,7 +393,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const autoCompanions = companions.filter(
     (c) => c.autoInclude
       && !resolved.some((r) => r.productId === c.productId)
-      && (!c.stateRestrictions?.length || (d.state && c.stateRestrictions.includes(d.state)))
+      && stateAllowsCompanion(c, d.state)
   );
   const autoIds = Array.from(new Set(autoCompanions.map((c) => c.productId)));
   const autoProducts = autoIds.length
@@ -226,17 +406,94 @@ router.post("/", submitRateLimit, async (req, res) => {
   for (const c of autoCompanions) {
     const autoProduct = autoProducts.find((p) => p.id === c.productId);
     if (!autoProduct || !autoProduct.active || autoProduct.org_id !== product.org_id) continue;
+    const targetPackage = c.packageId
+      ? (targetPackages.find((entry) => entry.id === c.packageId) as ResolvedPackageRow | undefined)
+      : undefined;
+    if (targetPackage && (!targetPackage.active || targetPackage.product_id !== c.productId)) continue;
     let unitPrice = 0;
     if (c.pricingMode === "free")        unitPrice = 0;
     else if (c.pricingMode === "fixed")  unitPrice = Number(c.fixedPrice ?? 0);
+    else if (targetPackage)              unitPrice = Number(targetPackage.price ?? 0);
     else {
       const primary = autoPricings.find((p) => p.product_id === c.productId && p.is_primary)
                    ?? autoPricings.find((p) => p.product_id === c.productId);
       unitPrice = Number(primary?.selling_price ?? 0);
     }
     const lineTotal = unitPrice * c.quantity;
+    const packageComponentsSnapshot = targetPackage
+      ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, c.productId, autoProduct.name, c.quantity)
+      : undefined;
     amount += lineTotal;
-    resolved.push({ productId: c.productId, productName: autoProduct.name, quantity: c.quantity, amount: lineTotal });
+    resolved.push({
+      productId: c.productId,
+      productName: targetPackage ? `${autoProduct.name} · ${targetPackage.name}` : autoProduct.name,
+      quantity: c.quantity,
+      amount: lineTotal,
+      packageId: targetPackage?.id,
+      packageName: targetPackage?.name,
+      packageQuantity: targetPackage?.quantity,
+      packageComponentsSnapshot
+    });
+  }
+
+  const selectedOfferKeys = new Set(
+    resolved.map((line) => packageOfferKey(line.productId, line.packageId))
+  );
+  const upsellCompanion = [...companions]
+    .filter((companion) =>
+      !companion.autoInclude
+      && (companion.placement ?? "inline") === "upsell"
+      && !selectedOfferKeys.has(packageOfferKey(companion.productId, companion.packageId))
+      && stateAllowsCompanion(companion, d.state)
+    )
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+
+  let upsellOffer:
+    | { companionId?: string; productId: string; packageId?: string; packageName?: string; packageQuantity?: number; quantity: number; unitPrice: number; amount: number }
+    | null = null;
+  let upsellToken: string | null = null;
+
+  if (upsellCompanion) {
+    const { data: upsellProduct } = await supabase
+      .from("products")
+      .select("id, org_id, active")
+      .eq("id", upsellCompanion.productId)
+      .maybeSingle();
+    if (upsellProduct && upsellProduct.active && upsellProduct.org_id === product.org_id) {
+      const targetPackage = upsellCompanion.packageId
+        ? (targetPackages.find((entry) => entry.id === upsellCompanion.packageId) as ResolvedPackageRow | undefined)
+        : undefined;
+      let standard = 0;
+      if (!targetPackage) {
+        const { data: upsellPricings } = await supabase
+          .from("product_pricings")
+          .select("selling_price, is_primary")
+          .eq("product_id", upsellCompanion.productId);
+        standard = upsellPricings?.find((pricing) => pricing.is_primary)?.selling_price
+          ?? upsellPricings?.[0]?.selling_price
+          ?? 0;
+      } else if (!targetPackage.active || targetPackage.product_id !== upsellCompanion.productId) {
+        standard = -1;
+      } else {
+        standard = Number(targetPackage.price ?? 0);
+      }
+      if (standard < 0) {
+        upsellOffer = null;
+      } else {
+        const unitPrice = companionUnitPrice(upsellCompanion, Number(standard));
+        const total = unitPrice * upsellCompanion.quantity;
+        upsellOffer = {
+          companionId: upsellCompanion.companionId,
+          productId: upsellCompanion.productId,
+          packageId: targetPackage?.id,
+          packageName: targetPackage?.name,
+          packageQuantity: targetPackage?.quantity,
+          quantity: upsellCompanion.quantity,
+          unitPrice,
+          amount: total
+        };
+      }
+    }
   }
 
   let assignedRepId: string | null = null;
@@ -268,41 +525,57 @@ router.post("/", submitRateLimit, async (req, res) => {
   const location = [d.city, d.state].filter(Boolean).join(", ") || null;
 
   // 4. Insert order
-  const { data: order, error: orderErr } = await supabase
+  const baseInsert = {
+    ...(d.id ? { id: d.id } : {}),
+    org_id:            product.org_id,
+    source_cart_id:    d.cartId ?? null,
+    customer:          d.customer,
+    phone:             d.phone,
+    whatsapp:          d.whatsapp ?? null,
+    email:             d.email || null,
+    address:           d.address ?? null,
+    city:              d.city ?? null,
+    state:             d.state ?? null,
+    product_id:        product.id,
+    package_id:        pkg.id,
+    product_name:      product.name,
+    package_name:      pkg.name,
+    quantity:          pkg.quantity,
+    amount,
+    currency:          pkg.currency,
+    package_components_snapshot: packageComponentsSnapshot,
+    cross_sell_lines:  resolved.length > 0 ? resolved : [],
+    source,
+    location,
+    assigned_rep_id:   assignedRepId,
+    utm_source:        d.utmSource ?? null,
+    utm_campaign:      d.utmCampaign ?? null,
+    utm_medium:        d.utmMedium ?? null,
+    utm_content:       d.utmContent ?? null,
+    utm_term:          d.utmTerm ?? null,
+    referrer:          d.referrer ?? null,
+    confirmation_checked: d.confirmationChecked ?? null,
+    preferred_delivery:   d.preferredDelivery ?? null,
+    status:            "New"
+  } as Record<string, unknown>;
+  const legacyInsert = { ...baseInsert };
+  delete legacyInsert.confirmation_checked;
+  delete legacyInsert.preferred_delivery;
+  delete legacyInsert.referrer;
+
+  let { data: order, error: orderErr } = await supabase
     .from("orders")
-    .insert({
-      ...(d.id ? { id: d.id } : {}),
-      org_id:            product.org_id,
-      source_cart_id:    d.cartId ?? null,
-      customer:          d.customer,
-      phone:             d.phone,
-      whatsapp:          d.whatsapp ?? null,
-      email:             d.email || null,
-      address:           d.address ?? null,
-      city:              d.city ?? null,
-      state:             d.state ?? null,
-      product_id:        product.id,
-      package_id:        pkg.id,
-      product_name:      product.name,
-      package_name:      pkg.name,
-      quantity:          pkg.quantity,
-      amount,
-      currency:          pkg.currency,
-      source,
-      location,
-      assigned_rep_id:   assignedRepId,
-      utm_source:        d.utmSource ?? null,
-      utm_campaign:      d.utmCampaign ?? null,
-      utm_medium:        d.utmMedium ?? null,
-      utm_content:       d.utmContent ?? null,
-      utm_term:          d.utmTerm ?? null,
-      referrer:          d.referrer ?? null,
-      confirmation_checked: d.confirmationChecked ?? null,
-      preferred_delivery:   d.preferredDelivery ?? null,
-      status:            "New"
-    })
+    .insert(baseInsert)
     .select()
     .single();
+
+  if (orderErr && isMissingPublicOrderOptionalColumnsError(orderErr)) {
+    ({ data: order, error: orderErr } = await supabase
+      .from("orders")
+      .insert(legacyInsert)
+      .select()
+      .single());
+  }
 
   if (orderErr) {
     if (orderErr.code === "23505") {
@@ -375,11 +648,179 @@ router.post("/", submitRateLimit, async (req, res) => {
     });
   }
 
+  if (upsellOffer) {
+    upsellToken = signPublicUpsellToken({
+      orderId: order.id,
+      orgId: product.org_id,
+      packageId: pkg.id,
+      companionId: upsellOffer.companionId,
+      productId: upsellOffer.productId,
+      companionPackageId: upsellOffer.packageId,
+      quantity: upsellOffer.quantity,
+      amount: upsellOffer.amount,
+      issuedAt: Date.now()
+    });
+  }
+
   res.status(201).json({
     id:       order.id,
     amount:   order.amount,
     currency: order.currency,
-    crossSellLines: resolved
+    crossSellLines: resolved,
+    upsellOffer,
+    upsellToken
+  });
+});
+
+router.post("/:id/upsell", submitRateLimit, async (req, res) => {
+  const orderId = req.params.id;
+  if (!orderId) {
+    res.status(400).json({ error: "Order id required." });
+    return;
+  }
+  const parsed = PublicUpsellAcceptSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  const tokenPayload = verifyPublicUpsellToken(parsed.data.token);
+  if (!tokenPayload || tokenPayload.orderId !== orderId) {
+    res.status(403).json({ error: "Upsell offer is no longer available." });
+    return;
+  }
+
+  const { data: order, error: orderErr } = await supabase
+    .from("orders")
+    .select("id, org_id, package_id, state, amount, currency, cross_sell_lines")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderErr || !order) {
+    res.status(404).json({ error: "Order not found." });
+    return;
+  }
+  if (order.org_id !== tokenPayload.orgId || order.package_id !== tokenPayload.packageId) {
+    res.status(403).json({ error: "Upsell offer does not match this order." });
+    return;
+  }
+
+  const { data: pkg } = await supabase
+    .from("product_packages")
+    .select("id, product_id, companion_products")
+    .eq("id", order.package_id)
+    .maybeSingle();
+  if (!pkg) {
+    res.status(404).json({ error: "Package not found." });
+    return;
+  }
+  const companions: CompanionOverride[] = Array.isArray(pkg.companion_products)
+    ? (pkg.companion_products as CompanionOverride[])
+    : [];
+  const companion = companions.find((entry) =>
+    (tokenPayload.companionId
+      ? entry.companionId === tokenPayload.companionId
+      : entry.productId === tokenPayload.productId)
+    && (tokenPayload.companionPackageId ? entry.packageId === tokenPayload.companionPackageId : true)
+    && (entry.placement ?? "inline") === "upsell"
+    && !entry.autoInclude
+    && stateAllowsCompanion(entry, order.state ?? undefined)
+  );
+  if (!companion) {
+    res.status(400).json({ error: "This upsell is no longer available." });
+    return;
+  }
+
+  const existingLines = Array.isArray(order.cross_sell_lines)
+    ? (order.cross_sell_lines as ResolvedLine[])
+    : [];
+  if (existingLines.some((line) =>
+    packageOfferKey(line.productId, line.packageId) === packageOfferKey(tokenPayload.productId, tokenPayload.companionPackageId)
+  )) {
+    res.json({
+      id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      crossSellLines: existingLines
+    });
+    return;
+  }
+
+  const { data: upsellProduct } = await supabase
+    .from("products")
+    .select("id, org_id, name, active")
+    .eq("id", tokenPayload.productId)
+    .maybeSingle();
+  if (!upsellProduct || !upsellProduct.active || upsellProduct.org_id !== order.org_id) {
+    res.status(404).json({ error: "Upsell product not available." });
+    return;
+  }
+  const { data: pricings } = await supabase
+    .from("product_pricings")
+    .select("selling_price, is_primary")
+    .eq("product_id", tokenPayload.productId);
+  const targetPackage = tokenPayload.companionPackageId
+    ? (await supabase
+        .from("product_packages")
+        .select("id, product_id, name, price, quantity, package_components, active")
+        .eq("id", tokenPayload.companionPackageId)
+        .maybeSingle()).data as ResolvedPackageRow | null
+    : null;
+  if (targetPackage && (!targetPackage.active || targetPackage.product_id !== tokenPayload.productId)) {
+    res.status(400).json({ error: "This upsell bundle is no longer available." });
+    return;
+  }
+  const standard = targetPackage
+    ? Number(targetPackage.price ?? 0)
+    : pricings?.find((pricing) => pricing.is_primary)?.selling_price
+      ?? pricings?.[0]?.selling_price
+      ?? 0;
+  const unitPrice = companionUnitPrice(companion, Number(standard));
+  const lineAmount = unitPrice * companion.quantity;
+  const packageComponentsSnapshot = targetPackage
+    ? await buildResolvedPackageSnapshot(order.org_id, targetPackage, tokenPayload.productId, upsellProduct.name, companion.quantity)
+    : undefined;
+  const nextLines = [
+    ...existingLines,
+    {
+      productId: tokenPayload.productId,
+      productName: targetPackage ? `${upsellProduct.name} · ${targetPackage.name}` : upsellProduct.name,
+      quantity: companion.quantity,
+      amount: lineAmount,
+      packageId: targetPackage?.id,
+      packageName: targetPackage?.name,
+      packageQuantity: targetPackage?.quantity,
+      packageComponentsSnapshot
+    }
+  ];
+  const nextAmount = Number(order.amount ?? 0) + lineAmount;
+
+  const { error: updateErr } = await supabase
+    .from("orders")
+    .update({
+      amount: nextAmount,
+      cross_sell_lines: nextLines
+    })
+    .eq("id", order.id)
+    .eq("org_id", order.org_id);
+  if (updateErr) {
+    logger.error("public-orders: upsell accept failed", { error: updateErr.message, orderId });
+    res.status(500).json({ error: "Could not add this offer to the order." });
+    return;
+  }
+
+  await supabase.from("order_audit").insert({
+    order_id: order.id,
+    org_id: order.org_id,
+    changed_by: null,
+    from_status: null,
+    to_status: null,
+    note: `Customer accepted follow-up offer: ${upsellProduct.name} × ${companion.quantity}`
+  });
+
+  res.json({
+    id: order.id,
+    amount: nextAmount,
+    currency: order.currency,
+    crossSellLines: nextLines
   });
 });
 

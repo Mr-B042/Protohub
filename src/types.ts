@@ -86,7 +86,7 @@ export type WaybillRecord = {
 
 export type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 export type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
-export type CallOutcome = "Confirmed" | "No Answer" | "Wrong Number" | "Refused" | "Scheduled Callback" | "Not Reached";
+export type CallOutcome = string;
 export type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info"; message: string; read: boolean; createdAt: string; productId?: string };
 export type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 export type CreateOrderContext = "admin" | "rep";
@@ -125,8 +125,34 @@ export type ProductPricing = {
 };
 
 export type PackageCompanion = {
+  companionId?: string;
+  productId: string;
+  packageId?: string | null;
+  quantity: number;
+  pricingMode?: "free" | "fixed" | "use_product_price" | "standard";
+  fixedPrice?: number | null;
+  stateFilterMode?: "all" | "allow" | "block";
+  stateRestrictions?: string[];
+  autoInclude?: boolean;
+  placement?: "inline" | "upsell";
+  pitch?: string;
+  badgeText?: string;
+  headline?: string;
+  ctaText?: string;
+  declineText?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  embedHtml?: string;
+  priority?: number;
+  displayMode?: "compact" | "card";
+};
+
+export type PackageComponent = {
+  componentId?: string;
   productId: string;
   quantity: number;
+  isFreeGift?: boolean;
+  note?: string;
 };
 
 export type ProductPackage = {
@@ -139,6 +165,7 @@ export type ProductPackage = {
   displayOrder: number;
   active: boolean;
   companions?: PackageCompanion[];
+  packageComponents?: PackageComponent[];
 };
 
 export type PackBonusRule = {
@@ -182,6 +209,7 @@ export type ProductBonusConfig = {
 };
 
 export type ProductRole = "Main" | "Cross-sell" | "Free Gift";
+export type ProductCatalogType = "standard" | "combo_only";
 
 export type Product = {
   id: string;
@@ -200,6 +228,7 @@ export type Product = {
   availableStates?: string[];
   bonusConfig?: ProductBonusConfig;
   role?: ProductRole;
+  catalogType?: ProductCatalogType;
   canBeCrossSell?: boolean;
   canBeFreeGift?: boolean;
   crossSellProductIds?: string[];
@@ -213,9 +242,23 @@ export type Product = {
 export type CrossSellLine = {
   id: string;
   productId?: string;
+  packageId?: string;
+  packageName?: string;
+  packageQuantity?: number;
+  packageComponentsSnapshot?: PackageComponentSnapshotLine[];
   productName: string;
   quantity: number;
   amount: number;
+};
+
+export type PackageComponentSnapshotLine = {
+  componentId?: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  isFreeGift?: boolean;
+  note?: string;
+  sourceType?: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };
 
 export type FreeGiftLine = {
@@ -223,6 +266,16 @@ export type FreeGiftLine = {
   productId?: string;
   productName: string;
   quantity: number;
+};
+
+export type OrderInventoryComponentSnapshot = {
+  componentId?: string;
+  productId?: string;
+  productName: string;
+  quantity: number;
+  isFreeGift?: boolean;
+  note?: string;
+  sourceType?: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };
 
 export type RepPenaltyType =
@@ -312,6 +365,12 @@ export type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   callOutcome?: CallOutcome;
+  buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
+  followUpAttemptCount?: number;
+  lastContactAttemptAt?: string;
+  lastContactAttemptOutcome?: string;
+  nextFollowUpAt?: string;
+  overdueFollowUpCount?: number;
   upsellFromQty?: number;
   upsellToQty?: number;
   upsellNote?: string;
@@ -330,6 +389,40 @@ export type OrderNote = {
   by: string;
   date: string;
   followUpDate?: string;
+  followUpAt?: string;
+};
+
+export type FollowUpTask = {
+  id: string;
+  orderId: string;
+  assignedRepId?: string;
+  taskType: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  priority: "same_day" | "normal" | "low_intent";
+  status: "open" | "due" | "overdue" | "completed" | "cancelled";
+  effectiveStatus?: "open" | "due" | "overdue" | "completed" | "cancelled";
+  dueAt: string;
+  slaMinutes?: number;
+  note?: string;
+  sourceKind?: string;
+  sourceRef?: string;
+  completedAt?: string;
+  createdAt?: string;
+};
+
+export type OrderContactAttempt = {
+  id: string;
+  orderId: string;
+  taskId?: string;
+  repId?: string;
+  attemptedAt: string;
+  channel: "call" | "whatsapp" | "sms" | "manual";
+  attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
+  outcomeCode: string;
+  outcomeNote?: string;
+  customerReached?: boolean;
+  nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
+  nextActionAt?: string;
+  promiseWindow?: "same_day" | "tomorrow" | "later";
 };
 
 export type AbandonedCartRecord = {

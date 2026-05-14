@@ -18,18 +18,39 @@ const readRateLimit = rateLimit({
 // shipping a product to an unauthenticated visitor.
 type DbPricing = { currency: string; selling_price: number; is_primary: boolean };
 type DbCompanion = {
-  productId: string; quantity: number; pricingMode: string;
-  fixedPrice?: number; stateRestrictions?: string[]; autoInclude?: boolean;
+  companionId?: string;
+  productId: string; packageId?: string; quantity: number; pricingMode: string;
+  fixedPrice?: number; stateFilterMode?: "all" | "allow" | "block"; stateRestrictions?: string[]; autoInclude?: boolean;
+  placement?: "inline" | "upsell";
+  pitch?: string;
+  badgeText?: string;
+  headline?: string;
+  ctaText?: string;
+  declineText?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  embedHtml?: string;
+  priority?: number;
+  displayMode?: "compact" | "card";
+};
+type DbPackageComponent = {
+  componentId?: string;
+  productId: string;
+  quantity: number;
+  isFreeGift?: boolean;
+  note?: string;
 };
 type DbPackage = {
   id: string; name: string; description: string | null; quantity: number;
   price: number; currency: string; display_order: number; active: boolean;
   companion_products: DbCompanion[] | null;
+  package_components: DbPackageComponent[] | null;
 };
 type DbProduct = {
   id: string; org_id: string;
   name: string; description: string | null;
   active: boolean; available_states: string[] | null;
+  catalog_type?: "standard" | "combo_only" | null;
   can_be_cross_sell: boolean | null; can_be_free_gift: boolean | null;
   cross_sell_product_ids: string[] | null;
   cross_sell_state_restrictions: Record<string, string[]> | null;
@@ -56,13 +77,42 @@ const sanitisePackage = (p: DbPackage) => ({
   currency:     p.currency,
   displayOrder: p.display_order,
   active:       p.active,
-  companionProducts: (p.companion_products ?? []).map((c) => ({
+  companionProducts: (p.companion_products ?? []).map((c) => {
+    const restrictions = c.stateRestrictions ?? [];
+    const stateFilterMode =
+      c.stateFilterMode === "block"
+        ? "block"
+        : c.stateFilterMode === "allow"
+          ? (restrictions.length > 0 ? "allow" : "all")
+          : "all";
+    return ({
+    companionId:       c.companionId ?? "",
     productId:         c.productId,
+    packageId:         c.packageId ?? null,
     quantity:          c.quantity,
     pricingMode:       c.pricingMode,
     fixedPrice:        c.fixedPrice ?? null,
-    stateRestrictions: c.stateRestrictions ?? [],
-    autoInclude:       c.autoInclude ?? false
+    stateFilterMode,
+    stateRestrictions: restrictions,
+    autoInclude:       c.autoInclude ?? false,
+    placement:         c.placement ?? "inline",
+    pitch:             c.pitch ?? "",
+    badgeText:         c.badgeText ?? "",
+    headline:          c.headline ?? "",
+    ctaText:           c.ctaText ?? "",
+    declineText:       c.declineText ?? "",
+    imageUrl:          c.imageUrl ?? "",
+    videoUrl:          c.videoUrl ?? "",
+    embedHtml:         c.embedHtml ?? "",
+    priority:          c.priority ?? 0,
+    displayMode:       c.displayMode ?? "compact"
+  })}),
+  packageComponents: (p.package_components ?? []).map((component) => ({
+    componentId: component.componentId ?? "",
+    productId: component.productId,
+    quantity: component.quantity,
+    isFreeGift: component.isFreeGift ?? false,
+    note: component.note ?? ""
   }))
 });
 
@@ -72,6 +122,7 @@ const sanitiseProduct = (p: DbProduct) => ({
   name:                        p.name,
   description:                 p.description ?? "",
   active:                      p.active,
+  catalogType:                 p.catalog_type ?? "standard",
   availableStates:             p.available_states ?? [],
   canBeCrossSell:              p.can_be_cross_sell ?? false,
   canBeFreeGift:               p.can_be_free_gift ?? false,
@@ -97,13 +148,13 @@ router.get("/:id", readRateLimit, async (req, res) => {
   const { data: rawProduct, error } = await supabase
     .from("products")
     .select(`
-      id, org_id, name, description, active, available_states,
+      id, org_id, name, description, active, available_states, catalog_type,
       can_be_cross_sell, can_be_free_gift,
       cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
       free_gift_product_ids, free_gift_state_restrictions,
       form_custom_text,
       pricings: product_pricings(currency, selling_price, is_primary),
-      packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products)
+      packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
     `)
     .eq("id", id)
     .maybeSingle();
@@ -130,13 +181,13 @@ router.get("/:id", readRateLimit, async (req, res) => {
     const { data: rawRelated } = await supabase
       .from("products")
       .select(`
-        id, org_id, name, description, active, available_states,
+        id, org_id, name, description, active, available_states, catalog_type,
         can_be_cross_sell, can_be_free_gift,
         cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
         free_gift_product_ids, free_gift_state_restrictions,
         form_custom_text,
         pricings: product_pricings(currency, selling_price, is_primary),
-        packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products)
+        packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
       `)
       .in("id", Array.from(referenced))
       .eq("active", true);

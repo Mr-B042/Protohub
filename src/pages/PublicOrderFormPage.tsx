@@ -9,12 +9,26 @@ type PublicPricing = {
 };
 
 type PublicCompanion = {
+  companionId?: string;
   productId: string;
+  packageId?: string | null;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price" | "standard";
   fixedPrice?: number | null;
+  stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions: string[];
   autoInclude: boolean;
+  placement?: "inline" | "upsell";
+  pitch?: string;
+  badgeText?: string;
+  headline?: string;
+  ctaText?: string;
+  declineText?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  embedHtml?: string;
+  priority?: number;
+  displayMode?: "compact" | "card";
 };
 
 type PublicPackage = {
@@ -69,8 +83,22 @@ type PublicEmbedSettings = {
 };
 
 type CrossSellSelection = {
+  companionId?: string;
   productId: string;
+  packageId?: string | null;
   quantity: number;
+};
+
+type PendingUpsellOffer = {
+  orderId: string;
+  customer: string;
+  token: string;
+  companion: PublicCompanion;
+  product: PublicProduct;
+  targetPackage?: PublicPackage | null;
+  quantity: number;
+  amount: number;
+  currency: ProductCurrencyCode;
 };
 
 const DEFAULT_CONFIRMATION_TEXT =
@@ -91,8 +119,14 @@ const NIGERIA_STATES = [
   "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti", "Enugu", "Gombe", "Imo",
   "Jigawa", "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos",
   "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau", "Rivers",
-  "Sokoto", "Taraba", "Yobe", "Zamfara", "FCT",
+  "Sokoto", "Taraba", "Yobe", "Zamfara", "FCT Abuja",
 ];
+
+function normalizeStateName(value: string | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
+  return (value ?? "").trim();
+}
 
 const DEFAULT_SETTINGS: PublicEmbedSettings = {
   stateFieldMode: "freetext",
@@ -198,12 +232,225 @@ function crossSellPriceFor(mainProduct: PublicProduct, crossSellProduct: PublicP
   return primaryPricing(crossSellProduct)?.sellingPrice ?? 0;
 }
 
+function targetPackageForCompanion(companion: PublicCompanion, products: PublicProduct[]) {
+  if (!companion.packageId) return null;
+  for (const product of products) {
+    const target = (product.packages ?? []).find((pkg) => pkg.id === companion.packageId);
+    if (target) return target;
+  }
+  return null;
+}
+
+function companionUnitPrice(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
+  const standard = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
+  if (companion.pricingMode === "free") return 0;
+  if (companion.pricingMode === "fixed") return companion.fixedPrice ?? 0;
+  return standard;
+}
+
+function companionVisibleInState(companion: PublicCompanion, state: string) {
+  const mode = companion.stateFilterMode ?? "all";
+  if (mode === "all") return true;
+  if (companion.stateRestrictions.length === 0) return mode === "block";
+  if (!state) return false;
+  const normalizedState = normalizeStateName(state);
+  const matches = companion.stateRestrictions.map(normalizeStateName).includes(normalizedState);
+  return mode === "block" ? !matches : matches;
+}
+
+function companionSelectionKey(companion: { companionId?: string; productId: string; packageId?: string | null }) {
+  return companion.companionId?.trim() || `${companion.productId}:${companion.packageId ?? ""}`;
+}
+
+function companionDisplayName(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
+  return targetPackage ? `${product.name} · ${targetPackage.name}` : product.name;
+}
+
+function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  if (targetPackage) {
+    if (targetPackage.description.trim()) {
+      return targetPackage.description.trim();
+    }
+    return `${companion.quantity} ${companion.quantity === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`;
+  }
+  return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
+}
+
+function fallbackCompanionImageSrc(productName: string) {
+  const safeName = productName
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#eff6ff" />
+          <stop offset="100%" stop-color="#dbeafe" />
+        </linearGradient>
+      </defs>
+      <rect width="900" height="600" rx="36" fill="url(#bg)" />
+      <rect x="48" y="48" width="804" height="504" rx="28" fill="#ffffff" opacity="0.92" />
+      <text x="450" y="278" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#0f172a">${safeName}</text>
+      <text x="450" y="332" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="600" fill="#475569">Quick add-on preview</text>
+    </svg>`
+  )}`;
+}
+
+function normaliseCompanionVideoUrl(url: string) {
+  if (!url.trim()) return null;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host.includes("youtube.com")) {
+      const videoId = parsed.searchParams.get("v");
+      return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+    }
+    if (host.includes("youtu.be")) {
+      const videoId = parsed.pathname.replace("/", "").trim();
+      return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+    }
+    if (host.includes("vimeo.com")) {
+      const videoId = parsed.pathname.split("/").filter(Boolean).pop();
+      return videoId ? `https://player.vimeo.com/video/${videoId}` : url;
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+function companionEmbedPaddingTop(embedHtml: string) {
+  const paddingMatch = embedHtml.match(/padding-top\s*:\s*([0-9.]+)%/i);
+  if (paddingMatch?.[1]) {
+    return `${paddingMatch[1]}%`;
+  }
+  const aspectMatch = embedHtml.match(/aspect\s*=\s*["']([0-9.]+)["']/i);
+  if (aspectMatch?.[1]) {
+    const aspect = Number(aspectMatch[1]);
+    if (Number.isFinite(aspect) && aspect > 0) {
+      return `${(1 / aspect) * 100}%`;
+    }
+  }
+  return "56.25%";
+}
+
+function companionWistiaMediaId(embedHtml: string) {
+  const playerMatch = embedHtml.match(/wistia-player[^>]*media-id\s*=\s*["']([^"']+)["']/i);
+  if (playerMatch?.[1]) return playerMatch[1];
+  const scriptMatch = embedHtml.match(/embed\/([a-z0-9]+)\.js/i);
+  return scriptMatch?.[1] ?? null;
+}
+
+function companionEmbedDocument(embedHtml: string) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+      }
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      body > * {
+        max-width: 100% !important;
+      }
+      iframe, video, img, wistia-player {
+        max-width: 100% !important;
+      }
+    </style>
+  </head>
+  <body>${embedHtml}</body>
+</html>`;
+}
+
+function renderCompanionMedia(companion: PublicCompanion, productName: string) {
+  const embedHtml = (companion.embedHtml ?? "").trim();
+  if (embedHtml) {
+    const paddingTop = companionEmbedPaddingTop(embedHtml);
+    const wistiaMediaId = companionWistiaMediaId(embedHtml);
+    return (
+      <div style={{ position: "relative", width: "100%", paddingTop, borderRadius: 14, overflow: "hidden", background: "#f8fafc" }}>
+        {wistiaMediaId ? (
+          <iframe
+            src={`https://fast.wistia.net/embed/iframe/${wistiaMediaId}?videoFoam=true&seo=false`}
+            title={`${productName} video`}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none", background: "transparent" }}
+          />
+        ) : (
+          <iframe
+            srcDoc={companionEmbedDocument(embedHtml)}
+            title={`${productName} embed`}
+            sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none", background: "transparent" }}
+          />
+        )}
+      </div>
+    );
+  }
+  const videoUrl = normaliseCompanionVideoUrl(companion.videoUrl ?? "");
+  if (videoUrl) {
+    const isDirectVideo = /\.(mp4|webm|ogg)(\?.*)?$/i.test(videoUrl);
+    if (isDirectVideo) {
+      return (
+        <video
+          controls
+          playsInline
+          preload="metadata"
+          style={{ width: "100%", borderRadius: 14, background: "#000", maxHeight: 260, objectFit: "cover" }}
+          src={videoUrl}
+        />
+      );
+    }
+    return (
+      <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden", background: "#0f172a" }}>
+        <iframe
+          src={videoUrl}
+          title={`${productName} video`}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+        />
+      </div>
+    );
+  }
+  if (companion.imageUrl?.trim()) {
+    return (
+      <img
+        src={companion.imageUrl}
+        alt={productName}
+        onError={(event) => {
+          const target = event.currentTarget;
+          if (target.dataset.fallbackApplied === "true") return;
+          target.dataset.fallbackApplied = "true";
+          target.src = fallbackCompanionImageSrc(productName);
+        }}
+        style={{ width: "100%", borderRadius: 14, maxHeight: 260, objectFit: "cover", display: "block" }}
+      />
+    );
+  }
+  return null;
+}
+
 function freeGiftVisibleInState(mainProduct: PublicProduct, giftProduct: PublicProduct, state: string) {
   if (!state) return true;
+  const normalizedState = normalizeStateName(state);
   const attachmentRule = mainProduct.freeGiftStateRestrictions?.[giftProduct.id];
-  if (attachmentRule && attachmentRule.length > 0) return attachmentRule.includes(state);
+  if (attachmentRule && attachmentRule.length > 0) return attachmentRule.map(normalizeStateName).includes(normalizedState);
   const productRule = giftProduct.availableStates;
-  if (productRule && productRule.length > 0) return productRule.includes(state);
+  if (productRule && productRule.length > 0) return productRule.map(normalizeStateName).includes(normalizedState);
   return true;
 }
 
@@ -250,6 +497,8 @@ export default function PublicOrderFormPage() {
   const [toast, setToast] = useState("");
   const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
+  const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
+  const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
 
   const [orderFormName, setOrderFormName] = useState("");
@@ -304,7 +553,7 @@ export default function PublicOrderFormPage() {
     const ro = new ResizeObserver(send);
     ro.observe(document.documentElement);
     return () => ro.disconnect();
-  }, [params, publicOrderSubmitted, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
+  }, [params, publicOrderSubmitted, publicUpsellOffer, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
 
   useEffect(() => {
     if (!publicProductId) {
@@ -331,6 +580,7 @@ export default function PublicOrderFormPage() {
     setLoading(cachedBundleProducts.length === 0);
     setLoadError(null);
     setPublicOrderSubmitted(null);
+    setPublicUpsellOffer(null);
     setOrderFormPackageId("");
     setOrderFormCrossSells([]);
     setAbandonedDraftCartId("");
@@ -408,13 +658,13 @@ export default function PublicOrderFormPage() {
   }, [orderFormPackageId, publicPackages]);
 
   useEffect(() => {
-    const companionIds = new Set(
+    const companionKeys = new Set(
       (chosenPackage?.companionProducts ?? [])
         .filter((companion) => !companion.autoInclude)
-        .filter((companion) => companion.stateRestrictions.length === 0 || (orderFormState && companion.stateRestrictions.includes(orderFormState)))
-        .map((companion) => companion.productId)
+        .filter((companion) => companionVisibleInState(companion, orderFormState))
+        .map((companion) => companionSelectionKey(companion))
     );
-    setOrderFormCrossSells((prev) => prev.filter((line) => companionIds.has(line.productId)));
+    setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
   }, [chosenPackage, orderFormState]);
 
   useEffect(() => {
@@ -492,16 +742,35 @@ export default function PublicOrderFormPage() {
     setToast(message);
   }
 
-  function toggleOrderFormCrossSell(productId: string) {
-    setOrderFormCrossSells((prev) =>
-      prev.some((line) => line.productId === productId)
-        ? prev.filter((line) => line.productId !== productId)
-        : [...prev, { productId, quantity: 1 }]
-    );
+  function setOrderFormCrossSellSelection(
+    companion: PublicCompanion,
+    nextSelected: boolean,
+    options?: { exclusiveProduct?: boolean }
+  ) {
+    const key = companionSelectionKey(companion);
+    setOrderFormCrossSells((prev) => {
+      const withoutCurrent = prev.filter((line) => companionSelectionKey(line) !== key);
+      if (!nextSelected) {
+        return withoutCurrent;
+      }
+      const withoutProductGroup = options?.exclusiveProduct
+        ? withoutCurrent.filter((line) => line.productId !== companion.productId)
+        : withoutCurrent;
+      return [
+        ...withoutProductGroup,
+        {
+          companionId: companion.companionId?.trim() || undefined,
+          productId: companion.productId,
+          packageId: companion.packageId?.trim() || undefined,
+          quantity: companion.quantity
+        }
+      ];
+    });
   }
 
-  function shouldUseStateDropdown() {
-    return settings.stateFieldMode === "dropdown" && publicCurrency === "NGN";
+  function isOrderFormCrossSellSelected(companion: PublicCompanion) {
+    const key = companionSelectionKey(companion);
+    return orderFormCrossSells.some((line) => companionSelectionKey(line) === key);
   }
 
   function resetOrderForm() {
@@ -519,6 +788,20 @@ export default function PublicOrderFormPage() {
     setPublicHoneypot("");
     setAbandonedDraftCartId("");
     if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
+  }
+
+  function finishPublicOrderJourney(orderId: string, customer: string) {
+    setPublicUpsellOffer(null);
+    setPublicOrderSubmitted({ orderId, customer });
+    if (publicRedirectUrl) {
+      redirectTimerRef.current = window.setTimeout(() => {
+        try {
+          (window.top ?? window).location.href = publicRedirectUrl;
+        } catch {
+          window.location.href = publicRedirectUrl;
+        }
+      }, 800);
+    }
   }
 
   async function submitPublicOrder() {
@@ -585,7 +868,12 @@ export default function PublicOrderFormPage() {
         packageId: chosenPackage.id,
         crossSellLines: orderFormCrossSells
           .filter((line) => line.productId && line.quantity > 0)
-          .map((line) => ({ productId: line.productId, quantity: line.quantity })),
+          .map((line) => ({
+            companionId: line.companionId?.trim() || undefined,
+            productId: line.productId,
+            packageId: line.packageId?.trim() || undefined,
+            quantity: line.quantity
+          })),
         utmSource: publicUtmSource || undefined,
         utmCampaign: publicUtmCampaign || undefined,
         utmMedium: publicUtmMedium || undefined,
@@ -596,31 +884,77 @@ export default function PublicOrderFormPage() {
         preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
         company: publicHoneypot,
       });
-      setPublicOrderSubmitted({ orderId: created.id, customer: customerName });
+      const upsellProductId = created.upsellOffer?.productId;
+      const upsellPackageId = created.upsellOffer?.packageId;
+      const upsellCompanion = upsellProductId
+        ? (chosenPackage.companionProducts ?? [])
+            .filter((companion) => (companion.placement ?? "inline") === "upsell")
+            .filter((companion) => companionVisibleInState(companion, orderFormState))
+            .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+            .find((companion) =>
+              created.upsellOffer?.companionId
+                ? companion.companionId === created.upsellOffer.companionId
+                : companion.productId === upsellProductId
+                  && (created.upsellOffer?.packageId ? companion.packageId === created.upsellOffer.packageId : true)
+            )
+        : null;
+      const upsellProduct = upsellProductId
+        ? products.find((item) => item.id === upsellProductId)
+        : null;
+      const upsellTargetPackage = upsellPackageId
+        ? (products.flatMap((item) => item.packages ?? []).find((pkg) => pkg.id === upsellPackageId) ?? null)
+        : null;
+
+      resetOrderForm();
+      setPublicOrderSubmitting(false);
+      publicOrderSubmittingRef.current = false;
+      if (cartSyncTimerRef.current) {
+        window.clearTimeout(cartSyncTimerRef.current);
+        cartSyncTimerRef.current = null;
+      }
+
+      if (created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct) {
+        setPublicUpsellOffer({
+          orderId: created.id,
+          customer: customerName,
+          token: created.upsellToken,
+          companion: upsellCompanion,
+          product: upsellProduct,
+          targetPackage: upsellTargetPackage,
+          quantity: created.upsellOffer.quantity,
+          amount: created.upsellOffer.amount,
+          currency: created.currency as ProductCurrencyCode
+        });
+        return;
+      }
+
+      finishPublicOrderJourney(created.id, customerName);
+      return;
     } catch (error: any) {
       setPublicOrderSubmitting(false);
       publicOrderSubmittingRef.current = false;
       showToast(error?.message ?? "Could not submit your order. Please try again.");
       return;
     }
+  }
 
-    setPublicOrderSubmitting(false);
-    if (cartSyncTimerRef.current) {
-      window.clearTimeout(cartSyncTimerRef.current);
-      cartSyncTimerRef.current = null;
+  async function acceptPublicUpsell() {
+    if (!publicUpsellOffer || publicUpsellSubmitting) return;
+    setPublicUpsellSubmitting(true);
+    try {
+      await publicOrdersApi.acceptUpsell(publicUpsellOffer.orderId, { token: publicUpsellOffer.token });
+      finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
+    } catch (error: any) {
+      setPublicUpsellSubmitting(false);
+      showToast(error?.message ?? "Could not add this offer. Please try again.");
+      return;
     }
-    publicOrderSubmittingRef.current = false;
-    resetOrderForm();
+    setPublicUpsellSubmitting(false);
+  }
 
-    if (publicRedirectUrl) {
-      redirectTimerRef.current = window.setTimeout(() => {
-        try {
-          (window.top ?? window).location.href = publicRedirectUrl;
-        } catch {
-          window.location.href = publicRedirectUrl;
-        }
-      }, 800);
-    }
+  function declinePublicUpsell() {
+    if (!publicUpsellOffer || publicUpsellSubmitting) return;
+    finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
   }
 
   if (loading && !publicProduct) {
@@ -672,25 +1006,25 @@ export default function PublicOrderFormPage() {
     );
   }
 
-  const companionForProductId = (productId: string) =>
+  const companionForSelection = (selection: CrossSellSelection) =>
     chosenPackage?.companionProducts?.find((companion) =>
-      companion.productId === productId
-      && (companion.stateRestrictions.length === 0 || (orderFormState && companion.stateRestrictions.includes(orderFormState)))
+      companionSelectionKey(companion) === companionSelectionKey(selection)
+      && companionVisibleInState(companion, orderFormState)
     );
 
   const selectedCrossSellLines = orderFormCrossSells
     .map((line) => {
       const product = products.find((item) => item.id === line.productId);
       if (!product || !chosenPackage) return null;
-      const companion = companionForProductId(line.productId);
+      const companion = companionForSelection(line);
       if (companion) {
-        const standard = primaryPricing(product)?.sellingPrice ?? 0;
-        const unit = companion.pricingMode === "free"
-          ? 0
-          : companion.pricingMode === "fixed"
-            ? (companion.fixedPrice ?? 0)
-            : standard;
-        return { name: product.name, qty: companion.quantity, total: unit * companion.quantity };
+        const targetPackage = targetPackageForCompanion(companion, products);
+        const unit = companionUnitPrice(companion, product, targetPackage);
+        return {
+          name: companionDisplayName(companion, product, targetPackage),
+          qty: companion.quantity,
+          total: unit * companion.quantity
+        };
       }
       const unit = crossSellPriceFor(publicProduct, product);
       return { name: product.name, qty: line.quantity, total: unit * line.quantity };
@@ -699,17 +1033,17 @@ export default function PublicOrderFormPage() {
 
   const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
     .filter((companion) => companion.autoInclude)
-    .filter((companion) => companion.stateRestrictions.length === 0 || (orderFormState && companion.stateRestrictions.includes(orderFormState)))
+    .filter((companion) => companionVisibleInState(companion, orderFormState))
     .map((companion) => {
       const product = products.find((item) => item.id === companion.productId);
       if (!product) return null;
-      const standard = primaryPricing(product)?.sellingPrice ?? 0;
-      const unit = companion.pricingMode === "free"
-        ? 0
-        : companion.pricingMode === "fixed"
-          ? (companion.fixedPrice ?? 0)
-          : standard;
-      return { name: `${product.name} (bundled)`, qty: companion.quantity, total: unit * companion.quantity };
+      const targetPackage = targetPackageForCompanion(companion, products);
+      const unit = companionUnitPrice(companion, product, targetPackage);
+      return {
+        name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
+        qty: companion.quantity,
+        total: unit * companion.quantity
+      };
     })
     .filter(Boolean) as { name: string; qty: number; total: number }[];
 
@@ -753,18 +1087,142 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
-  const allowedStates = publicProduct.availableStates && publicProduct.availableStates.length > 0
-    ? NIGERIA_STATES.filter((state) => publicProduct.availableStates?.includes(state))
+  const normalizedAvailableStates = Array.from(new Set((publicProduct.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
+  const treatAsAllNigeriaStates =
+    normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
+    !normalizedAvailableStates.includes("FCT Abuja");
+  const allowedStates = normalizedAvailableStates.length > 0
+    ? NIGERIA_STATES.filter(
+        (state) =>
+          normalizedAvailableStates.includes(normalizeStateName(state)) ||
+          (state === "FCT Abuja" && treatAsAllNigeriaStates)
+      )
     : NIGERIA_STATES;
+
+  const normalizedSelectedState = normalizeStateName(orderFormState);
 
   const companionOptions = (chosenPackage?.companionProducts ?? [])
     .filter((companion) => !companion.autoInclude)
-    .filter((companion) => companion.stateRestrictions.length === 0 || (orderFormState && companion.stateRestrictions.includes(orderFormState)));
+    .filter((companion) => (companion.placement ?? "inline") === "inline")
+    .filter((companion) =>
+      companion.stateRestrictions.length === 0
+        ? true
+        : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
+    );
+
+  const cardCompanionGroups = Object.values(
+    companionOptions
+      .filter((companion) => (companion.displayMode ?? "compact") === "card")
+      .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
+        const key = companion.productId;
+        if (!acc[key]) {
+          acc[key] = {
+            product: products.find((item) => item.id === companion.productId),
+            companions: [],
+            priority: companion.priority ?? 0
+          };
+        }
+        acc[key].companions.push(companion);
+        acc[key].priority = Math.max(acc[key].priority, companion.priority ?? 0);
+        return acc;
+      }, {})
+  )
+    .map((group) => ({
+      ...group,
+      companions: [...group.companions].sort((a, b) => {
+        if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+        return (b.priority ?? 0) - (a.priority ?? 0);
+      })
+    }))
+    .sort((a, b) => b.priority - a.priority);
+
+  const compactCompanionOptions = companionOptions
+    .filter((companion) => (companion.displayMode ?? "compact") !== "card");
 
   return (
     <main className="public-order-page">
+      <style>{`
+        @keyframes publicBumpNudge {
+          0%, 100% { transform: translateX(0); }
+          50% { transform: translateX(6px); }
+        }
+        @keyframes publicRemovePulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+          50% { transform: scale(1.02); box-shadow: 0 10px 24px rgba(239, 68, 68, 0.18); }
+        }
+      `}</style>
       <section className="public-order-shell">
-        {publicOrderSubmitted ? (
+        {publicUpsellOffer ? (
+          <div className="public-form-layout">
+            <article className="panel public-order-card public-form-main public-form-clean" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "16px 18px", background: "#eff6ff", borderBottom: "1px solid #dbeafe", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1d4ed8" }}>
+                Before you finish
+              </div>
+              <div style={{ padding: 20, display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <h2 style={{ margin: 0, fontSize: 26, lineHeight: 1.15, color: "#111827" }}>
+                    {publicUpsellOffer.companion.headline?.trim() || `Add ${publicUpsellOffer.product.name} to this order?`}
+                  </h2>
+                  <p style={{ margin: 0, fontSize: 15, color: "#4b5563", lineHeight: 1.6 }}>
+                    {publicUpsellOffer.companion.pitch?.trim() || "Quick extra add-on before you move to the thank-you page."}
+                  </p>
+                </div>
+                <div style={{ border: "1px solid #dbeafe", borderRadius: 18, background: "#f8fbff", padding: 18, display: "grid", gap: 12 }}>
+                  {renderCompanionMedia(publicUpsellOffer.companion, publicUpsellOffer.product.name)}
+                  {publicUpsellOffer.companion.badgeText?.trim() && (
+                    <span style={{ display: "inline-flex", width: "fit-content", padding: "6px 10px", borderRadius: 999, background: "#dbeafe", color: "#1d4ed8", fontSize: 12, fontWeight: 800 }}>
+                      {publicUpsellOffer.companion.badgeText}
+                    </span>
+                  )}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <strong style={{ fontSize: 20, color: "#111827" }}>
+                        {companionDisplayName(publicUpsellOffer.companion, publicUpsellOffer.product, publicUpsellOffer.targetPackage)}
+                      </strong>
+                      <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+                        {companionDisplayDetail(publicUpsellOffer.companion, publicUpsellOffer.targetPackage)}
+                      </span>
+                      {publicUpsellOffer.product.description && (
+                        <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
+                          {publicUpsellOffer.product.description}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#6b7280" }}>
+                        Add now
+                      </div>
+                      <div style={{ fontSize: 28, fontWeight: 800, color: "#1F8FE0" }}>
+                        {formatProductMoney(publicUpsellOffer.amount, publicUpsellOffer.currency)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={publicUpsellSubmitting}
+                      onClick={acceptPublicUpsell}
+                      style={{ opacity: publicUpsellSubmitting ? 0.7 : 1, cursor: publicUpsellSubmitting ? "not-allowed" : "pointer" }}
+                    >
+                      {publicUpsellSubmitting
+                        ? "Adding..."
+                        : (publicUpsellOffer.companion.ctaText?.trim() || "Yes, add to my order")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={declinePublicUpsell}
+                      disabled={publicUpsellSubmitting}
+                      style={{ border: "none", background: "transparent", color: "#6b7280", fontSize: 14, fontWeight: 700, textDecoration: "underline", cursor: publicUpsellSubmitting ? "not-allowed" : "pointer", opacity: publicUpsellSubmitting ? 0.7 : 1 }}
+                    >
+                      {publicUpsellOffer.companion.declineText?.trim() || "No thanks, continue"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        ) : publicOrderSubmitted ? (
           <div className="public-form-layout">
             <article className="panel public-order-card public-form-main public-form-clean" style={{ textAlign: "center" }}>
               <div style={{ padding: "40px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
@@ -866,16 +1324,12 @@ export default function PublicOrderFormPage() {
                 </label>
 
                 <label className="field-full">
-                  {shouldUseStateDropdown() ? (
-                    <select required value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)}>
-                      <option value="" disabled>Select your state *</option>
-                      {allowedStates.map((state) => (
-                        <option key={state} value={state}>{state}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)} placeholder="Your State *" />
-                  )}
+                  <select required value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)}>
+                    <option value="" disabled>Select your state *</option>
+                    {allowedStates.map((state) => (
+                      <option key={state} value={state}>{state}</option>
+                    ))}
+                  </select>
                 </label>
               </div>
 
@@ -913,28 +1367,259 @@ export default function PublicOrderFormPage() {
                 })}
               </div>
 
-              {companionOptions.length > 0 && (
+              {compactCompanionOptions.length > 0 && (
                 <div className="cross-sell-picker" style={{ padding: 12, border: "1px solid #1F8FE040", background: "#eff6ff", borderRadius: 12, marginTop: 16 }}>
-                  <strong style={{ fontSize: 14, display: "block", marginBottom: 8 }}>Add to your order</strong>
-                  {companionOptions.map((companion, index) => {
+                  <strong style={{ fontSize: 14, display: "block", marginBottom: 8 }}>Add Extra Item to your order</strong>
+                  {compactCompanionOptions.map((companion, index) => {
                     const product = products.find((item) => item.id === companion.productId);
                     if (!product) return null;
-                    const productPrice = primaryPricing(product)?.sellingPrice ?? 0;
+                    const targetPackage = targetPackageForCompanion(companion, products);
                     const currency = primaryPricing(product)?.currency ?? "NGN";
-                    const unit = companion.pricingMode === "free"
-                      ? 0
-                      : companion.pricingMode === "fixed"
-                        ? (companion.fixedPrice ?? 0)
-                        : productPrice;
+                    const unit = companionUnitPrice(companion, product, targetPackage);
                     const total = unit * companion.quantity;
-                    const selected = orderFormCrossSells.some((item) => item.productId === companion.productId);
+                    const selected = isOrderFormCrossSellSelected(companion);
+                    const media = renderCompanionMedia(companion, product.name);
                     return (
-                      <label key={`${companion.productId}-${index}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
-                        <input type="checkbox" checked={selected} onChange={() => toggleOrderFormCrossSell(companion.productId)} />
-                        <span style={{ flex: 1 }}>
-                          <strong>{product.name}</strong> × {companion.quantity} · {companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
+                      <label
+                        key={`${companionSelectionKey(companion)}-${index}`}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: media ? "112px 1fr auto" : "1fr auto",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "10px 0",
+                          fontSize: 13,
+                          borderTop: index === 0 ? "1px solid #dbeafe" : "1px solid #dbeafe"
+                        }}
+                      >
+                        {media && (
+                          <div style={{ width: 112, minWidth: 112 }}>
+                            {media}
+                          </div>
+                        )}
+                        <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                          <strong style={{ fontSize: 16, color: "#111827" }}>{companionDisplayName(companion, product, targetPackage)}</strong>
+                          <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
+                            {companionDisplayDetail(companion, targetPackage)}
+                            {companion.pitch?.trim() ? ` · ${companion.pitch.trim()}` : ""}
+                          </span>
+                          <span style={{ fontSize: 16, fontWeight: 800, color: "#111827" }}>
+                            {companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
+                          </span>
                         </span>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => setOrderFormCrossSellSelection(companion, !selected)}
+                          style={{ width: 22, height: 22, accentColor: "#1F8FE0" }}
+                        />
                       </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {cardCompanionGroups.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+                  {cardCompanionGroups.map((group, index) => {
+                    const product = group.product;
+                    if (!product) return null;
+                    const hasVariantChoices = group.companions.length > 1;
+                    const selectedVariant = group.companions.find((companion) => isOrderFormCrossSellSelected(companion)) ?? null;
+                    const displayCompanion = selectedVariant ?? group.companions[0];
+                    const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
+                    const currency = primaryPricing(product)?.currency ?? "NGN";
+                    const unit = companionUnitPrice(displayCompanion, product, displayTargetPackage);
+                    const total = unit * displayCompanion.quantity;
+                    const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
+                    const standardTotal = standard * displayCompanion.quantity;
+                    const savings = Math.max(0, standardTotal - total);
+                    const media = renderCompanionMedia(displayCompanion, product.name);
+                    return (
+                      <div key={`${product.id}-${index}`} style={{ border: "2px solid #1F8FE0", borderRadius: 18, overflow: "hidden", background: "#f8fbff" }}>
+                        <div style={{ background: "#1F8FE0", color: "white", padding: "9px 14px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                          {(displayCompanion.badgeText && displayCompanion.badgeText.trim()) || "Add this too"}
+                        </div>
+                        <div style={{ padding: 16, display: "grid", gap: 12 }}>
+                          {media}
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <strong style={{ fontSize: 18, color: "#111827" }}>
+                              {companionDisplayName(displayCompanion, product, displayTargetPackage)}
+                            </strong>
+                            <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+                              {hasVariantChoices
+                                ? "Choose the bundle you want below"
+                                : companionDisplayDetail(displayCompanion, displayTargetPackage)}
+                            </span>
+                            <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
+                              {displayCompanion.pitch?.trim() || "Easy extra add-on that fits this order."}
+                            </p>
+                          </div>
+                          {hasVariantChoices && (
+                            <div style={{ display: "grid", gap: 8 }}>
+                              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "#475569" }}>
+                                Choose bundle
+                              </div>
+                              <div style={{ borderTop: "1px solid #dbe4ef", borderBottom: "1px solid #dbe4ef" }}>
+                                {group.companions.map((variant) => {
+                                  const variantTargetPackage = targetPackageForCompanion(variant, products);
+                                  const variantSelected = selectedVariant
+                                    ? companionSelectionKey(selectedVariant) === companionSelectionKey(variant)
+                                    : false;
+                                  const variantPrice = companionUnitPrice(variant, product, variantTargetPackage) * variant.quantity;
+                                  return (
+                                    <button
+                                      key={companionSelectionKey(variant)}
+                                      type="button"
+                                      onClick={() => setOrderFormCrossSellSelection(variant, true, { exclusiveProduct: true })}
+                                      style={{
+                                        width: "100%",
+                                        border: "none",
+                                        borderBottom: "1px solid #e5e7eb",
+                                        background: variantSelected ? "#eff6ff" : "transparent",
+                                        color: "#0f172a",
+                                        padding: "12px 0",
+                                        fontSize: 13,
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        alignItems: "flex-start",
+                                        gap: 12,
+                                        textAlign: "left"
+                                      }}
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        style={{
+                                          marginTop: 4,
+                                          width: 18,
+                                          height: 18,
+                                          borderRadius: "50%",
+                                          border: variantSelected ? "2px solid #1F8FE0" : "2px solid #9ca3af",
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          flexShrink: 0
+                                        }}
+                                      >
+                                        {variantSelected && (
+                                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1F8FE0", display: "block" }} />
+                                        )}
+                                      </span>
+                                      <span style={{ flex: 1, minWidth: 0 }}>
+                                        <span style={{ display: "block", fontWeight: 800, fontSize: 16, color: "#111827" }}>
+                                          {companionDisplayName(variant, product, variantTargetPackage)}
+                                        </span>
+                                        <span style={{ display: "block", fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.45 }}>
+                                          {companionDisplayDetail(variant, variantTargetPackage)}
+                                          {variant.pitch?.trim() ? ` · ${variant.pitch.trim()}` : ""}
+                                        </span>
+                                      </span>
+                                      <strong style={{ fontSize: 16, color: "#111827", whiteSpace: "nowrap" }}>
+                                        {variant.pricingMode === "free" ? "FREE" : formatProductMoney(variantPrice, currency)}
+                                      </strong>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {(!hasVariantChoices || selectedVariant) && (
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                              <strong style={{ fontSize: 24, color: "#1F8FE0" }}>
+                                {displayCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
+                              </strong>
+                              {savings > 0 && (
+                                <>
+                                  <span style={{ fontSize: 13, color: "#9ca3af", textDecoration: "line-through" }}>
+                                    {formatProductMoney(standardTotal, currency)}
+                                  </span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: "#047857" }}>
+                                    Save {formatProductMoney(savings, currency)}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {selectedVariant ? (
+                            <div style={{ display: "grid", gap: 8 }}>
+                              <div
+                                style={{ width: "100%", padding: "13px 16px", background: "#16a34a", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  style={{
+                                    width: 22,
+                                    height: 22,
+                                    borderRadius: "50%",
+                                    border: "2px solid rgba(255,255,255,0.95)",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexShrink: 0
+                                  }}
+                                >
+                                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
+                                </span>
+                                <span style={{ flex: 1, textAlign: "left" }}>
+                                  {companionDisplayName(selectedVariant, product, targetPackageForCompanion(selectedVariant, products))} added to your order
+                                </span>
+                                <span aria-hidden="true" style={{ fontSize: 18, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setOrderFormCrossSellSelection(selectedVariant, false, { exclusiveProduct: true })}
+                                style={{
+                                  width: "100%",
+                                  padding: "11px 14px",
+                                  background: "#fef2f2",
+                                  color: "#b91c1c",
+                                  borderRadius: 12,
+                                  fontWeight: 800,
+                                  fontSize: 14,
+                                  border: "2px solid #fca5a5",
+                                  cursor: "pointer",
+                                  animation: "publicRemovePulse 1.6s ease-in-out infinite"
+                                }}
+                              >
+                                Tap here to remove this product from your order
+                              </button>
+                            </div>
+                          ) : !hasVariantChoices ? (
+                            <div style={{ display: "grid", gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() => setOrderFormCrossSellSelection(displayCompanion, true, { exclusiveProduct: true })}
+                                style={{ width: "100%", padding: "13px 16px", background: "#1F8FE0", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 14 }}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  style={{ fontSize: 20, fontWeight: 900, lineHeight: 1, animation: "publicBumpNudge 1s ease-in-out infinite", marginRight: 6 }}
+                                >
+                                  →
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  style={{
+                                    width: 22,
+                                    height: 22,
+                                    borderRadius: "50%",
+                                    border: "2px solid rgba(255,255,255,0.95)",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexShrink: 0
+                                  }}
+                                >
+                                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
+                                </span>
+                                <span style={{ flex: 1, textAlign: "left" }}>
+                                  {displayCompanion.ctaText?.trim() || "Yes, add to my order"}
+                                </span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1024,12 +1709,19 @@ export default function PublicOrderFormPage() {
               )}
 
               <button
-                className="primary-button"
+                className="primary-button public-order-submit-button"
                 onClick={submitPublicOrder}
                 disabled={publicOrderSubmitting}
-                style={{ opacity: publicOrderSubmitting ? 0.65 : 1, cursor: publicOrderSubmitting ? "not-allowed" : "pointer" }}
+                style={{ opacity: publicOrderSubmitting ? 0.78 : 1, cursor: publicOrderSubmitting ? "not-allowed" : "pointer" }}
               >
-                {publicOrderSubmitting ? "Submitting..." : "Order Now"}
+                <span className="public-order-submit-button__label">
+                  {publicOrderSubmitting ? "Submitting..." : "Order Now"}
+                </span>
+                {!publicOrderSubmitting && (
+                  <span className="public-order-submit-button__icon" aria-hidden="true">
+                    →
+                  </span>
+                )}
               </button>
             </article>
             {orderSummaryBlock}

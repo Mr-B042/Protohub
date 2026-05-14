@@ -252,7 +252,7 @@ export async function syncAgentStockAggregate(orgId: string | string[], agentId:
       quantity: totals.quantity,
       defective: totals.defective,
       missing: totals.missing
-    });
+    }, { onConflict: "agent_id,product_id" });
   if (upsertError) throw upsertError;
   return totals;
 }
