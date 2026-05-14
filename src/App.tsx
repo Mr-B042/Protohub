@@ -36,6 +36,7 @@ import {
   Package,
   PackageCheck,
   PackagePlus,
+  Minus,
   Flame,
   Pencil,
   Plus,
@@ -1160,6 +1161,16 @@ const agentLocationStockQuantity = (
   const location = findAgentLocation(agent, locationId);
   if (!location) return 0;
   return location.stock.find((row) => row.productId === productId)?.quantity ?? 0;
+};
+
+const agentLocationStockRowsWithQuantity = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
+  locationId: string | null | undefined
+) => {
+  if (!locationId) return [] as DeliveryAgentLocationStock[];
+  const location = findAgentLocation(agent, locationId);
+  if (!location) return [] as DeliveryAgentLocationStock[];
+  return location.stock.filter((row) => Number(row.quantity ?? 0) > 0);
 };
 
 const totalAgentProductStock = (
@@ -3074,6 +3085,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reorderPoint, setReorderPoint] = useState("0");
   const [stockChange, setStockChange] = useState("0");
   const [stockAdjustmentNote, setStockAdjustmentNote] = useState("");
+  const [stockAdjustmentMode, setStockAdjustmentMode] = useState<"add" | "remove">("add");
   const [products, setProducts] = useState<Product[]>([]);
   const [inventoryView, setInventoryView] = useState<InventoryView>(() => {
     // pricing / packages need a selectedProduct to render. selectedProductId
@@ -4738,13 +4750,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!agent) {
       return;
     }
-    setAssignStockProductId(products[0]?.id ?? "");
+    const assignableProducts = products.filter((product) => {
+      const hasExplicitComboType = (product.catalogType ?? "standard") === "combo_only";
+      if (hasExplicitComboType) return false;
+      const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
+      if (packageMixes.length === 0) return true;
+      const hasPricing = (product.pricings?.length ?? 0) > 0;
+      const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
+      const hasAgentStock = Number(product.agentStock ?? 0) > 0;
+      return hasPricing || hasWarehouseStock || hasAgentStock;
+    });
+    const primaryLocation = primaryAgentLocation(agent);
+    const primaryLocationId = primaryLocation?.id ?? "";
+    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, primaryLocationId);
+    const fallbackReconcileProductId =
+      agentStock.find((stock) => stock.agentId === agent.id && stock.quantity > 0)?.productId ??
+      assignableProducts[0]?.id ??
+      "";
+    setAssignStockProductId(assignableProducts[0]?.id ?? "");
     setAssignStockQty("1");
-    setReconcileProductId(agentStock.find((stock) => stock.agentId === agent.id)?.productId ?? products[0]?.id ?? "");
+    setAssignStockLocationId(primaryLocationId);
+    setReconcileProductId(primaryLocationStockRows[0]?.productId ?? fallbackReconcileProductId);
     setReconcileReturned("0");
     setReconcileDefective("0");
     setReconcileMissing("0");
     setReconcileNotes("");
+    setReconcileLocationId(primaryLocationId);
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
     setAgentWhatsappPhone(agent.whatsappPhone ?? "");
@@ -4754,6 +4785,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgentActive(agent.active);
     setAgentStockCapacity(agent.stockCapacity ?? 1000);
   }, [modal, selectedAgentId, agents, agentStock, products]);
+  useEffect(() => {
+    if (modal !== "reconcileAgentStock" || !selectedAgentId) {
+      return;
+    }
+    const agent = agents.find((item) => item.id === selectedAgentId);
+    if (!agent) {
+      return;
+    }
+    const targetLocation = findAgentLocation(agent, reconcileLocationId) ?? primaryAgentLocation(agent);
+    if (!targetLocation?.id) {
+      return;
+    }
+    const locationRows = agentLocationStockRowsWithQuantity(agent, targetLocation.id);
+    if (locationRows.length === 0) {
+      if (reconcileProductId !== "") {
+        setReconcileProductId("");
+        setReconcileReturned("0");
+        setReconcileDefective("0");
+        setReconcileMissing("0");
+      }
+      return;
+    }
+    const hasSelectedProductInLocation = locationRows.some((row) => row.productId === reconcileProductId);
+    if (!hasSelectedProductInLocation) {
+      setReconcileProductId(locationRows[0]?.productId ?? "");
+      setReconcileReturned("0");
+      setReconcileDefective("0");
+      setReconcileMissing("0");
+    }
+  }, [modal, selectedAgentId, reconcileLocationId, reconcileProductId, agents]);
   useEffect(() => {
     if (modal !== "editTeam" || !editTeamId) {
       return;
@@ -4969,7 +5030,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWriteOffReason("");
     setWriteOffCustomReason("");
   }, [modal, adjustStockEntryId]);
-  const isComboLibraryProduct = (product: Product) => (product.catalogType ?? "standard") === "combo_only";
+  const isLegacyComboWrapper = (product: Product) => {
+    const hasExplicitComboType = (product.catalogType ?? "standard") === "combo_only";
+    if (hasExplicitComboType) return false;
+    const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
+    if (packageMixes.length === 0) return false;
+    const hasPricing = (product.pricings?.length ?? 0) > 0;
+    const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
+    const hasAgentStock = Number(product.agentStock ?? 0) > 0;
+    return !hasPricing && !hasWarehouseStock && !hasAgentStock;
+  };
+  const isComboLibraryProduct = (product: Product) =>
+    (product.catalogType ?? "standard") === "combo_only" || isLegacyComboWrapper(product);
   const catalogProducts = products.filter((product) => !isComboLibraryProduct(product));
   const comboLibraryProducts = products.filter((product) => isComboLibraryProduct(product));
   const readyEmbedProducts = catalogProducts.filter((product) => product.active && !isTemporaryProductId(product.id) && persistedActiveProductPackages(product).length > 0);
@@ -8299,6 +8371,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setStockProductId(requestedProduct?.id ?? catalogProducts[0]?.id ?? "");
       setStockChange("0");
       setStockAdjustmentNote("");
+      setStockAdjustmentMode("add");
       setModal("updateStock");
       return;
     }
@@ -10920,7 +10993,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const submitStockUpdate = () => {
     const product = products.find((item) => item.id === stockProductId);
-    const change = Number(stockChange) || 0;
+    const quantity = Number(stockChange) || 0;
     const adjustmentNote = stockAdjustmentNote.trim();
 
     if (!product) {
@@ -10932,8 +11005,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
-    if (change === 0) {
-      showToast("Enter a positive or negative stock quantity.");
+    if (quantity === 0) {
+      showToast("Enter how many units you want to add or remove.");
       return;
     }
 
@@ -10941,6 +11014,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast("Add a short reason so the owner can review this warehouse stock change.");
       return;
     }
+
+    const change = stockAdjustmentMode === "remove" ? -Math.abs(quantity) : Math.abs(quantity);
 
     if (change < 0 && Math.abs(change) > product.warehouseStock) {
       showToast(`You can only remove up to ${product.warehouseStock} unit${product.warehouseStock === 1 ? "" : "s"} currently available in warehouse. Agent-held stock cannot be adjusted here.`);
@@ -10968,6 +11043,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const productSnapshot = product;
     setStockChange("0");
     setStockAdjustmentNote("");
+    setStockAdjustmentMode("add");
     closeModal();
     showToast(`${product.name} stock updated to ${nextBalance}.`);
     // Roll back the optimistic warehouse-stock mutation if the API rejects it.
@@ -13487,16 +13563,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
+    const primaryLocation = primaryAgentLocation(agent);
+    const primaryLocationId = primaryLocation?.id ?? "";
+    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, primaryLocationId);
+    const fallbackReconcileProductId =
+      agentStock.find((stock) => stock.agentId === agent.id && stock.quantity > 0)?.productId ??
+      catalogProducts[0]?.id ??
+      "";
     setSelectedAgentId(agent.id);
-    setAssignStockProductId(products[0]?.id ?? "");
+    setAssignStockProductId(catalogProducts[0]?.id ?? "");
     setAssignStockQty("1");
-    setAssignStockLocationId(primaryAgentLocation(agent)?.id ?? "");
-    setReconcileProductId(agentStock.find((stock) => stock.agentId === agent.id)?.productId ?? products[0]?.id ?? "");
+    setAssignStockLocationId(primaryLocationId);
+    setReconcileProductId(primaryLocationStockRows[0]?.productId ?? fallbackReconcileProductId);
     setReconcileReturned("0");
     setReconcileDefective("0");
     setReconcileMissing("0");
     setReconcileNotes("");
-    setReconcileLocationId(primaryAgentLocation(agent)?.id ?? "");
+    setReconcileLocationId(primaryLocationId);
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
     setAgentWhatsappPhone(agent.whatsappPhone ?? "");
@@ -13674,6 +13757,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     // money walking out the door.
     const productSnapshot = product;
     const agentStockSnapshot = currentStock;
+    const agentSnapshot = selectedAgent;
     const synthesizedMovementIds: string[] = [];
 
     // Accumulate defective/missing tallies — do NOT reset to 0
@@ -13689,6 +13773,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           : stock
       )
     );
+    adjustAgentLocationStock(selectedAgent.id, targetLocation.id, reconcileProductId, (current) => {
+      if (!current) return null;
+      return {
+        productId: current.productId,
+        quantity: nextQuantity,
+        defective: Number(current.defective ?? 0) + defective,
+        missing: Number(current.missing ?? 0) + missing
+      };
+    });
 
     if (product) {
       // Return good stock to warehouse
@@ -13756,6 +13849,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     // local synthesized movements are just optimistic placeholders that the
     // next stockApi.movements load will reconcile.
     agentsApi.reconcile(selectedAgent.id, {
+      locationId: targetLocation.id,
       productId: reconcileProductId,
       returned,
       defective,
@@ -13771,6 +13865,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           )
         );
       }
+      setAgents((value) => value.map((a) => a.id === agentSnapshot.id ? agentSnapshot : a));
       if (productSnapshot && returned > 0) {
         setProducts((value) => value.map((p) => p.id === productSnapshot.id ? productSnapshot : p));
       }
@@ -15530,6 +15625,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setStockProductId(requestedProduct?.id ?? catalogProducts[0]?.id ?? "");
     setStockChange("0");
     setStockAdjustmentNote("");
+    setStockAdjustmentMode("add");
     setModal("updateStock");
     syncHashRoute(
       requestedProduct?.id
@@ -31388,15 +31484,58 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="modal-form">
                 {(() => {
                   const selectedStockProduct = products.find((product) => product.id === stockProductId);
+                  const quantity = Number(stockChange) || 0;
+                  const signedPreview = stockAdjustmentMode === "remove" ? -Math.abs(quantity) : Math.abs(quantity);
                   return (
                     <>
                 <p>Add or remove warehouse-only stock from a product. Stock already with agents is locked and cannot be changed here.</p>
                 <label><span>Select Product *</span><select aria-label="Select product" value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}><option value="">Choose a product...</option>{catalogProducts.map((product) => <option key={product.id} value={product.id}>{product.name} - {product.warehouseStock} in stock</option>)}</select></label>
-                <label><span>Quantity Change *</span><input value={stockChange} onChange={(event) => setStockChange(event.target.value)} inputMode="numeric" /></label>
+                <div className="space-y-2">
+                  <span className="block text-sm font-medium text-gray-700">Choose action *</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors ${stockAdjustmentMode === "add" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                      onClick={() => setStockAdjustmentMode("add")}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add stock
+                    </button>
+                    <button
+                      type="button"
+                      className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors ${stockAdjustmentMode === "remove" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                      onClick={() => setStockAdjustmentMode("remove")}
+                    >
+                      <Minus className="h-4 w-4" />
+                      Remove stock
+                    </button>
+                  </div>
+                </div>
+                <label>
+                  <span>Units *</span>
+                  <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5 focus-within:border-[#1F8FE0] focus-within:ring-2 focus-within:ring-[#1F8FE0]/10">
+                    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${stockAdjustmentMode === "add" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+                      {stockAdjustmentMode === "add" ? "+" : "−"}
+                    </span>
+                    <input
+                      value={stockChange}
+                      onChange={(event) => setStockChange(event.target.value.replace(/[^\d]/g, ""))}
+                      inputMode="numeric"
+                      placeholder="0"
+                      className="min-w-0 flex-1 border-0 bg-transparent p-0 text-lg font-semibold text-gray-900 focus:outline-none focus:ring-0"
+                    />
+                    <span className="text-xs font-medium uppercase tracking-wide text-gray-400">units</span>
+                  </div>
+                </label>
                 {selectedStockProduct && (
                   <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                     <p className="m-0 font-medium">Warehouse available: {selectedStockProduct.warehouseStock}</p>
                     <p className="m-0 mt-1 text-xs text-amber-800">With agents: {selectedStockProduct.agentStock} · only the warehouse-available stock above can be adjusted here.</p>
+                  </div>
+                )}
+                {selectedStockProduct && quantity > 0 && (
+                  <div className={`rounded-lg px-3 py-2 text-sm font-medium ${stockAdjustmentMode === "add" ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"}`}>
+                    {stockAdjustmentMode === "add" ? "Adding" : "Removing"} {Math.abs(signedPreview)} unit{Math.abs(signedPreview) === 1 ? "" : "s"} will move <strong>{selectedStockProduct.name}</strong> warehouse stock from <strong>{selectedStockProduct.warehouseStock}</strong> to <strong>{selectedStockProduct.warehouseStock + signedPreview}</strong>.
                   </div>
                 )}
                 <label>
@@ -31408,10 +31547,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     placeholder="Example: damaged units removed after warehouse count"
                   />
                 </label>
-                <p>Positive numbers add warehouse stock, negative numbers remove it. This note is required so Owner/Admin can review why the change was made.</p>
+                <p>This note is required so Owner/Admin can review why the warehouse stock was changed.</p>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitStockUpdate}>Update Stock</button>
+                  <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${stockAdjustmentMode === "add" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}`} onClick={submitStockUpdate}>
+                    {stockAdjustmentMode === "add" ? <Plus className="h-4 w-4" /> : <Minus className="h-4 w-4" />}
+                    {stockAdjustmentMode === "add" ? "Add to warehouse" : "Remove from warehouse"}
+                  </button>
                 </div>
                     </>
                   );
@@ -32692,8 +32834,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                {/* Actions */}
 	                <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("assignAgentStock")}>Assign Stock</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("reconcileAgentStock")}>Reconcile</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(selectedAgent.id)}>Assign Stock</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentReconcileRoute(selectedAgent.id)}>Reconcile</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
 	                </div>
 	              </div>
@@ -32720,7 +32862,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {agentLocations.length > 0 && (
                     <label><span>State Hub</span><select value={selectedLocation?.id ?? ""} onChange={(event) => setAssignStockLocationId(event.target.value)}>{agentLocations.map((location) => <option key={location.id} value={location.id}>{agentLocationLabel(location)}{location.active ? "" : " · inactive"}</option>)}</select></label>
                   )}
-	                <label><span>Product</span><select value={assignStockProductId} onChange={(event) => setAssignStockProductId(event.target.value)}>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · warehouse {product.warehouseStock}</option>)}</select></label>
+	                <label><span>Product</span><select value={assignStockProductId} onChange={(event) => setAssignStockProductId(event.target.value)}>{catalogProducts.map((product) => <option key={product.id} value={product.id}>{product.name} · warehouse {product.warehouseStock}</option>)}</select></label>
                   {selectedLocation && assignStockProductId && (
                     <p className="text-xs text-gray-500 -mt-1">{agentLocationLabel(selectedLocation)} currently holds {locationStockQty} unit{locationStockQty === 1 ? "" : "s"} of this product.</p>
                   )}
@@ -32743,7 +32885,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              }
                 const agentLocations = agentLocationRows(selectedAgent);
                 const selectedLocation = findAgentLocation(selectedAgent, reconcileLocationId) ?? primaryAgentLocation(selectedAgent);
-	              const currentRow = agentStockRows.find((s) => s.productId === reconcileProductId);
+                const locationStockOptions = selectedLocation?.id ? agentLocationStockRowsWithQuantity(selectedAgent, selectedLocation.id) : [];
+                const hasLocationStock = locationStockOptions.length > 0;
+	              const currentRow = locationStockOptions.find((s) => s.productId === reconcileProductId) ?? agentStockRows.find((s) => s.productId === reconcileProductId);
 	              const currentQuantity = selectedLocation?.id ? agentLocationStockQuantity(selectedAgent, selectedLocation.id, reconcileProductId) : (currentRow?.quantity ?? 0);
 	              const locationStockRow = selectedLocation?.stock.find((row) => row.productId === reconcileProductId);
 	              const runningDefective = Number(locationStockRow?.defective ?? currentRow?.defective ?? 0);
@@ -32777,13 +32921,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       )}
 	                    <div>
 	                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Product</p>
-	                      {agentStockRows.length > 1 ? (
-	                        <select className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={reconcileProductId} onChange={(event) => { setReconcileProductId(event.target.value); setReconcileReturned("0"); setReconcileDefective("0"); setReconcileMissing("0"); }}>
-	                          {agentStockRows.map((stock) => <option key={stock.productId} value={stock.productId}>{products.find((product) => product.id === stock.productId)?.name ?? stock.productId}</option>)}
-	                        </select>
-	                      ) : (
-	                        <p className="text-sm font-bold text-gray-900 mt-0.5">{productName}</p>
-	                      )}
+                        {hasLocationStock ? (
+                          locationStockOptions.length > 1 ? (
+                            <select className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={reconcileProductId} onChange={(event) => { setReconcileProductId(event.target.value); setReconcileReturned("0"); setReconcileDefective("0"); setReconcileMissing("0"); }}>
+                              {locationStockOptions.map((stock) => <option key={stock.productId} value={stock.productId}>{products.find((product) => product.id === stock.productId)?.name ?? stock.productId}</option>)}
+                            </select>
+                          ) : (
+                            <p className="text-sm font-bold text-gray-900 mt-0.5">{productName}</p>
+                          )
+                        ) : (
+                          <p className="text-sm font-medium text-amber-700 mt-0.5">No stock in this state hub yet.</p>
+                        )}
 	                    </div>
 	                    <div>
 	                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Current Stock</p>
@@ -32866,7 +33014,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={overReconciled || totalRemoved === 0} onClick={reconcileSelectedAgentStock}>Reconcile Stock</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={!hasLocationStock || !reconcileProductId || overReconciled || totalRemoved === 0} onClick={reconcileSelectedAgentStock}>Reconcile Stock</button>
 	                  </div>
 	                </div>
 	              );
