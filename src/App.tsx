@@ -1173,6 +1173,11 @@ const agentLocationStockRowsWithQuantity = (
   return location.stock.filter((row) => Number(row.quantity ?? 0) > 0);
 };
 
+const preferredReconcileLocation = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null
+) => agentLocationRows(agent).find((location) => (location.stock ?? []).some((row) => Number(row.quantity ?? 0) > 0))
+  ?? primaryAgentLocation(agent);
+
 const totalAgentProductStock = (
   agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
   productId: string | null | undefined
@@ -4762,7 +4767,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     const primaryLocation = primaryAgentLocation(agent);
     const primaryLocationId = primaryLocation?.id ?? "";
-    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, primaryLocationId);
+    const reconcileLocation = preferredReconcileLocation(agent);
+    const reconcileLocationId = reconcileLocation?.id ?? primaryLocationId;
+    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, reconcileLocationId);
     const fallbackReconcileProductId =
       agentStock.find((stock) => stock.agentId === agent.id && stock.quantity > 0)?.productId ??
       assignableProducts[0]?.id ??
@@ -4775,7 +4782,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setReconcileDefective("0");
     setReconcileMissing("0");
     setReconcileNotes("");
-    setReconcileLocationId(primaryLocationId);
+    setReconcileLocationId(reconcileLocationId);
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
     setAgentWhatsappPhone(agent.whatsappPhone ?? "");
@@ -13565,7 +13572,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
     const primaryLocation = primaryAgentLocation(agent);
     const primaryLocationId = primaryLocation?.id ?? "";
-    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, primaryLocationId);
+    const reconcileLocation = preferredReconcileLocation(agent);
+    const reconcileLocationId = reconcileLocation?.id ?? primaryLocationId;
+    const primaryLocationStockRows = agentLocationStockRowsWithQuantity(agent, reconcileLocationId);
     const fallbackReconcileProductId =
       agentStock.find((stock) => stock.agentId === agent.id && stock.quantity > 0)?.productId ??
       catalogProducts[0]?.id ??
@@ -13579,7 +13588,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setReconcileDefective("0");
     setReconcileMissing("0");
     setReconcileNotes("");
-    setReconcileLocationId(primaryLocationId);
+    setReconcileLocationId(reconcileLocationId);
     setAgentName(agent.name);
     setAgentPhone(agent.phone);
     setAgentWhatsappPhone(agent.whatsappPhone ?? "");

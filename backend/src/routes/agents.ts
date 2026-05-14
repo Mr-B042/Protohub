@@ -386,26 +386,110 @@ router.post("/:id/reconcile",
       return;
     }
 
+    const stockAcrossLocations = locations
+      .map((location) => {
+        const rows = Array.isArray(location.stock) ? location.stock : [];
+        const totals = rows.reduce<{ quantity: number; defective: number; missing: number }>((acc, row) => {
+          const rowProductId = String(row.product_id ?? row.productId ?? "");
+          if (rowProductId !== productId) return acc;
+          return {
+            quantity: acc.quantity + Math.max(0, Number(row.quantity ?? 0)),
+            defective: acc.defective + Math.max(0, Number(row.defective ?? 0)),
+            missing: acc.missing + Math.max(0, Number(row.missing ?? 0))
+          };
+        }, { quantity: 0, defective: 0, missing: 0 });
+        return {
+          location,
+          ...totals
+        };
+      })
+      .filter((row) => row.quantity > 0 || row.defective > 0 || row.missing > 0);
+    const stockInOtherLocations = stockAcrossLocations.filter((row) => row.location.id !== targetLocation.id && row.quantity > 0);
+
     // Fetch current agent location stock
-    const { data: stock } = await supabase
+    const { data: currentStockRow, error: stockError } = await supabase
       .from("agent_location_stock")
       .select("quantity, defective, missing")
       .eq("agent_location_id", targetLocation.id)
       .eq("product_id", productId)
-      .single();
-
-    if (!stock || stock.quantity < totalRemoved) {
-      res.status(400).json({ error: `Not enough agent stock. Available: ${stock?.quantity ?? 0}` });
+      .maybeSingle();
+    if (stockError) {
+      res.status(500).json({ error: stockError.message });
       return;
     }
 
-    const nextQty = stock.quantity - totalRemoved;
+    let stock = currentStockRow
+      ? {
+          quantity: Math.max(0, Number(currentStockRow.quantity ?? 0)),
+          defective: Math.max(0, Number(currentStockRow.defective ?? 0)),
+          missing: Math.max(0, Number(currentStockRow.missing ?? 0))
+        }
+      : null;
+
+    // Legacy fallback: older agent records can still have aggregate agent_stock without
+    // a matching agent_location_stock row yet. Seed the selected hub from aggregate once
+    // so multi-state reconcile can keep working without fake "Available: 0" failures.
+    if (!stock) {
+      const { data: aggregateRow, error: aggregateError } = await supabase
+        .from("agent_stock")
+        .select("quantity, defective, missing")
+        .eq("agent_id", agentId)
+        .eq("product_id", productId)
+        .maybeSingle();
+      if (aggregateError) {
+        res.status(500).json({ error: aggregateError.message });
+        return;
+      }
+
+      const aggregate = {
+        quantity: Math.max(0, Number(aggregateRow?.quantity ?? 0)),
+        defective: Math.max(0, Number(aggregateRow?.defective ?? 0)),
+        missing: Math.max(0, Number(aggregateRow?.missing ?? 0))
+      };
+
+      if (aggregate.quantity > 0 && stockAcrossLocations.length === 0) {
+        const { error: seedError } = await supabase
+          .from("agent_location_stock")
+          .upsert({
+            agent_location_id: targetLocation.id,
+            product_id: productId,
+            quantity: aggregate.quantity,
+            defective: aggregate.defective,
+            missing: aggregate.missing
+          }, { onConflict: "agent_location_id,product_id" });
+        if (seedError) {
+          res.status(500).json({ error: seedError.message });
+          return;
+        }
+        stock = aggregate;
+      }
+    }
+
+    const currentQuantity = Number(stock?.quantity ?? 0);
+    const currentDefective = Number(stock?.defective ?? 0);
+    const currentMissing = Number(stock?.missing ?? 0);
+
+    if (currentQuantity < totalRemoved) {
+      if (currentQuantity <= 0 && stockInOtherLocations.length > 0) {
+        const otherHubSummary = stockInOtherLocations
+          .map((row) => `${row.location.name} (${row.quantity})`)
+          .join(", ");
+        res.status(400).json({
+          error: `No stock is available in ${targetLocation.name}. This item is currently stocked in: ${otherHubSummary}.`
+        });
+        return;
+      }
+      res.status(400).json({ error: `Not enough agent stock. Available: ${currentQuantity}` });
+      return;
+    }
+
+    const nextQty = currentQuantity - totalRemoved;
 
     // Update agent location stock
     await supabase.from("agent_location_stock").update({
       quantity: nextQty,
-      defective: (stock.defective ?? 0) + defective,
-      missing: (stock.missing ?? 0) + missing
+      defective: currentDefective + defective,
+      missing: currentMissing + missing
     }).eq("agent_location_id", targetLocation.id).eq("product_id", productId);
 
     const totals = await syncAgentStockAggregate(orgId, agentId, productId);
