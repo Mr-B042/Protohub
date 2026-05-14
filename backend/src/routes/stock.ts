@@ -41,7 +41,7 @@ router.get("/movements", async (req, res) => {
 const UpdateSchema = z.object({
   productId: z.string().uuid(),
   change:    z.number().int(),            // positive = add, negative = remove
-  note:      z.string().optional()
+  note:      z.string().trim().min(3, "Reason is required.").max(300, "Reason is too long.")
 });
 
 router.post("/update",
@@ -56,13 +56,22 @@ router.post("/update",
 
     const { data: product, error: fetchError } = await supabase
       .from("products")
-      .select("warehouse_stock, reorder_point, name")
+      .select("warehouse_stock, agent_stock, reorder_point, name")
       .eq("id", productId)
       .eq("org_id", req.user!.orgId)
       .single();
 
     if (fetchError || !product) {
       res.status(404).json({ error: "Product not found." });
+      return;
+    }
+
+    const agentHeld = Number(product.agent_stock ?? 0);
+
+    if (change < 0 && Math.abs(change) > product.warehouse_stock) {
+      res.status(400).json({
+        error: `You can only remove up to ${product.warehouse_stock} unit${product.warehouse_stock === 1 ? "" : "s"} currently available in the warehouse. ${agentHeld > 0 ? `${agentHeld} unit${agentHeld === 1 ? "" : "s"} are already with agents and cannot be adjusted here.` : "Agent stock cannot be adjusted here."}`
+      });
       return;
     }
 
@@ -96,6 +105,27 @@ router.post("/update",
 
     if (movError) { res.status(500).json({ error: movError.message }); return; }
 
+    const movementLabel = change > 0 ? "added to" : "removed from";
+    const movementMessage = `Warehouse stock ${movementLabel} ${product.name}: ${change > 0 ? "+" : "−"}${Math.abs(change)} unit${Math.abs(change) === 1 ? "" : "s"} · warehouse ${product.warehouse_stock} → ${newStock}${agentHeld > 0 ? ` · with agents ${agentHeld}` : ""} · reason: ${note} · by ${req.user!.name}`;
+    const branding = await getOrgPushBranding(req.user!.orgId);
+    await Promise.allSettled([
+      supabase.from("system_notifications").insert({
+        org_id: req.user!.orgId,
+        type: "info",
+        message: movementMessage,
+        product_id: productId
+      }),
+      sendPushToRoles(req.user!.orgId, ["Owner", "Admin"], {
+        title: "Warehouse stock adjusted",
+        body: movementMessage,
+        kind: "info",
+        url: "/dashboard/admin/inventory",
+        tag: `warehouse-stock-${productId}`,
+        brandName: branding.brandName,
+        brandLogo: branding.brandLogo
+      })
+    ]);
+
     // Check low stock threshold
     const wasAbove = product.warehouse_stock > product.reorder_point;
     const nowBelow = newStock <= product.reorder_point;
@@ -107,7 +137,6 @@ router.post("/update",
         message,
         product_id: productId
       });
-      const branding = await getOrgPushBranding(req.user!.orgId);
       await sendPushToRoles(req.user!.orgId, ["Owner", "Admin", "Inventory Manager"], {
         title: "Low Stock Alert",
         body: message,

@@ -3073,6 +3073,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [openingStock, setOpeningStock] = useState("0");
   const [reorderPoint, setReorderPoint] = useState("0");
   const [stockChange, setStockChange] = useState("0");
+  const [stockAdjustmentNote, setStockAdjustmentNote] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [inventoryView, setInventoryView] = useState<InventoryView>(() => {
     // pricing / packages need a selectedProduct to render. selectedProductId
@@ -8291,8 +8292,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (section === "inventory" && parts[3] === "update-stock") {
       setActivePage("Inventory");
       setInventoryView("dashboard");
-      setStockProductId(catalogProducts[0]?.id ?? "");
+      const requestedProductId = parts[4];
+      const requestedProduct = requestedProductId
+        ? catalogProducts.find((product) => product.id === requestedProductId)
+        : undefined;
+      setStockProductId(requestedProduct?.id ?? catalogProducts[0]?.id ?? "");
       setStockChange("0");
+      setStockAdjustmentNote("");
       setModal("updateStock");
       return;
     }
@@ -10915,6 +10921,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const submitStockUpdate = () => {
     const product = products.find((item) => item.id === stockProductId);
     const change = Number(stockChange) || 0;
+    const adjustmentNote = stockAdjustmentNote.trim();
 
     if (!product) {
       showToast("Choose a product first.");
@@ -10930,8 +10937,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
-    const nextBalance = Math.max(0, product.warehouseStock + change);
-    const actualChange = nextBalance - product.warehouseStock;
+    if (!adjustmentNote) {
+      showToast("Add a short reason so the owner can review this warehouse stock change.");
+      return;
+    }
+
+    if (change < 0 && Math.abs(change) > product.warehouseStock) {
+      showToast(`You can only remove up to ${product.warehouseStock} unit${product.warehouseStock === 1 ? "" : "s"} currently available in warehouse. Agent-held stock cannot be adjusted here.`);
+      return;
+    }
+
+    const nextBalance = product.warehouseStock + change;
+    const actualChange = change;
     setProducts((value) => value.map((item) => (item.id === product.id ? { ...item, warehouseStock: nextBalance } : item)));
     setStockMovements((value) => [
       {
@@ -10943,41 +10960,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         qty: actualChange,
         balanceAfter: nextBalance,
         by: ownerName,
-        note: actualChange >= 0 ? "Manual stock increase" : "Manual stock reduction"
+        note: adjustmentNote
       },
       ...value
     ]);
-    // Low-stock notification on manual reduction (kept as a distinct alert
-    // so it stays prominent / push-eligible even if Info notifications get
-    // muted at the org level later).
-    const crossedReorder = actualChange < 0 && nextBalance <= product.reorderPoint && product.warehouseStock > product.reorderPoint;
-    if (crossedReorder) {
-      pushSystemNotification({
-        type: "low_stock",
-        title: "Low stock",
-        message: `${product.name} — warehouse down to ${nextBalance} unit${nextBalance === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
-        productId: product.id
-      });
-    }
-    // Audit-trail notification for the manual movement itself.
-    if (actualChange !== 0) {
-      const sign = actualChange > 0 ? "+" : "−";
-      pushSystemNotification({
-        type: "info",
-        title: actualChange > 0 ? "Warehouse stock added" : "Warehouse stock corrected",
-        message: `${product.name}: ${sign}${Math.abs(actualChange)} unit${Math.abs(actualChange) === 1 ? "" : "s"} · new balance ${nextBalance} (by ${ownerName})`,
-        productId: product.id
-      });
-    }
     const _suProdId = product.id;
     const productSnapshot = product;
     setStockChange("0");
+    setStockAdjustmentNote("");
     closeModal();
     showToast(`${product.name} stock updated to ${nextBalance}.`);
     // Roll back the optimistic warehouse-stock mutation if the API rejects it.
     // Without this, two reps could each apply +5 locally on a flaky network and
     // only one persists, leaving the warehouse balance off by 5 until reload.
-    stockApi.update({ productId: _suProdId, change: actualChange, note: actualChange >= 0 ? "Manual stock increase" : "Manual stock reduction" }).catch((err: any) => {
+    stockApi.update({ productId: _suProdId, change: actualChange, note: adjustmentNote }).catch((err: any) => {
       setProducts((value) => value.map((item) => item.id === _suProdId ? productSnapshot : item));
       showToast(`Stock change for ${productSnapshot.name} not synced: ${err?.message ?? "please retry"}.`);
     });
@@ -15525,13 +15521,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     syncHashRoute("#/dashboard/admin/inventory/combos/new");
   };
 
-  const openInventoryUpdateStockRoute = () => {
+  const openInventoryUpdateStockRoute = (productId?: string) => {
     setActivePage("Inventory");
     setInventoryView("dashboard");
-    setStockProductId(catalogProducts[0]?.id ?? "");
+    const requestedProduct = productId
+      ? catalogProducts.find((product) => product.id === productId)
+      : undefined;
+    setStockProductId(requestedProduct?.id ?? catalogProducts[0]?.id ?? "");
     setStockChange("0");
+    setStockAdjustmentNote("");
     setModal("updateStock");
-    syncHashRoute("#/dashboard/admin/inventory/update-stock");
+    syncHashRoute(
+      requestedProduct?.id
+        ? `#/dashboard/admin/inventory/update-stock/${requestedProduct.id}`
+        : "#/dashboard/admin/inventory/update-stock"
+    );
   };
 
   const openInventoryHistoryRoute = () => {
@@ -17609,7 +17613,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (modalBeforeClose === "addProduct" && hashRoute === "#/dashboard/admin/inventory/combos/new") {
       syncHashRoute("#/dashboard/admin/inventory/combos");
     }
-    if (modalBeforeClose === "updateStock" && hashRoute === "#/dashboard/admin/inventory/update-stock") {
+    if (modalBeforeClose === "updateStock" && hashRoute.startsWith("#/dashboard/admin/inventory/update-stock")) {
       syncHashRoute("#/dashboard/admin/inventory");
     }
     if (modalBeforeClose === "productDetails" && hashRoute.startsWith("#/dashboard/admin/inventory/products/")) {
@@ -29077,7 +29081,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-violet-200 text-violet-700 text-sm font-semibold hover:bg-violet-50 transition-colors" onClick={openInventoryCombosRoute}><Boxes className="w-4 h-4" /> Combo Library</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
-                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryUpdateStockRoute}><RefreshCw className="w-4 h-4" /> Update Stock</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryUpdateStockRoute()}><RefreshCw className="w-4 h-4" /> Update Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                     </div>
                   </div>
@@ -31382,14 +31386,36 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
             {modal === "updateStock" && (
               <div className="modal-form">
-                <p>Add or remove stock from a product. Use positive numbers to add stock, negative numbers to remove stock.</p>
-                <label><span>Select Product *</span><select aria-label="Select product" value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}><option value="">Choose a product...</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} - {product.warehouseStock} in stock</option>)}</select></label>
+                {(() => {
+                  const selectedStockProduct = products.find((product) => product.id === stockProductId);
+                  return (
+                    <>
+                <p>Add or remove warehouse-only stock from a product. Stock already with agents is locked and cannot be changed here.</p>
+                <label><span>Select Product *</span><select aria-label="Select product" value={stockProductId} onChange={(event) => setStockProductId(event.target.value)}><option value="">Choose a product...</option>{catalogProducts.map((product) => <option key={product.id} value={product.id}>{product.name} - {product.warehouseStock} in stock</option>)}</select></label>
                 <label><span>Quantity Change *</span><input value={stockChange} onChange={(event) => setStockChange(event.target.value)} inputMode="numeric" /></label>
-                <p>Positive numbers add stock, negative numbers remove stock</p>
+                {selectedStockProduct && (
+                  <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <p className="m-0 font-medium">Warehouse available: {selectedStockProduct.warehouseStock}</p>
+                    <p className="m-0 mt-1 text-xs text-amber-800">With agents: {selectedStockProduct.agentStock} · only the warehouse-available stock above can be adjusted here.</p>
+                  </div>
+                )}
+                <label>
+                  <span>Reason for this adjustment *</span>
+                  <textarea
+                    value={stockAdjustmentNote}
+                    onChange={(event) => setStockAdjustmentNote(event.target.value)}
+                    rows={3}
+                    placeholder="Example: damaged units removed after warehouse count"
+                  />
+                </label>
+                <p>Positive numbers add warehouse stock, negative numbers remove it. This note is required so Owner/Admin can review why the change was made.</p>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitStockUpdate}>Update Stock</button>
                 </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -31400,7 +31426,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">SKU</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.sku}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Unit Cost</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.unitCost ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => { const pp = primaryPricing(selectedProduct); if (pp) openEditPricing(pp); else openAddPricing(); }}><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Selling Price</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(primaryPricing(selectedProduct)?.sellingPrice ?? 0, primaryPricing(selectedProduct)?.currency ?? "NGN")}</strong><Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" /></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Warehouse Stock</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.warehouseStock}</strong></article>
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5 relative group cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => openInventoryUpdateStockRoute(selectedProduct.id)}>
+                    <span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Warehouse Stock</span>
+                    <strong className="text-sm font-semibold text-gray-900">{selectedProduct.warehouseStock}</strong>
+                    <Pencil className="w-3.5 h-3.5 text-[#1F8FE0] absolute top-2 right-2" />
+                  </article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Reorder Point</span><strong className="text-sm font-semibold text-gray-900">{selectedProduct.reorderPoint}</strong></article>
                 </div>
                 <section className="flex flex-col gap-3">
