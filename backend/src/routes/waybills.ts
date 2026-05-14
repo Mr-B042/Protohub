@@ -325,7 +325,7 @@ router.patch("/:id/status",
             agent_location_id: data.to_agent_location_id,
             product_id: data.product_id,
             quantity: balanceAfter
-          });
+          }, { onConflict: "agent_location_id,product_id" });
           await syncAgentStockAggregate(req.user!.orgId, data.to_agent_id, data.product_id);
           if (product) {
             await supabase.from("products").update({
@@ -351,7 +351,7 @@ router.patch("/:id/status",
             agent_location_id: data.from_agent_location_id,
             product_id: data.product_id,
             quantity: balanceAfter
-          });
+          }, { onConflict: "agent_location_id,product_id" });
           await syncAgentStockAggregate(req.user!.orgId, data.from_agent_id, data.product_id);
           if (product) {
             await supabase.from("products").update({

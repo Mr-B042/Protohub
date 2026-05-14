@@ -287,7 +287,7 @@ router.post("/:id/stock",
       .select("quantity")
       .eq("agent_location_id", targetLocation.id)
       .eq("product_id", productId)
-      .single();
+      .maybeSingle();
 
     const newQty = (existing?.quantity ?? 0) + quantity;
 
@@ -299,7 +299,7 @@ router.post("/:id/stock",
         agent_location_id: targetLocation.id,
         product_id: productId,
         quantity: newQty
-      });
+      }, { onConflict: "agent_location_id,product_id" });
     if (stockError) { res.status(500).json({ error: stockError.message }); return; }
 
     const totals = await syncAgentStockAggregate(orgId, agentId, productId);
