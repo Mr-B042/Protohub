@@ -75,14 +75,23 @@ router.post("/update",
       return;
     }
 
-    // Atomic single-statement update via DB function (migration_004).
-    const { data: newStockVal, error: rpcError } = await supabase.rpc("adjust_warehouse_stock", {
-      p_product_id: productId,
-      p_org_id:     req.user!.orgId,
-      p_delta:      change
-    });
-    if (rpcError) { res.status(500).json({ error: rpcError.message }); return; }
-    const newStock: number = typeof newStockVal === "number" ? newStockVal : Number(newStockVal);
+    const targetStock = Number(product.warehouse_stock ?? 0) + change;
+
+    const { data: updatedProduct, error: updateError } = await supabase
+      .from("products")
+      .update({ warehouse_stock: targetStock })
+      .eq("id", productId)
+      .eq("org_id", req.user!.orgId)
+      .eq("warehouse_stock", product.warehouse_stock)
+      .select("warehouse_stock")
+      .single();
+
+    if (updateError) { res.status(500).json({ error: updateError.message }); return; }
+    if (!updatedProduct) {
+      res.status(409).json({ error: "Warehouse stock changed just now. Please refresh and try again." });
+      return;
+    }
+    const newStock = Number(updatedProduct.warehouse_stock ?? targetStock);
 
     // Log the movement
     const movType = change > 0 ? "Stock Added" : "Correction";
