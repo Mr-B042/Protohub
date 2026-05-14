@@ -30631,8 +30631,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                </section>
 
                   {renderFollowUpWorkSection(selectedOrder, { compact: true })}
-
-	                <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-3`}>
+		                <section className={`${orderPanelMutedClass} rounded-xl p-4 flex flex-col gap-3`}>
 	                  <div><h3 className={`text-sm font-semibold ${orderTitleTextClass}`}>Communication Timeline</h3><p className={orderMutedTextClass}>{orderNotesFor(selectedOrder).length} note{orderNotesFor(selectedOrder).length === 1 ? "" : "s"}</p></div>
 	                  <div className="flex flex-col gap-3 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
                       {orderNotesFor(selectedOrder).length === 0 ? (

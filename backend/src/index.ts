@@ -56,6 +56,9 @@ const configuredFrontendOrigins = [
 
 const defaultFrontendOrigins = [
   "http://localhost:5173",
+  "http://localhost",
+  "https://localhost",
+  "capacitor://localhost",
   "https://protohub-zeta.vercel.app",
   "https://brightpathhubs.com",
   "https://www.brightpathhubs.com"
