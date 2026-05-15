@@ -89,6 +89,8 @@ type CrossSellSelection = {
   quantity: number;
 };
 
+const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
+
 type PendingUpsellOffer = {
   orderId: string;
   customer: string;
@@ -692,11 +694,12 @@ export default function PublicOrderFormPage() {
 
     cartSyncTimerRef.current = window.setTimeout(() => {
       if (publicOrderSubmittingRef.current) return;
+      const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
       cartsApi.capture({
         id: cartId,
         customer: orderFormName.trim() || "Partial lead",
-        phone: orderFormPhone.trim() || orderFormWhatsapp.trim() || "No phone yet",
-        whatsapp: orderFormWhatsapp.trim() || undefined,
+        phone: orderFormPhone.trim() || whatsappDigits || "No phone yet",
+        whatsapp: whatsappDigits || undefined,
         city: orderFormCity.trim() || undefined,
         state: orderFormState.trim() || undefined,
         productId: publicProduct.id,
@@ -816,13 +819,19 @@ export default function PublicOrderFormPage() {
     }
 
     const phoneDigits = orderFormPhone.replace(/\D/g, "");
+    const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
     if (phoneDigits.length < 7 || phoneDigits.length > 15) {
       showToast("Please enter a valid phone number.");
       return;
     }
 
-    if (settings.showWhatsapp && settings.requireWhatsapp && !orderFormWhatsapp.trim()) {
+    if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
       showToast("WhatsApp number is required.");
+      return;
+    }
+
+    if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+      showToast("Please enter a valid WhatsApp number.");
       return;
     }
 
@@ -860,7 +869,7 @@ export default function PublicOrderFormPage() {
         cartId: abandonedDraftCartId || undefined,
         customer: customerName,
         phone: orderFormPhone.trim(),
-        whatsapp: orderFormWhatsapp.trim() || undefined,
+        whatsapp: whatsappDigits || undefined,
         email: orderFormEmail.trim() || undefined,
         address: orderFormAddress.trim() || undefined,
         city: orderFormCity.trim() || undefined,
@@ -1301,9 +1310,12 @@ export default function PublicOrderFormPage() {
                       <input
                         style={{ flex: 1 }}
                         value={orderFormWhatsapp}
-                        onChange={(event) => setOrderFormWhatsapp(event.target.value)}
+                        onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))}
                         placeholder={`Your WhatsApp Number${settings.requireWhatsapp ? " *" : ""}`}
                         inputMode="tel"
+                        pattern="[0-9]{7,15}"
+                        autoComplete="tel-national"
+                        maxLength={15}
                       />
                     </div>
                   </label>

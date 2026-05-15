@@ -49,7 +49,7 @@ const PublicOrderSchema = z.object({
   cartId:       z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/).optional(),
   customer:     z.string().min(1).max(120),
   phone:        z.string().min(1).max(40),
-  whatsapp:     z.string().max(40).optional(),
+  whatsapp:     z.string().regex(/^\d{7,15}$/).optional(),
   email:        z.string().email().max(254).optional().or(z.literal("")),
   address:      z.string().max(500).optional(),
   city:         z.string().max(80).optional(),

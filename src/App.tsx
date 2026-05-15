@@ -754,6 +754,8 @@ const productCurrencies: Record<ProductCurrencyCode, { label: string; symbol: st
   EUR: { label: "Euro", symbol: "€", locale: "de-DE", currency: "EUR" }
 };
 
+const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
+
 const nigeriaStates = [
   "Abia",
   "Adamawa",
@@ -9762,8 +9764,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const cartPatch: AbandonedCartRecord = {
       id: abandonedDraftCartId || makeCartId(),
       customer: orderFormName.trim() || "Partial lead",
-      phone: orderFormPhone.trim() || orderFormWhatsapp.trim() || "No phone yet",
-      whatsapp: orderFormWhatsapp.trim(),
+      phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "No phone yet",
+      whatsapp: sanitizePhoneDigitsInput(orderFormWhatsapp),
       email: orderFormEmail.trim(),
       city: orderFormCity.trim(),
       state: orderFormState.trim(),
@@ -13214,13 +13216,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     // Reject obvious bot garbage early — Nigerian numbers are 10–11 digits;
     // accept 7–15 digits to allow international numbers and room for typos.
     const phoneDigits = orderFormPhone.replace(/\D/g, "");
+    const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
     if (phoneDigits.length < 7 || phoneDigits.length > 15) {
       showToast("Please enter a valid phone number.");
       return;
     }
 
-    if (showWhatsappField && requireWhatsapp && !orderFormWhatsapp.trim()) {
+    if (showWhatsappField && requireWhatsapp && !whatsappDigits) {
       showToast("WhatsApp number is required.");
+      return;
+    }
+
+    if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+      showToast("Please enter a valid WhatsApp number.");
       return;
     }
 
@@ -13300,7 +13308,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         // Authenticated admin previewing the form — keep the full create payload.
         const saved = await ordersApi.create({
           customer: orderFormName.trim(), phone: orderFormPhone.trim(),
-          whatsapp: orderFormWhatsapp.trim() || undefined, email: orderFormEmail.trim() || undefined,
+          whatsapp: whatsappDigits || undefined, email: orderFormEmail.trim() || undefined,
           address: orderFormAddress.trim() || undefined, city: orderFormCity.trim() || undefined,
           state: orderFormState.trim() || undefined,
           productId: publicProduct.id, packageId: chosenPackage.id,
@@ -13326,7 +13334,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             packageId: chosenPackage.id,
             customer: orderFormName.trim(),
             phone: orderFormPhone.trim(),
-            whatsapp: orderFormWhatsapp.trim(),
+            whatsapp: whatsappDigits,
             email: orderFormEmail.trim(),
             address: orderFormAddress.trim(),
             city: orderFormCity.trim(),
@@ -13358,7 +13366,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   "Public form submission details:",
                   `Customer name: ${orderFormName.trim()}`,
                   `Phone: ${orderFormPhone.trim()}`,
-                  orderFormWhatsapp.trim() ? `WhatsApp: ${orderFormWhatsapp.trim()}` : null,
+                  whatsappDigits ? `WhatsApp: ${whatsappDigits}` : null,
                   `Address: ${[orderFormAddress.trim(), orderFormCity.trim(), orderFormState.trim()].filter(Boolean).join(", ")}`,
                   orderFormDeliveryWindow.trim() ? `Preferred delivery: ${orderFormDeliveryWindow.trim()}` : null,
                   `Confirmation checkbox: ${orderFormConfirmed ? "Accepted" : "Not accepted"}`,
@@ -13384,7 +13392,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           cartId: abandonedDraftCartId || undefined,
           customer: orderFormName.trim(),
           phone: orderFormPhone.trim(),
-          whatsapp: orderFormWhatsapp.trim() || undefined,
+          whatsapp: whatsappDigits || undefined,
           email: orderFormEmail.trim() || undefined,
           address: orderFormAddress.trim() || undefined,
           city: orderFormCity.trim() || undefined,
@@ -18063,7 +18071,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <label className="field-full">
                         <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                           <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 700, fontSize: 14, color: "#111827", minWidth: 70, whiteSpace: "nowrap" }}>+234</span>
-                          <input style={{ flex: 1 }} value={orderFormWhatsapp} onChange={(event) => setOrderFormWhatsapp(event.target.value)} placeholder={`Your WhatsApp Number${requireWhatsapp ? " *" : ""}`} inputMode="tel" />
+                          <input
+                            style={{ flex: 1 }}
+                            value={orderFormWhatsapp}
+                            onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))}
+                            placeholder={`Your WhatsApp Number${requireWhatsapp ? " *" : ""}`}
+                            inputMode="tel"
+                            pattern="[0-9]{7,15}"
+                            autoComplete="tel-national"
+                            maxLength={15}
+                          />
                         </div>
                       </label>
                     )}
