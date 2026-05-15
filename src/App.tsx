@@ -817,6 +817,8 @@ const agentZones: AgentZone[] = ["All Zones", "Lagos Island", "Mainland", "Abuja
 const agentStatuses: AgentStatus[] = ["All Status", "Active", "Order in Progress", "Inactive"];
 const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
+const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
+type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
 const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Clearing & Shipping", "Waybill", "Airtime & Data", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
@@ -3345,6 +3347,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [customerDateRange, setCustomerDateRange] = useState<DateRange>({ start: "", end: "" });
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerSource, setCustomerSource] = useState<CustomerSource>("Source: All");
+  const [customerStateFilter, setCustomerStateFilter] = useState("State: All");
+  const [customerQuantityFilter, setCustomerQuantityFilter] = useState<CustomerQuantityFilter>("Qty: All");
   const [customerPage, setCustomerPage] = useState(1);
   const [expensePeriod, setExpensePeriod] = useState<Period>("This Month");
   const [showExpenseDateRange, setShowExpenseDateRange] = useState(false);
@@ -6514,6 +6518,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!value) return "-";
     return formatDateTime(value);
   };
+  const customerOrderStateLabel = (order: Pick<TrackedOrder, "state" | "city" | "location">) =>
+    (order.state ?? "").trim() || (order.location ?? "").trim() || orderLocationFromFields(order.city ?? "", order.state ?? "");
   const isCustomerFlagged = (phone: string) => {
     const flag = customerFlags[normalizePhone(phone)];
     return flag?.flagged === true;
@@ -7643,6 +7649,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     source: string;
     latestOrderAt: number;
     latestOrderDate: string;
+    latestOrderState: string;
     latestProductName: string;
     latestPackageName: string;
     latestQuantity: number;
@@ -7669,6 +7676,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         source,
         latestOrderAt: 0,
         latestOrderDate: order.createdAt ?? (order.date ? `${order.date}T00:00:00` : ""),
+        latestOrderState: customerOrderStateLabel(order),
         latestProductName: order.productName,
         latestPackageName: order.packageName,
         latestQuantity: Math.max(1, order.quantity ?? order.originalQuantity ?? 1),
@@ -7683,6 +7691,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       if (orderTimestamp >= current.latestOrderAt) {
         current.latestOrderAt = orderTimestamp;
         current.latestOrderDate = order.createdAt ?? (order.date ? `${order.date}T00:00:00` : "");
+        current.latestOrderState = customerOrderStateLabel(order);
         current.latestProductName = order.productName;
         current.latestPackageName = order.packageName;
         current.latestQuantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
@@ -7693,11 +7702,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return acc;
     }, {})
   );
+  const customerStateOptions = [
+    "State: All",
+    ...Array.from(new Set(customerRecords.map((customer) => customer.latestOrderState).filter((value) => value && value.trim().length > 0))).sort((a, b) => a.localeCompare(b))
+  ];
   const filteredCustomers = customerRecords.filter((customer) => {
     const search = customerSearch.trim().toLowerCase();
     const matchesSearch = !search || `${customer.name} ${customer.email} ${customer.phone}`.toLowerCase().includes(search);
     const matchesSource = customerSource === "Source: All" || customer.source === customerSource;
-    return matchesSearch && matchesSource;
+    const matchesState = customerStateFilter === "State: All" || customer.latestOrderState === customerStateFilter;
+    const matchesQuantity =
+      customerQuantityFilter === "Qty: All"
+        || (customerQuantityFilter === "Qty: 1" && customer.latestQuantity === 1)
+        || (customerQuantityFilter === "Qty: 2-4" && customer.latestQuantity >= 2 && customer.latestQuantity <= 4)
+        || (customerQuantityFilter === "Qty: 5+" && customer.latestQuantity >= 5);
+    return matchesSearch && matchesSource && matchesState && matchesQuantity;
   });
   const activeCustomerCount = customerRecords.filter((customer) => customer.successful > 0).length;
   const returningRate = customerRecords.length === 0 ? 0 : Math.round((customerRecords.filter((customer) => customer.orders > 1).length / customerRecords.length) * 1000) / 10;
@@ -10657,12 +10676,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Currency", selectedCurrency.label],
       ["Search", customerSearch || "All"],
       ["Source", customerSource],
+      ["State", customerStateFilter],
+      ["Qty", customerQuantityFilter],
       ["Total Customers", String(customerRecords.length)],
       ["Active Customers", String(activeCustomerCount)],
       ["Returning Rate", `${returningRate}%`],
       ["Avg Lifetime Value", formatMoney(avgLifetimeValue)],
       [],
-      ["Name", "Email", "Phone", "Latest Order", "Latest Qty", "Latest Price", "Latest Ordered At", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
+      ["Name", "Email", "Phone", "Latest Order", "Latest Qty", "Latest Price", "Latest Ordered State", "Latest Ordered At", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
       ...filteredCustomers.map((customer) => [
         customer.name,
         customer.email,
@@ -10670,6 +10691,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         customerOrderLabel(customer.latestProductName, customer.latestPackageName),
         customer.latestQuantity,
         formatProductMoney(customer.latestAmount, customer.latestCurrency),
+        customer.latestOrderState,
         customerOrderPlacedLabel(customer.latestOrderDate),
         customer.orders,
         customer.successful,
@@ -23308,6 +23330,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 }}>
                   {customerSources.map((source) => <option key={source}>{source}</option>)}
                 </select>
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer state" value={customerStateFilter} onChange={(event) => {
+                  setCustomerStateFilter(event.target.value);
+                  showToast(`Customer state filter set to ${event.target.value}.`);
+                }}>
+                  {customerStateOptions.map((state) => <option key={state}>{state}</option>)}
+                </select>
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer quantity" value={customerQuantityFilter} onChange={(event) => {
+                  setCustomerQuantityFilter(event.target.value as CustomerQuantityFilter);
+                  showToast(`Customer quantity filter set to ${event.target.value}.`);
+                }}>
+                  {customerQuantityFilters.map((quantity) => <option key={quantity}>{quantity}</option>)}
+                </select>
                 {renderProductFilter(customerProductIds, setCustomerProductIds, showCustomerProductFilter, setShowCustomerProductFilter)}
                 <button className="!min-h-0 w-full sm:w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => { retryLoadData.current(); showToast("Refreshing customer data…"); }}><RefreshCw className="w-4 h-4" /></button>
               </div>
@@ -23344,7 +23378,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Latest order</span>
                               <span className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</span>
                               <span className="text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</span>
-                              <span className="text-gray-400">Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</span>
+                              <span className="text-gray-400">{customer.latestOrderState} · Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</span>
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
@@ -23411,7 +23445,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-4">
                                 <div className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</div>
                                 <div className="text-xs text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</div>
-                                <div className="text-xs text-gray-400">Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</div>
+                                <div className="text-xs text-gray-400">{customer.latestOrderState} · Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</div>
                               </td>
                               <td className="px-4 py-4 text-gray-700">{customer.orders}</td>
                               <td className="px-4 py-4 text-gray-700">{customer.source}</td>
