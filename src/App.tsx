@@ -6479,6 +6479,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   // ===== Customer flags =====
   const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
+  const customerIdentityKeyForOrder = (order: TrackedOrder) => {
+    const normalizedPhone = normalizePhone(order.phone ?? "");
+    if (normalizedPhone.length >= 7) {
+      return `phone:${normalizedPhone}`;
+    }
+    const normalizedWhatsapp = normalizePhone(order.whatsapp ?? "");
+    if (normalizedWhatsapp.length >= 7) {
+      return `whatsapp:${normalizedWhatsapp}`;
+    }
+    const normalizedEmail = (order.email ?? "").trim().toLowerCase();
+    if (normalizedEmail) {
+      return `email:${normalizedEmail}`;
+    }
+    const normalizedName = (order.customer ?? "").trim().toLowerCase();
+    return `name:${normalizedName || order.id}`;
+  };
+  const customerOrderTimestamp = (order: TrackedOrder) => {
+    const raw = order.createdAt ?? order.date;
+    if (!raw) return 0;
+    const normalized = raw.includes("T") ? raw : `${raw}T00:00:00`;
+    const timestamp = new Date(normalized).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const customerOrderLabel = (productName: string, packageName?: string) => {
+    const cleanProduct = (productName ?? "").trim();
+    const cleanPackage = (packageName ?? "").trim();
+    if (!cleanPackage || cleanPackage.toLowerCase() === cleanProduct.toLowerCase()) {
+      return cleanProduct || "Order item";
+    }
+    return `${cleanProduct} · ${cleanPackage}`;
+  };
   const isCustomerFlagged = (phone: string) => {
     const flag = customerFlags[normalizePhone(phone)];
     return flag?.flagged === true;
@@ -7596,19 +7627,61 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const agentStockLossRate = totalAgentStockValue === 0 ? 0 : Math.round((agentStockIssueLoss / totalAgentStockValue) * 1000) / 10;
   const topAgentsByDeliveries = [...financeAgentRows].sort((a, b) => b.deliveries - a.deliveries).slice(0, 3);
   const topAgentsByIssues = [...financeAgentRows].sort((a, b) => (b.defectiveValue + b.missingValue) - (a.defectiveValue + a.missingValue)).slice(0, 3);
+  type CustomerDirectoryRecord = {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    orders: number;
+    successful: number;
+    cancelled: number;
+    totalSpend: number;
+    source: string;
+    latestOrderAt: number;
+    latestProductName: string;
+    latestPackageName: string;
+    latestQuantity: number;
+    latestAmount: number;
+    latestCurrency: ProductCurrencyCode;
+  };
   const customerRecords = Object.values(
     trackedOrders
       .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
       .filter(o => matchesProductFilter(o.productId, o.productName, customerProductIds))
-      .filter((order) => isInPeriod(orderCreatedKey(order), customerPeriod, customerDateRange)).reduce<Record<string, { id: string; name: string; email: string; phone: string; orders: number; successful: number; cancelled: number; totalSpend: number; source: string }>>((acc, order) => {
-      const key = order.email ? order.email.toLowerCase() : `${order.phone.replace(/\D/g, "")}-${order.customer.trim().toLowerCase()}`;
+      .filter((order) => isInPeriod(orderCreatedKey(order), customerPeriod, customerDateRange)).reduce<Record<string, CustomerDirectoryRecord>>((acc, order) => {
+      const key = customerIdentityKeyForOrder(order);
       const status = order.status ?? "New";
       const source = order.source ?? orderSourceFromUtm(order.utmSource);
-      const current = acc[key] ?? { id: key, name: order.customer, email: order.email || "-", phone: order.phone, orders: 0, successful: 0, cancelled: 0, totalSpend: 0, source };
+      const current = acc[key] ?? {
+        id: key,
+        name: order.customer,
+        email: order.email || "-",
+        phone: order.phone,
+        orders: 0,
+        successful: 0,
+        cancelled: 0,
+        totalSpend: 0,
+        source,
+        latestOrderAt: 0,
+        latestProductName: order.productName,
+        latestPackageName: order.packageName,
+        latestQuantity: Math.max(1, order.quantity ?? order.originalQuantity ?? 1),
+        latestAmount: order.amount,
+        latestCurrency: order.currency
+      };
       current.orders += 1;
       current.successful += status === "Delivered" ? 1 : 0;
       current.cancelled += status === "Cancelled" ? 1 : 0;
       current.totalSpend += status === "Delivered" ? order.amount : 0;
+      const orderTimestamp = customerOrderTimestamp(order);
+      if (orderTimestamp >= current.latestOrderAt) {
+        current.latestOrderAt = orderTimestamp;
+        current.latestProductName = order.productName;
+        current.latestPackageName = order.packageName;
+        current.latestQuantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
+        current.latestAmount = order.amount;
+        current.latestCurrency = order.currency;
+      }
       acc[key] = current;
       return acc;
     }, {})
@@ -10582,8 +10655,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Returning Rate", `${returningRate}%`],
       ["Avg Lifetime Value", formatMoney(avgLifetimeValue)],
       [],
-      ["Name", "Email", "Phone", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
-      ...filteredCustomers.map((customer) => [customer.name, customer.email, customer.phone, customer.orders, customer.successful, customer.cancelled, formatMoney(customer.totalSpend), customer.source])
+      ["Name", "Email", "Phone", "Latest Order", "Latest Qty", "Latest Price", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
+      ...filteredCustomers.map((customer) => [
+        customer.name,
+        customer.email,
+        customer.phone,
+        customerOrderLabel(customer.latestProductName, customer.latestPackageName),
+        customer.latestQuantity,
+        formatProductMoney(customer.latestAmount, customer.latestCurrency),
+        customer.orders,
+        customer.successful,
+        customer.cancelled,
+        formatMoney(customer.totalSpend),
+        customer.source
+      ])
     ];
 
     const csv = rows
@@ -23247,6 +23332,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </div>
                           {flagged && <span className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-3 h-3" /> Flagged</span>}
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
+                            <div className="flex flex-col gap-0.5 col-span-2">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Latest order</span>
+                              <span className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</span>
+                              <span className="text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</span>
+                            </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
                               <span className="text-gray-700">{customer.source}</span>
@@ -23286,14 +23376,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Customer", "Contact Details", "Orders", "Source", "Successful", "Cancelled", "Total Spend", "Reliability", "Actions"].map((h) => (
+                        {["Customer", "Contact Details", "Latest Order", "Orders", "Source", "Successful", "Cancelled", "Total Spend", "Reliability", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {pagedCustomers.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
+                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
                       ) : (
                         pagedCustomers.map((customer) => {
                           const reliability = customer.orders === 0 ? 0 : Math.round((customer.successful / customer.orders) * 100);
@@ -23308,6 +23398,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-4">
                                 <div className="text-gray-700">{customer.phone}</div>
                                 <div className="text-xs text-gray-400">{customer.email}</div>
+                              </td>
+                              <td className="px-4 py-4">
+                                <div className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</div>
+                                <div className="text-xs text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</div>
                               </td>
                               <td className="px-4 py-4 text-gray-700">{customer.orders}</td>
                               <td className="px-4 py-4 text-gray-700">{customer.source}</td>
