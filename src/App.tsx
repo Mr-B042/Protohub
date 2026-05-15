@@ -6510,6 +6510,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     return `${cleanProduct} · ${cleanPackage}`;
   };
+  const customerOrderPlacedLabel = (value?: string) => {
+    if (!value) return "-";
+    return formatDateTime(value);
+  };
   const isCustomerFlagged = (phone: string) => {
     const flag = customerFlags[normalizePhone(phone)];
     return flag?.flagged === true;
@@ -7638,6 +7642,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     totalSpend: number;
     source: string;
     latestOrderAt: number;
+    latestOrderDate: string;
     latestProductName: string;
     latestPackageName: string;
     latestQuantity: number;
@@ -7663,6 +7668,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         totalSpend: 0,
         source,
         latestOrderAt: 0,
+        latestOrderDate: order.createdAt ?? (order.date ? `${order.date}T00:00:00` : ""),
         latestProductName: order.productName,
         latestPackageName: order.packageName,
         latestQuantity: Math.max(1, order.quantity ?? order.originalQuantity ?? 1),
@@ -7676,6 +7682,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       const orderTimestamp = customerOrderTimestamp(order);
       if (orderTimestamp >= current.latestOrderAt) {
         current.latestOrderAt = orderTimestamp;
+        current.latestOrderDate = order.createdAt ?? (order.date ? `${order.date}T00:00:00` : "");
         current.latestProductName = order.productName;
         current.latestPackageName = order.packageName;
         current.latestQuantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
@@ -10655,7 +10662,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Returning Rate", `${returningRate}%`],
       ["Avg Lifetime Value", formatMoney(avgLifetimeValue)],
       [],
-      ["Name", "Email", "Phone", "Latest Order", "Latest Qty", "Latest Price", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
+      ["Name", "Email", "Phone", "Latest Order", "Latest Qty", "Latest Price", "Latest Ordered At", "Orders", "Successful", "Cancelled", "Total Spend", "Source"],
       ...filteredCustomers.map((customer) => [
         customer.name,
         customer.email,
@@ -10663,6 +10670,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         customerOrderLabel(customer.latestProductName, customer.latestPackageName),
         customer.latestQuantity,
         formatProductMoney(customer.latestAmount, customer.latestCurrency),
+        customerOrderPlacedLabel(customer.latestOrderDate),
         customer.orders,
         customer.successful,
         customer.cancelled,
@@ -23336,6 +23344,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Latest order</span>
                               <span className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</span>
                               <span className="text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</span>
+                              <span className="text-gray-400">Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</span>
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
@@ -23402,6 +23411,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-4">
                                 <div className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</div>
                                 <div className="text-xs text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</div>
+                                <div className="text-xs text-gray-400">Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</div>
                               </td>
                               <td className="px-4 py-4 text-gray-700">{customer.orders}</td>
                               <td className="px-4 py-4 text-gray-700">{customer.source}</td>
