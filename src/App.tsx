@@ -3461,12 +3461,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
   const packageEditorHydrationKeyRef = useRef("");
+  const packageEditorDraftKeyRef = useRef("");
+  const packageEditorDirtyRef = useRef(false);
   const seenFollowUpNotificationIdsRef = useRef<Set<string>>(new Set());
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const orderUpsellSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveTimerRef = useRef<Record<string, number>>({});
+  const clearPackageEditorDraftTracking = () => {
+    packageEditorHydrationKeyRef.current = "";
+    packageEditorDraftKeyRef.current = "";
+    packageEditorDirtyRef.current = false;
+  };
+  const markPackageEditorDirty = () => {
+    if (modal === "addPackage" || modal === "editPackage") {
+      packageEditorDirtyRef.current = true;
+    }
+  };
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   useEffect(() => {
@@ -5213,18 +5225,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetPackageForm();
   }, [modal]);
   useEffect(() => {
-    if (modal !== "editPackage") {
-      packageEditorHydrationKeyRef.current = "";
-      return;
-    }
+    if (modal !== "editPackage") return;
     if (!selectedProduct || !selectedPackage) {
       return;
     }
     const hydrationKey = `${selectedProduct.id}:${selectedPackage.id}`;
+    if (packageEditorDraftKeyRef.current === hydrationKey && packageEditorDirtyRef.current) {
+      return;
+    }
     if (packageEditorHydrationKeyRef.current === hydrationKey) {
       return;
     }
     packageEditorHydrationKeyRef.current = hydrationKey;
+    packageEditorDraftKeyRef.current = hydrationKey;
+    packageEditorDirtyRef.current = false;
     setPackageName(selectedPackage.name);
     setPackageDescription(selectedPackage.description);
     setPackageQuantity(String(selectedPackage.quantity));
@@ -12195,6 +12209,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const resetPackageForm = () => {
+    clearPackageEditorDraftTracking();
     setPackageName("");
     setPackageDescription("");
     setPackageQuantity("1");
@@ -12217,6 +12232,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const openEditPackage = (item: ProductPackage, sourceProductId?: string) => {
     const productId = sourceProductId ?? selectedProduct?.id;
+    const hydrationKey = productId ? `${productId}:${item.id}` : "";
+    packageEditorHydrationKeyRef.current = hydrationKey;
+    packageEditorDraftKeyRef.current = hydrationKey;
+    packageEditorDirtyRef.current = false;
     if (productId) {
       setSelectedProductId(productId);
     }
@@ -12417,9 +12436,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     showToast(`Created "${clone.name}" as an x${multiplier} combo copy. Adjust the price if you want a bundle discount.`);
   };
 
-  const duplicatePackageOfferRow = (index: number) => {
+  const duplicatePackageOfferRow = (companionId: string) => {
+    markPackageEditorDirty();
     setPackageCompanions((prev) => {
-      const target = prev[index];
+      const index = prev.findIndex((row) => row.companionId === companionId);
+      const target = index >= 0 ? prev[index] : undefined;
       if (!target) return prev;
       const clone = normalisePackageCompanion({
         ...target,
@@ -18838,6 +18859,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const dismissModal = () => {
     const modalBeforeClose = modal;
+    if (modalBeforeClose && ["addPackage", "editPackage", "deletePackage"].includes(modalBeforeClose)) {
+      clearPackageEditorDraftTracking();
+    }
     setModal(null);
     setCreateOrderContext("admin");
     setUserPassword("");
@@ -33489,7 +33513,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             )}
 
             {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (
-              <div className="modal-form">
+              <div
+                className="modal-form"
+                onChangeCapture={() => markPackageEditorDirty()}
+                onClickCapture={(event) => {
+                  const target = event.target as HTMLElement | null;
+                  if (target?.closest("button, input, textarea, select, label")) {
+                    markPackageEditorDirty();
+                  }
+                }}
+              >
                 <p>{selectedProduct.name}</p>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
@@ -33739,8 +33772,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="space-y-3">
                       {packageCompanions.map((c, idx) => {
                         const update = (patch: Partial<PackageCompanion>) =>
-                          setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, ...patch } : row));
-                        const remove = () => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx));
+                          setPackageCompanions((prev) =>
+                            prev.map((row) => (row.companionId === c.companionId ? { ...row, ...patch } : row))
+                          );
+                        const remove = () =>
+                          setPackageCompanions((prev) => prev.filter((row) => row.companionId !== c.companionId));
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
@@ -33756,7 +33792,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 ? "No states are hidden right now."
                                 : `All states except ${c.stateRestrictions.length} selected state${c.stateRestrictions.length === 1 ? "" : "s"} can see this offer.`;
                         return (
-                          <div key={idx} className="border border-gray-100 rounded-lg p-3 bg-gray-50/50 space-y-2.5">
+                          <div key={c.companionId} className="border border-gray-100 rounded-lg p-3 bg-gray-50/50 space-y-2.5">
                             <div className="flex items-center justify-between gap-3 pb-1 border-b border-gray-100">
                               <div>
                                 <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
@@ -33766,7 +33802,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <button
                                   type="button"
                                   className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-[#1F8FE0] hover:bg-blue-50 rounded"
-                                  onClick={() => duplicatePackageOfferRow(idx)}
+                                  onClick={() => duplicatePackageOfferRow(c.companionId)}
                                 ><Copy className="w-3 h-3" /> Duplicate</button>
                                 <button
                                   type="button"
