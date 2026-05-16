@@ -473,7 +473,6 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string) {
 
 function renderCompanionTeaserVisual(companion: PublicCompanion, productName: string) {
   const src = companion.imageUrl?.trim() || fallbackCompanionImageSrc(productName);
-  const hasDemo = Boolean((companion.embedHtml ?? "").trim() || (companion.videoUrl ?? "").trim());
   return (
     <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 22, overflow: "hidden", background: "#ffffff", border: "1px solid rgba(148, 163, 184, 0.18)" }}>
       <img
@@ -487,29 +486,6 @@ function renderCompanionTeaserVisual(companion: PublicCompanion, productName: st
         }}
         style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
       />
-      {hasDemo && (
-        <div
-          style={{
-            position: "absolute",
-            right: 10,
-            bottom: 10,
-            padding: "6px 10px",
-            borderRadius: 999,
-            background: "rgba(15, 23, 42, 0.78)",
-            color: "#ffffff",
-            fontSize: 11,
-            fontWeight: 800,
-            letterSpacing: "0.03em",
-            textTransform: "uppercase",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6
-          }}
-        >
-          <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1 }}>▶</span>
-          Demo inside
-        </div>
-      )}
     </div>
   );
 }
