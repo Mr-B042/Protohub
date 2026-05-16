@@ -34586,6 +34586,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
+                        const previousCompanion = idx > 0 ? packageCompanions[idx - 1] : null;
                         const stateRuleMode = c.stateFilterMode ?? "all";
                         const stateSummary =
                           stateRuleMode === "all"
@@ -34722,6 +34723,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   <p className="m-0 border border-gray-100 rounded-md bg-white px-2.5 py-2 text-[11px] text-gray-500">
                                     Add more than one offer here if you want two or more quick add-ons on the same order form, or one quick add-on plus one after-submit offer.
                                   </p>
+                                  {previousCompanion && (
+                                    <button
+                                      type="button"
+                                      className="!min-h-0 mt-1 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold rounded-md border border-blue-200 bg-blue-50 text-[#1F8FE0] hover:bg-blue-100"
+                                      onClick={() =>
+                                        update({
+                                          stateFilterMode: previousCompanion.stateFilterMode ?? "all",
+                                          stateRestrictions: [...(previousCompanion.stateRestrictions ?? [])]
+                                        })
+                                      }
+                                    >
+                                      Copy state setup from Offer {idx}
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                               {stateRuleMode !== "all" && (
