@@ -6675,6 +6675,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     || abandonedCarts.length > 0
     || salesTeams.length > 0
     || waybillRecords.length > 0;
+  const reconnectFallbackMessage = "Live data is temporarily unavailable. Showing cached data while reconnecting.";
+  const showReconnectFallbackBanner = dataError === reconnectFallbackMessage && !hasRenderableWorkspaceData;
   const workspacePageBlockingLoad = dataLoading && !hasRenderableWorkspaceData;
   const salesTeamsPageBlockingLoad = dataLoading && salesTeams.length === 0 && salesRepUsers.length === 0 && trackedOrders.length === 0;
   const agentRows = agents.map((agent) => {
@@ -19183,7 +19185,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const DataErrorBanner = () => (
     <>
-      {dataError && (
+      {dataError && (showReconnectFallbackBanner || dataError !== reconnectFallbackMessage) && (
         <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
           <span className="font-medium text-red-800 flex-1">{dataError}</span>
