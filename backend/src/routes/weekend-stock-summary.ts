@@ -86,6 +86,14 @@ type WeeklySnapshotRow = {
   generated_at?: string | null;
 };
 
+const isMissingWeeklySnapshotTableError = (message?: string | null) =>
+  typeof message === "string"
+  && message.includes("agent_balance_weekly_snapshots")
+  && (
+    message.includes("schema cache")
+    || message.includes("Could not find the table")
+  );
+
 const formatDateKey = (date: Date) => date.toISOString().slice(0, 10);
 
 const mondayWeekStartKey = (source = new Date()) => {
@@ -500,7 +508,8 @@ router.get(
     if (parsed.data.productId) snapshotQuery = snapshotQuery.eq("product_id", parsed.data.productId);
 
     const { data: snapshotRows, error: snapshotError } = await snapshotQuery;
-    if (snapshotError) {
+    const snapshotTableAvailable = !snapshotError;
+    if (snapshotError && !isMissingWeeklySnapshotTableError(snapshotError.message)) {
       res.status(500).json({ error: snapshotError.message });
       return;
     }
@@ -521,7 +530,7 @@ router.get(
         opening_quantity: row.openingBalance
       }));
 
-    if (snapshotInsertRows.length > 0) {
+    if (snapshotTableAvailable && snapshotInsertRows.length > 0) {
       const { error: snapshotInsertError } = await supabase
         .from("agent_balance_weekly_snapshots")
         .upsert(snapshotInsertRows, {
