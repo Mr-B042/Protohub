@@ -69,6 +69,7 @@ const allowedFrontendOrigins = Array.from(new Set([
   ...defaultFrontendOrigins,
   ...configuredFrontendOrigins
 ]));
+const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isLoopbackIp(ip: string | undefined) {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
@@ -77,6 +78,27 @@ function isLoopbackIp(ip: string | undefined) {
 function isAllowedFrontendOrigin(origin: string | undefined) {
   if (!origin) return true;
   return allowedFrontendOrigins.includes(normalizeOrigin(origin));
+}
+
+function rateLimitBucketKey(req: express.Request) {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string") {
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    const token = match?.[1]?.trim();
+    if (token) {
+      const parts = token.split(".");
+      if (parts.length >= 2) {
+        try {
+          const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+          const sub = typeof payload?.sub === "string" ? payload.sub.trim() : "";
+          if (UUID_LIKE_PATTERN.test(sub)) return `user:${sub}`;
+        } catch {
+          // Fall back to IP-based limiting when the header isn't a valid JWT.
+        }
+      }
+    }
+  }
+  return `ip:${req.ip ?? "unknown"}`;
 }
 
 // Trust the first proxy hop so req.ip reflects the real client IP behind
@@ -120,6 +142,7 @@ app.use(rateLimit({
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitBucketKey,
   skip: (req) =>
     isLoopbackIp(req.ip) ||
     req.path.startsWith("/api/public/branding/") ||
