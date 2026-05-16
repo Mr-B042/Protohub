@@ -6675,9 +6675,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     || abandonedCarts.length > 0
     || salesTeams.length > 0
     || waybillRecords.length > 0;
+  const hasRenderableWeekendStockSummaryData = isWeekendStockSummaryPage(activePage)
+    && !agentBalanceLoading
+    && !agentBalanceError;
+  const hasRenderableCurrentPageData = hasRenderableWorkspaceData || hasRenderableWeekendStockSummaryData;
   const reconnectFallbackMessage = "Live data is temporarily unavailable. Showing cached data while reconnecting.";
-  const showReconnectFallbackBanner = dataError === reconnectFallbackMessage && !hasRenderableWorkspaceData;
-  const workspacePageBlockingLoad = dataLoading && !hasRenderableWorkspaceData;
+  const showReconnectFallbackBanner = dataError === reconnectFallbackMessage && !hasRenderableCurrentPageData;
+  const workspacePageBlockingLoad = dataLoading && !hasRenderableCurrentPageData;
   const salesTeamsPageBlockingLoad = dataLoading && salesTeams.length === 0 && salesRepUsers.length === 0 && trackedOrders.length === 0;
   const agentRows = agents.map((agent) => {
     const assigned = trackedOrders.filter((order) =>
@@ -9826,12 +9830,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   useEffect(() => {
     if (!dataLoading) return;
-    if (!hasRenderableWorkspaceData) return;
+    if (!hasRenderableCurrentPageData) return;
     setDataLoading(false);
     setDataRefreshing(true);
     setHasCompletedInitialDataLoad(true);
     hasCompletedInitialDataLoadRef.current = true;
-  }, [dataLoading, hasRenderableWorkspaceData]);
+  }, [dataLoading, hasRenderableCurrentPageData]);
 
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
