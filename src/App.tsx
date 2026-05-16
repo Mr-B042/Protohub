@@ -2505,6 +2505,13 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   priority: typeof companion.priority === "number" ? companion.priority : 0,
   displayMode: companion.displayMode === "card" ? "card" : "compact"
 });
+const clonePackageCompanions = (companions: PackageCompanion[]) =>
+  companions.map((companion) =>
+    normalisePackageCompanion({
+      ...companion,
+      companionId: makeCompanionId()
+    })
+  );
 const normalisePackageComponent = (component: Partial<PackageComponent>): PackageComponent => ({
   componentId: component.componentId || `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   productId: component.productId || "",
@@ -3279,6 +3286,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageComponents, setPackageComponents] = useState<PackageComponent[]>([]);
   const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState("");
+  const [showPackageOfferCopyPanel, setShowPackageOfferCopyPanel] = useState(false);
+  const [packageOfferCopyTargetIds, setPackageOfferCopyTargetIds] = useState<string[]>([]);
+  const [packageOfferCopyBusy, setPackageOfferCopyBusy] = useState(false);
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
   const [showSalesDateRange, setShowSalesDateRange] = useState(false);
@@ -4814,6 +4824,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
+  const availablePackageOfferCopyTargets = selectedProduct?.packages.filter((item) =>
+    item.id !== selectedPackageId && !isTemporaryPackageId(item.id)
+  ) ?? [];
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
@@ -12085,6 +12098,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setPackageComponents([]);
     setPackageCompanions([]);
     setSelectedPackageId("");
+    setShowPackageOfferCopyPanel(false);
+    setPackageOfferCopyTargetIds([]);
+    setPackageOfferCopyBusy(false);
   };
 
   const openAddPackage = () => {
@@ -12107,6 +12123,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setPackageDisplayOrder(String(item.displayOrder));
     setPackageComponents((item.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((item.companionProducts ?? []).map(normalisePackageCompanion));
+    setShowPackageOfferCopyPanel(false);
+    setPackageOfferCopyTargetIds([]);
+    setPackageOfferCopyBusy(false);
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -12290,6 +12309,106 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`Failed to create x${multiplier} bundle: ${err?.message ?? "please retry"}.`);
     });
     showToast(`Created "${clone.name}" as an x${multiplier} combo copy. Adjust the price if you want a bundle discount.`);
+  };
+
+  const duplicatePackageOfferRow = (index: number) => {
+    setPackageCompanions((prev) => {
+      const target = prev[index];
+      if (!target) return prev;
+      const clone = normalisePackageCompanion({
+        ...target,
+        companionId: makeCompanionId()
+      });
+      return [...prev.slice(0, index + 1), clone, ...prev.slice(index + 1)];
+    });
+    showToast("Offer duplicated.");
+  };
+
+  const applyCurrentPackageOffersToTargets = async () => {
+    if (!selectedProduct || !selectedPackage) {
+      showToast("Open a saved package first.");
+      return;
+    }
+    const targetIds = Array.from(new Set(packageOfferCopyTargetIds.filter((id) => id && id !== selectedPackage.id)));
+    if (targetIds.length === 0) {
+      showToast("Choose at least one package to update.");
+      return;
+    }
+    const sourceCompanions = packageCompanions
+      .map(normalisePackageCompanion)
+      .filter((companion) => companion.productId);
+    if (sourceCompanions.length === 0) {
+      showToast("Add at least one valid extra offer first.");
+      return;
+    }
+    const invalidStateScopedOffer = sourceCompanions.find(
+      (companion) => companion.stateFilterMode === "allow" && companion.stateRestrictions.length === 0
+    );
+    if (invalidStateScopedOffer) {
+      showToast("Pick at least one state for every 'Show only in selected states' offer.");
+      return;
+    }
+
+    const productSnapshot = selectedProduct;
+    const clonedByTarget = Object.fromEntries(
+      targetIds.map((targetId) => [targetId, clonePackageCompanions(sourceCompanions)])
+    ) as Record<string, PackageCompanion[]>;
+
+    setPackageOfferCopyBusy(true);
+    setProducts((value) =>
+      value.map((product) =>
+        product.id !== selectedProduct.id
+          ? product
+          : {
+              ...product,
+              packages: product.packages.map((pkg) =>
+                targetIds.includes(pkg.id)
+                  ? { ...pkg, companionProducts: clonedByTarget[pkg.id] ?? [] }
+                  : pkg
+              )
+            }
+      )
+    );
+
+    const results = await Promise.allSettled(
+      targetIds.map((targetId) =>
+        productsApi.updatePackage(selectedProduct.id, targetId, {
+          companionProducts: clonedByTarget[targetId] ?? []
+        })
+      )
+    );
+
+    const failedTargetIds = targetIds.filter((_, index) => results[index]?.status === "rejected");
+    if (failedTargetIds.length > 0) {
+      setProducts((value) =>
+        value.map((product) =>
+          product.id !== selectedProduct.id
+            ? product
+            : {
+                ...product,
+                packages: product.packages.map((pkg) => {
+                  if (!failedTargetIds.includes(pkg.id)) return pkg;
+                  const snapshotPkg = productSnapshot.packages.find((candidate) => candidate.id === pkg.id);
+                  return snapshotPkg ? { ...pkg, companionProducts: snapshotPkg.companionProducts ?? [] } : pkg;
+                })
+              }
+        )
+      );
+    }
+
+    const successCount = targetIds.length - failedTargetIds.length;
+    if (successCount > 0 && failedTargetIds.length === 0) {
+      showToast(`Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`);
+      setShowPackageOfferCopyPanel(false);
+      setPackageOfferCopyTargetIds([]);
+    } else if (successCount > 0) {
+      showToast(`Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`);
+    } else {
+      setProducts((value) => value.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
+      showToast("Could not copy offers to the selected packages.");
+    }
+
+    setPackageOfferCopyBusy(false);
   };
 
   // Toggle active/inactive — quick action from the package row.
@@ -33259,12 +33378,97 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         Use this package as a <strong>quick add-on</strong> inside the order form or as an <strong>after-submit offer</strong>. Set it up once here, then the embed link picks it up automatically.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-md hover:bg-gray-50"
-                      onClick={() => setPackageCompanions((prev) => [...prev, normalisePackageCompanion({ productId: "", packageId: undefined, quantity: 1, pricingMode: "free", stateFilterMode: "all", stateRestrictions: [], autoInclude: false })])}
-                    >+ Add extra offer</button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {modal === "editPackage" && availablePackageOfferCopyTargets.length > 0 && (
+                        <button
+                          type="button"
+                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-blue-200 text-[#1F8FE0] rounded-md hover:bg-blue-50"
+                          onClick={() => setShowPackageOfferCopyPanel((prev) => !prev)}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          {showPackageOfferCopyPanel ? "Hide copy to other packages" : "Copy offers to other packages"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-md hover:bg-gray-50"
+                        onClick={() => setPackageCompanions((prev) => [...prev, normalisePackageCompanion({ productId: "", packageId: undefined, quantity: 1, pricingMode: "free", stateFilterMode: "all", stateRestrictions: [], autoInclude: false })])}
+                      >+ Add extra offer</button>
+                    </div>
                   </div>
+                  {showPackageOfferCopyPanel && modal === "editPackage" && availablePackageOfferCopyTargets.length > 0 && (
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-3">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-[#1F8FE0]">Copy current offer setup</p>
+                          <p className="m-0 text-xs text-blue-900">
+                            Apply everything under <strong>Promote This Package</strong> from <strong>{packageName || selectedPackage?.name || "this package"}</strong> to other existing bundles. This replaces the target package&apos;s current extra offers so you don&apos;t have to rebuild them one by one.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-blue-200 bg-white text-[#1F8FE0] hover:bg-blue-50"
+                            onClick={() => setPackageOfferCopyTargetIds(availablePackageOfferCopyTargets.map((pkg) => pkg.id))}
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            onClick={() => setPackageOfferCopyTargetIds([])}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {availablePackageOfferCopyTargets.map((pkg) => {
+                          const checked = packageOfferCopyTargetIds.includes(pkg.id);
+                          const offerCount = pkg.companionProducts?.length ?? 0;
+                          return (
+                            <label
+                              key={pkg.id}
+                              className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${checked ? "border-[#1F8FE0] bg-white" : "border-blue-100 bg-white/80 hover:bg-white"}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setPackageOfferCopyTargetIds((prev) =>
+                                    checked ? prev.filter((id) => id !== pkg.id) : [...prev, pkg.id]
+                                  )
+                                }
+                                className="mt-0.5"
+                              />
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-sm font-semibold text-gray-900">{pkg.name}</span>
+                                <span className="block text-[11px] text-gray-500">
+                                  {pkg.quantity} pcs · {formatProductMoney(pkg.price, pkg.currency)} · currently {offerCount} offer{offerCount === 1 ? "" : "s"}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <p className="m-0 text-[11px] text-blue-900">
+                          {packageOfferCopyTargetIds.length === 0
+                            ? "Choose the bundles that should inherit this same offer setup."
+                            : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
+                        </p>
+                        <button
+                          type="button"
+                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-[#1F8FE0] text-white text-xs font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50"
+                          disabled={packageOfferCopyBusy || packageOfferCopyTargetIds.length === 0}
+                          onClick={applyCurrentPackageOffersToTargets}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          {packageOfferCopyBusy ? "Copying..." : "Apply to selected packages"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {packageCompanions.length === 0 ? (
                     <p className="text-xs text-gray-400 italic m-0">No extra offers added yet.</p>
                   ) : (
@@ -33294,11 +33498,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
                                 <p className="m-0 text-xs text-gray-500">What is the offer, who should see it, and how should it look?</p>
                               </div>
-                              <button
-                                type="button"
-                                className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
-                                onClick={remove}
-                              ><Trash2 className="w-3 h-3" /> Remove</button>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-[#1F8FE0] hover:bg-blue-50 rounded"
+                                  onClick={() => duplicatePackageOfferRow(idx)}
+                                ><Copy className="w-3 h-3" /> Duplicate</button>
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
+                                  onClick={remove}
+                                ><Trash2 className="w-3 h-3" /> Remove</button>
+                              </div>
                             </div>
                             <div className="space-y-2">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">1. What customers can buy</p>
