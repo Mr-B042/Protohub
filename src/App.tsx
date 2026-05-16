@@ -2524,6 +2524,15 @@ const companionMatchesState = (
   const matches = companion.stateRestrictions.map(normalizeStateName).includes(normalizedState);
   return mode === "block" ? !matches : matches;
 };
+const companionConfiguredTotal = (
+  companion: Pick<PackageCompanion, "pricingMode" | "fixedPrice" | "quantity">,
+  standardPrice: number
+) => {
+  const normalizedQuantity = Math.max(1, Number(companion.quantity) || 1);
+  if (companion.pricingMode === "free") return 0;
+  if (companion.pricingMode === "fixed") return Math.max(0, Number(companion.fixedPrice ?? 0));
+  return standardPrice * normalizedQuantity;
+};
 const formatBundleUnitLabel = (quantity: number) => `${quantity}${quantity === 1 ? "pc" : "pcs"}`;
 const summarizePackageComponents = (
   components: PackageComponent[] | undefined,
@@ -12355,10 +12364,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       .map((c) => {
         const product = products.find((p) => p.id === c.productId);
         const standardPrice = product ? (primaryPricing(product)?.sellingPrice ?? 0) : 0;
-        const unit = c.pricingMode === "free" ? 0
-                   : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                   : standardPrice;
-        return { id: makeCrossSellLineId(), productId: c.productId, productName: (product?.name ?? "Companion") + " (bundled)", quantity: c.quantity, amount: unit * c.quantity };
+        return {
+          id: makeCrossSellLineId(),
+          productId: c.productId,
+          productName: (product?.name ?? "Companion") + " (bundled)",
+          quantity: c.quantity,
+          amount: companionConfiguredTotal(c, standardPrice)
+        };
       });
   };
 
@@ -13795,11 +13807,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       let amount = 0;
       if (companion && p) {
         const standard = primaryPricing(p)?.sellingPrice ?? 0;
-        const unit = companion.pricingMode === "free" ? 0
-                    : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
-                    : standard;
         qty = companion.quantity;
-        amount = unit * qty;
+        amount = companionConfiguredTotal(companion, standard);
       } else if (p) {
         amount = crossSellPriceFor(publicProduct, p) * c.quantity;
       }
@@ -18762,10 +18771,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               const companion = companionForProductId(c.productId);
               if (companion) {
                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
-                const unit = companion.pricingMode === "free" ? 0
-                           : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
-                           : standard;
-                return { name: cp.name, qty: companion.quantity, total: unit * companion.quantity };
+                return { name: cp.name, qty: companion.quantity, total: companionConfiguredTotal(companion, standard) };
               }
               const unit = crossSellPriceFor(publicProduct, cp);
               return { name: cp.name, qty: c.quantity, total: unit * c.quantity };
@@ -18778,10 +18784,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 const cp = products.find((pp) => pp.id === c.productId);
                 if (!cp) return null;
                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
-                const unit = c.pricingMode === "free" ? 0
-                           : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                           : standard;
-                return { name: `${cp.name} (bundled)`, qty: c.quantity, total: unit * c.quantity };
+                return { name: `${cp.name} (bundled)`, qty: c.quantity, total: companionConfiguredTotal(c, standard) };
               }).filter(Boolean) as { name: string; qty: number; total: number }[];
             const summaryGiftLines = (publicProduct.freeGiftProductIds ?? []).map((gid) => products.find((p) => p.id === gid)).filter((g) => g && freeGiftVisibleInState(publicProduct, g, orderFormState)) as Product[];
             const summaryTotal = chosenPkg
@@ -18988,10 +18991,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               if (!cp) return null;
                               const productPrice = primaryPricing(cp)?.sellingPrice ?? 0;
                               const currency     = primaryPricing(cp)?.currency ?? "NGN";
-                              const unit = c.pricingMode === "free" ? 0
-                                         : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                                         : productPrice;
-                              const total = unit * c.quantity;
+                              const total = companionConfiguredTotal(c, productPrice);
                               const sel = orderFormCrossSells.find((s) => s.productId === c.productId);
                               return (
                                 <label key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
@@ -19017,10 +19017,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 if (!cp) return null;
                                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                                 const currency = primaryPricing(cp)?.currency ?? "NGN";
-                                const unit = c.pricingMode === "free" ? 0
-                                           : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                                           : standard;
-                                const total = unit * c.quantity;
+                                const total = companionConfiguredTotal(c, standard);
                                 return (
                                   <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#047857" }}>
                                     <span>+ {cp.name} × {c.quantity}</span>
@@ -19106,10 +19103,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           if (!cp) return null;
                           const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                           const currency = primaryPricing(cp)?.currency ?? "NGN";
-                          const unit = c.pricingMode === "free" ? 0
-                                     : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                                     : standard;
-                          const total    = unit * c.quantity;
+                          const total    = companionConfiguredTotal(c, standard);
                           const savings  = Math.max(0, standard * c.quantity - total);
                           const sel      = Boolean(orderFormCrossSells.find((s) => s.productId === c.productId));
                           const badge    = (c.badgeText && c.badgeText.trim()) || "🎁 Add to your order?";

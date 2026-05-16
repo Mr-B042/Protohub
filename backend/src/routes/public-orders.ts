@@ -145,6 +145,17 @@ const companionUnitPrice = (
   return standardPrice;
 };
 
+const companionLineAmount = (
+  companion: CompanionOverride,
+  standardPrice: number,
+  quantity: number
+) => {
+  const unitPrice = companionUnitPrice(companion, standardPrice);
+  return companion.pricingMode === "fixed"
+    ? unitPrice
+    : unitPrice * Math.max(1, Number(quantity) || 1);
+};
+
 const packageOfferKey = (productId: string, packageId?: string | null) =>
   `${productId}:${packageId ?? ""}`;
 
@@ -371,7 +382,9 @@ router.post("/", submitRateLimit, async (req, res) => {
         unitPrice = Number(primary?.selling_price ?? 0);
       }
     }
-    const lineTotal = unitPrice * line.quantity;
+    const lineTotal = companion && companion.pricingMode === "fixed"
+      ? companionLineAmount(companion, unitPrice, line.quantity)
+      : unitPrice * line.quantity;
     const packageComponentsSnapshot = targetPackage
       ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, line.productId, xsProduct.name, line.quantity)
       : undefined;
@@ -419,7 +432,7 @@ router.post("/", submitRateLimit, async (req, res) => {
                    ?? autoPricings.find((p) => p.product_id === c.productId);
       unitPrice = Number(primary?.selling_price ?? 0);
     }
-    const lineTotal = unitPrice * c.quantity;
+    const lineTotal = companionLineAmount(c, unitPrice, c.quantity);
     const packageComponentsSnapshot = targetPackage
       ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, c.productId, autoProduct.name, c.quantity)
       : undefined;
@@ -481,7 +494,7 @@ router.post("/", submitRateLimit, async (req, res) => {
         upsellOffer = null;
       } else {
         const unitPrice = companionUnitPrice(upsellCompanion, Number(standard));
-        const total = unitPrice * upsellCompanion.quantity;
+        const total = companionLineAmount(upsellCompanion, Number(standard), upsellCompanion.quantity);
         upsellOffer = {
           companionId: upsellCompanion.companionId,
           productId: upsellCompanion.productId,
@@ -773,8 +786,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     : pricings?.find((pricing) => pricing.is_primary)?.selling_price
       ?? pricings?.[0]?.selling_price
       ?? 0;
-  const unitPrice = companionUnitPrice(companion, Number(standard));
-  const lineAmount = unitPrice * companion.quantity;
+  const lineAmount = companionLineAmount(companion, Number(standard), companion.quantity);
   const packageComponentsSnapshot = targetPackage
     ? await buildResolvedPackageSnapshot(order.org_id, targetPackage, tokenPayload.productId, upsellProduct.name, companion.quantity)
     : undefined;

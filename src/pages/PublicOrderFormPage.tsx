@@ -250,6 +250,13 @@ function companionUnitPrice(companion: PublicCompanion, product: PublicProduct, 
   return standard;
 }
 
+function companionLineTotal(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
+  const unit = companionUnitPrice(companion, product, targetPackage);
+  return companion.pricingMode === "fixed"
+    ? unit
+    : unit * Math.max(1, Number(companion.quantity) || 1);
+}
+
 function companionVisibleInState(companion: PublicCompanion, state: string) {
   const mode = companion.stateFilterMode ?? "all";
   if (mode === "all") return true;
@@ -1036,11 +1043,10 @@ export default function PublicOrderFormPage() {
       const companion = companionForSelection(line);
       if (companion) {
         const targetPackage = targetPackageForCompanion(companion, products);
-        const unit = companionUnitPrice(companion, product, targetPackage);
         return {
           name: companionDisplayName(companion, product, targetPackage),
           qty: companion.quantity,
-          total: unit * companion.quantity
+          total: companionLineTotal(companion, product, targetPackage)
         };
       }
       const unit = crossSellPriceFor(publicProduct, product);
@@ -1055,11 +1061,10 @@ export default function PublicOrderFormPage() {
       const product = products.find((item) => item.id === companion.productId);
       if (!product) return null;
       const targetPackage = targetPackageForCompanion(companion, products);
-      const unit = companionUnitPrice(companion, product, targetPackage);
       return {
         name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
         qty: companion.quantity,
-        total: unit * companion.quantity
+        total: companionLineTotal(companion, product, targetPackage)
       };
     })
     .filter(Boolean) as { name: string; qty: number; total: number }[];
@@ -1412,8 +1417,7 @@ export default function PublicOrderFormPage() {
                     if (!product) return null;
                     const targetPackage = targetPackageForCompanion(companion, products);
                     const currency = primaryPricing(product)?.currency ?? "NGN";
-                    const unit = companionUnitPrice(companion, product, targetPackage);
-                    const total = unit * companion.quantity;
+                    const total = companionLineTotal(companion, product, targetPackage);
                     const selected = isOrderFormCrossSellSelected(companion);
                     const media = renderCompanionMedia(companion, product.name);
                     return (
@@ -1466,8 +1470,7 @@ export default function PublicOrderFormPage() {
                     const displayCompanion = selectedVariant ?? group.companions[0];
                     const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
                     const currency = primaryPricing(product)?.currency ?? "NGN";
-                    const unit = companionUnitPrice(displayCompanion, product, displayTargetPackage);
-                    const total = unit * displayCompanion.quantity;
+                    const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
                     const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
                     const standardTotal = standard * displayCompanion.quantity;
                     const savings = Math.max(0, standardTotal - total);
@@ -1503,7 +1506,7 @@ export default function PublicOrderFormPage() {
                                   const variantSelected = selectedVariant
                                     ? companionSelectionKey(selectedVariant) === companionSelectionKey(variant)
                                     : false;
-                                  const variantPrice = companionUnitPrice(variant, product, variantTargetPackage) * variant.quantity;
+                                  const variantPrice = companionLineTotal(variant, product, variantTargetPackage);
                                   return (
                                     <button
                                       key={companionSelectionKey(variant)}
