@@ -20,8 +20,8 @@ router.get("/", async (req, res) => {
     .from("products")
     .select(`
       *,
-      pricings: product_pricings(*),
-      packages: product_packages(*)
+      pricings: product_pricings!product_pricings_product_id_fkey(*),
+      packages: product_packages!product_packages_product_id_fkey(*)
     `)
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false });

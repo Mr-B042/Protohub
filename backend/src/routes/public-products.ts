@@ -153,8 +153,8 @@ router.get("/:id", readRateLimit, async (req, res) => {
       cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
       free_gift_product_ids, free_gift_state_restrictions,
       form_custom_text,
-      pricings: product_pricings(currency, selling_price, is_primary),
-      packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
+      pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
+      packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
     `)
     .eq("id", id)
     .maybeSingle();
@@ -186,8 +186,8 @@ router.get("/:id", readRateLimit, async (req, res) => {
         cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
         free_gift_product_ids, free_gift_state_restrictions,
         form_custom_text,
-        pricings: product_pricings(currency, selling_price, is_primary),
-        packages: product_packages(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
+        pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
+        packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
       `)
       .in("id", Array.from(referenced))
       .eq("active", true);
