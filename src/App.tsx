@@ -18707,6 +18707,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return (
       <main className="public-order-page" data-theme={theme}>
         <section className="public-order-shell">
+          {publicEmbedIsPreview ? (
+            <div
+              className="panel"
+              style={{
+                marginBottom: 12,
+                padding: "10px 12px",
+                background: "#eff6ff",
+                border: "1px solid #bfdbfe",
+                borderRadius: 12,
+                fontSize: 13,
+                color: "#1e3a8a",
+                lineHeight: 1.45
+              }}
+            >
+              <strong>Preview mode</strong> · This form is open for testing only. Abandoned-cart capture is disabled here.
+            </div>
+          ) : null}
           {dataLoading && !publicProduct ? (
             showPublicEmbedLoading ? (
             <article className="panel public-order-empty" aria-busy="true" aria-live="polite">
