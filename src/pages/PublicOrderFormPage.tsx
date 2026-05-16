@@ -467,6 +467,7 @@ export default function PublicOrderFormPage() {
   const publicUtmMedium = (params?.get("utm_medium") ?? "").slice(0, 100);
   const publicUtmContent = (params?.get("utm_content") ?? "").slice(0, 100);
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
+  const publicEmbedIsPreview = params?.get("preview") === "1";
   const rawPublicRedirect = params?.get("redirect_url") ?? "";
   const publicRedirectUrl = (() => {
     if (!rawPublicRedirect) return "";
@@ -525,6 +526,12 @@ export default function PublicOrderFormPage() {
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
+
+  useEffect(() => {
+    if (publicEmbedIsPreview) {
+      setAbandonedDraftCartId("");
+    }
+  }, [publicEmbedIsPreview, publicProductId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -685,7 +692,7 @@ export default function PublicOrderFormPage() {
       orderFormState.trim()
     );
 
-    if (!formTouched || !publicProduct || !chosenPackage) return;
+    if (publicEmbedIsPreview || !formTouched || !publicProduct || !chosenPackage) return;
 
     const cartId = abandonedDraftCartId || makeCartId();
     if (!abandonedDraftCartId) {
@@ -730,6 +737,7 @@ export default function PublicOrderFormPage() {
     orderFormPhone,
     orderFormState,
     orderFormWhatsapp,
+    publicEmbedIsPreview,
     publicProduct,
     publicUtmSource,
   ]);
@@ -866,7 +874,7 @@ export default function PublicOrderFormPage() {
     publicOrderSubmittingRef.current = true;
     try {
       const created = await publicOrdersApi.create({
-        cartId: abandonedDraftCartId || undefined,
+        cartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
         customer: customerName,
         phone: orderFormPhone.trim(),
         whatsapp: whatsappDigits || undefined,

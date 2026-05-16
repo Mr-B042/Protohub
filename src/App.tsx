@@ -5259,6 +5259,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicUtmMedium   = (publicEmbedParams?.get("utm_medium")   ?? "").slice(0, 100);
   const publicUtmContent  = (publicEmbedParams?.get("utm_content")  ?? "").slice(0, 100);
   const publicUtmTerm     = (publicEmbedParams?.get("utm_term")     ?? "").slice(0, 100);
+  const publicEmbedIsPreview = publicEmbedParams?.get("preview") === "1";
   // Only http(s) redirect targets are honored — defends against `javascript:` /
   // `data:` smuggling that would execute in the parent window after submit.
   const rawPublicRedirect = publicEmbedParams?.get("redirect_url") ?? "";
@@ -5276,6 +5277,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
 const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
+  useEffect(() => {
+    if (publicEmbedIsPreview) {
+      setAbandonedDraftCartId("");
+    }
+  }, [publicEmbedIsPreview, publicProductId]);
   useEffect(() => {
     if (!publicEmbedParams || !dataLoading || publicProduct) {
       setShowPublicEmbedLoading(false);
@@ -5401,7 +5407,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
   ];
 
-  const buildEmbedUrl = (product: Product | undefined = generatedProduct, currencyOverride?: ProductCurrencyCode, redirectOverride?: string) => {
+  const buildEmbedUrl = (
+    product: Product | undefined = generatedProduct,
+    currencyOverride?: ProductCurrencyCode,
+    redirectOverride?: string,
+    previewMode = false
+  ) => {
     if (!product) {
       return "";
     }
@@ -5413,6 +5424,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
+    }
+    if (previewMode) {
+      params.set("preview", "1");
     }
 
     return `${window.location.origin}${window.location.pathname}#/order-form/embed?${params.toString()}`;
@@ -10257,7 +10271,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const capturePackages = publicProduct ? publicPackages : previewPackages;
     const chosenPackage = capturePackages.find((item) => item.id === orderFormPackageId) ?? capturePackages[0];
 
-    if (!formTouched || !captureProduct || !chosenPackage) {
+    if (publicEmbedIsPreview || !formTouched || !captureProduct || !chosenPackage) {
       return;
     }
 
@@ -10326,6 +10340,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     orderFormCity,
     orderFormState,
     orderFormPackageId,
+    publicEmbedIsPreview,
     publicProduct,
     publicUtmSource,
     previewProduct
@@ -13816,7 +13831,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           productName: publicProduct.name, packageName: chosenPackage.name,
           quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
           currency: chosenPackage.currency, source,
-          sourceCartId: abandonedDraftCartId || undefined,
+          sourceCartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
           utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
           utmMedium: publicUtmMedium || undefined,
           utmContent: publicUtmContent || undefined,
@@ -13862,7 +13877,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
             freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
             notes: [
-              { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
+              { id: makeNoteId(), text: !publicEmbedIsPreview && abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
               { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
                   "Public form submission details:",
                   `Customer name: ${orderFormName.trim()}`,
@@ -13890,7 +13905,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         // Anonymous customer — server recomputes amount from canonical pricing.
         // We send packageId + cross-sell line ids; server handles the math.
         const saved = await publicOrdersApi.create({
-          cartId: abandonedDraftCartId || undefined,
+          cartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
           customer: orderFormName.trim(),
           phone: orderFormPhone.trim(),
           whatsapp: whatsappDigits || undefined,
@@ -27776,7 +27791,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
                           onClick={() => {
                             if (!previewProduct) return;
-                            window.open(buildEmbedUrl(previewProduct), "_blank", "noopener,noreferrer");
+                            window.open(buildEmbedUrl(previewProduct, undefined, undefined, true), "_blank", "noopener,noreferrer");
                           }}
                         >
                           <ExternalLink className="w-4 h-4" /> Preview form
@@ -28032,7 +28047,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <div className="flex items-center gap-2">
                                         <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={embedUrl} aria-label={`${product.name} direct embed URL`} />
                                         <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(embedUrl, "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(buildEmbedUrl(product, productEmbedCurrency(product), productEmbedRedirect(product), true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
                                       </div>
                                     </div>
                                   ) : (
