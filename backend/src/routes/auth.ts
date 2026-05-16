@@ -6,8 +6,31 @@ import { supabase, supabaseAuth, supabaseAnon } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
+import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 
 const router = Router();
+
+const sanitizeStoredPageList = (pages: unknown) =>
+  Array.from(
+    new Set(
+      (Array.isArray(pages) ? pages : [])
+        .filter((page): page is string => typeof page === "string" && page.trim().length > 0)
+    )
+  );
+
+const sanitizeStoredPermissionList = (permissions: unknown) =>
+  Array.from(
+    new Set(
+      (Array.isArray(permissions) ? permissions : [])
+        .filter((permission): permission is string => typeof permission === "string" && permission.trim().length > 0)
+    )
+  );
+
+const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) => ({
+  ...row,
+  permissions: sanitizeStoredPermissionList(row.permissions),
+  extra_pages: sanitizeStoredPageList(row.extra_pages)
+});
 
 const touchUserPresence = async (userId: string) => {
   if (!userId) return;
@@ -274,11 +297,19 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 router.get("/team", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at, round_robin_position, last_seen_at")
+    .select("id, name, email, phone, role, active, created_at, round_robin_position, last_seen_at, permissions, extra_pages, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  try {
+    const assignedAgentIdsByUser = await loadAssignedAgentIdsByUser(req.user!.orgId, (data ?? []).map((row) => row.id));
+    res.json((data ?? []).map((row) => ({
+      ...sanitizeTeamMemberPayload(row),
+      assigned_agent_ids: assignedAgentIdsByUser.get(row.id) ?? []
+    })));
+  } catch (assignmentError: any) {
+    res.status(500).json({ error: assignmentError?.message ?? "Failed to load assigned agents." });
+  }
 });
 
 // ── PATCH /api/auth/team/:id ──────────────────────────────
@@ -290,8 +321,24 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
   // Allow-list the DB column names and accept either casing on input.
   const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"] as const;
+  const VALID_AGENT_BALANCE_SCOPE_MODES = ["all", "states", "agents", "assigned_agents"] as const;
   if (req.body.role !== undefined && !VALID_ROLES.includes(req.body.role)) {
     res.status(400).json({ error: { role: [`Invalid role. Must be one of: ${VALID_ROLES.join(", ")}.`] } });
+    return;
+  }
+  const incomingScopeMode = req.body.agentBalanceScopeMode ?? req.body.agent_balance_scope_mode;
+  if (incomingScopeMode !== undefined && !VALID_AGENT_BALANCE_SCOPE_MODES.includes(incomingScopeMode)) {
+    res.status(400).json({ error: { agentBalanceScopeMode: [`Invalid scope mode. Must be one of: ${VALID_AGENT_BALANCE_SCOPE_MODES.join(", ")}.`] } });
+    return;
+  }
+  const incomingStateScope = req.body.agentBalanceStateScope ?? req.body.agent_balance_state_scope;
+  if (incomingStateScope !== undefined && (!Array.isArray(incomingStateScope) || incomingStateScope.some((value: unknown) => typeof value !== "string"))) {
+    res.status(400).json({ error: { agentBalanceStateScope: ["State scope must be an array of state names."] } });
+    return;
+  }
+  const incomingAgentScope = req.body.agentBalanceAgentIds ?? req.body.agent_balance_agent_ids;
+  if (incomingAgentScope !== undefined && (!Array.isArray(incomingAgentScope) || incomingAgentScope.some((value: unknown) => typeof value !== "string"))) {
+    res.status(400).json({ error: { agentBalanceAgentIds: ["Agent scope must be an array of agent IDs."] } });
     return;
   }
   const allowed: Record<string, string> = {
@@ -303,12 +350,24 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     permissions: "permissions",
     extraPages: "extra_pages",
     extra_pages: "extra_pages",
+    agentBalanceScopeMode: "agent_balance_scope_mode",
+    agent_balance_scope_mode: "agent_balance_scope_mode",
+    agentBalanceStateScope: "agent_balance_state_scope",
+    agent_balance_state_scope: "agent_balance_state_scope",
+    agentBalanceAgentIds: "agent_balance_agent_ids",
+    agent_balance_agent_ids: "agent_balance_agent_ids",
     roundRobinPosition: "round_robin_position",
     round_robin_position: "round_robin_position"
   };
   const updates: Record<string, unknown> = {};
   for (const [inKey, dbKey] of Object.entries(allowed)) {
     if (req.body[inKey] !== undefined) updates[dbKey] = req.body[inKey];
+  }
+  if (updates.permissions !== undefined) {
+    updates.permissions = sanitizeStoredPermissionList(updates.permissions);
+  }
+  if (updates.extra_pages !== undefined) {
+    updates.extra_pages = sanitizeStoredPageList(updates.extra_pages);
   }
   const { data, error } = await supabase
     .from("users")
@@ -321,7 +380,84 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     if (error.code === "PGRST116") { res.status(404).json({ error: "User not found." }); return; }
     res.status(500).json({ error: error.message }); return;
   }
-  res.json(data);
+  res.json(sanitizeTeamMemberPayload(data));
+});
+
+const TeamAgentAssignmentsSchema = z.object({
+  agentIds: z.array(z.string().uuid()).default([])
+});
+
+router.put("/team/:id/agent-assignments", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin"].includes(req.user!.role)) {
+    res.status(403).json({ error: "Only Owner or Admin can assign agents." });
+    return;
+  }
+
+  const parsed = TeamAgentAssignmentsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { data: targetUser, error: targetError } = await supabase
+    .from("users")
+    .select("id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+  if (targetError) {
+    res.status(500).json({ error: targetError.message });
+    return;
+  }
+  if (!targetUser) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+
+  const agentIds = Array.from(new Set(parsed.data.agentIds));
+  if (agentIds.length > 0) {
+    const { data: validAgents, error: agentsError } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("org_id", req.user!.orgId)
+      .in("id", agentIds);
+    if (agentsError) {
+      res.status(500).json({ error: agentsError.message });
+      return;
+    }
+    const validSet = new Set((validAgents ?? []).map((row) => row.id));
+    const invalidIds = agentIds.filter((id) => !validSet.has(id));
+    if (invalidIds.length > 0) {
+      res.status(400).json({ error: `Some selected agents do not belong to this organization: ${invalidIds.join(", ")}` });
+      return;
+    }
+  }
+
+  const { error: deleteError } = await supabase
+    .from("user_agent_assignments")
+    .delete()
+    .eq("org_id", req.user!.orgId)
+    .eq("user_id", req.params.id);
+  if (deleteError) {
+    res.status(500).json({ error: deleteError.message });
+    return;
+  }
+
+  if (agentIds.length > 0) {
+    const { error: insertError } = await supabase
+      .from("user_agent_assignments")
+      .insert(agentIds.map((agentId) => ({
+        org_id: req.user!.orgId,
+        user_id: req.params.id,
+        agent_id: agentId
+      })));
+    if (insertError) {
+      res.status(500).json({ error: insertError.message });
+      return;
+    }
+  }
+
+  res.json({ userId: req.params.id, agentIds });
 });
 
 // ── PUT /api/auth/team/round-robin ───────────────────────

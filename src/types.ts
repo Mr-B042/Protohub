@@ -5,11 +5,11 @@ export type CurrencyCode = "NGN" | "USD" | "GBP";
 export type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 export type ModalType = "createTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 
-export type ActivePage = 
-  | "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" 
-  | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" 
-  | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" 
-  | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" 
+export type ActivePage =
+  | "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries"
+  | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents"
+  | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting"
+  | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form"
   | "Notifications" | "Settings";
 
 export type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
@@ -95,6 +95,7 @@ export type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "In
 export type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
+  | "view_weekend_stock_summary"
   | "manage_agents"
   | "view_finance" | "view_reports"
   | "manage_users" | "manage_settings";
@@ -114,6 +115,10 @@ export type ManagedUser = {
   created: string;
   lastSeenAt?: string;
   permissions?: UserPermission[];
+  agentBalanceScopeMode?: "all" | "states" | "agents" | "assigned_agents";
+  agentBalanceStateScope?: string[];
+  agentBalanceAgentIds?: string[];
+  assignedAgentIds?: string[];
 };
 
 export type PayStructureType = "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";

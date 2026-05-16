@@ -43,7 +43,9 @@ import {
   RefreshCw,
   Repeat2,
   Search,
+  Scale,
   Sparkles,
+  ShieldCheck,
   Trash2,
   Truck,
   Upload,
@@ -101,7 +103,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
@@ -146,7 +148,7 @@ type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
@@ -170,7 +172,8 @@ type ManagerQueueActionType = "reviewed_queue" | "nudged_rep" | "escalated_order
 type NotificationFilter = "All" | "Unread";
 type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
-type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In";
+type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
+type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
 type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
 type StockCountStatus = "Pending" | "Agent Submitted" | "Admin Confirmed" | "Verified" | "Discrepancy";
 type WriteOffReason = "Damaged" | "Theft" | "Unreported Sale" | "Return to Warehouse" | "Other";
@@ -340,6 +343,7 @@ type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
+  | "view_weekend_stock_summary"
   | "manage_agents"
   | "view_finance" | "view_reports"
   | "manage_users" | "manage_settings";
@@ -355,8 +359,37 @@ type ManagedUser = {
   permissions?: UserPermission[];
   // Owner-granted page-level overrides on top of the role's defaults.
   extraPages?: ActivePage[];
+  agentBalanceScopeMode?: "all" | "states" | "agents" | "assigned_agents";
+  agentBalanceStateScope?: string[];
+  agentBalanceAgentIds?: string[];
+  assignedAgentIds?: string[];
   roundRobinPosition?: number;
 };
+
+const WEEKEND_STOCK_SUMMARY_PAGE = "Weekend Stock Summary" as const;
+const WEEKEND_STOCK_SUMMARY_PERMISSION = "view_weekend_stock_summary" as const;
+
+const sanitizeActivePageList = (pages: readonly (ActivePage | string)[] | undefined | null): ActivePage[] =>
+  Array.from(
+    new Set(
+      (pages ?? [])
+        .filter((page): page is ActivePage => typeof page === "string" && page.trim().length > 0)
+    )
+  );
+
+const isWeekendStockSummaryPage = (page: ActivePage | string | undefined | null) =>
+  page === WEEKEND_STOCK_SUMMARY_PAGE;
+
+const sanitizeUserPermissionList = (permissions: readonly (UserPermission | string)[] | undefined | null): UserPermission[] =>
+  Array.from(
+    new Set(
+      (permissions ?? [])
+        .filter((permission): permission is UserPermission => typeof permission === "string" && permission.trim().length > 0)
+    )
+  );
+
+const hasWeekendStockSummaryPermission = (permissions: readonly (UserPermission | string)[] | undefined | null) =>
+  sanitizeUserPermissionList(permissions).includes(WEEKEND_STOCK_SUMMARY_PERMISSION);
 type PayStructureType = "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";
 type BonusTier = { threshold: number; amount: number };
 type ProductPricing = {
@@ -529,8 +562,11 @@ type StockMovement = {
   qty: number;
   balanceAfter: number;
   agent?: string;
+  agentId?: string;
   order?: string;
+  orderId?: string;
   by: string;
+  byName?: string;
   note?: string;
   waybillId?: string;
   fromLocation?: string;
@@ -706,6 +742,84 @@ type AgentStockRecord = {
   defective: number;
   missing: number;
 };
+type AgentWeeklyBalanceRow = {
+  agentId: string;
+  agentName: string;
+  agentPhone?: string | null;
+  agentWhatsappPhone?: string | null;
+  locationId: string;
+  locationName: string;
+  locationState?: string | null;
+  locationCity?: string | null;
+  productId: string;
+  productName: string;
+  productSku?: string | null;
+  openingBalance: number;
+  receivedThisWeek: number;
+  deliveredThisWeek: number;
+  returnedThisWeek: number;
+  transferredOutThisWeek: number;
+  restoredThisWeek: number;
+  writtenOffThisWeek: number;
+  closingBalance: number;
+  netChange: number;
+  openingSnapshotAt?: string | null;
+};
+type AgentWeeklyBalanceGroup = {
+  key: string;
+  agentId: string;
+  agentName: string;
+  agentPhone?: string | null;
+  agentWhatsappPhone?: string | null;
+  locationId: string;
+  locationName: string;
+  locationState?: string | null;
+  locationCity?: string | null;
+  rows: AgentWeeklyBalanceRow[];
+};
+type AgentWeeklyBalanceSummary = {
+  openingUnits: number;
+  receivedUnits: number;
+  deliveredUnits: number;
+  closingUnits: number;
+  returnedUnits: number;
+  writeOffUnits: number;
+  transferredOutUnits: number;
+  restoredUnits: number;
+  agentCount: number;
+  hubCount: number;
+  productCount: number;
+};
+type AgentWeeklyFollowUpStatus = "pending" | "summary_sent" | "agent_confirmed" | "shortage_reported" | "balance_reported" | "manager_reviewed" | "locked";
+type AgentWeeklyFollowUp = {
+  id: string;
+  weekStart: string;
+  agentId: string;
+  locationId: string;
+  status: AgentWeeklyFollowUpStatus;
+  lastSentAt?: string | null;
+  sentChannel?: "whatsapp" | "call" | "manual" | null;
+  lastSentByName?: string | null;
+  confirmedAt?: string | null;
+  confirmationNote?: string | null;
+  confirmedByName?: string | null;
+  shortageReportedAt?: string | null;
+  shortageNote?: string | null;
+  shortageReportedByName?: string | null;
+  reportedClosingUnits?: number | null;
+  reportedAt?: string | null;
+  reportedNote?: string | null;
+  reportedByName?: string | null;
+  managerReviewStatus?: "under_review" | "resolved" | "approved_write_off" | "send_to_owner" | null;
+  managerReviewNote?: string | null;
+  managerReviewedAt?: string | null;
+  managerReviewedByName?: string | null;
+  lockedAt?: string | null;
+  lockedByName?: string | null;
+  lastActionAt?: string | null;
+  lastActionType?: "mark_sent" | "mark_confirmed" | "report_shortage" | "report_agent_balance" | "manager_review" | "lock_week" | "unlock_week" | null;
+  lastActionByName?: string | null;
+};
 type ExpenseRecord = {
   id: string;
   type: ExpenseType;
@@ -830,7 +944,7 @@ const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate"];
 const embedCodeTabs: EmbedCodeTab[] = ["Direct Link", "HTML/Iframe", "Elementor"];
-const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "Stock Added", "Distributed to Agent", "Order Fulfilled", "Return", "Correction", "Waybill Out", "Waybill In"];
+const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "Stock Added", "Distributed to Agent", "Order Fulfilled", "Return", "Correction", "Waybill Out", "Waybill In", "Status Reversal"];
 const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
@@ -875,6 +989,7 @@ const permissionDefs: { key: UserPermission; label: string; group: string }[] = 
   { key: "reassign_orders",     label: "Reassign Orders",     group: "Orders" },
   { key: "manage_inventory",    label: "Manage Inventory",    group: "Inventory" },
   { key: "manage_products",     label: "Manage Products",     group: "Inventory" },
+  { key: "view_weekend_stock_summary", label: "View Weekend Stock Summary", group: "Operations" },
   { key: "manage_agents",       label: "Manage Agents",       group: "Operations" },
   { key: "view_finance",        label: "View Finance",        group: "Finance" },
   { key: "view_reports",        label: "View Reports",        group: "Finance" },
@@ -883,10 +998,10 @@ const permissionDefs: { key: UserPermission; label: string; group: string }[] = 
 ];
 const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Owner":             permissionDefs.map((p) => p.key),
-  "Admin":             ["create_orders", "edit_orders", "delete_orders", "change_order_status", "reassign_orders", "manage_inventory", "manage_products", "manage_agents", "view_finance", "view_reports"],
-  "Manager":           ["create_orders", "edit_orders", "change_order_status", "reassign_orders", "manage_inventory", "manage_products", "view_finance", "view_reports"],
-  "Sales Rep":         ["create_orders", "change_order_status", "reassign_orders"],
-  "Inventory Manager": ["manage_inventory", "manage_products", "view_reports"],
+  "Admin":             ["create_orders", "edit_orders", "delete_orders", "change_order_status", "reassign_orders", "manage_inventory", "manage_products", "view_weekend_stock_summary", "manage_agents", "view_finance", "view_reports"],
+  "Manager":           ["create_orders", "edit_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary", "manage_inventory", "manage_products", "view_finance", "view_reports"],
+  "Sales Rep":         ["create_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary"],
+  "Inventory Manager": ["view_weekend_stock_summary", "manage_inventory", "manage_products", "view_reports"],
   "Viewer":            ["view_finance", "view_reports"],
 };
 
@@ -898,25 +1013,25 @@ type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console",
+    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Admin": [
     "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console",
+    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Manager": [
     "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Customers", "Round-Robin", "Notifications", "Settings"
+    "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Call Rep Console", "Notifications", "Settings"
+    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
   ],
   "Inventory Manager": [
-    "Dashboard", "Inventory", "Agents", "Waybill", "Notifications", "Settings"
+    "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
   "Viewer": [
     "Dashboard", "Orders", "Customers", "Notifications", "Settings"
@@ -935,7 +1050,7 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
   if (!role) return roleAllowedPages["Viewer"];
   const base = roleAllowedPages[role] ?? [];
-  return Array.from(new Set([...base, ...extraPages]));
+  return sanitizeActivePageList([...base, ...extraPages]);
 };
 const payStructureTypes: { value: PayStructureType; helper: string }[] = [
   { value: "Per Delivered Order", helper: "Rate × delivered orders" },
@@ -1626,6 +1741,19 @@ const chooseRangeDate = (range: DateRange, nextDate: string): DateRange => {
 };
 
 const todayKey = () => formatDateKey(new Date());
+const mondayKeyFromDate = (source = new Date()) => {
+  const date = new Date(source);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + offset);
+  return formatDateKey(date);
+};
+const addDaysToDateKey = (dateKey: string, days: number) => {
+  const date = new Date(`${normalizeDateKey(dateKey)}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return formatDateKey(date);
+};
+const weekEndFromStartKey = (weekStart: string) => addDaysToDateKey(weekStart, 6);
 
 const normalizeDateKey = (value?: string) => {
   if (!value) {
@@ -1704,6 +1832,7 @@ const formatMoment = (value?: string | Date | null) => {
   }
   return formatDateTime(value);
 };
+const weekRangeLabel = (weekStart: string, weekEnd: string) => `${formatDateOnly(weekStart)} - ${formatDateOnly(weekEnd)}`;
 const USER_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const userPresenceState = (user: Pick<ManagedUser, "active" | "lastSeenAt">): "Active" | "Offline" | "Inactive" => {
   if (!user.active) return "Inactive";
@@ -2762,6 +2891,18 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
     active: user.active !== false,
     created: user.createdAt ?? user.created ?? "",
     lastSeenAt: user.lastSeenAt ?? undefined,
+    permissions: sanitizeUserPermissionList(Array.isArray(user.permissions) ? user.permissions : undefined),
+    extraPages: sanitizeActivePageList(Array.isArray(user.extraPages) ? user.extraPages : undefined),
+    agentBalanceScopeMode:
+      user.agentBalanceScopeMode === "states"
+      || user.agentBalanceScopeMode === "agents"
+      || user.agentBalanceScopeMode === "assignedAgents"
+      || user.agentBalanceScopeMode === "assigned_agents"
+        ? (user.agentBalanceScopeMode === "assignedAgents" ? "assigned_agents" : user.agentBalanceScopeMode)
+        : "all",
+    agentBalanceStateScope: Array.isArray(user.agentBalanceStateScope) ? user.agentBalanceStateScope.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
+    agentBalanceAgentIds: Array.isArray(user.agentBalanceAgentIds) ? user.agentBalanceAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
+    assignedAgentIds: Array.isArray(user.assignedAgentIds) ? user.assignedAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     roundRobinPosition: user.roundRobinPosition ?? 0
   };
 };
@@ -3111,7 +3252,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [historyProductFilter, setHistoryProductFilter] = useState("All Products");
+  const [historyAgentFilter, setHistoryAgentFilter] = useState("All Agents");
   const [historyTypeFilter, setHistoryTypeFilter] = useState<"All Types" | StockMovementType>("All Types");
+  const [historyMovementDrill, setHistoryMovementDrill] = useState<InventoryHistoryMovementDrill>("");
   const [historyStartDate, setHistoryStartDate] = useState("");
   const [historyEndDate, setHistoryEndDate] = useState("");
   const [pricingCurrency, setPricingCurrency] = useState<ProductCurrencyCode>("USD");
@@ -3165,6 +3308,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agents, setAgents] = useState<DeliveryAgentRecord[]>([]);
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>([]);
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>([]);
+  const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => mondayKeyFromDate());
+  const [agentBalanceRows, setAgentBalanceRows] = useState<AgentWeeklyBalanceRow[]>([]);
+  const [agentBalanceSummary, setAgentBalanceSummary] = useState<AgentWeeklyBalanceSummary | null>(null);
+  const [agentBalanceGeneratedAt, setAgentBalanceGeneratedAt] = useState("");
+  const [agentBalanceLoading, setAgentBalanceLoading] = useState(false);
+  const [agentBalanceError, setAgentBalanceError] = useState("");
+  const [agentBalanceAgentId, setAgentBalanceAgentId] = useState("");
+  const [agentBalanceStateFilter, setAgentBalanceStateFilter] = useState("");
+  const [agentBalanceProductId, setAgentBalanceProductId] = useState("");
+  const [agentBalanceSearch, setAgentBalanceSearch] = useState("");
   const [customerFlags, setCustomerFlags] = useState<Record<string, CustomerFlag>>(() => readStored<Record<string, CustomerFlag>>(storageKeys.customerFlags, {}));
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([]);
   const [flagReasonDraft, setFlagReasonDraft] = useState("");
@@ -3878,6 +4031,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setSmsMessagesLoading(false);
     }
   };
+
+
+  const loadAgentBalances = async (options: { quiet?: boolean } = {}) => {
+    setAgentBalanceLoading(true);
+    try {
+      const result = await weekendStockSummaryApi.weekly({
+        weekStart: agentBalanceWeekStart,
+        ...(agentBalanceAgentId ? { agentId: agentBalanceAgentId } : {}),
+        ...(agentBalanceProductId ? { productId: agentBalanceProductId } : {})
+      });
+      setAgentBalanceRows(Array.isArray(result?.rows) ? result.rows : []);
+      setAgentBalanceSummary(result?.summary ?? null);
+      setAgentBalanceGeneratedAt(result?.generatedAt ?? "");
+      setAgentBalanceError("");
+    } catch (err: any) {
+      setAgentBalanceRows([]);
+      setAgentBalanceSummary(null);
+      setAgentBalanceGeneratedAt("");
+      const message = err?.message ?? "please retry.";
+      setAgentBalanceError(message);
+      if (!options.quiet) showToast(`Failed to load weekend stock summary: ${message}`);
+    } finally {
+      setAgentBalanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (!isWeekendStockSummaryPage(activePage)) return;
+    void loadAgentBalances({ quiet: agentBalanceRows.length > 0 });
+  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId]);
 
   const loadSmsBalance = async (options: { quiet?: boolean } = {}) => {
     setSmsBalanceLoading(true);
@@ -5139,13 +5323,46 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const agentInventoryUnits = catalogProducts.reduce((sum, product) => sum + productAgentStockSum(product.id), 0);
   const distributionRate = totalInventoryUnits === 0 ? 0 : Math.round((agentInventoryUnits / totalInventoryUnits) * 100);
   const lowStockProducts = catalogProducts.filter((product) => product.warehouseStock <= product.reorderPoint);
+  const historyAgentOptions = Array.from(
+    new Set(
+      stockMovements
+        .map((movement) => movement.agentId ?? "")
+        .filter((agentId) => agentId.length > 0)
+    )
+  )
+    .map((agentId) => {
+      const agent = agents.find((row) => row.id === agentId);
+      return { id: agentId, name: agent?.name ?? agentId };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const historyMovementDrillLabel = historyMovementDrill === "returned"
+    ? "Returned"
+    : historyMovementDrill === "transfer_out"
+      ? "Transfer out"
+      : historyMovementDrill === "restored"
+        ? "Restored"
+        : historyMovementDrill === "write_off"
+          ? "Write-off"
+          : "";
   const filteredStockMovements = stockMovements.filter((movement) => {
     const matchesProduct = historyProductFilter === "All Products" || movement.productId === historyProductFilter;
     const matchesType = historyTypeFilter === "All Types" || movement.type === historyTypeFilter;
+    const matchesAgent = historyAgentFilter === "All Agents" || movement.agentId === historyAgentFilter;
     const movementDate = (movement.date ?? movement.createdAt ?? "").slice(0, 10);
     const matchesStart = !historyStartDate || movementDate >= historyStartDate;
     const matchesEnd = !historyEndDate || movementDate <= historyEndDate;
-    return matchesProduct && matchesType && matchesStart && matchesEnd;
+    const matchesDrill = !historyMovementDrill || (
+      historyMovementDrill === "returned"
+        ? movement.type === "Return"
+        : historyMovementDrill === "transfer_out"
+          ? movement.type === "Waybill Out"
+          : historyMovementDrill === "restored"
+            ? movement.type === "Waybill In" || movement.type === "Status Reversal"
+            : historyMovementDrill === "write_off"
+              ? movement.type === "Correction" && movement.qty < 0
+              : true
+    );
+    return matchesProduct && matchesType && matchesAgent && matchesStart && matchesEnd && matchesDrill;
   });
 
   const formatMoney = (amount: number) =>
@@ -5918,8 +6135,272 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const avgSalesConversion = salesRepRows.length === 0 ? 0 : Math.round(salesRepRows.reduce((sum, row) => sum + row.conversion, 0) / salesRepRows.length);
   const salesTeams = extraTeams;
   const teamForRep = (rep: ManagedUser) => salesTeams.find((t) => t.memberIds.includes(rep.id)) ?? undefined;
+  const teamForManagedUser = (user: ManagedUser) => salesTeams.find((team) => team.memberIds.includes(user.id) || team.leadId === user.id) ?? undefined;
+  const agentIdsForStateScope = (states: string[]) => {
+    const normalizedStates = new Set(states.map((state) => normalizeAgentState(state)).filter(Boolean));
+    if (normalizedStates.size === 0) return [] as string[];
+    return agents
+      .filter((agent) => {
+        const baseState = agentPrimaryBaseState(agent);
+        if (baseState && normalizedStates.has(baseState)) return true;
+        return agentLocationRows(agent).some((location) => normalizedStates.has(normalizeAgentState(location.state)));
+      })
+      .map((agent) => agent.id);
+  };
+  const suggestedAssignedAgentIdsForTeam = (user: ManagedUser) => {
+    const team = teamForManagedUser(user);
+    if (!team) return [] as string[];
+    const scopedProductIds = new Set(team.productIds ?? []);
+    if (scopedProductIds.size === 0) return [] as string[];
+    return agents
+      .filter((agent) =>
+        agentLocationRows(agent).some((location) =>
+          location.stock.some((stockRow) => scopedProductIds.has(stockRow.productId) && Number(stockRow.quantity ?? 0) > 0)
+        )
+      )
+      .map((agent) => agent.id);
+  };
+  const userWeekendStockSummaryScopeSummary = (user: ManagedUser) => {
+    const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+    const rolePages = allowedPagesFor(user.role, user.extraPages ?? []);
+    const canSeeWeekendStockSummary = hasWeekendStockSummaryPermission(userPerms) || rolePages.includes(WEEKEND_STOCK_SUMMARY_PAGE);
+    if (!canSeeWeekendStockSummary) {
+      return { label: "Not enabled", detail: "No stock summary access" };
+    }
+    const scopeMode = user.agentBalanceScopeMode ?? "all";
+    if (scopeMode === "states") {
+      const count = user.agentBalanceStateScope?.length ?? 0;
+      return { label: `${count} state${count === 1 ? "" : "s"}`, detail: "State-scoped summary" };
+    }
+    if (scopeMode === "agents") {
+      const count = user.agentBalanceAgentIds?.length ?? 0;
+      return { label: `${count} agent${count === 1 ? "" : "s"}`, detail: "Direct agent picks" };
+    }
+    if (scopeMode === "assigned_agents") {
+      const count = user.assignedAgentIds?.length ?? 0;
+      return { label: `${count} assigned`, detail: "Owned agent list" };
+    }
+      return { label: "All agents", detail: "Full stock summary" };
+  };
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
+  const agentBalanceWeekEnd = weekEndFromStartKey(agentBalanceWeekStart);
+  const agentBalanceSearchNeedle = agentBalanceSearch.trim().toLowerCase();
+  const visibleAgentBalanceRows = agentBalanceRows.filter((row) => {
+    const matchesState = !agentBalanceStateFilter || (row.locationState?.trim() ?? "") === agentBalanceStateFilter;
+    if (!agentBalanceSearchNeedle) return matchesState;
+    const matchesSearch = [
+      row.agentName,
+      row.locationName,
+      row.locationState ?? "",
+      row.locationCity ?? "",
+      row.productName,
+      row.productSku ?? ""
+    ].join(" ").toLowerCase().includes(agentBalanceSearchNeedle);
+    return matchesState && matchesSearch;
+  });
+  const agentBalanceGroups = Object.values(
+    visibleAgentBalanceRows.reduce<Record<string, AgentWeeklyBalanceGroup>>((acc, row) => {
+      const key = `${row.agentId}::${row.locationId}`;
+      if (!acc[key]) {
+        acc[key] = {
+          key,
+          agentId: row.agentId,
+          agentName: row.agentName,
+          agentPhone: row.agentPhone ?? null,
+          agentWhatsappPhone: row.agentWhatsappPhone ?? null,
+          locationId: row.locationId,
+          locationName: row.locationName,
+          locationState: row.locationState ?? null,
+          locationCity: row.locationCity ?? null,
+          rows: []
+        };
+      }
+      acc[key].rows.push(row);
+      return acc;
+    }, {})
+  ).sort((a, b) => a.agentName.localeCompare(b.agentName) || a.locationName.localeCompare(b.locationName));
+  const agentBalanceAgentOptions = Object.values(
+    agentBalanceRows.reduce<Record<string, { id: string; name: string }>>((acc, row) => {
+      if (!acc[row.agentId]) acc[row.agentId] = { id: row.agentId, name: row.agentName };
+      return acc;
+    }, {})
+  ).sort((a, b) => a.name.localeCompare(b.name));
+  const agentBalanceStateOptions = Array.from(
+    new Set(
+      agentBalanceRows
+        .map((row) => row.locationState?.trim() || "")
+        .filter((state) => state.length > 0)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  const agentBalanceHubLabel = (group: Pick<AgentWeeklyBalanceGroup, "locationName" | "locationState" | "locationCity">) => (
+    group.locationCity
+      ? `${group.locationName} (${group.locationCity}, ${group.locationState ?? ""})`
+      : group.locationState
+        ? `${group.locationName} (${group.locationState})`
+        : group.locationName
+  );
+  const weekendStockAdjustmentForRow = (row: Pick<AgentWeeklyBalanceRow, "returnedThisWeek" | "transferredOutThisWeek" | "restoredThisWeek" | "writtenOffThisWeek">) => (
+    row.restoredThisWeek
+    - row.returnedThisWeek
+    - row.transferredOutThisWeek
+    - row.writtenOffThisWeek
+  );
+  const formatSignedUnits = (value: number) => (value > 0 ? `+${value}` : String(value));
+  const weekendStockAdjustmentTabs = (values: {
+    returned: number;
+    transferredOut: number;
+    restored: number;
+    writtenOff: number;
+  }) => ([
+    {
+      label: "Returned",
+      value: values.returned,
+      className: values.returned > 0 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-gray-50 text-gray-400 border-gray-200"
+    },
+    {
+      label: "Transfer out",
+      value: values.transferredOut,
+      className: values.transferredOut > 0 ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-gray-50 text-gray-400 border-gray-200"
+    },
+    {
+      label: "Restored",
+      value: values.restored,
+      className: values.restored > 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-50 text-gray-400 border-gray-200"
+    },
+    {
+      label: "Write-off",
+      value: values.writtenOff,
+      className: values.writtenOff > 0 ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-gray-50 text-gray-400 border-gray-200"
+    }
+  ]);
+  const openWeekendStockHistoryDrill = (drill: InventoryHistoryMovementDrill, options?: { agentId?: string; productId?: string }) => {
+    openInventoryHistoryWithFilters({
+      productId: options?.productId,
+      agentId: options?.agentId,
+      typeFilter:
+        drill === "returned"
+          ? "Return"
+          : drill === "transfer_out"
+            ? "Waybill Out"
+            : drill === "write_off"
+              ? "Correction"
+              : "All Types",
+      movementDrill: drill,
+      startDate: agentBalanceWeekStart,
+      endDate: agentBalanceWeekEnd
+    });
+  };
+  const formatAgentBalanceWeekMessage = (group: AgentWeeklyBalanceGroup) => {
+    const hubLabel = agentBalanceHubLabel(group);
+    const body = group.rows
+      .map((row) => {
+        const adjustment = weekendStockAdjustmentForRow(row);
+        return `• ${row.productName}: Opening ${row.openingBalance} | Received ${row.receivedThisWeek} | Delivered ${row.deliveredThisWeek} | Adjustments ${formatSignedUnits(adjustment)} | Closing ${row.closingBalance}`;
+      })
+      .join("\n");
+    return [
+      `Weekly stock balance`,
+      `Week: ${weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}`,
+      `Agent: ${group.agentName}`,
+      `Hub: ${hubLabel}`,
+      "",
+      body,
+      "",
+      `Regards,`,
+      `Protohub`
+    ].join("\n");
+  };
+  const copyAgentBalanceSummary = async (group: AgentWeeklyBalanceGroup) => {
+    try {
+      await navigator.clipboard.writeText(formatAgentBalanceWeekMessage(group));
+      showToast(`Weekly balance copied for ${group.agentName}.`);
+    } catch {
+      showToast("Copy failed. Please retry.");
+    }
+  };
+  const copyAllVisibleWeekendStockSummaries = async () => {
+    if (agentBalanceGroups.length === 0) {
+      showToast("No visible weekend stock summaries to copy.");
+      return;
+    }
+
+    const combined = [
+      `Weekend stock summary`,
+      `Week: ${weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}`,
+      `Visible hubs: ${agentBalanceGroups.length}`,
+      "",
+      ...agentBalanceGroups.flatMap((group, index) => (
+        index === 0
+          ? [formatAgentBalanceWeekMessage(group)]
+          : ["", "--------------------", "", formatAgentBalanceWeekMessage(group)]
+      ))
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(combined);
+      showToast(`Copied ${agentBalanceGroups.length} visible weekend summaries.`);
+    } catch {
+      showToast("Copy failed. Please retry.");
+    }
+  };
+  const openAgentBalanceWhatsapp = (group: AgentWeeklyBalanceGroup) => {
+    const digits = sanitizePhoneDigitsInput(group.agentWhatsappPhone || group.agentPhone || "");
+    if (!digits) {
+      showToast(`No WhatsApp number saved for ${group.agentName}.`);
+      return;
+    }
+    const text = encodeURIComponent(formatAgentBalanceWeekMessage(group));
+    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener,noreferrer");
+  };
+  const exportWeekendStockSummaryCsv = () => {
+    const rows = [
+      ["Weekend Stock Summary"],
+      ["Week", weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)],
+      ["Agent Filter", agentBalanceAgentId ? (agentBalanceAgentOptions.find((agent) => agent.id === agentBalanceAgentId)?.name ?? agentBalanceAgentId) : "All agents"],
+      ["State Filter", agentBalanceStateFilter || "All states"],
+      ["Product Filter", agentBalanceProductId ? (products.find((product) => product.id === agentBalanceProductId)?.name ?? agentBalanceProductId) : "All products"],
+      ["Search", agentBalanceSearch || "All"],
+      ["Updated", agentBalanceGeneratedAt ? formatMoment(agentBalanceGeneratedAt) : "Not yet generated"],
+      [],
+      ["Agent", "Hub", "State", "City", "Product", "SKU", "Opening", "Received", "Delivered", "Adjustments", "Closing"]
+    ];
+
+    const csvRows = visibleAgentBalanceRows
+      .slice()
+      .sort((a, b) =>
+        a.agentName.localeCompare(b.agentName)
+        || a.locationName.localeCompare(b.locationName)
+        || a.productName.localeCompare(b.productName)
+      )
+      .map((row) => [
+        row.agentName,
+        row.locationName,
+        row.locationState ?? "",
+        row.locationCity ?? "",
+        row.productName,
+        row.productSku ?? "",
+        String(row.openingBalance),
+        String(row.receivedThisWeek),
+        String(row.deliveredThisWeek),
+        String(weekendStockAdjustmentForRow(row)),
+        String(row.closingBalance)
+      ]);
+
+    const csv = [...rows, ...csvRows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `weekend-stock-summary-${agentBalanceWeekStart}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast("Weekend stock summary exported as CSV.");
+  };
   const summarizeManagerQueueOrder = (order: TrackedOrder, members: ManagedUser[]) => {
     const tasks = orderFollowUpTasksByOrder[order.id] ?? [];
     const attempts = orderContactAttemptsByOrder[order.id] ?? [];
@@ -8170,7 +8651,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -8354,6 +8835,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       inventory: "Inventory",
       "sales-reps": "Sales Reps",
       "sales-teams": "Sales Teams",
+      "weekend-stock-summary": "Weekend Stock Summary",
       agents: "Agents",
       waybill: "Waybill",
       payroll: "Payroll",
@@ -9090,6 +9572,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             active: u.active,
             created: u.createdAt ?? u.created_at ?? "",
             lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
+            permissions: sanitizeUserPermissionList(Array.isArray(u.permissions) ? u.permissions : undefined),
+            extraPages: sanitizeActivePageList(Array.isArray(u.extraPages ?? u.extra_pages) ? (u.extraPages ?? u.extra_pages) : undefined),
+            agentBalanceScopeMode: (() => {
+              const rawScopeMode = u.agentBalanceScopeMode ?? u.agent_balance_scope_mode;
+              if (rawScopeMode === "states" || rawScopeMode === "agents" || rawScopeMode === "assigned_agents" || rawScopeMode === "assignedAgents") {
+                return rawScopeMode === "assignedAgents" ? "assigned_agents" : rawScopeMode;
+              }
+              return "all";
+            })(),
+            agentBalanceStateScope: Array.isArray(u.agentBalanceStateScope ?? u.agent_balance_state_scope) ? (u.agentBalanceStateScope ?? u.agent_balance_state_scope) : [],
+            agentBalanceAgentIds: Array.isArray(u.agentBalanceAgentIds ?? u.agent_balance_agent_ids) ? (u.agentBalanceAgentIds ?? u.agent_balance_agent_ids) : [],
+            assignedAgentIds: Array.isArray(u.assignedAgentIds ?? u.assigned_agent_ids) ? (u.assignedAgentIds ?? u.assigned_agent_ids) : [],
             roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
           })));
         }
@@ -10915,6 +11409,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       Inventory: "#/dashboard/admin/inventory",
       "Sales Reps": "#/dashboard/admin/sales-reps",
       "Sales Teams": "#/dashboard/admin/sales-teams",
+      "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
       Agents: "#/dashboard/admin/agents",
       Waybill: "#/dashboard/admin/waybill",
       Payroll: "#/dashboard/admin/payroll",
@@ -10958,7 +11453,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
-    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
+    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
@@ -14928,18 +15423,92 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const prevUsers = users;
     setUsers((prev) => prev.map((u) => {
       if (u.id !== userId || u.role === "Owner") return u;
-      const perms = u.permissions ?? defaultPermsByRole[u.role] ?? [];
-      return { ...u, permissions: perms.includes(permission) ? perms.filter((p) => p !== permission) : [...perms, permission] };
+      const perms = sanitizeUserPermissionList(u.permissions ?? defaultPermsByRole[u.role] ?? []);
+      return {
+        ...u,
+        permissions: perms.includes(permission)
+          ? perms.filter((p) => p !== permission)
+          : [...perms, permission]
+      };
     }));
     showToast("Permissions updated.");
     const user = users.find((u) => u.id === userId);
     if (user && user.role !== "Owner") {
-      const perms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
-      const nextPerms = perms.includes(permission) ? perms.filter((p) => p !== permission) : [...perms, permission];
+      const perms = sanitizeUserPermissionList(user.permissions ?? defaultPermsByRole[user.role] ?? []);
+      const nextPerms = perms.includes(permission)
+        ? perms.filter((p) => p !== permission)
+        : [...perms, permission];
       teamApi.update(userId, { permissions: nextPerms }).catch((err: any) => {
         setUsers(prevUsers);
         showToast(`Failed to update permissions: ${err.message}`);
       });
+    }
+  };
+
+  const updateUserAgentBalanceScope = (
+    user: ManagedUser,
+    patch: Partial<Pick<ManagedUser, "agentBalanceScopeMode" | "agentBalanceStateScope" | "agentBalanceAgentIds">>
+  ) => {
+    if (isTemporaryUserId(user.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
+    const prevUsers = users;
+    const nextUser: ManagedUser = {
+      ...user,
+      ...patch,
+      agentBalanceScopeMode: patch.agentBalanceScopeMode ?? user.agentBalanceScopeMode ?? "all",
+      agentBalanceStateScope: patch.agentBalanceStateScope ?? user.agentBalanceStateScope ?? [],
+      agentBalanceAgentIds: patch.agentBalanceAgentIds ?? user.agentBalanceAgentIds ?? []
+    };
+    setUsers((prev) => prev.map((entry) => entry.id === user.id ? nextUser : entry));
+    teamApi.update(user.id, {
+      agent_balance_scope_mode: nextUser.agentBalanceScopeMode ?? "all",
+      agent_balance_state_scope: nextUser.agentBalanceStateScope ?? [],
+      agent_balance_agent_ids: nextUser.agentBalanceAgentIds ?? []
+    }).catch((err: any) => {
+      setUsers(prevUsers);
+      showToast(`Failed to update agent balance scope: ${err.message}`);
+    });
+  };
+
+  const updateUserAssignedAgents = (user: ManagedUser, agentIds: string[]) => {
+    if (isTemporaryUserId(user.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
+    const normalizedAgentIds = Array.from(new Set(agentIds.filter(Boolean)));
+    const prevUsers = users;
+    const nextUser: ManagedUser = {
+      ...user,
+      assignedAgentIds: normalizedAgentIds
+    };
+    setUsers((prev) => prev.map((entry) => entry.id === user.id ? nextUser : entry));
+    teamApi.updateAgentAssignments(user.id, normalizedAgentIds).catch((err: any) => {
+      setUsers(prevUsers);
+      showToast(`Failed to update assigned agents: ${err.message}`);
+    });
+  };
+
+  const syncSalesTeamAssignedAgents = async (team: { id: string; name: string; leadId: string | undefined; productIds: string[]; memberIds: string[] }) => {
+    if (isTemporaryTeamId(team.id)) {
+      showToast("This team is still syncing. Try again in a moment.");
+      return;
+    }
+    try {
+      const result = await salesTeamsApi.syncAgentAssignments(team.id);
+      const nextAssignedIds = Array.isArray(result.agentIds) ? Array.from(new Set(result.agentIds.filter(Boolean))) : [];
+      const targetUserIds = new Set(Array.isArray(result.userIds) ? result.userIds.filter(Boolean) : []);
+      setUsers((prev) => prev.map((user) => (
+        targetUserIds.has(user.id)
+          ? { ...user, assignedAgentIds: nextAssignedIds }
+          : user
+      )));
+      showToast(
+        `${result.teamName || team.name} ownership synced for ${result.userCount ?? targetUserIds.size} user${(result.userCount ?? targetUserIds.size) === 1 ? "" : "s"} across ${result.agentCount ?? nextAssignedIds.length} agent${(result.agentCount ?? nextAssignedIds.length) === 1 ? "" : "s"}.`
+      );
+    } catch (err: any) {
+      showToast(`Failed to sync team ownership: ${err?.message ?? "please retry"}.`);
     }
   };
 
@@ -15770,6 +16339,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setActivePage("Inventory");
     setInventoryView("history");
     setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory/history");
+  };
+  const openInventoryHistoryWithFilters = (filters: {
+    productId?: string;
+    agentId?: string;
+    typeFilter?: "All Types" | StockMovementType;
+    movementDrill?: InventoryHistoryMovementDrill;
+    startDate?: string;
+    endDate?: string;
+  }) => {
+    setActivePage("Inventory");
+    setInventoryView("history");
+    setModal(null);
+    setHistoryProductFilter(filters.productId ?? "All Products");
+    setHistoryAgentFilter(filters.agentId ?? "All Agents");
+    setHistoryTypeFilter(filters.typeFilter ?? "All Types");
+    setHistoryMovementDrill(filters.movementDrill ?? "");
+    setHistoryStartDate(filters.startDate ?? "");
+    setHistoryEndDate(filters.endDate ?? "");
     syncHashRoute("#/dashboard/admin/inventory/history");
   };
 
@@ -17664,6 +18252,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
     const isOwner = user.role === "Owner";
     const permGroups = ["Orders", "Inventory", "Operations", "Finance", "Admin"] as const;
+    const canManageScope = !isOwner && (currentRole === "Owner" || currentRole === "Admin");
+    const rolePages = allowedPagesFor(user.role, user.extraPages ?? []);
+    const canSeeWeekendStockSummary = hasWeekendStockSummaryPermission(userPerms) || rolePages.includes(WEEKEND_STOCK_SUMMARY_PAGE);
+    const scopeMode = user.agentBalanceScopeMode ?? "all";
+    const scopedStates = user.agentBalanceStateScope ?? [];
+    const scopedAgentIds = user.agentBalanceAgentIds ?? [];
+    const assignedAgentIds = user.assignedAgentIds ?? [];
+    const teamScope = teamForManagedUser(user);
+    const suggestedStateAssignedAgentIds = agentIdsForStateScope(scopedStates);
+    const suggestedTeamAssignedAgentIds = suggestedAssignedAgentIdsForTeam(user);
 
     return (
       <div className="px-4 sm:px-6 py-4 bg-blue-50/30">
@@ -17680,7 +18278,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 return;
               }
               const prevUsers = users;
-              const defaultPerms = defaultPermsByRole[user.role] ?? [];
+              const defaultPerms = sanitizeUserPermissionList(defaultPermsByRole[user.role] ?? []);
               setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
               teamApi.update(user.id, { permissions: defaultPerms }).catch((err: any) => {
                 setUsers(prevUsers);
@@ -17765,7 +18363,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               const s = new Set(user.extraPages ?? []);
                               if (granted) s.delete(page);
                               else s.add(page);
-                              return Array.from(s) as ActivePage[];
+                              return sanitizeActivePageList(Array.from(s)) as ActivePage[];
                             })();
                             setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, extraPages: nextExtras } : u));
                             teamApi.update(user.id, { extra_pages: nextExtras }).catch((err: any) => {
@@ -17785,6 +18383,192 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               );
             })()}
             <p className="text-[11px] text-gray-400 mt-3">Default pages for {user.role}: {(roleAllowedPages[user.role] ?? []).join(", ") || "none"}.</p>
+          </div>
+        )}
+
+        {canManageScope && canSeeWeekendStockSummary && (
+          <div className="mt-5 pt-4 border-t border-blue-100">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Weekend stock summary access scope</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Choose whether <strong>{user.name}</strong> sees all agents, only selected states, only selected agents, or only their owned assigned-agent list inside the Weekend Stock Summary page.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-2">
+              {[
+                { key: "all", title: "Full agent access", desc: "See every agent hub in the weekly stock summary." },
+                { key: "states", title: "Selected states", desc: "Only show agent hubs in the states you tick below." },
+                { key: "agents", title: "Selected agents", desc: "Only show the exact agents you tick below." },
+                { key: "assigned_agents", title: "Assigned agents", desc: "Only show the agents explicitly owned by this user below." }
+              ].map((option) => {
+                const active = scopeMode === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={`!min-h-0 rounded-xl border px-4 py-3 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
+                    onClick={() => updateUserAgentBalanceScope(user, {
+                      agentBalanceScopeMode: option.key as "all" | "states" | "agents" | "assigned_agents",
+                      agentBalanceStateScope: option.key === "states" ? scopedStates : (option.key === "all" ? [] : scopedStates),
+                      agentBalanceAgentIds: option.key === "agents" ? scopedAgentIds : (option.key === "all" ? [] : scopedAgentIds)
+                    })}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{option.title}</span>
+                      {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0]" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block" />}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 mb-0">{option.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {scopeMode === "states" && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Allowed states</p>
+                  <button
+                    type="button"
+                    className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
+                    onClick={() => updateUserAgentBalanceScope(user, { agentBalanceStateScope: nigeriaStates.slice() })}
+                  >
+                    Select all states
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {nigeriaStates.map((state) => {
+                    const active = scopedStates.includes(state);
+                    return (
+                      <button
+                        key={state}
+                        type="button"
+                        className={`!min-h-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${active ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 bg-white hover:bg-gray-50"}`}
+                        onClick={() => updateUserAgentBalanceScope(user, {
+                          agentBalanceStateScope: active
+                            ? scopedStates.filter((item) => item !== state)
+                            : [...scopedStates, state]
+                        })}
+                      >
+                        {state}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-400 m-0">Only agent hubs in the selected states will appear for this user.</p>
+              </div>
+            )}
+
+            {scopeMode === "agents" && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Allowed agents</p>
+                  <button
+                    type="button"
+                    className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
+                    onClick={() => updateUserAgentBalanceScope(user, { agentBalanceAgentIds: agents.map((agent) => agent.id) })}
+                  >
+                    Select all agents
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {agents
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((agent) => {
+                      const active = scopedAgentIds.includes(agent.id);
+                      return (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          className={`!min-h-0 flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
+                          onClick={() => updateUserAgentBalanceScope(user, {
+                            agentBalanceAgentIds: active
+                              ? scopedAgentIds.filter((id) => id !== agent.id)
+                              : [...scopedAgentIds, agent.id]
+                          })}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 m-0">{agent.name}</p>
+                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{agentPrimaryBaseState(agent) || "No base state yet"}</p>
+                          </div>
+                          {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0] shrink-0" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block shrink-0 mt-0.5" />}
+                        </button>
+                      );
+                    })}
+                </div>
+                <p className="text-[11px] text-gray-400 m-0">This user will only see weekly stock summaries for the agents you tick here.</p>
+              </div>
+            )}
+
+            {scopeMode === "assigned_agents" && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Owned agents</p>
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline disabled:text-gray-300 disabled:no-underline"
+                      disabled={suggestedStateAssignedAgentIds.length === 0}
+                      onClick={() => updateUserAssignedAgents(user, suggestedStateAssignedAgentIds)}
+                    >
+                      Use selected states
+                    </button>
+                    <button
+                      type="button"
+                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline disabled:text-gray-300 disabled:no-underline"
+                      disabled={suggestedTeamAssignedAgentIds.length === 0}
+                      onClick={() => updateUserAssignedAgents(user, suggestedTeamAssignedAgentIds)}
+                    >
+                      Use team product agents
+                    </button>
+                    <button
+                      type="button"
+                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
+                      onClick={() => updateUserAssignedAgents(user, agents.map((agent) => agent.id))}
+                    >
+                      Assign all agents
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[11px] text-gray-600 leading-relaxed">
+                  <span className="font-semibold text-gray-800">Smart fill:</span>{" "}
+                  `Use selected states` pulls in agents whose base/hub state matches this user’s saved state scope.{" "}
+                  `Use team product agents` pulls in agents currently carrying products from this user’s sales-team scope.
+                  {!teamScope ? " This user is not attached to any sales team yet." : teamScope.productIds.length === 0 ? ` Team "${teamScope.name}" has no product scope yet, so product-based suggestions are empty.` : ` Team "${teamScope.name}" is available for product-based suggestions.`}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {agents
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((agent) => {
+                      const active = assignedAgentIds.includes(agent.id);
+                      return (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          className={`!min-h-0 flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
+                          onClick={() => updateUserAssignedAgents(
+                            user,
+                            active
+                              ? assignedAgentIds.filter((id) => id !== agent.id)
+                              : [...assignedAgentIds, agent.id]
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 m-0">{agent.name}</p>
+                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{agentPrimaryBaseState(agent) || "No base state yet"}</p>
+                          </div>
+                          {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0] shrink-0" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block shrink-0 mt-0.5" />}
+                        </button>
+                      );
+                    })}
+                </div>
+                <p className="text-[11px] text-gray-400 m-0">Use this when you want Protohub to auto-scope the weekly stock summary to the agents this user actually owns. You can smart-fill first, then fine-tune manually.</p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -18469,7 +19253,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         {/* Nav items */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
           {navItems.filter((item) => currentAllowedPages.includes(item.label as ActivePage)).map((item) => {
-            const isActive = activePage === item.label;
+            const targetPage = item.label as ActivePage;
+            const isActive = activePage === targetPage;
             return (
               <button
                 type="button"
@@ -20836,7 +21621,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Sales representatives table">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">All Sales Representatives</h2>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone ?? "", role: u.role, active: u.active, created: u.createdAt ?? u.created_at ?? "", lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined }))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh" aria-label="Refresh sales representatives" onClick={() => { teamApi.list().then((res: any[]) => { setUsers(res.map((u: any) => normalizeRealtimeUser(u))); showToast("Sales representatives refreshed."); }).catch(() => showToast("Failed to refresh — please try again.")); }}><RefreshCw className="w-4 h-4" /></button>
                 </div>
                 {pagedSalesRepRows.length === 0 ? (
                   <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">No sales representatives found</div>
@@ -21355,7 +22140,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div key={team.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                         <h3 className="text-sm font-bold text-gray-900">{team.name}</h3>
-                        <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1">
+                          <button
+                            className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-[#1F8FE0] hover:bg-blue-50 transition-colors disabled:opacity-40"
+                            title="Sync assigned agents from team scope"
+                            disabled={!team.leadId && team.memberIds.length === 0}
+                            onClick={() => { void syncSalesTeamAssignedAgents(team); }}
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                          </button>
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit team" onClick={() => openSalesTeamEditRoute(team.id)}><Pencil className="w-4 h-4" /></button>
                           <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-red-500 hover:bg-red-50 transition-colors" title="Delete team" onClick={() => {
                             if (isTemporaryTeamId(team.id)) {
@@ -21394,6 +22187,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <strong className="text-sm font-semibold text-gray-800">Round-robin</strong>
                         </div>
                       </div>
+                      <p className="mt-3 text-[11px] text-gray-500">
+                        Ownership sync refreshes the assigned-agent list for this team’s lead and members using the current team scope.
+                        {team.productIds.length === 0 ? " This team covers all products, so the sync will include all agents." : " This team only pulls agents currently carrying the team’s scoped products."}
+                      </p>
                     </div>
                   );
                 })}
@@ -21562,6 +22359,361 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             renderCallRepConsole()
           ) : activePage === "Sales Rep Workspace" ? (
             renderRepConsole()
+          ) : activePage === "Weekend Stock Summary" ? (
+            <div className="space-y-6">
+              <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+                <div className="space-y-1">
+                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Weekend Stock Summary</h1>
+                  <p className="text-sm font-medium text-gray-500">Weekly opening, delivered, and closing stock by agent hub. Built for quick weekend summaries reps can copy or send out without touching inventory controls.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-[#1F8FE0]" />
+                    Read-only stock summary
+                  </span>
+                  {agentBalanceGeneratedAt && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-gray-400" />
+                      Updated {formatMoment(agentBalanceGeneratedAt)}
+                    </span>
+                  )}
+                </div>
+              </header>
+
+              <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-4">
+                <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, -7))}
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Previous week
+                    </button>
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      onClick={() => setAgentBalanceWeekStart(mondayKeyFromDate())}
+                    >
+                      This week
+                    </button>
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, 7))}
+                    >
+                      Next week <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="xl:ml-auto inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
+                    <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
+                    Week of {weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Agent</span>
+                    <select
+                      className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                      value={agentBalanceAgentId}
+                      onChange={(event) => setAgentBalanceAgentId(event.target.value)}
+                    >
+                      <option value="">All agents</option>
+                      {agentBalanceAgentOptions
+                        .slice()
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((agent) => (
+                          <option key={agent.id} value={agent.id}>{agent.name}</option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">State</span>
+                    <select
+                      className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                      value={agentBalanceStateFilter}
+                      onChange={(event) => setAgentBalanceStateFilter(event.target.value)}
+                    >
+                      <option value="">All states</option>
+                      {agentBalanceStateOptions.map((state) => (
+                        <option key={state} value={state}>{state}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
+                    <select
+                      className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                      value={agentBalanceProductId}
+                      onChange={(event) => setAgentBalanceProductId(event.target.value)}
+                    >
+                      <option value="">All products</option>
+                      {products
+                        .filter((product) => product.catalogType !== "combo_only")
+                        .slice()
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((product) => (
+                          <option key={product.id} value={product.id}>{product.name}</option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        value={agentBalanceSearch}
+                        onChange={(event) => setAgentBalanceSearch(event.target.value)}
+                        placeholder="Agent, hub, state, product"
+                        className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                      />
+                    </div>
+                  </label>
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Actions</span>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => void loadAgentBalances()}
+                        disabled={agentBalanceLoading}
+                      >
+                        <RefreshCw className={`w-4 h-4 ${agentBalanceLoading ? "animate-spin" : ""}`} />
+                        Refresh stock summary
+                      </button>
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={exportWeekendStockSummaryCsv}
+                        disabled={visibleAgentBalanceRows.length === 0}
+                      >
+                        <Download className="w-4 h-4" />
+                        Export CSV
+                      </button>
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => void copyAllVisibleWeekendStockSummaries()}
+                        disabled={agentBalanceGroups.length === 0}
+                      >
+                        <ClipboardCheck className="w-4 h-4" />
+                        Copy all visible
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {agentBalanceSummary && (
+                <section className="space-y-3">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                    This page is a lightweight weekend stock summary. Opening balances come from the first weekly snapshot Protohub creates, while delivered and closing figures stay tied to real inventory movement and delivered orders. Adjustments cover returns, transfers, restorations, and write-offs so the closing stock balances clearly.
+                  </div>
+                  <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+                    {[
+                      { label: "Agents", value: agentBalanceSummary.agentCount, helper: "in this weekly view" },
+                      { label: "Opening", value: agentBalanceSummary.openingUnits, helper: "units at week start" },
+                      { label: "Received", value: agentBalanceSummary.receivedUnits, helper: "units stocked in this week" },
+                      { label: "Delivered", value: agentBalanceSummary.deliveredUnits, helper: "units fulfilled this week" },
+                      {
+                        label: "Adjustments",
+                        value: formatSignedUnits(agentBalanceSummary.restoredUnits - agentBalanceSummary.returnedUnits - agentBalanceSummary.transferredOutUnits - agentBalanceSummary.writeOffUnits),
+                        helper: "returns, transfers, restorations, write-offs",
+                        tabs: weekendStockAdjustmentTabs({
+                          returned: agentBalanceSummary.returnedUnits,
+                          transferredOut: agentBalanceSummary.transferredOutUnits,
+                          restored: agentBalanceSummary.restoredUnits,
+                          writtenOff: agentBalanceSummary.writeOffUnits
+                        })
+                      },
+                      { label: "Closing", value: agentBalanceSummary.closingUnits, helper: "units remaining now" }
+                    ].map((card) => (
+                      <article key={card.label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">{card.label}</p>
+                        <p className="text-2xl font-extrabold text-gray-900 mt-1 mb-1">{card.value}</p>
+                        <p className="text-[11px] text-gray-400 m-0">{card.helper}</p>
+                        {card.tabs ? (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {card.tabs.map((tab) => (
+                              <button
+                                key={tab.label}
+                                type="button"
+                                className={`!min-h-0 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold transition-colors ${tab.className} ${tab.value > 0 ? "hover:brightness-95 cursor-pointer" : "cursor-default"}`}
+                                onClick={() => {
+                                  if (tab.value <= 0) return;
+                                  openWeekendStockHistoryDrill(
+                                    tab.label === "Returned"
+                                      ? "returned"
+                                      : tab.label === "Transfer out"
+                                        ? "transfer_out"
+                                        : tab.label === "Restored"
+                                          ? "restored"
+                                          : "write_off"
+                                  );
+                                }}
+                                disabled={tab.value <= 0}
+                                title={tab.value > 0 ? `Open ${tab.label.toLowerCase()} stock history` : `${tab.label} has no movement this week`}
+                              >
+                                <span>{tab.label}</span>
+                                <span>{tab.value}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {agentBalanceError && (
+                <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
+                  <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+                  <span className="font-medium text-red-800 flex-1">{agentBalanceError}</span>
+                  <button className="!min-h-0 px-4 py-1.5 text-xs font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors" onClick={() => void loadAgentBalances()}>Retry</button>
+                </div>
+              )}
+
+              {agentBalanceLoading ? (
+                <TableSkeleton cols={5} rows={6} />
+              ) : agentBalanceGroups.length === 0 ? (
+                <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-10 flex flex-col items-center justify-center gap-3 text-gray-400">
+                  <ClipboardCheck className="w-10 h-10 text-gray-300" />
+                  <p className="text-sm font-medium m-0 text-gray-500">No weekend stock rows match this view yet.</p>
+                  <p className="text-xs m-0 text-gray-400">Try another week, remove a filter, or wait for stock and delivery activity to land.</p>
+                </section>
+              ) : (
+                <div className="space-y-4">
+                  {agentBalanceGroups.map((group) => {
+                    const opening = group.rows.reduce((sum, row) => sum + row.openingBalance, 0);
+                    const delivered = group.rows.reduce((sum, row) => sum + row.deliveredThisWeek, 0);
+                    const closing = group.rows.reduce((sum, row) => sum + row.closingBalance, 0);
+                    const received = group.rows.reduce((sum, row) => sum + row.receivedThisWeek, 0);
+                    const adjustments = group.rows.reduce((sum, row) => sum + weekendStockAdjustmentForRow(row), 0);
+                    const returned = group.rows.reduce((sum, row) => sum + row.returnedThisWeek, 0);
+                    const transferredOut = group.rows.reduce((sum, row) => sum + row.transferredOutThisWeek, 0);
+                    const restored = group.rows.reduce((sum, row) => sum + row.restoredThisWeek, 0);
+                    const writtenOff = group.rows.reduce((sum, row) => sum + row.writtenOffThisWeek, 0);
+                    const hubLabel = agentBalanceHubLabel(group);
+                    const hasWhatsapp = Boolean(sanitizePhoneDigitsInput(group.agentWhatsappPhone || group.agentPhone || ""));
+
+                    return (
+                      <section key={group.key} className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h2 className="text-lg font-bold text-gray-900 m-0">{group.agentName}</h2>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-[11px] font-bold">
+                                <MapPin className="w-3.5 h-3.5" />
+                                {hubLabel}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-500 mt-1 mb-0">Share this week’s stock position with the agent. Inventory edits, corrections, and deeper movement checks still stay inside Inventory and Stock History.</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                              onClick={() => void copyAgentBalanceSummary(group)}
+                            >
+                              <Copy className="w-4 h-4" /> Copy Summary
+                            </button>
+                            <button
+                              className={`!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${hasWhatsapp ? "bg-[#25D366] text-white hover:bg-[#1fb55a]" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
+                              onClick={() => openAgentBalanceWhatsapp(group)}
+                              disabled={!hasWhatsapp}
+                            >
+                              <MessageCircle className="w-4 h-4" /> Send via WhatsApp
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="px-5 py-4 grid grid-cols-2 md:grid-cols-5 gap-3 border-b border-gray-100 bg-gray-50/60">
+                          {[
+                            { label: "Opening", value: opening, helper: "Stock the agent started this week with." },
+                            { label: "Received", value: received, helper: "Extra units added to this hub during the week." },
+                            { label: "Delivered", value: delivered, helper: "Units used to fulfil delivered customer orders." },
+                            {
+                              label: "Adjustments",
+                              value: formatSignedUnits(adjustments),
+                              helper: "Returns, transfers, restorations, and write-offs this week.",
+                              tabs: weekendStockAdjustmentTabs({
+                                returned,
+                                transferredOut,
+                                restored,
+                                writtenOff
+                              })
+                            },
+                            { label: "Closing", value: closing, helper: "Stock still remaining with the agent this week." }
+                          ].map((item) => (
+                            <div key={item.label} className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 m-0">{item.label}</p>
+                              <p className="text-xl font-extrabold text-gray-900 mt-1 mb-1">{item.value}</p>
+                              <p className="text-[11px] leading-snug text-gray-400 m-0">{item.helper}</p>
+                              {item.tabs ? (
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                  {item.tabs.map((tab) => (
+                                    <button
+                                      key={tab.label}
+                                      type="button"
+                                      className={`!min-h-0 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold transition-colors ${tab.className} ${tab.value > 0 ? "hover:brightness-95 cursor-pointer" : "cursor-default"}`}
+                                      onClick={() => {
+                                        if (tab.value <= 0) return;
+                                        openWeekendStockHistoryDrill(
+                                          tab.label === "Returned"
+                                            ? "returned"
+                                            : tab.label === "Transfer out"
+                                              ? "transfer_out"
+                                              : tab.label === "Restored"
+                                                ? "restored"
+                                                : "write_off",
+                                          { agentId: group.agentId }
+                                        );
+                                      }}
+                                      disabled={tab.value <= 0}
+                                      title={tab.value > 0 ? `Open ${tab.label.toLowerCase()} stock history for ${group.agentName}` : `${tab.label} has no movement this week`}
+                                    >
+                                      <span>{tab.label}</span>
+                                      <span>{tab.value}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-white">
+                              <tr className="text-left border-b border-gray-100">
+                                {["Product", "Opening", "Received", "Delivered", "Adjustments", "Closing"].map((heading) => (
+                                  <th key={heading} className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-gray-500 whitespace-nowrap">{heading}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {group.rows
+                                .slice()
+                                .sort((a, b) => a.productName.localeCompare(b.productName))
+                                .map((row) => (
+                                  <tr key={`${group.key}-${row.productId}`} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-5 py-3">
+                                      <div className="font-semibold text-gray-900">{row.productName}</div>
+                                      {row.productSku && <div className="text-[11px] text-gray-400 font-mono">{row.productSku}</div>}
+                                    </td>
+                                    <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{row.openingBalance}</td>
+                                    <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{row.receivedThisWeek || "—"}</td>
+                                    <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{row.deliveredThisWeek || "—"}</td>
+                                    <td className={`px-5 py-3 whitespace-nowrap font-semibold ${weekendStockAdjustmentForRow(row) > 0 ? "text-emerald-700" : weekendStockAdjustmentForRow(row) < 0 ? "text-amber-700" : "text-gray-500"}`}>
+                                      {weekendStockAdjustmentForRow(row) === 0 ? "—" : formatSignedUnits(weekendStockAdjustmentForRow(row))}
+                                    </td>
+                                    <td className="px-5 py-3 font-extrabold text-gray-900 whitespace-nowrap">{row.closingBalance}</td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           ) : activePage === "Agents" && agentView === "detail" && selectedAgentId && agents.find((a) => a.id === selectedAgentId) ? (
             (() => {
               const agent = agents.find((a) => a.id === selectedAgentId)!;
@@ -25881,6 +27033,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const isOwner = user.role === "Owner";
                       const isExpanded = expandedPermissionsUserId === user.id;
                       const presence = userPresenceMeta(user);
+                      const scopeSummary = userWeekendStockSummaryScopeSummary(user);
                       return (
                         <article key={user.id} className="p-4 space-y-4">
                           <div className="flex items-start justify-between gap-3">
@@ -25924,6 +27077,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 </div>
                               </>
                             )}
+                            <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Agent Scope</span>
+                              <strong className="text-sm text-gray-900">{scopeSummary.label}</strong>
+                              <p className="mt-1 mb-0 text-[11px] text-gray-500">{scopeSummary.detail}</p>
+                            </div>
                           </div>
 
                           <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
@@ -25971,6 +27129,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           "Name & Email",
                           "Role",
                           "Permissions",
+                          "Agent Scope",
                           ...(ownerCanSeeUserPresence ? ["Presence", "Last Seen"] : []),
                           ownerCanSeeUserPresence ? "Account" : "Status",
                           "Created",
@@ -25982,13 +27141,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody>
                       {filteredUsers.length === 0 ? (
-                        <tr><td colSpan={ownerCanSeeUserPresence ? 8 : 6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
+                      <tr><td colSpan={ownerCanSeeUserPresence ? 9 : 7} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
                       ) : (
                         pagedFilteredUsers.map((user) => {
                           const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
                           const presence = userPresenceMeta(user);
+                          const scopeSummary = userWeekendStockSummaryScopeSummary(user);
                           return (
                             <Fragment key={user.id}>
                               <tr className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
@@ -26010,6 +27170,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     {isOwner ? "All" : userPerms.length}/{permissionDefs.length}
                                     <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                                   </button>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <div className="font-semibold text-gray-900">{scopeSummary.label}</div>
+                                  <div className="text-[11px] text-gray-500">{scopeSummary.detail}</div>
                                 </td>
                                 {ownerCanSeeUserPresence && (
                                   <>
@@ -26049,7 +27213,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </tr>
                               {isExpanded && (
                                 <tr className="bg-blue-50/30 border-t border-blue-100">
-                                  <td colSpan={ownerCanSeeUserPresence ? 8 : 6} className="p-0">
+                                  <td colSpan={ownerCanSeeUserPresence ? 9 : 7} className="p-0">
                                     {renderUserPermissionsPanel(user)}
                                   </td>
                                 </tr>
@@ -28955,18 +30119,31 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <p className="text-sm font-medium text-gray-500">Review additions, corrections, deliveries, and agent stock movements.</p>
                   </div>
                 </header>
+                {(historyMovementDrill || historyAgentFilter !== "All Agents" || historyStartDate || historyEndDate || historyProductFilter !== "All Products" || historyTypeFilter !== "All Types") && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-medium text-blue-900">
+                    <span className="font-bold uppercase tracking-wide text-blue-700">Focused view</span>
+                    {historyMovementDrill ? <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1">{historyMovementDrillLabel}</span> : null}
+                    {historyAgentFilter !== "All Agents" ? <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1">{historyAgentOptions.find((agent) => agent.id === historyAgentFilter)?.name ?? historyAgentFilter}</span> : null}
+                    {historyProductFilter !== "All Products" ? <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1">{products.find((product) => product.id === historyProductFilter)?.name ?? historyProductFilter}</span> : null}
+                    {historyStartDate || historyEndDate ? <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1">{historyStartDate || "…"} to {historyEndDate || "…"}</span> : null}
+                  </div>
+                )}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-wrap gap-3">
                   <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyProductFilter} onChange={(event) => setHistoryProductFilter(event.target.value)}>
                     <option>All Products</option>
                     {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
                   </select>
-                  <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyTypeFilter} onChange={(event) => setHistoryTypeFilter(event.target.value as "All Types" | StockMovementType)}>
+                  <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyAgentFilter} onChange={(event) => setHistoryAgentFilter(event.target.value)}>
+                    <option>All Agents</option>
+                    {historyAgentOptions.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                  </select>
+                  <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyTypeFilter} onChange={(event) => { setHistoryTypeFilter(event.target.value as "All Types" | StockMovementType); setHistoryMovementDrill(""); }}>
                     {stockMovementTypes.map((type) => <option key={type}>{type}</option>)}
                   </select>
                   <input type="date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyStartDate} onChange={(event) => setHistoryStartDate(event.target.value)} aria-label="Start date" />
                   <input type="date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={historyEndDate} onChange={(event) => setHistoryEndDate(event.target.value)} aria-label="End date" />
                   <button className="px-4 py-2 rounded-lg border border-[#1F8FE0] text-[#1F8FE0] text-sm font-semibold hover:bg-blue-50 transition-colors" onClick={() => showToast(`${filteredStockMovements.length} movement${filteredStockMovements.length === 1 ? "" : "s"} found.`)}>Apply</button>
-                  <button className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setHistoryProductFilter("All Products"); setHistoryTypeFilter("All Types"); setHistoryStartDate(""); setHistoryEndDate(""); }}>Clear</button>
+                  <button className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setHistoryProductFilter("All Products"); setHistoryAgentFilter("All Agents"); setHistoryTypeFilter("All Types"); setHistoryMovementDrill(""); setHistoryStartDate(""); setHistoryEndDate(""); }}>Clear</button>
                 </div>
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
@@ -29843,6 +31020,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         </button>
                       );
                     })}
+                  </div>
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-gray-600">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-gray-800 m-0">Agent ownership sync</p>
+                        <p className="mt-1 mb-0">
+                          Refresh assigned agents for this team’s lead and members from the current team scope.
+                          {team.productIds.length === 0 ? " This team covers all products, so the sync uses all agents." : " This team only pulls agents currently carrying the team’s scoped products."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-200 bg-white text-[#1F8FE0] text-sm font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        disabled={!team.leadId && team.memberIds.length === 0}
+                        onClick={() => { void syncSalesTeamAssignedAgents(team); }}
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        Sync ownership
+                      </button>
+                    </div>
                   </div>
                   <div className="flex items-center justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>

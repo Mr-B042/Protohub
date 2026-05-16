@@ -307,6 +307,13 @@ export const agentsApi = {
   reconcile: (id: string, body: unknown) => post<any>(`/api/agents/${id}/reconcile`, body)
 };
 
+export const weekendStockSummaryApi = {
+  weekly: (params?: Record<string, string>) => {
+    const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
+    return get<any>(`/api/weekend-stock-summary/weekly${qs}`);
+  }
+};
+
 // ── Stock ─────────────────────────────────────────────────
 export const stockApi = {
   movements: (params?: Record<string, string>) => {
@@ -369,6 +376,8 @@ export const waybillsApi = {
 export const teamApi = {
   list: () => get<any[]>("/api/auth/team"),
   update: (id: string, body: unknown) => patch<any>(`/api/auth/team/${id}`, body),
+  updateAgentAssignments: (id: string, agentIds: string[]) =>
+    request<{ userId: string; agentIds: string[] }>("PUT", `/api/auth/team/${id}/agent-assignments`, { agentIds }),
   delete: (id: string) => del<void>(`/api/auth/team/${id}`),
   updateRoundRobin: (order: string[]) => request<{ ok: boolean }>("PUT", "/api/auth/team/round-robin", { order })
 };
@@ -495,6 +504,11 @@ export const salesTeamsApi = {
   logManagerAction: (id: string, body: unknown) => post<any>(`/api/sales-teams/${id}/manager-actions`, body),
   create: (body: unknown) => post<any>("/api/sales-teams", body),
   update: (id: string, body: unknown) => patch<any>(`/api/sales-teams/${id}`, body),
+  syncAgentAssignments: (id: string) =>
+    post<{ teamId: string; teamName: string; userIds: string[]; agentIds: string[]; userCount: number; agentCount: number; mode: string }>(
+      `/api/sales-teams/${id}/sync-agent-assignments`,
+      {}
+    ),
   delete: (id: string) => del<void>(`/api/sales-teams/${id}`)
 };
 

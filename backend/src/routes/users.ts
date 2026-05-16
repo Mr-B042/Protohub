@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -11,11 +12,19 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at, last_seen_at")
+    .select("id, name, email, phone, role, active, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  try {
+    const assignedAgentIdsByUser = await loadAssignedAgentIdsByUser(req.user!.orgId, (data ?? []).map((row) => row.id));
+    res.json((data ?? []).map((row) => ({
+      ...row,
+      assigned_agent_ids: assignedAgentIdsByUser.get(row.id) ?? []
+    })));
+  } catch (assignmentError: any) {
+    res.status(500).json({ error: assignmentError?.message ?? "Failed to load assigned agents." });
+  }
 });
 
 // ── PATCH /api/users/:id ─────────────────────────────────

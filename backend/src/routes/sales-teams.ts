@@ -82,6 +82,11 @@ router.get("/performance", async (req, res) => {
     .select("id, team_id, manager_id, actor_id, actor_name, order_id, rep_id, action_type, note, created_at")
     .eq("org_id", req.user!.orgId)
     .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  const whatsappMessagesQuery = supabase
+    .from("whatsapp_messages")
+    .select("id, order_id, trigger, status, created_at, sent_at, delivered_at")
+    .eq("org_id", req.user!.orgId)
+    .in("trigger", ["order_follow_up_rep", "order_follow_up_manager", "order_follow_up_owner"]);
 
   const { data: tasks, error: tasksError } = orderIds.length > 0
     ? await tasksQuery.in("order_id", orderIds)
@@ -97,6 +102,10 @@ router.get("/performance", async (req, res) => {
     ? await managerActivitiesQuery.in("team_id", teamIds)
     : { data: [], error: null };
   if (managerActivitiesError) { res.status(500).json({ error: managerActivitiesError.message }); return; }
+  const { data: whatsappMessages, error: whatsappMessagesError } = orderIds.length > 0
+    ? await whatsappMessagesQuery.in("order_id", orderIds)
+    : { data: [], error: null };
+  if (whatsappMessagesError) { res.status(500).json({ error: whatsappMessagesError.message }); return; }
 
   const result = buildManagerPerformance(
     (teams ?? []).map((team) => ({
@@ -156,6 +165,15 @@ router.get("/performance", async (req, res) => {
       actionType: activity.action_type,
       note: activity.note ?? undefined,
       createdAt: activity.created_at
+    })),
+    (whatsappMessages ?? []).map((message) => ({
+      id: message.id,
+      orderId: message.order_id ?? undefined,
+      trigger: message.trigger,
+      status: message.status,
+      createdAt: message.created_at,
+      sentAt: message.sent_at ?? undefined,
+      deliveredAt: message.delivered_at ?? undefined
     }))
   );
 
@@ -320,6 +338,72 @@ router.patch("/:id", async (req, res) => {
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data) { res.status(404).json({ error: "Team not found." }); return; }
   res.json(data);
+});
+
+router.post("/:id/sync-agent-assignments", async (req, res) => {
+  const { data: team, error: teamError } = await supabase
+    .from("sales_teams")
+    .select("id, name, lead_id, product_ids, member_ids")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+  if (teamError) { res.status(500).json({ error: teamError.message }); return; }
+  if (!team) { res.status(404).json({ error: "Team not found." }); return; }
+
+  const userIds = [...new Set([...(team.lead_id ? [team.lead_id] : []), ...(Array.isArray(team.member_ids) ? team.member_ids : [])])];
+  if (userIds.length === 0) {
+    res.status(400).json({ error: "This team has no lead or members yet." });
+    return;
+  }
+
+  const scopedProductIds = Array.isArray(team.product_ids) ? team.product_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0) : [];
+  const { data: agents, error: agentsError } = await supabase
+    .from("agents")
+    .select("id, locations:agent_locations(stock:agent_location_stock(product_id, quantity))")
+    .eq("org_id", req.user!.orgId);
+  if (agentsError) { res.status(500).json({ error: agentsError.message }); return; }
+
+  const agentIds = (agents ?? [])
+    .filter((agent: any) => {
+      if (scopedProductIds.length === 0) return true;
+      return (agent.locations ?? []).some((location: any) =>
+        (location.stock ?? []).some((row: any) =>
+          scopedProductIds.includes(String(row.product_id ?? ""))
+          && Number(row.quantity ?? 0) > 0
+        )
+      );
+    })
+    .map((agent: any) => agent.id)
+    .filter((id: unknown): id is string => typeof id === "string" && id.trim().length > 0);
+
+  const { error: deleteError } = await supabase
+    .from("user_agent_assignments")
+    .delete()
+    .eq("org_id", req.user!.orgId)
+    .in("user_id", userIds);
+  if (deleteError) { res.status(500).json({ error: deleteError.message }); return; }
+
+  if (agentIds.length > 0) {
+    const rows = userIds.flatMap((userId) => agentIds.map((agentId) => ({
+      org_id: req.user!.orgId,
+      user_id: userId,
+      agent_id: agentId
+    })));
+    const { error: insertError } = await supabase
+      .from("user_agent_assignments")
+      .insert(rows);
+    if (insertError) { res.status(500).json({ error: insertError.message }); return; }
+  }
+
+  res.json({
+    teamId: team.id,
+    teamName: team.name,
+    userIds,
+    agentIds,
+    userCount: userIds.length,
+    agentCount: agentIds.length,
+    mode: scopedProductIds.length === 0 ? "all_products" : "team_products"
+  });
 });
 
 // ── DELETE /api/sales-teams/:id ──────────────────────────
