@@ -5,6 +5,7 @@ import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
+import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
@@ -71,6 +72,46 @@ const serializePlannedOrderMetadata = (
 };
 const isMissingPlannedColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
   error?.code === "42703" || /scheduled_at|timeline_notes|confirmation_checked|preferred_delivery/i.test(error?.message ?? "");
+
+const numericAmount = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const logRemittanceDelta = async (args: {
+  orgId: string;
+  orderId: string;
+  previousAmountRemitted: unknown;
+  nextAmountRemitted: unknown;
+  userId?: string | null;
+  userName?: string | null;
+  reason: string;
+}) => {
+  const previous = numericAmount(args.previousAmountRemitted);
+  const next = numericAmount(args.nextAmountRemitted);
+  const delta = Math.round((next - previous) * 100) / 100;
+  if (delta === 0) return;
+
+  const { error } = await supabase.from("remittance_transactions").insert({
+    org_id: args.orgId,
+    order_id: args.orderId,
+    delta_amount: delta,
+    previous_amount_remitted: previous,
+    running_amount_remitted: next,
+    logged_by_user_id: args.userId ?? null,
+    logged_by_name: args.userName ?? null,
+    reason: args.reason
+  });
+
+  if (error) {
+    logger.error("remittance: failed to log remittance transaction", {
+      orderId: args.orderId,
+      orgId: args.orgId,
+      delta,
+      error: error.message
+    });
+  }
+};
 
 const inventoryAvailabilityMap = async (
   agentId: string,
@@ -472,7 +513,7 @@ router.patch("/:id/status", async (req, res) => {
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, amount_remitted, remittance_status, logistics_cost, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -650,6 +691,20 @@ router.patch("/:id/status", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  await logRemittanceDelta({
+    orgId: req.user!.orgId,
+    orderId: req.params.id,
+    previousAmountRemitted: existing.amount_remitted,
+    nextAmountRemitted: (data as any).amount_remitted,
+    userId: req.user!.id,
+    userName: req.user!.name,
+    reason: status === "Delivered"
+      ? "Status update while delivered"
+      : existing?.status === "Delivered"
+        ? `Status changed from Delivered to ${status}`
+        : `Status updated to ${status}`
+  });
 
   if (["Delivered", "Cancelled", "Failed"].includes(status)) {
     await cancelActiveFollowUpTasksForOrder(req.user!.orgId, req.params.id, `Order moved to ${status}.`).catch(() => undefined);
@@ -891,7 +946,7 @@ const MANUAL_BONUS_FIELDS = new Set([
 router.patch("/:id", async (req, res) => {
   const { data: current } = await supabase
     .from("orders")
-    .select("status, notes, city, state, agent_id, agent_location_id, product_id")
+    .select("status, notes, city, state, agent_id, agent_location_id, product_id, amount_remitted, remittance_status, logistics_cost")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -1086,6 +1141,16 @@ router.patch("/:id", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  await logRemittanceDelta({
+    orgId: req.user!.orgId,
+    orderId: req.params.id,
+    previousAmountRemitted: current.amount_remitted,
+    nextAmountRemitted: (data as any).amount_remitted,
+    userId: req.user!.id,
+    userName: req.user!.name,
+    reason: "Manual remittance update"
+  });
   await syncOrderFollowUpTask({
     orgId: req.user!.orgId,
     orderId: req.params.id,

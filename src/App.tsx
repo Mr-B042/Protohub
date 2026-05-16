@@ -103,7 +103,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, remittanceTransactionsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
@@ -956,6 +956,68 @@ const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", 
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
 const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
+type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
+const financeTabMeta: Record<FinanceTab, {
+  primaryLens: FinanceLens;
+  lenses: FinanceLens[];
+  summary: string;
+  caution: string;
+}> = {
+  "Financial Overview": {
+    primaryLens: "Accounting",
+    lenses: ["Accounting", "Cash Flow"],
+    summary: "Use this for the overall period snapshot: revenue, gross profit, net profit, expenses, and the high-level cash position.",
+    caution: "Best for the big picture. Delivered revenue is period-based, while remittance cash depends on receipt entries being logged correctly."
+  },
+  "Weekly Accounting": {
+    primaryLens: "Accounting",
+    lenses: ["Accounting", "Performance", "Cash Flow"],
+    summary: "Use this to reconcile three different week views together: orders placed this week, deliveries recognized this week, and remittances logged this week.",
+    caution: "This is intentionally a mixed board. Read each block by its own week logic instead of expecting one single number to explain everything."
+  },
+  "Sales Rep Finance": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting"],
+    summary: "Use this to compare reps by delivered output, revenue, ROI, and approximate net-profit contribution in the selected period.",
+    caution: "This is a ranking tool, not a final payroll or fully cost-owned P&L. Shared expenses are allocated, not directly owned."
+  },
+  "Agent Costs": {
+    primaryLens: "Operational",
+    lenses: ["Operational", "Accounting"],
+    summary: "Use this to watch delivery costs, stock value, stock-loss pressure, and which agents are driving delivery output.",
+    caution: "This is strongest for operational control. Profit contribution here is directional, not a full landed-cost accounting model."
+  },
+  "Remittance": {
+    primaryLens: "Cash Flow",
+    lenses: ["Cash Flow"],
+    summary: "Use this to track delivery-week receivable, receipt-dated remittance cash, and where collections are aging badly.",
+    caution: "Best for collections follow-up. Cash received here is period-true by receipt date, while outstanding is still tied to delivered-period orders."
+  },
+  "Profit & Loss": {
+    primaryLens: "Accounting",
+    lenses: ["Accounting"],
+    summary: "Use this for the cleanest delivered-period P&L view: revenue, COGS, expenses, net profit, and margin.",
+    caution: "This is the closest thing to period P&L in the current app and should be treated as the accounting-first tab."
+  },
+  "Product Profitability": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting"],
+    summary: "Use this to compare products by cohort delivery performance, delivered revenue so far, landed costs, allocated opex, margin, ROI, and ROAS.",
+    caution: "This is still a cohort-performance board first. Profit is more consistent now, but it is not a closed product ledger."
+  },
+  "State Performance": {
+    primaryLens: "Performance",
+    lenses: ["Performance"],
+    summary: "Use this to judge which states are worth scaling, pausing, or tightening lead screening on based on cohort delivery outcomes.",
+    caution: "Treat this as a cohort-performance board with delivered profit contribution, not a full state-by-state accounting statement."
+  }
+};
+const financeLensToneClasses: Record<FinanceLens, string> = {
+  Accounting: "bg-blue-50 text-blue-700 border-blue-200",
+  Performance: "bg-violet-50 text-violet-700 border-violet-200",
+  "Cash Flow": "bg-emerald-50 text-emerald-700 border-emerald-200",
+  Operational: "bg-amber-50 text-amber-700 border-amber-200"
+};
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Clearing & Shipping", "Waybill", "Airtime & Data", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
 const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"];
@@ -3721,8 +3783,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Weekly Accounting (Sun→Sat). Default to the Sunday of the current week.
   const [weeklyAcctSunday, setWeeklyAcctSunday] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10);
+    return formatDateKey(d);
   });
+  const [weeklyAccountingData, setWeeklyAccountingData] = useState<WeeklyAccountingDataset | null>(null);
+  const [weeklyAccountingLoading, setWeeklyAccountingLoading] = useState(false);
+  const [weeklyAccountingError, setWeeklyAccountingError] = useState("");
+  const [financeRemittanceTransactions, setFinanceRemittanceTransactions] = useState<WeeklyAccountingRemittanceTransaction[]>([]);
+  const [financeRemittanceGeneratedAt, setFinanceRemittanceGeneratedAt] = useState("");
+  const [financeRemittanceLoading, setFinanceRemittanceLoading] = useState(false);
+  const [financeRemittanceError, setFinanceRemittanceError] = useState("");
   const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
     readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
       raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
@@ -4113,6 +4182,81 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (!options.quiet) showToast(`Failed to load weekend stock summary: ${message}`);
     } finally {
       setAgentBalanceLoading(false);
+    }
+  };
+
+  const loadWeeklyAccountingData = async (options: { quiet?: boolean } = {}) => {
+    setWeeklyAccountingLoading(true);
+    try {
+      const result = await weeklyAccountingApi.summary({
+        weekStart: weeklyAcctSunday,
+        ...(financeProductFilter.length > 0 ? { productIds: financeProductFilter.join(",") } : {})
+      });
+      const normalizedWeekStart = typeof result?.weekStart === "string"
+        ? result.weekStart
+        : (typeof result?.week_start === "string" ? result.week_start : weeklyAcctSunday);
+      const normalizedWeekEnd = typeof result?.weekEnd === "string"
+        ? result.weekEnd
+        : (typeof result?.week_end === "string" ? result.week_end : addDaysToDateKey(weeklyAcctSunday, 6));
+      const normalizedGeneratedAt = typeof result?.generatedAt === "string"
+        ? result.generatedAt
+        : (typeof result?.generated_at === "string" ? result.generated_at : "");
+      const cohortOrders = Array.isArray(result?.cohortOrders)
+        ? result.cohortOrders
+        : (Array.isArray(result?.cohort_orders) ? result.cohort_orders : []);
+      const deliveredOrders = Array.isArray(result?.deliveredOrders)
+        ? result.deliveredOrders
+        : (Array.isArray(result?.delivered_orders) ? result.delivered_orders : []);
+      const remittanceTransactions = Array.isArray(result?.remittanceTransactions)
+        ? result.remittanceTransactions
+        : (Array.isArray(result?.remittance_transactions) ? result.remittance_transactions : []);
+      setWeeklyAccountingData({
+        weekStart: normalizedWeekStart,
+        weekEnd: normalizedWeekEnd,
+        generatedAt: normalizedGeneratedAt,
+        cohortOrders: cohortOrders.map((row: any) => normalizeTrackedOrder(row)),
+        deliveredOrders: deliveredOrders.map((row: any) => normalizeTrackedOrder(row)),
+        expenses: Array.isArray(result?.expenses) ? result.expenses.map((row: any) => normalizeExpenseRecord(row)) : [],
+        remittanceTransactions: remittanceTransactions.map((row: any) => normalizeWeeklyAccountingRemittanceTransaction(row))
+      });
+      setWeeklyAccountingError("");
+    } catch (err: any) {
+      const message = err?.message ?? "please retry.";
+      setWeeklyAccountingError(message);
+      if (!options.quiet) showToast(`Failed to load weekly accounting: ${message}`);
+    } finally {
+      setWeeklyAccountingLoading(false);
+    }
+  };
+
+  const loadFinanceRemittanceData = async (options: { quiet?: boolean } = {}) => {
+    const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
+    if (!bounds) {
+      setFinanceRemittanceTransactions([]);
+      setFinanceRemittanceGeneratedAt("");
+      setFinanceRemittanceError("");
+      return;
+    }
+    setFinanceRemittanceLoading(true);
+    try {
+      const result = await remittanceTransactionsApi.list({
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        ...(financeProductFilter.length > 0 ? { productIds: financeProductFilter.join(",") } : {})
+      });
+      const rows = Array.isArray(result?.transactions)
+        ? result.transactions
+        : (Array.isArray(result?.data) ? result.data : []);
+      setFinanceRemittanceTransactions(rows.map((row: any) => normalizeWeeklyAccountingRemittanceTransaction(row)));
+      setFinanceRemittanceGeneratedAt(typeof result?.generatedAt === "string" ? result.generatedAt : "");
+      setFinanceRemittanceError("");
+    } catch (err: any) {
+      setFinanceRemittanceError(err?.message ?? "please retry.");
+      if (!options.quiet) {
+        showToast(`Failed to load remittance cash data: ${err?.message ?? "please retry"}.`);
+      }
+    } finally {
+      setFinanceRemittanceLoading(false);
     }
   };
 
@@ -4801,6 +4945,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repAmountToRemit, setRepAmountToRemit] = useState("");
   const [repExtraExpenses, setRepExtraExpenses] = useState<{ type: ExpenseType; amount: string; description: string }[]>([]);
   const [financeProductFilter, setFinanceProductFilter] = useState<string[]>([]);
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Finance & Accounting") return;
+    if (financeTab !== "Weekly Accounting") return;
+    void loadWeeklyAccountingData({ quiet: !!weeklyAccountingData });
+  }, [activePage, financeTab, weeklyAcctSunday, financeProductFilter.join(","), authUser?.id]);
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Finance & Accounting") return;
+    void loadFinanceRemittanceData({ quiet: financeRemittanceTransactions.length > 0 });
+  }, [activePage, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
   const [bonusSettingsProductId, setBonusSettingsProductId] = useState<string | null>(null);
   const [stateAvailabilityProductId, setStateAvailabilityProductId] = useState<string | null>(null);
   const [crossSellTargetOrderId, setCrossSellTargetOrderId] = useState<string | null>(null);
@@ -6926,6 +7081,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
+  const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeCohortDeliveredRows = financePeriodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const financeExpenses = expenses.filter((expense) => isInPeriod(expense.date, financePeriod, financeDateRange) && expenseMatchesProductFilter(expense));
   const financeExpenseTotal = financeExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
@@ -6935,7 +7092,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeCogs = financeDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
   const financeLogisticsCost = financeDeliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
   const financeDeliveryExpenses = financeExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
-  const financeOpex = financeExpenseTotal - financeDeliveryExpenses;
+  const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery" && expense.type !== "Failed Delivery");
+  const financeOpex = financeOpexExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const financeSharedOpex = financeOpexExpenses.filter((expense) => !expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
+  const financeAdSpendTotal = financeExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
   const financeGrossProfit = financeRevenue - financeCogs - financeLogisticsCost;
   const financeNetProfit = financeGrossProfit - financeOpex;
   const financeGrossMargin = financeRevenue === 0 ? 0 : Math.round((financeGrossProfit / financeRevenue) * 1000) / 10;
@@ -6943,19 +7103,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeDeliveredCount = financeDeliveredRows.length;
   const financeAvgCpa = financeDeliveredCount === 0 ? 0 : Math.round(financeExpenseTotal / financeDeliveredCount);
   const financeRoi = financeCogs + financeLogisticsCost + financeOpex === 0 ? 0 : Math.round((financeNetProfit / (financeCogs + financeLogisticsCost + financeOpex)) * 100);
+  const proportionalShare = (valueBase: number, totalBase: number, pool: number, countBase = 0, totalCountBase = 0) => {
+    if (pool === 0) return 0;
+    if (totalBase > 0) return pool * (valueBase / totalBase);
+    if (totalCountBase > 0) return pool * (countBase / totalCountBase);
+    return 0;
+  };
   const financeRepRows = salesRepUsers.map((user) => {
     const delivered = financeDeliveredRows.filter((order) => order.assignedRepId === user.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const allocatedExpenses = financeDeliveredCount === 0 ? 0 : Math.round(financeExpenseTotal * (delivered.length / financeDeliveredCount));
-    const netProfit = revenue - cogs - allocatedExpenses;
+    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const allocatedExpenses = proportionalShare(revenue, financeRevenue, financeSharedOpex, delivered.length, financeDeliveredCount);
+    const netProfit = revenue - cogs - logistics - allocatedExpenses;
     return {
       user,
       revenue,
       delivered: delivered.length,
       netProfit,
       cpa: delivered.length === 0 ? 0 : Math.round(allocatedExpenses / delivered.length),
-      roi: cogs + allocatedExpenses === 0 ? 0 : Math.round((netProfit / (cogs + allocatedExpenses)) * 100)
+      roi: cogs + logistics + allocatedExpenses === 0 ? 0 : Math.round((netProfit / (cogs + logistics + allocatedExpenses)) * 100)
     };
   });
   const filteredFinanceRepRows = financeRepRows.filter((row) => {
@@ -6967,7 +7134,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const delivered = financeDeliveredRows.filter((order) => order.agentId === row.agent.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    return { ...row, deliveries: delivered.length, profitContribution: revenue - cogs };
+    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    return { ...row, deliveries: delivered.length, profitContribution: revenue - cogs - logistics };
   });
   const financeAgentDeliveredCount = financeAgentRows.reduce((sum, row) => sum + row.deliveries, 0);
 
@@ -6998,18 +7166,36 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (days <= 7) return { label: `${days}d`, cls: "bg-amber-100 text-amber-700" };
     return { label: `${days}d overdue`, cls: "bg-red-100 text-red-700" };
   };
+  const remittancePartnerKey = (agentId: string | null | undefined, partnerName: string) =>
+    agentId || `name:${partnerName.trim().toLowerCase() || "unassigned"}`;
+  const partnerCashMap = (() => {
+    const map = new Map<string, { partnerName: string; agentId: string | null; remitted: number; transactionCount: number }>();
+    financeRemittanceTransactions.forEach((transaction) => {
+      const partnerName = transaction.agentName ?? agents.find((agent) => agent.id === transaction.agentId)?.name ?? "Unassigned";
+      const key = remittancePartnerKey(transaction.agentId, partnerName);
+      const current = map.get(key) ?? {
+        partnerName,
+        agentId: transaction.agentId ?? null,
+        remitted: 0,
+        transactionCount: 0
+      };
+      current.remitted += transaction.deltaAmount;
+      current.transactionCount += 1;
+      map.set(key, current);
+    });
+    return map;
+  })();
   const remittanceRows = (() => {
-    const partnerMap = new Map<string, { partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; orders: TrackedOrder[] }>();
+    const partnerMap = new Map<string, { partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; transactionCount: number; orders: TrackedOrder[] }>();
     financeDeliveredRows.forEach((order) => {
       const agent = agents.find((a) => a.id === order.agentId);
       const partnerName = agent?.name ?? "Unassigned";
-      const key = agent?.id ?? "unassigned";
-      const current = partnerMap.get(key) ?? { partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, orders: [] };
+      const key = remittancePartnerKey(agent?.id ?? null, partnerName);
+      const current = partnerMap.get(key) ?? { partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, transactionCount: 0, orders: [] };
       current.orderCount += 1;
       current.revenue += order.amount;
       current.logisticsCost += orderLogisticsCost(order);
       current.expected += orderAmountToRemit(order);
-      current.remitted += orderAmountRemitted(order);
       current.outstanding += orderRemittanceOutstanding(order);
       if (orderRemittanceStatus(order) !== "Paid") {
         const days = remittanceDaysAgo(order);
@@ -7018,12 +7204,32 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       current.orders.push(order);
       partnerMap.set(key, current);
     });
+    partnerCashMap.forEach((cashRow, key) => {
+      const current = partnerMap.get(key) ?? {
+        partnerName: cashRow.partnerName,
+        agentId: cashRow.agentId,
+        orderCount: 0,
+        revenue: 0,
+        logisticsCost: 0,
+        expected: 0,
+        remitted: 0,
+        outstanding: 0,
+        oldestUnpaidDays: 0,
+        transactionCount: 0,
+        orders: []
+      };
+      current.remitted += cashRow.remitted;
+      current.transactionCount += cashRow.transactionCount;
+      partnerMap.set(key, current);
+    });
     return Array.from(partnerMap.values()).sort((a, b) => b.outstanding - a.outstanding);
   })();
   const totalRemittanceExpected = remittanceRows.reduce((s, r) => s + r.expected, 0);
-  const totalRemittanceReceived = remittanceRows.reduce((s, r) => s + r.remitted, 0);
+  const totalRemittanceReceived = financeRemittanceTransactions.reduce((sum, row) => sum + row.deltaAmount, 0);
   const totalRemittanceOutstanding = remittanceRows.reduce((s, r) => s + r.outstanding, 0);
   const totalLogisticsCost = remittanceRows.reduce((s, r) => s + r.logisticsCost, 0);
+  const financeRemittanceReceiptCount = financeRemittanceTransactions.length;
+  const financeRemittanceTouchedOrderCount = new Set(financeRemittanceTransactions.map((row) => row.orderId).filter(Boolean)).size;
   const remittancePartnerOptions = ["All Partners", ...remittanceRows.map((r) => r.partnerName)];
   const filteredRemittanceRows = remittanceRows.filter((row) => {
     const matchPartner = remittancePartnerFilter === "All Partners" || row.partnerName === remittancePartnerFilter;
@@ -7908,6 +8114,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       by: ownerName
     };
     setRepPenalties((prev) => [record, ...prev]);
+    setPayrollPreviewData(null);
     closeModal();
     showToast(`Penalty applied to ${record.repName}`);
     const amountPart = amount > 0 ? ` · ${formatMoney(amount)}` : "";
@@ -7943,6 +8150,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const removePenalty = (penaltyId: string) => {
     const removed = repPenalties.find((p) => p.id === penaltyId);
     setRepPenalties((prev) => prev.filter((p) => p.id !== penaltyId));
+    setPayrollPreviewData(null);
     showToast("Penalty removed");
     penaltiesApi.delete(penaltyId).catch((err: any) => {
       if (removed) setRepPenalties((prev) => [removed, ...prev]);
@@ -8077,19 +8285,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     : tier === "Fair" ? "bg-amber-100 text-amber-700 border border-amber-200"
     : "bg-red-100 text-red-700 border border-red-200";
 
-  // ===== State performance — every state with at least one period order, grouped =====
-  const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  // ===== State performance — cohort view by created-week/state =====
   const stateRows = (() => {
-    const map = new Map<string, { state: string; total: number; delivered: number; cancelled: number; failed: number; pending: number; revenue: number; cogs: number }>();
+    const map = new Map<string, { state: string; total: number; delivered: number; cancelled: number; failed: number; pending: number; revenue: number; cogs: number; logistics: number }>();
     financePeriodOrders.forEach((order) => {
       const stateName = (order.state || order.location || "Unknown").trim() || "Unknown";
       const status = order.status ?? "New";
-      const cur = map.get(stateName) ?? { state: stateName, total: 0, delivered: 0, cancelled: 0, failed: 0, pending: 0, revenue: 0, cogs: 0 };
+      const cur = map.get(stateName) ?? { state: stateName, total: 0, delivered: 0, cancelled: 0, failed: 0, pending: 0, revenue: 0, cogs: 0, logistics: 0 };
       cur.total += 1;
       if (status === "Delivered") {
         cur.delivered += 1;
         cur.revenue += order.amount;
         cur.cogs += costForOrder(order);
+        cur.logistics += order.logisticsCost ?? 0;
       } else if (status === "Cancelled") {
         cur.cancelled += 1;
       } else if (status === "Failed") {
@@ -8101,7 +8309,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
     return Array.from(map.values()).map((s) => {
       const deliveryRate = s.total === 0 ? 0 : Math.round((s.delivered / s.total) * 100);
-      return { ...s, deliveryRate, tier: performanceTier(deliveryRate), grossProfit: s.revenue - s.cogs };
+      return {
+        ...s,
+        deliveryRate,
+        tier: performanceTier(deliveryRate),
+        deliveredProfit: s.revenue - s.cogs - s.logistics
+      };
     }).sort((a, b) => b.deliveryRate - a.deliveryRate || b.delivered - a.delivered);
   })();
   const topStateRows = stateRows.filter((s) => s.tier === "Good").slice(0, 5);
@@ -8207,15 +8420,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
   const productProfitabilityRows = products.map((product) => {
     const allOrders = financePeriodOrders.filter((order) => order.productId === product.id);
-    const delivered = financeDeliveredRows.filter((order) => order.productId === product.id);
+    const delivered = financeCohortDeliveredRows.filter((order) => order.productId === product.id);
     const unitsSold = delivered.reduce((sum, order) => {
       const packageRecord = product.packages.find((item) => item.id === order.packageId);
       return sum + (order.quantity ?? packageRecord?.quantity ?? 1);
     }, 0);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const productExpenses = financeExpenses.filter((expense) => expense.productId === product.id).reduce((sum, expense) => sum + expense.amount, 0);
-    const netProfit = revenue - cogs - productExpenses;
+    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const directExpenses = financeOpexExpenses
+      .filter((expense) => expense.productId === product.id)
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const allocatedSharedOpex = proportionalShare(
+      revenue,
+      financeCohortDeliveredRows.reduce((sum, order) => sum + order.amount, 0),
+      financeSharedOpex,
+      delivered.length,
+      financeCohortDeliveredRows.length
+    );
+    const productExpenses = directExpenses + allocatedSharedOpex;
+    const adSpend = financeExpenses
+      .filter((expense) => expense.productId === product.id && expense.type === "Ad Spend")
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const netProfit = revenue - cogs - logistics - productExpenses;
     const totalOrders = allOrders.length;
     const deliveryRate = totalOrders === 0 ? 0 : Math.round((delivered.length / totalOrders) * 100);
     return {
@@ -8227,14 +8454,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       unitsSold,
       revenue,
       cogs,
+      logistics,
       expenses: productExpenses,
+      adSpend,
       netProfit,
       margin: revenue === 0 ? 0 : Math.round((netProfit / revenue) * 100),
-      roi: cogs + productExpenses === 0 ? 0 : Math.round((netProfit / (cogs + productExpenses)) * 100)
+      roi: cogs + logistics + productExpenses === 0 ? 0 : Math.round((netProfit / (cogs + logistics + productExpenses)) * 100)
     };
   }).filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
-  const financeRoas = financeExpenseTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeExpenseTotal).toFixed(2);
+  const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
     const now = new Date();
@@ -8389,166 +8618,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const activeCustomerCount = customerRecords.filter((customer) => customer.successful > 0).length;
   const returningRate = customerRecords.length === 0 ? 0 : Math.round((customerRecords.filter((customer) => customer.orders > 1).length / customerRecords.length) * 1000) / 10;
   const avgLifetimeValue = customerRecords.length === 0 ? 0 : Math.round(customerRecords.reduce((sum, customer) => sum + customer.totalSpend, 0) / customerRecords.length);
-  const payrollMonthDelivered = deliveredOrderRows.filter((order) => {
-    const key = orderDeliveredKey(order);
-    const monthLabel = payrollMonth.trim();
-    if (!key) return false;
-    try {
-      const d = new Date(`${key}T00:00:00`);
-      return d.toLocaleString("en-US", { month: "long", year: "numeric" }) === monthLabel;
-    } catch { return false; }
-  });
-  // ===== Weekly stats per rep, used by bonus engine gates =====
-  // Group rep orders by ISO-week so AOV / delivery-rate / order-count gates can be applied per-week.
-  const repWeeklyStats = (() => {
-    const byRep = new Map<string, Map<string, { delivered: number; total: number; revenue: number }>>();
-    payrollMonthDelivered.forEach((o) => {
-      const repId = o.assignedRepId;
-      if (!repId) return;
-      const key = orderDeliveredKey(o) || orderCreatedKey(o);
-      if (!key) return;
-      const d = new Date(`${key}T00:00:00`);
-      const yearStart = new Date(d.getFullYear(), 0, 1);
-      const weekIdx = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7);
-      const weekKey = `${d.getFullYear()}-W${weekIdx}`;
-      const rep = byRep.get(repId) ?? new Map();
-      const cur = rep.get(weekKey) ?? { delivered: 0, total: 0, revenue: 0 };
-      cur.delivered += 1;
-      cur.total += 1;
-      cur.revenue += o.amount;
-      rep.set(weekKey, cur);
-      byRep.set(repId, rep);
-    });
-    // Add non-delivered orders to total counts so delivery rate denominator is correct.
-    trackedOrders.forEach((o) => {
-      if (o.status === "Delivered") return;
-      const repId = o.assignedRepId;
-      if (!repId) return;
-      const key = orderCreatedKey(o);
-      if (!key) return;
-      const d = new Date(`${key}T00:00:00`);
-      const monthLabel = d.toLocaleString("en-US", { month: "long", year: "numeric" });
-      if (monthLabel !== payrollMonth.trim()) return;
-      const yearStart = new Date(d.getFullYear(), 0, 1);
-      const weekIdx = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7);
-      const weekKey = `${d.getFullYear()}-W${weekIdx}`;
-      const rep = byRep.get(repId) ?? new Map();
-      const cur = rep.get(weekKey) ?? { delivered: 0, total: 0, revenue: 0 };
-      cur.total += 1;
-      rep.set(weekKey, cur);
-      byRep.set(repId, rep);
-    });
-    return byRep;
-  })();
-
-  // ===== Auto-bonus per rep: sum of computeOrderBonus across that rep's delivered orders + AOV/delivery-rate weekly tier bonuses =====
-  const computeRepAutoBonus = (repId: string) => {
-    const orders = payrollMonthDelivered.filter((o) => o.assignedRepId === repId);
-    if (orders.length === 0) return { perOrder: 0, weeklyTiers: 0, total: 0 };
-    let perOrder = 0;
-    orders.forEach((o) => {
-      const stats = repWeeklyStats.get(repId);
-      const key = orderDeliveredKey(o) || orderCreatedKey(o);
-      let rate = 100, aov = 0, count = orders.length;
-      if (key && stats) {
-        const d = new Date(`${key}T00:00:00`);
-        const yearStart = new Date(d.getFullYear(), 0, 1);
-        const weekIdx = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7);
-        const w = stats.get(`${d.getFullYear()}-W${weekIdx}`);
-        if (w) {
-          rate = w.total > 0 ? (w.delivered / w.total) * 100 : 0;
-          aov = w.delivered > 0 ? w.revenue / w.delivered : 0;
-          count = w.total;
-        }
-      }
-      perOrder += computeOrderBonus(o, rate, aov, count).total;
-    });
-    // Weekly tier bonuses (AOV + delivery rate) — once per week, using each week's strongest rule per product
-    let weeklyTiers = 0;
-    const weeks = repWeeklyStats.get(repId);
-    if (weeks) {
-      const repProducts = new Set(orders.map((o) => o.productId).filter(Boolean) as string[]);
-      weeks.forEach((w) => {
-        if (w.total === 0) return;
-        const rate = (w.delivered / w.total) * 100;
-        const aov = w.delivered > 0 ? w.revenue / w.delivered : 0;
-        repProducts.forEach((pid) => {
-          const cfg = productBonusConfig(products.find((p) => p.id === pid));
-          // Delivery-rate tier (need min orders)
-          if (w.total >= cfg.deliveryRateMinOrders && rate >= cfg.poorDeliveryRatePercent) {
-            const drTier = cfg.deliveryRateBonuses
-              .filter((r) => rate >= r.ratePercent)
-              .sort((a, b) => b.ratePercent - a.ratePercent)[0];
-            if (drTier) weeklyTiers += drTier.amount;
-          }
-          // AOV tier (need delivery-rate gate)
-          if (rate >= cfg.aovRequiresMinDeliveryRate) {
-            const aovTier = cfg.aovBonuses
-              .filter((r) => aov >= r.threshold)
-              .sort((a, b) => b.threshold - a.threshold)[0];
-            if (aovTier) weeklyTiers += aovTier.amount;
-          }
-        });
-      });
-    }
-    return { perOrder, weeklyTiers, total: perOrder + weeklyTiers };
-  };
-
-  // ===== Penalties for the period =====
-  const repPenaltiesInPeriod = (repId: string) =>
-    repPenalties.filter((pen) => {
-      if (pen.repId !== repId) return false;
-      try {
-        const d = new Date(pen.date);
-        return d.toLocaleString("en-US", { month: "long", year: "numeric" }) === payrollMonth.trim();
-      } catch { return false; }
-    });
-
-  const payrollPreviewRows = users
-    .map((user) => {
-      const structure = payStructures.find((item) => item.userId === user.id);
-      if (!structure) {
-        return null;
-      }
-
-      const delivered = user.role === "Sales Rep"
-        ? payrollMonthDelivered.filter((order) => order.assignedRepId === user.id).length
-        : user.role === "Inventory Manager"
-          ? 0
-          : payrollMonthDelivered.length;
-      const fixed = structure.type === "Per Delivered Order" ? 0 : structure.fixedSalary;
-      const commission = (structure.type === "Per Delivered Order" || structure.type === "Hybrid")
-        ? structure.commissionRate * delivered : 0;
-      // Performance tier bonus: highest tier where delivered >= threshold
-      const tierBonus = structure.type === "Performance Bonus" && structure.bonusTiers?.length
-        ? (structure.bonusTiers.filter((t) => delivered >= t.threshold).sort((a, b) => b.threshold - a.threshold)[0]?.amount ?? 0)
-        : 0;
-      const autoBonus = (user.role === "Sales Rep" ? computeRepAutoBonus(user.id).total : 0) + tierBonus;
-      const deductions = user.role === "Sales Rep" ? repPenaltiesInPeriod(user.id).reduce((sum, p) => sum + p.amount, 0) : 0;
-      const total = Math.max(0, fixed + commission + autoBonus - deductions);
-      return { userId: user.id, name: user.name, delivered, fixedSalary: fixed, commission, autoBonus, deductions, total };
-    })
-    .filter(Boolean) as PayrollRun["rows"];
-
-  // Top performer bonus: find the sales rep(s) with highest delivered count and add bonus
-  const topPerformerBonusNum = topPerformerBonusEnabled ? Math.max(0, Number(topPerformerBonusAmount) || 0) : 0;
-  const topPerformerInfo = (() => {
-    if (topPerformerBonusNum <= 0) return null;
-    const repRows = payrollPreviewRows.filter((r) => users.find((u) => u.id === r.userId)?.role === "Sales Rep");
-    if (repRows.length === 0) return null;
-    const maxDelivered = Math.max(...repRows.map((r) => r.delivered));
-    if (maxDelivered === 0) return null;
-    const winners = repRows.filter((r) => r.delivered === maxDelivered);
-    const amountEach = Math.round(topPerformerBonusNum / winners.length);
-    // Mutate the preview rows to include the bonus
-    for (const winner of winners) {
-      winner.autoBonus = (winner.autoBonus ?? 0) + amountEach;
-      winner.total = winner.total + amountEach;
-    }
-    return { names: winners.map((w) => w.name), amountEach, delivered: maxDelivered };
-  })();
-
-  const payrollGrandTotal = payrollPreviewRows.reduce((sum, row) => sum + row.total, 0);
+  const payrollPreviewRows = payrollPreviewData?.rows ?? [];
+  const topPerformerInfo = payrollPreviewData?.topPerformer ?? null;
+  const payrollGrandTotal = payrollPreviewData?.total ?? 0;
   const roundRobinActiveRows = activeSalesRepUsers
     .map((user) => ({
       user,
@@ -25809,7 +25881,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <table className="w-full text-sm">
                               <thead className="bg-gray-50">
                                 <tr className="text-left">
-                                  {["Rank","Rep","Delivered (cash)","Revenue","AOV","Bonus payable","Cohort orders","Delivery rate"].map((h) => (
+                                  {["Rank","Rep","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
                                     <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                                   ))}
                                 </tr>
@@ -25829,7 +25901,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <td className="px-3 py-2.5 text-gray-900 font-semibold">{r.delivered}</td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
-                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonus)}</td>
+                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonusEstimate)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
                                         <span className="font-semibold text-gray-900">{r.cohortDelivered}</span>
                                         <span className="text-gray-400"> / {r.cohortPlaced}</span>
@@ -25901,8 +25973,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-xs text-blue-900 leading-relaxed">
                       <strong className="block mb-1">📖 How to read this view</strong>
                       <ul className="list-disc pl-5 m-0 space-y-1">
-                        <li><strong>Cash week</strong> is what hit the bank Sun–Sat. Use it to decide payroll & weekly cash flow. Bonuses are paid for orders <strong>delivered</strong> this week (per your policy).</li>
+                        <li><strong>Delivered week P&amp;L</strong> recognizes revenue, COGS, logistics, and bonuses on the week the orders were actually delivered.</li>
+                        <li><strong>Cash received</strong> comes from remittance entries logged during this week, not just the total remitted sitting on the order now.</li>
                         <li><strong>Cohort week</strong> tells you whether the ads <em>this week</em> paid back. The number keeps rising until pending orders finalize, so a Monday review will show a lower delivery rate than a Friday review of the same week.</li>
+                        <li><strong>Delivered by source cohort</strong> explains why the number of orders placed this week and the number delivered this week are usually different.</li>
                         <li><strong>Daily ROI</strong> matches each day's ad budget to the orders that came in that day. Use it to spot which days of the week your ads work best.</li>
                         <li><strong>60% target</strong>: aim for the <strong>finalized delivery rate</strong> on the cohort view (when all orders have settled, usually 7–14 days after the week ends).</li>
                       </ul>
@@ -26114,13 +26188,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {financeTab === "Remittance" && (
                 <div className="space-y-4">
+                  {(financeRemittanceLoading || financeRemittanceError || financeRemittanceGeneratedAt) && (
+                    <div className={`rounded-xl border px-4 py-3 text-sm ${financeRemittanceError ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                      {financeRemittanceError
+                        ? `Receipt-dated remittance cash could not fully refresh, so the cash-received numbers below may be incomplete: ${financeRemittanceError}`
+                        : financeRemittanceLoading
+                          ? "Refreshing receipt-dated remittance cash…"
+                          : `Receipt-dated remittance cash updated ${formatMoment(financeRemittanceGeneratedAt)}.`}
+                    </div>
+                  )}
                   {/* Top metric cards */}
                   <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Remittance summary">
                     {[
-                      { title: "Expected Remittance", value: formatMoney(totalRemittanceExpected), helper: `From ${financeDeliveredCount} delivered orders`, tone: "blue", icon: HandCoins },
-                      { title: "Cash Received", value: formatMoney(totalRemittanceReceived), helper: totalRemittanceExpected === 0 ? "—" : `${Math.round((totalRemittanceReceived / totalRemittanceExpected) * 100)}% collected`, tone: "green", icon: BadgeCheck },
-                      { title: "Outstanding", value: formatMoney(totalRemittanceOutstanding), helper: `${remittanceRows.filter((r) => r.outstanding > 0).length} partner${remittanceRows.filter((r) => r.outstanding > 0).length === 1 ? "" : "s"} owe you`, tone: "amber", icon: AlertTriangle },
-                      { title: "Logistics Fees", value: formatMoney(totalLogisticsCost), helper: "Already deducted by partners", tone: "gray", icon: Truck },
+                      { title: "Delivery-week Receivable", value: formatMoney(totalRemittanceExpected), helper: `From ${financeDeliveredCount} delivered orders in ${selectedFinancePeriodLabel}`, tone: "blue", icon: HandCoins },
+                      { title: "Cash Received", value: formatMoney(totalRemittanceReceived), helper: `${financeRemittanceReceiptCount} remittance entr${financeRemittanceReceiptCount === 1 ? "y" : "ies"} logged in ${selectedFinancePeriodLabel}`, tone: "green", icon: BadgeCheck },
+                      { title: "Outstanding", value: formatMoney(totalRemittanceOutstanding), helper: `${remittanceRows.filter((r) => r.outstanding > 0).length} partner${remittanceRows.filter((r) => r.outstanding > 0).length === 1 ? "" : "s"} still owe on delivered-period orders`, tone: "amber", icon: AlertTriangle },
+                      { title: "Logistics Fees", value: formatMoney(totalLogisticsCost), helper: "Delivery-period logistics already deducted by partners", tone: "gray", icon: Truck },
                     ].map(({ title, value, helper, tone, icon: Icon }) => (
                       <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-2">
@@ -26150,8 +26233,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
                       <div>
-                        <h2 className="text-sm font-bold text-gray-800">Per-Logistics-Partner Reconciliation</h2>
-                        <p className="text-xs text-gray-400">{selectedFinancePeriodLabel} · sorted by outstanding balance</p>
+                        <h2 className="text-sm font-bold text-gray-800">Per-Logistics-Partner Receivable + Cash</h2>
+                        <p className="text-xs text-gray-400">{selectedFinancePeriodLabel} · delivery-week receivable alongside receipt-dated cash</p>
                       </div>
                       <div className="flex flex-col gap-2 w-full sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                         <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
@@ -26165,12 +26248,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                     <div className="sm:hidden divide-y divide-gray-100">
                       {filteredRemittanceRows.length === 0 ? (
-                        <div className="px-5 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</div>
+                        <div className="px-5 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</div>
                       ) : (
                         <>
                           {filteredRemittanceRows.map((row) => {
-                            const pct = row.expected === 0 ? 0 : Math.round((row.remitted / row.expected) * 100);
-                            const pctTone = pct >= 100 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                             const aging = row.outstanding > 0 ? remittanceAgingLabel(row.oldestUnpaidDays) : null;
                             return (
                               <article key={row.partnerName} className="px-5 py-4 space-y-3">
@@ -26179,7 +26260,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <div className="font-bold text-gray-900">{row.partnerName}</div>
                                     {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "—"}</div>}
                                   </div>
-                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${pctTone}`}>{pct}% paid</span>
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${row.transactionCount > 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+                                    {row.transactionCount > 0 ? `${row.transactionCount} receipt${row.transactionCount === 1 ? "" : "s"}` : "No cash logged"}
+                                  </span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3 text-sm">
                                   <div>
@@ -26195,7 +26278,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <div className="font-semibold text-blue-700">{formatMoney(row.expected)}</div>
                                   </div>
                                   <div>
-                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Cash Received</span>
                                     <div className="font-semibold text-green-700">{formatMoney(row.remitted)}</div>
                                   </div>
                                   <div>
@@ -26232,7 +26315,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="font-semibold text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Cash Received</span>
                                 <div className="font-semibold text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</div>
                               </div>
                               <div className="col-span-2">
@@ -26248,16 +26331,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Received", "Outstanding", "Aging", "% Paid"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Outstanding", "Aging", "Receipts"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {filteredRemittanceRows.length === 0 ? (
-                            <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>
+                            <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
                           ) : (
                             filteredRemittanceRows.map((row) => {
-                              const pct = row.expected === 0 ? 0 : Math.round((row.remitted / row.expected) * 100);
-                              const pctTone = pct >= 100 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                               return (
                                 <tr key={row.partnerName} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-4">
@@ -26275,7 +26356,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       ? (() => { const ag = remittanceAgingLabel(row.oldestUnpaidDays); return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${ag.cls}`}>{ag.label}</span>; })()
                                       : <span className="text-gray-300 text-xs">—</span>}
                                   </td>
-                                  <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pctTone}`}>{pct}%</span></td>
+                                  <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.transactionCount > 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{row.transactionCount}</span></td>
                                 </tr>
                               );
                             })
@@ -26290,7 +26371,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-3 text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
                               <td className="px-4 py-3 text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
                               <td className="px-4 py-3 text-gray-700">—</td>
-                              <td className="px-4 py-3 text-gray-700">—</td>
+                              <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((sum, row) => sum + row.transactionCount, 0)}</td>
                             </tr>
                           )}
                         </tbody>
@@ -26423,11 +26504,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {financeTab === "Profit & Loss" && (() => {
                 const prevRange = explicitPeriodRange(financePeriod, financeDateRange, true);
-                const prevDelivered = deliveredOrderRows.filter((o) => isInExplicitRange(orderDeliveredKey(o), prevRange));
+                const prevDelivered = deliveredOrderRows.filter((o) => isInExplicitRange(orderDeliveredKey(o), prevRange) && orderMatchesProductFilter(o));
                 const prevRevenue = prevDelivered.reduce((s, o) => s + o.amount, 0);
                 const prevCogs = prevDelivered.reduce((s, o) => s + costForOrder(o), 0);
                 const prevLogistics = prevDelivered.reduce((s, o) => s + orderLogisticsCost(o), 0);
-                const prevAllExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange));
+                const prevAllExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange) && expenseMatchesProductFilter(e));
                 const prevExpenseTotal = prevAllExpenses.reduce((s, e) => s + e.amount, 0);
                 const prevDeliveryExp = prevAllExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
                 const prevOpex = prevExpenseTotal - prevDeliveryExp;
@@ -26622,14 +26703,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="text-gray-600">{formatMoney(row.cogs)}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Expenses</span>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics</span>
+                                <div className="text-gray-600">{formatMoney(row.logistics)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Opex</span>
                                 <div className="text-gray-600">{formatMoney(row.expenses)}</div>
                               </div>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}% margin</span>
                               <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}% ROI</span>
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700">{row.expenses === 0 ? (row.revenue > 0 ? "Uncapped ROAS" : "ROAS N/A") : `${(row.revenue / row.expenses).toFixed(2)}x ROAS`}</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700">{row.adSpend === 0 ? (row.revenue > 0 ? "Uncapped ROAS" : "ROAS N/A") : `${(row.revenue / row.adSpend).toFixed(2)}x ROAS`}</span>
                             </div>
                           </article>
                         ))
@@ -26639,14 +26724,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Product Name", "Total Orders", "Delivered", "Delivery Rate", "Performance", "Units Sold", "Revenue", "COGS", "Expenses", "Net Profit", "Margin %", "ROI", "ROAS"].map((h) => (
+                            {["Product Name", "Total Orders", "Delivered", "Delivery Rate", "Performance", "Units Sold", "Revenue", "COGS", "Logistics", "Opex", "Net Profit", "Margin %", "ROI", "ROAS"].map((h) => (
                               <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {productProfitabilityRows.length === 0 ? (
-                            <tr><td colSpan={13} className="px-4 py-12 text-center text-gray-400 font-medium italic">No products found matching your search</td></tr>
+                            <tr><td colSpan={14} className="px-4 py-12 text-center text-gray-400 font-medium italic">No products found matching your search</td></tr>
                           ) : (
                             productProfitabilityRows.map((row) => (
                               <tr key={row.product.id} className="hover:bg-gray-50 transition-colors">
@@ -26661,11 +26746,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-4 text-gray-700">{row.unitsSold}</td>
                                 <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</td>
                                 <td className="px-4 py-4 text-gray-600">{formatMoney(row.cogs)}</td>
+                                <td className="px-4 py-4 text-gray-600">{formatMoney(row.logistics)}</td>
                                 <td className="px-4 py-4 text-gray-600">{formatMoney(row.expenses)}</td>
                                 <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(row.netProfit)}</td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}%</span></td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}%</span></td>
-                                <td className="px-4 py-4 font-semibold text-gray-900">{row.expenses === 0 ? (row.revenue > 0 ? "Uncapped" : "N/A") : `${(row.revenue / row.expenses).toFixed(2)}x`}</td>
+                                <td className="px-4 py-4 font-semibold text-gray-900">{row.adSpend === 0 ? (row.revenue > 0 ? "Uncapped" : "N/A") : `${(row.revenue / row.adSpend).toFixed(2)}x`}</td>
                               </tr>
                             ))
                           )}
@@ -26793,8 +26879,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="font-semibold text-[#1F8FE0]">{formatMoney(s.revenue)}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Gross Profit</span>
-                                <div className="text-gray-700">{formatMoney(s.grossProfit)}</div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered Profit</span>
+                                <div className="text-gray-700">{formatMoney(s.deliveredProfit)}</div>
                               </div>
                             </div>
                           </article>
@@ -26805,7 +26891,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["State", "Total Orders", "Delivered", "Cancelled / Failed", "Pending", "Delivery Rate", "Performance", "Revenue", "Gross Profit"].map((h) => (
+                            {["State", "Total Orders", "Delivered", "Cancelled / Failed", "Pending", "Delivery Rate", "Performance", "Revenue", "Delivered Profit"].map((h) => (
                               <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -26824,7 +26910,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-3 font-bold text-gray-900">{s.deliveryRate}%</td>
                                 <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${performanceTone(s.tier)}`}>{s.tier}</span></td>
                                 <td className="px-4 py-3 font-semibold text-[#1F8FE0]">{formatMoney(s.revenue)}</td>
-                                <td className="px-4 py-3 text-gray-700">{formatMoney(s.grossProfit)}</td>
+                                <td className="px-4 py-3 text-gray-700">{formatMoney(s.deliveredProfit)}</td>
                               </tr>
                             ))
                           )}

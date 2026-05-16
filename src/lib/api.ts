@@ -296,6 +296,27 @@ export const ordersApi = {
   logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
+export const weeklyAccountingApi = {
+  summary: (params: { weekStart: string; productIds?: string }) => {
+    const qs = new URLSearchParams({
+      weekStart: params.weekStart,
+      ...(params.productIds ? { productIds: params.productIds } : {})
+    }).toString();
+    return get<any>(`/api/weekly-accounting?${qs}`);
+  }
+};
+
+export const remittanceTransactionsApi = {
+  list: (params: { dateFrom: string; dateTo: string; productIds?: string }) => {
+    const qs = new URLSearchParams({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      ...(params.productIds ? { productIds: params.productIds } : {})
+    }).toString();
+    return get<any>(`/api/remittance-transactions?${qs}`);
+  }
+};
+
 // ── Agents ────────────────────────────────────────────────
 export const agentsApi = {
   list: () => get<any[]>("/api/agents"),
@@ -342,7 +363,8 @@ export const expensesApi = {
 // ── Payroll ───────────────────────────────────────────────
 export const payrollApi = {
   list: () => get<any[]>("/api/payroll"),
-  generate: (body: { period: string }) => post<any>("/api/payroll/generate", body),
+  preview: (body: { period: string }) => post<any>("/api/payroll/preview", body),
+  generate: (body: { period: string; label?: string; notes?: string }) => post<any>("/api/payroll/generate", body),
   approve: (id: string) => patch<any>(`/api/payroll/${id}/approve`, {}),
   markPaid: (id: string) => patch<any>(`/api/payroll/${id}/mark-paid`, {})
 };
