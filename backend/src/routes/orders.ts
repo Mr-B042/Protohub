@@ -535,12 +535,6 @@ router.patch("/:id/status", async (req, res) => {
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
 
-  // Cancelled orders cannot be re-opened
-  if (existing.status === "Cancelled") {
-    res.status(400).json({ error: "Cannot change status of a Cancelled order." });
-    return;
-  }
-
   // Sales Reps can only change status on their own orders
   if (req.user!.role === "Sales Rep" && existing.assigned_rep_id !== req.user!.id) {
     res.status(403).json({ error: "You can only update orders assigned to you." });
@@ -979,7 +973,7 @@ router.patch("/:id", async (req, res) => {
     .single();
   if (!current) { res.status(404).json({ error: "Order not found." }); return; }
 
-  const isTerminal = current.status === "Delivered" || current.status === "Cancelled";
+  const isTerminal = current.status === "Delivered";
   const requestedKeys = Object.keys(req.body);
   const touchesManualBonus = requestedKeys.some((k) => MANUAL_BONUS_FIELDS.has(k));
   const hasNonTerminalField = requestedKeys.some((k) => !POST_TERMINAL_FIELDS.has(k));
