@@ -34920,7 +34920,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                       <p className="m-0 text-sm font-semibold text-gray-900">Upload image from desktop</p>
-                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Keep it under 600 KB for faster form loading.</p>
+                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Supports any browser-readable image format. Keep it under 600 KB for faster form loading.</p>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                       <label className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer">
@@ -34928,7 +34928,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                         Upload image
                                         <input
                                           type="file"
-                                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                          accept="image/*"
                                           className="hidden"
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
