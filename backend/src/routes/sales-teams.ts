@@ -82,12 +82,6 @@ router.get("/performance", async (req, res) => {
     .select("id, team_id, manager_id, actor_id, actor_name, order_id, rep_id, action_type, note, created_at")
     .eq("org_id", req.user!.orgId)
     .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
-  const whatsappMessagesQuery = supabase
-    .from("whatsapp_messages")
-    .select("id, order_id, trigger, status, created_at, sent_at, delivered_at")
-    .eq("org_id", req.user!.orgId)
-    .in("trigger", ["order_follow_up_rep", "order_follow_up_manager", "order_follow_up_owner"]);
-
   const { data: tasks, error: tasksError } = orderIds.length > 0
     ? await tasksQuery.in("order_id", orderIds)
     : { data: [], error: null };
@@ -102,10 +96,6 @@ router.get("/performance", async (req, res) => {
     ? await managerActivitiesQuery.in("team_id", teamIds)
     : { data: [], error: null };
   if (managerActivitiesError) { res.status(500).json({ error: managerActivitiesError.message }); return; }
-  const { data: whatsappMessages, error: whatsappMessagesError } = orderIds.length > 0
-    ? await whatsappMessagesQuery.in("order_id", orderIds)
-    : { data: [], error: null };
-  if (whatsappMessagesError) { res.status(500).json({ error: whatsappMessagesError.message }); return; }
 
   const result = buildManagerPerformance(
     (teams ?? []).map((team) => ({
@@ -165,15 +155,6 @@ router.get("/performance", async (req, res) => {
       actionType: activity.action_type,
       note: activity.note ?? undefined,
       createdAt: activity.created_at
-    })),
-    (whatsappMessages ?? []).map((message) => ({
-      id: message.id,
-      orderId: message.order_id ?? undefined,
-      trigger: message.trigger,
-      status: message.status,
-      createdAt: message.created_at,
-      sentAt: message.sent_at ?? undefined,
-      deliveredAt: message.delivered_at ?? undefined
     }))
   );
 
