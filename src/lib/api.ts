@@ -306,6 +306,17 @@ export const weeklyAccountingApi = {
   }
 };
 
+export const financeSummaryApi = {
+  summary: (params: { dateFrom: string; dateTo: string; productIds?: string }) => {
+    const qs = new URLSearchParams({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      ...(params.productIds ? { productIds: params.productIds } : {})
+    }).toString();
+    return get<any>(`/api/finance-summary?${qs}`);
+  }
+};
+
 export const remittanceTransactionsApi = {
   list: (params: { dateFrom: string; dateTo: string; productIds?: string }) => {
     const qs = new URLSearchParams({
@@ -314,6 +325,9 @@ export const remittanceTransactionsApi = {
       ...(params.productIds ? { productIds: params.productIds } : {})
     }).toString();
     return get<any>(`/api/remittance-transactions?${qs}`);
+  },
+  backfill: (body?: { dryRun?: boolean; dateMode?: "updated_at" | "delivered_date" | "created_at" }) => {
+    return post<any>("/api/remittance-transactions/backfill", body ?? {});
   }
 };
 

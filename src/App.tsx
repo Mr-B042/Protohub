@@ -103,7 +103,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, remittanceTransactionsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
@@ -653,6 +653,47 @@ type TrackedOrder = {
   notes?: OrderNote[];
   date: string;
 };
+type WeeklyAccountingRemittanceTransaction = {
+  id: string;
+  orderId: string;
+  deltaAmount: number;
+  previousAmountRemitted: number;
+  runningAmountRemitted: number;
+  receivedAt: string;
+  loggedByName?: string | null;
+  reason?: string | null;
+  productId?: string | null;
+  productName?: string | null;
+  packageName?: string | null;
+  customer?: string | null;
+  orderCreatedAt?: string | null;
+  orderDeliveredDate?: string | null;
+  assignedRepId?: string | null;
+  agentId?: string | null;
+  agentName?: string | null;
+  orderAmount?: number | null;
+  logisticsCost?: number | null;
+  currentAmountRemitted?: number | null;
+  currentExpectedRemittance?: number | null;
+  currentOutstanding?: number | null;
+  remittanceStatus?: "Pending" | "Partial" | "Paid" | null;
+};
+type WeeklyAccountingDataset = {
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: string;
+  cohortOrders: TrackedOrder[];
+  deliveredOrders: TrackedOrder[];
+  expenses: ExpenseRecord[];
+  remittanceTransactions: WeeklyAccountingRemittanceTransaction[];
+};
+type FinanceSummaryDataset = {
+  dateFrom: string;
+  dateTo: string;
+  generatedAt: string;
+  cohortOrders: TrackedOrder[];
+  deliveredOrders: TrackedOrder[];
+};
 type OrderNote = {
   id: string;
   text: string;
@@ -870,6 +911,12 @@ type PayrollRun = {
   createdAt: string;
   rows: { userId: string; name: string; delivered: number; fixedSalary: number; commission: number; autoBonus?: number; deductions?: number; total: number }[];
   topPerformer?: { names: string[]; amountEach: number; delivered: number };
+};
+type PayrollPreviewData = {
+  period: string;
+  rows: PayrollRun["rows"];
+  total: number;
+  topPerformer?: PayrollRun["topPerformer"];
 };
 
 const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
@@ -2915,11 +2962,65 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
       : undefined;
   return {
     ...value,
+    createdAt: typeof value?.createdAt === "string" && value.createdAt
+      ? value.createdAt
+      : typeof value?.created_at === "string" && value.created_at
+        ? value.created_at
+        : undefined,
+    updatedAt: typeof value?.updatedAt === "string" && value.updatedAt
+      ? value.updatedAt
+      : typeof value?.updated_at === "string" && value.updated_at
+        ? value.updated_at
+        : undefined,
+    deliveredDate: typeof value?.deliveredDate === "string" && value.deliveredDate
+      ? value.deliveredDate
+      : typeof value?.delivered_date === "string" && value.delivered_date
+        ? value.delivered_date
+        : undefined,
     scheduledAt,
     scheduledDate,
     notes: orderNotesFor(value)
   };
 };
+
+const normalizeExpenseRecord = (value: any): ExpenseRecord => ({
+  id: value.id,
+  type: (value.type ?? value.category ?? "Other") as ExpenseType,
+  amount: Number(value.amount ?? 0),
+  currency: (value.currency ?? "NGN") as CurrencyCode,
+  date: typeof value.date === "string" ? normalizeDateKey(value.date) : todayKey(),
+  createdAt: typeof value.createdAt === "string" ? value.createdAt : typeof value.created_at === "string" ? value.created_at : undefined,
+  productId: value.productId ?? value.product_id ?? undefined,
+  productName: value.productName ?? value.product_name ?? "",
+  description: value.description ?? "",
+  waybillId: value.waybillId ?? value.waybill_id ?? undefined
+});
+
+const normalizeWeeklyAccountingRemittanceTransaction = (value: any): WeeklyAccountingRemittanceTransaction => ({
+  id: value.id,
+  orderId: value.orderId ?? value.order_id ?? "",
+  deltaAmount: Number(value.deltaAmount ?? value.delta_amount ?? 0),
+  previousAmountRemitted: Number(value.previousAmountRemitted ?? value.previous_amount_remitted ?? 0),
+  runningAmountRemitted: Number(value.runningAmountRemitted ?? value.running_amount_remitted ?? 0),
+  receivedAt: value.receivedAt ?? value.received_at ?? "",
+  loggedByName: value.loggedByName ?? value.logged_by_name ?? null,
+  reason: value.reason ?? null,
+  productId: value.productId ?? value.product_id ?? null,
+  productName: value.productName ?? value.product_name ?? null,
+  packageName: value.packageName ?? value.package_name ?? null,
+  customer: value.customer ?? null,
+  orderCreatedAt: value.orderCreatedAt ?? value.order_created_at ?? null,
+  orderDeliveredDate: value.orderDeliveredDate ?? value.order_delivered_date ?? null,
+  assignedRepId: value.assignedRepId ?? value.assigned_rep_id ?? null,
+  agentId: value.agentId ?? value.agent_id ?? null,
+  agentName: value.agentName ?? value.agent_name ?? value.agent_name_snapshot ?? null,
+  orderAmount: value.orderAmount != null || value.order_amount != null ? Number(value.orderAmount ?? value.order_amount ?? 0) : null,
+  logisticsCost: value.logisticsCost != null || value.logistics_cost != null ? Number(value.logisticsCost ?? value.logistics_cost ?? 0) : null,
+  currentAmountRemitted: value.currentAmountRemitted != null || value.current_amount_remitted != null ? Number(value.currentAmountRemitted ?? value.current_amount_remitted ?? 0) : null,
+  currentExpectedRemittance: value.currentExpectedRemittance != null || value.current_expected_remittance != null ? Number(value.currentExpectedRemittance ?? value.current_expected_remittance ?? 0) : null,
+  currentOutstanding: value.currentOutstanding != null || value.current_outstanding != null ? Number(value.currentOutstanding ?? value.current_outstanding ?? 0) : null,
+  remittanceStatus: value.remittanceStatus ?? value.remittance_status ?? null
+});
 
 const normalizeFollowUpTask = (value: any): FollowUpTask => ({
   id: value.id,
@@ -3477,6 +3578,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [payRateUserId, setPayRateUserId] = useState("owner");
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
+  const [payrollPreviewData, setPayrollPreviewData] = useState<PayrollPreviewData | null>(null);
   const [topPerformerBonusEnabled, setTopPerformerBonusEnabled] = useState(false);
   const [topPerformerBonusAmount, setTopPerformerBonusAmount] = useState("0");
   // Branding: company logo (data URL or remote URL) + display name
@@ -3788,10 +3890,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyAccountingData, setWeeklyAccountingData] = useState<WeeklyAccountingDataset | null>(null);
   const [weeklyAccountingLoading, setWeeklyAccountingLoading] = useState(false);
   const [weeklyAccountingError, setWeeklyAccountingError] = useState("");
+  const [financeSummaryData, setFinanceSummaryData] = useState<FinanceSummaryDataset | null>(null);
+  const [financeSummaryLoading, setFinanceSummaryLoading] = useState(false);
+  const [financeSummaryError, setFinanceSummaryError] = useState("");
   const [financeRemittanceTransactions, setFinanceRemittanceTransactions] = useState<WeeklyAccountingRemittanceTransaction[]>([]);
   const [financeRemittanceGeneratedAt, setFinanceRemittanceGeneratedAt] = useState("");
   const [financeRemittanceLoading, setFinanceRemittanceLoading] = useState(false);
   const [financeRemittanceError, setFinanceRemittanceError] = useState("");
+  const [financeRemittanceBackfillLoading, setFinanceRemittanceBackfillLoading] = useState(false);
+  const [financeRemittanceBackfillSummary, setFinanceRemittanceBackfillSummary] = useState("");
   const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
     readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
       raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
@@ -4229,6 +4336,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const loadFinanceSummaryData = async (options: { quiet?: boolean } = {}) => {
+    const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
+    if (!bounds) {
+      setFinanceSummaryData(null);
+      setFinanceSummaryError("");
+      return;
+    }
+
+    setFinanceSummaryLoading(true);
+    try {
+      const result = await financeSummaryApi.summary({
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        ...(financeProductFilter.length > 0 ? { productIds: financeProductFilter.join(",") } : {})
+      });
+      const cohortOrders = Array.isArray(result?.cohortOrders)
+        ? result.cohortOrders
+        : (Array.isArray(result?.cohort_orders) ? result.cohort_orders : []);
+      const deliveredOrders = Array.isArray(result?.deliveredOrders)
+        ? result.deliveredOrders
+        : (Array.isArray(result?.delivered_orders) ? result.delivered_orders : []);
+      setFinanceSummaryData({
+        dateFrom: typeof result?.dateFrom === "string" ? result.dateFrom : bounds.dateFrom,
+        dateTo: typeof result?.dateTo === "string" ? result.dateTo : bounds.dateTo,
+        generatedAt: typeof result?.generatedAt === "string"
+          ? result.generatedAt
+          : (typeof result?.generated_at === "string" ? result.generated_at : ""),
+        cohortOrders: cohortOrders.map((row: any) => normalizeTrackedOrder(row)),
+        deliveredOrders: deliveredOrders.map((row: any) => normalizeTrackedOrder(row))
+      });
+      setFinanceSummaryError("");
+    } catch (err: any) {
+      setFinanceSummaryError(err?.message ?? "please retry.");
+      if (!options.quiet) {
+        showToast(`Failed to load finance summary: ${err?.message ?? "please retry"}.`);
+      }
+    } finally {
+      setFinanceSummaryLoading(false);
+    }
+  };
+
   const loadFinanceRemittanceData = async (options: { quiet?: boolean } = {}) => {
     const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
     if (!bounds) {
@@ -4257,6 +4405,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     } finally {
       setFinanceRemittanceLoading(false);
+    }
+  };
+
+  const runFinanceRemittanceBackfill = async () => {
+    if (!(authUser?.role === "Owner" || authUser?.role === "Admin")) {
+      showToast("Only Owner or Admin can bootstrap remittance history.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Bootstrap missing remittance history for older orders? This creates estimated receipt-dated cash entries for orders that already have remitted amounts but no remittance ledger rows yet. Protohub will use each order's last updated time as the best available historical receipt date."
+    );
+    if (!confirmed) return;
+
+    setFinanceRemittanceBackfillLoading(true);
+    try {
+      const result = await remittanceTransactionsApi.backfill({ dateMode: "updated_at" });
+      const insertedCount = Math.max(0, Number(result?.insertedCount ?? 0));
+      const skippedExistingCount = Math.max(0, Number(result?.skippedExistingCount ?? 0));
+      const skippedNoDateCount = Math.max(0, Number(result?.skippedNoDateCount ?? 0));
+      const summary =
+        insertedCount > 0
+          ? `Bootstrapped ${insertedCount} historical remittance ${insertedCount === 1 ? "entry" : "entries"} using estimated last-update receipt dates.`
+          : "No missing historical remittance entries were found to backfill.";
+      const detailParts = [
+        skippedExistingCount > 0 ? `${skippedExistingCount} order${skippedExistingCount === 1 ? "" : "s"} already had ledger history` : "",
+        skippedNoDateCount > 0 ? `${skippedNoDateCount} order${skippedNoDateCount === 1 ? "" : "s"} still need manual review` : ""
+      ].filter(Boolean);
+      const detail = detailParts.length > 0 ? ` ${detailParts.join(" · ")}.` : "";
+      setFinanceRemittanceBackfillSummary(summary + detail);
+      showToast(summary + detail);
+      await Promise.all([
+        loadFinanceSummaryData({ quiet: true }),
+        loadFinanceRemittanceData({ quiet: true }),
+        loadWeeklyAccountingData({ quiet: true })
+      ]);
+    } catch (err: any) {
+      const message = err?.message ?? "please retry.";
+      setFinanceRemittanceBackfillSummary(`Backfill failed: ${message}`);
+      showToast(`Failed to bootstrap remittance history: ${message}`);
+    } finally {
+      setFinanceRemittanceBackfillLoading(false);
     }
   };
 
@@ -4953,6 +5142,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (financeTab !== "Weekly Accounting") return;
     void loadWeeklyAccountingData({ quiet: !!weeklyAccountingData });
   }, [activePage, financeTab, weeklyAcctSunday, financeProductFilter.join(","), authUser?.id]);
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Finance & Accounting") return;
+    if (financeTab === "Weekly Accounting") return;
+    void loadFinanceSummaryData({ quiet: !!financeSummaryData });
+  }, [activePage, financeTab, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
@@ -7088,13 +7283,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
-  const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeOrderSource = financeSummaryData?.cohortOrders ?? trackedOrders;
+  const financeDeliveredSource = financeSummaryData?.deliveredOrders ?? deliveredOrderRows;
+  const financePeriodOrders = financeOrderSource.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeCohortDeliveredRows = financePeriodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const financeExpenses = expenses.filter((expense) => isInPeriod(expense.date, financePeriod, financeDateRange) && expenseMatchesProductFilter(expense));
   const financeExpenseTotal = financeExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeGeneralExpenses = financeExpenseTotal - financeProductLinkedExpenses;
-  const financeDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeDeliveredRows = financeDeliveredSource.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
   const financeCogs = financeDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
   const financeLogisticsCost = financeDeliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
@@ -7350,6 +7547,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceReceivedDate(todayKey());
     showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
     ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
+      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
     }).catch((err: any) => {
@@ -8402,6 +8600,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       remittance_received_at: repRemittanceReceivedDate,
       timeline_notes: nextNotes
     }).then(async () => {
+      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
       if (newExpenses.length === 0) {
@@ -25581,6 +25780,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
               </section>
 
+              {financeTab !== "Weekly Accounting" && (financeSummaryLoading || financeSummaryError || financeSummaryData?.generatedAt) && (
+                <section className={`rounded-xl border px-4 py-3 text-xs ${
+                  financeSummaryError
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                }`}>
+                  {financeSummaryError
+                    ? `Dedicated finance summary could not fully refresh, so Protohub is falling back to cached order data for now: ${financeSummaryError}`
+                    : financeSummaryLoading
+                      ? "Refreshing full finance summary from the order book…"
+                      : `Dedicated finance summary updated ${formatMoment(financeSummaryData?.generatedAt ?? "")}.`}
+                </section>
+              )}
+
               {financeTab === "Financial Overview" && (
                 <div className="space-y-4">
                   <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Financial overview summary">
@@ -25865,7 +26078,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
                         const repRs   = getRepCohortStats(u.id);
-                        const bonus   = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
+                        const bonusEstimate = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
@@ -25873,7 +26086,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           user: u,
                           delivered: cashOrders.length,
                           revenue,
-                          bonus,
+                          bonusEstimate,
                           aov,
                           cohortPlaced: cohortOrders.length,
                           cohortDelivered: cohortDeliveredOrders.length,
@@ -25886,7 +26099,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       .sort((a, b) => b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
-                      const totalBonus = repStats.reduce((s, r) => s + r.bonus, 0);
+                      const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
 
                       return (
@@ -25894,12 +26107,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
                               <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Cash-week delivery & bonus. Cohort-week delivery rate vs the {target}% target.</p>
+                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Bonus here is a per-order estimate, while the rate tracks this week&apos;s order cohort against the {target}% target.</p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
                               <div className="text-right">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus payable</p>
-                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonus)}</p>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
+                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
+                                <p className="text-[10px] text-gray-400 m-0">Per-order only · final payroll may differ</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Avg AOV</p>
@@ -26225,6 +26439,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         : financeRemittanceLoading
                           ? "Refreshing receipt-dated remittance cash…"
                           : `Receipt-dated remittance cash updated ${formatMoment(financeRemittanceGeneratedAt)}.`}
+                    </div>
+                  )}
+                  {(currentRole === "Owner" || currentRole === "Admin") && (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <p className="m-0 text-sm font-bold text-blue-900">Historical cash bootstrap</p>
+                        <p className="m-0 text-xs text-blue-800">
+                          Older cash weeks before the new remittance ledger may still be incomplete. Run this once to create estimated historical receipt entries for past remitted orders that never had ledger rows. Protohub uses each order&apos;s last updated time as the best available historical receipt date.
+                        </p>
+                        {financeRemittanceBackfillSummary && (
+                          <p className="m-0 text-[11px] text-blue-900">{financeRemittanceBackfillSummary}</p>
+                        )}
+                      </div>
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-300 bg-white text-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors disabled:opacity-50"
+                        disabled={financeRemittanceBackfillLoading}
+                        onClick={runFinanceRemittanceBackfill}
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${financeRemittanceBackfillLoading ? "animate-spin" : ""}`} />
+                        {financeRemittanceBackfillLoading ? "Bootstrapping..." : "Backfill history"}
+                      </button>
                     </div>
                   )}
                   {/* Top metric cards */}
