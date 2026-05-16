@@ -156,21 +156,39 @@ const DEFAULT_SETTINGS: PublicEmbedSettings = {
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
-const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 5;
-const PUBLIC_PRODUCT_RETRY_DELAY_MS = 700;
+const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 8;
+const PUBLIC_PRODUCT_RETRY_DELAY_MS = 1200;
 
-function readCachedValue<T>(key: string, maxAgeMs: number): T | null {
+type CachedSnapshot<T> = {
+  cachedAt: number;
+  value: T;
+};
+
+function readCachedSnapshot<T>(key: string): CachedSnapshot<T> | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { cachedAt?: number; value?: T };
     if (!parsed || typeof parsed.cachedAt !== "number" || !("value" in parsed)) return null;
-    if (Date.now() - parsed.cachedAt > maxAgeMs) return null;
-    return parsed.value ?? null;
+    return {
+      cachedAt: parsed.cachedAt,
+      value: parsed.value as T
+    };
   } catch {
     return null;
   }
+}
+
+function readCachedValue<T>(key: string, maxAgeMs: number): T | null {
+  const snapshot = readCachedSnapshot<T>(key);
+  if (!snapshot) return null;
+  if (Date.now() - snapshot.cachedAt > maxAgeMs) return null;
+  return snapshot.value ?? null;
+}
+
+function readCachedValueAnyAge<T>(key: string): T | null {
+  return readCachedSnapshot<T>(key)?.value ?? null;
 }
 
 function writeCachedValue<T>(key: string, value: T) {
@@ -535,16 +553,26 @@ export default function PublicOrderFormPage() {
         PUBLIC_PRODUCT_CACHE_TTL_MS
       )
     : null;
-  const cachedSettings = cachedProductBundle?.orgId
+  const staleProductBundle = !cachedProductBundle && publicProductId
+    ? readCachedValueAnyAge<{ products: PublicProduct[]; orgId: string | null }>(
+        publicProductCacheKey(publicProductId)
+      )
+    : null;
+  const bootProductBundle = cachedProductBundle ?? staleProductBundle;
+  const cachedSettings = bootProductBundle?.orgId
     ? readCachedValue<PublicEmbedSettings>(
-        publicSettingsCacheKey(cachedProductBundle.orgId),
+        publicSettingsCacheKey(bootProductBundle.orgId),
         PUBLIC_SETTINGS_CACHE_TTL_MS
       )
     : null;
+  const staleSettings = !cachedSettings && bootProductBundle?.orgId
+    ? readCachedValueAnyAge<PublicEmbedSettings>(publicSettingsCacheKey(bootProductBundle.orgId))
+    : null;
+  const bootSettings = cachedSettings ?? staleSettings;
 
-  const [products, setProducts] = useState<PublicProduct[]>(() => cachedProductBundle?.products ?? []);
-  const [settings, setSettings] = useState<PublicEmbedSettings>(() => ({ ...DEFAULT_SETTINGS, ...(cachedSettings ?? {}) }));
-  const [loading, setLoading] = useState(Boolean(publicProductId) && !(cachedProductBundle?.products?.length));
+  const [products, setProducts] = useState<PublicProduct[]>(() => bootProductBundle?.products ?? []);
+  const [settings, setSettings] = useState<PublicEmbedSettings>(() => ({ ...DEFAULT_SETTINGS, ...(bootSettings ?? {}) }));
+  const [loading, setLoading] = useState(Boolean(publicProductId) && !(bootProductBundle?.products?.length));
   const [showLoading, setShowLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState("");
@@ -624,15 +652,23 @@ export default function PublicOrderFormPage() {
       return;
     }
 
-    const cachedBundle = readCachedValue<{ products: PublicProduct[]; orgId: string | null }>(
+    const freshBundle = readCachedValue<{ products: PublicProduct[]; orgId: string | null }>(
       publicProductCacheKey(publicProductId),
       PUBLIC_PRODUCT_CACHE_TTL_MS
     );
-    const cachedBundleProducts = cachedBundle?.products ?? [];
-    const cachedOrgId = cachedBundle?.orgId ?? null;
-    const cachedOrgSettings = cachedOrgId
+    const staleBundle = !freshBundle
+      ? readCachedValueAnyAge<{ products: PublicProduct[]; orgId: string | null }>(publicProductCacheKey(publicProductId))
+      : null;
+    const bootBundle = freshBundle ?? staleBundle;
+    const cachedBundleProducts = bootBundle?.products ?? [];
+    const cachedOrgId = bootBundle?.orgId ?? null;
+    const freshOrgSettings = cachedOrgId
       ? readCachedValue<PublicEmbedSettings>(publicSettingsCacheKey(cachedOrgId), PUBLIC_SETTINGS_CACHE_TTL_MS)
       : null;
+    const staleOrgSettings = !freshOrgSettings && cachedOrgId
+      ? readCachedValueAnyAge<PublicEmbedSettings>(publicSettingsCacheKey(cachedOrgId))
+      : null;
+    const cachedOrgSettings = freshOrgSettings ?? staleOrgSettings;
 
     let cancelled = false;
     setProducts(cachedBundleProducts);
@@ -661,6 +697,11 @@ export default function PublicOrderFormPage() {
           break;
         } catch (error: any) {
           lastError = error;
+          const status = typeof error?.status === "number" ? error.status : null;
+          const retryable = status == null || status === 0 || status === 429 || status >= 500;
+          if (!retryable) {
+            break;
+          }
           if (attempt < PUBLIC_PRODUCT_FETCH_ATTEMPTS - 1) {
             await new Promise((resolve) => window.setTimeout(resolve, PUBLIC_PRODUCT_RETRY_DELAY_MS * (attempt + 1)));
           }
@@ -672,10 +713,13 @@ export default function PublicOrderFormPage() {
       if (!resolvedProduct) {
         if (cachedBundleProducts.length === 0) {
           const status = typeof lastError?.status === "number" ? lastError.status : null;
+          const retryable = status == null || status === 0 || status === 429 || status >= 500;
           setLoadError(
             status === 404
               ? "This order form is still being prepared. Please retry in a moment."
-              : (lastError?.message ?? "Could not load the order form.")
+              : retryable
+                ? "We’re reconnecting to the order form. Please wait a moment and retry."
+                : (lastError?.message ?? "Could not load the order form.")
           );
         }
         setLoading(false);
