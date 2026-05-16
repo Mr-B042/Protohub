@@ -240,7 +240,10 @@ const PackageSchema = z.object({
   displayOrder: z.number().int().default(0),
   active:       z.boolean().default(true),
   companionProducts: z.array(CompanionSchema).default([]),
-  packageComponents: z.array(PackageComponentSchema).default([])
+  packageComponents: z.array(PackageComponentSchema).default([]),
+  offerSyncEnabled: z.boolean().default(false),
+  offerSyncSourceProductId: z.string().uuid().nullable().optional(),
+  offerSyncSourcePackageId: z.string().uuid().nullable().optional()
 });
 
 router.post("/:id/packages",
@@ -252,7 +255,20 @@ router.post("/:id/packages",
       res.status(400).json({ error: parsed.error.flatten().fieldErrors });
       return;
     }
-    const { name, description, quantity, price, currency, displayOrder, active, companionProducts, packageComponents } = parsed.data;
+    const {
+      name,
+      description,
+      quantity,
+      price,
+      currency,
+      displayOrder,
+      active,
+      companionProducts,
+      packageComponents,
+      offerSyncEnabled,
+      offerSyncSourceProductId,
+      offerSyncSourcePackageId
+    } = parsed.data;
     const { data, error } = await supabase
       .from("product_packages")
       .insert({
@@ -265,7 +281,10 @@ router.post("/:id/packages",
         display_order: displayOrder,
         active,
         companion_products: companionProducts,
-        package_components: packageComponents
+        package_components: packageComponents,
+        offer_sync_enabled: offerSyncEnabled,
+        offer_sync_source_product_id: offerSyncEnabled ? offerSyncSourceProductId ?? null : null,
+        offer_sync_source_package_id: offerSyncEnabled ? offerSyncSourcePackageId ?? null : null
       })
       .select()
       .single();
@@ -284,7 +303,10 @@ const PackageUpdateSchema = z.object({
   displayOrder: z.number().int().optional(),
   active:       z.boolean().optional(),
   companionProducts: z.array(CompanionSchema).optional(),
-  packageComponents: z.array(PackageComponentSchema).optional()
+  packageComponents: z.array(PackageComponentSchema).optional(),
+  offerSyncEnabled: z.boolean().optional(),
+  offerSyncSourceProductId: z.string().uuid().nullable().optional(),
+  offerSyncSourcePackageId: z.string().uuid().nullable().optional()
 });
 
 router.patch("/:id/packages/:pkgId",
@@ -306,6 +328,9 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
     if (parsed.data.companionProducts !== undefined) updates.companion_products = parsed.data.companionProducts;
     if (parsed.data.packageComponents !== undefined) updates.package_components = parsed.data.packageComponents;
+    if (parsed.data.offerSyncEnabled !== undefined) updates.offer_sync_enabled = parsed.data.offerSyncEnabled;
+    if (parsed.data.offerSyncSourceProductId !== undefined) updates.offer_sync_source_product_id = parsed.data.offerSyncEnabled === false ? null : parsed.data.offerSyncSourceProductId;
+    if (parsed.data.offerSyncSourcePackageId !== undefined) updates.offer_sync_source_package_id = parsed.data.offerSyncEnabled === false ? null : parsed.data.offerSyncSourcePackageId;
 
     const { data, error } = await supabase
       .from("product_packages")
@@ -316,6 +341,25 @@ router.patch("/:id/packages/:pkgId",
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: "Package not found." }); return; }
+
+    if (parsed.data.companionProducts !== undefined) {
+      const { error: linkedUpdateError } = await supabase
+        .from("product_packages")
+        .update({ companion_products: parsed.data.companionProducts })
+        .eq("product_id", req.params.id)
+        .eq("offer_sync_enabled", true)
+        .eq("offer_sync_source_product_id", req.params.id)
+        .eq("offer_sync_source_package_id", req.params.pkgId)
+        .neq("id", req.params.pkgId);
+      if (linkedUpdateError) {
+        logger.error("package offer sync propagation failed", {
+          productId: req.params.id,
+          packageId: req.params.pkgId,
+          error: linkedUpdateError.message
+        });
+      }
+    }
+
     res.json(data);
   }
 );

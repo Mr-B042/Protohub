@@ -456,6 +456,9 @@ type ProductPackage = {
   active: boolean;
   companionProducts?: PackageCompanion[];
   packageComponents?: PackageComponent[];
+  offerSyncEnabled?: boolean;
+  offerSyncSourceProductId?: string | null;
+  offerSyncSourcePackageId?: string | null;
 };
 type PackBonusRule = {
   id: string;
@@ -3309,6 +3312,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showPackageOfferCopyPanel, setShowPackageOfferCopyPanel] = useState(false);
   const [packageOfferCopyTargetIds, setPackageOfferCopyTargetIds] = useState<string[]>([]);
   const [packageOfferCopyBusy, setPackageOfferCopyBusy] = useState(false);
+  const [packageOfferCopyKeepSynced, setPackageOfferCopyKeepSynced] = useState(false);
+  const [packageOfferSyncEnabled, setPackageOfferSyncEnabled] = useState(false);
+  const [packageOfferSyncSourceProductId, setPackageOfferSyncSourceProductId] = useState<string | null>(null);
+  const [packageOfferSyncSourcePackageId, setPackageOfferSyncSourcePackageId] = useState<string | null>(null);
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
   const [showSalesDateRange, setShowSalesDateRange] = useState(false);
@@ -4860,6 +4867,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const availablePackageOfferCopyTargets = selectedProduct?.packages.filter((item) =>
     item.id !== selectedPackageId && !isTemporaryPackageId(item.id)
   ) ?? [];
+  const selectedPackageOfferSyncSource =
+    packageOfferSyncEnabled && packageOfferSyncSourceProductId === selectedProduct?.id && packageOfferSyncSourcePackageId
+      ? selectedProduct?.packages.find((item) => item.id === packageOfferSyncSourcePackageId)
+      : undefined;
+  const linkedOfferTargetCount =
+    modal === "editPackage" && selectedProduct && selectedPackage
+      ? selectedProduct.packages.filter((item) => {
+          const syncEnabled = ((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled) === true;
+          const syncSourceProductId = (item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null;
+          const syncSourcePackageId = (item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null;
+          return (
+            item.id !== selectedPackage.id &&
+            syncEnabled &&
+            syncSourceProductId === selectedProduct.id &&
+            syncSourcePackageId === selectedPackage.id
+          );
+        }).length
+      : 0;
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
@@ -5250,6 +5275,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowPackageOfferCopyPanel(false);
     setPackageOfferCopyTargetIds([]);
     setPackageOfferCopyBusy(false);
+    setPackageOfferCopyKeepSynced(false);
+    setPackageOfferSyncEnabled(Boolean((selectedPackage as any).offerSyncEnabled ?? (selectedPackage as any).offer_sync_enabled));
+    setPackageOfferSyncSourceProductId((selectedPackage as any).offerSyncSourceProductId ?? (selectedPackage as any).offer_sync_source_product_id ?? null);
+    setPackageOfferSyncSourcePackageId((selectedPackage as any).offerSyncSourcePackageId ?? (selectedPackage as any).offer_sync_source_package_id ?? null);
   }, [modal, selectedProduct, selectedPackage]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
@@ -11918,7 +11947,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       unitsSold: 0,
       createdAt: nowIso(),
       pricings: source.pricings.map((p) => ({ ...p })),
-      packages: source.packages.map((pkg) => ({ ...pkg, id: makePackageId() })),
+      packages: source.packages.map((pkg) => ({
+        ...pkg,
+        id: makePackageId(),
+        offerSyncEnabled: false,
+        offerSyncSourceProductId: null,
+        offerSyncSourcePackageId: null,
+        packageComponents: (pkg.packageComponents ?? []).map((component) =>
+          normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })
+        ),
+        companionProducts: clonePackageCompanions(pkg.companionProducts ?? [])
+      })),
       availableStates: source.availableStates ? [...source.availableStates] : undefined,
       bonusConfig: source.bonusConfig ? {
         ...source.bonusConfig,
@@ -11959,7 +11998,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           currency: pkg.currency,
           displayOrder: pkg.displayOrder,
           active: pkg.active,
-          companionProducts: pkg.companionProducts ?? []
+          packageComponents: pkg.packageComponents ?? [],
+          companionProducts: pkg.companionProducts ?? [],
+          offerSyncEnabled: false,
+          offerSyncSourceProductId: null,
+          offerSyncSourcePackageId: null
         }).then((savedPackage: any) => ({ tempId: pkg.id, savedPackage: savedPackage as ProductPackage }))
       );
       const settingsPayload = {
@@ -12222,6 +12265,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setShowPackageOfferCopyPanel(false);
     setPackageOfferCopyTargetIds([]);
     setPackageOfferCopyBusy(false);
+    setPackageOfferCopyKeepSynced(false);
+    setPackageOfferSyncEnabled(false);
+    setPackageOfferSyncSourceProductId(null);
+    setPackageOfferSyncSourcePackageId(null);
   };
 
   const openAddPackage = () => {
@@ -12251,6 +12298,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setShowPackageOfferCopyPanel(false);
     setPackageOfferCopyTargetIds([]);
     setPackageOfferCopyBusy(false);
+    setPackageOfferCopyKeepSynced(false);
+    setPackageOfferSyncEnabled(Boolean((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled));
+    setPackageOfferSyncSourceProductId((item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null);
+    setPackageOfferSyncSourcePackageId((item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null);
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -12311,11 +12362,33 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
       active: true,
       packageComponents: normalisedComponents,
-      companionProducts: normalisedCompanions
+      companionProducts: normalisedCompanions,
+      offerSyncEnabled: packageOfferSyncEnabled,
+      offerSyncSourceProductId: packageOfferSyncEnabled ? packageOfferSyncSourceProductId : null,
+      offerSyncSourcePackageId: packageOfferSyncEnabled ? packageOfferSyncSourcePackageId : null
     };
 
     const _pkgProdId = selectedProduct.id;
     const productSnapshot = selectedProduct;
+    const linkedOfferTargetIds =
+      modal === "editPackage" && selectedPackage
+        ? selectedProduct.packages
+            .filter((item) => {
+              const syncEnabled = ((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled) === true;
+              const syncSourceProductId = (item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null;
+              const syncSourcePackageId = (item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null;
+              return (
+                item.id !== selectedPackage.id &&
+                syncEnabled &&
+                syncSourceProductId === selectedProduct.id &&
+                syncSourcePackageId === selectedPackage.id
+              );
+            })
+            .map((item) => item.id)
+        : [];
+    const syncedCompanionsByTarget = Object.fromEntries(
+      linkedOfferTargetIds.map((targetId) => [targetId, clonePackageCompanions(normalisedCompanions)])
+    ) as Record<string, PackageCompanion[]>;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -12323,7 +12396,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               ...product,
               packages:
                 modal === "editPackage"
-                  ? product.packages.map((item) => (item.id === packageRecord.id ? packageRecord : item))
+                  ? product.packages.map((item) => {
+                      if (item.id === packageRecord.id) {
+                        return packageRecord;
+                      }
+                      if (linkedOfferTargetIds.includes(item.id)) {
+                        return {
+                          ...item,
+                          companionProducts: syncedCompanionsByTarget[item.id] ?? []
+                        };
+                      }
+                      return item;
+                    })
                   : [...product.packages, packageRecord]
             }
           : product
@@ -12333,7 +12417,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     closeModal();
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, packageComponents: normalisedComponents, companionProducts: normalisedCompanions })
+      productsApi.createPackage(_pkgProdId, {
+        name: packageRecord.name,
+        description: packageRecord.description,
+        quantity: packageRecord.quantity,
+        price: packageRecord.price,
+        currency: packageRecord.currency,
+        displayOrder: packageRecord.displayOrder,
+        active: packageRecord.active,
+        packageComponents: normalisedComponents,
+        companionProducts: normalisedCompanions,
+        offerSyncEnabled: packageRecord.offerSyncEnabled,
+        offerSyncSourceProductId: packageRecord.offerSyncSourceProductId,
+        offerSyncSourcePackageId: packageRecord.offerSyncSourcePackageId
+      })
         .then((savedPackage: any) => {
           replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
         })
@@ -12342,7 +12439,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
         });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, packageComponents: normalisedComponents, companionProducts: normalisedCompanions }).catch((err: any) => {
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, {
+        name: packageRecord.name,
+        description: packageRecord.description,
+        quantity: packageRecord.quantity,
+        price: packageRecord.price,
+        currency: packageRecord.currency,
+        displayOrder: packageRecord.displayOrder,
+        packageComponents: normalisedComponents,
+        companionProducts: normalisedCompanions,
+        offerSyncEnabled: packageRecord.offerSyncEnabled,
+        offerSyncSourceProductId: packageRecord.offerSyncSourceProductId,
+        offerSyncSourcePackageId: packageRecord.offerSyncSourcePackageId
+      }).catch((err: any) => {
         setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
         showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
       });
@@ -12368,6 +12477,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       id: makePackageId(),
       name: `${item.name} (Copy)`,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
+      offerSyncEnabled: false,
+      offerSyncSourceProductId: null,
+      offerSyncSourcePackageId: null,
       packageComponents: item.packageComponents ? item.packageComponents.map((component) => normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })) : [],
       companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
     };
@@ -12410,6 +12522,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       quantity: Math.max(1, item.quantity * multiplier),
       price: Math.round((item.price * multiplier + Number.EPSILON) * 100) / 100,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
+      offerSyncEnabled: false,
+      offerSyncSourceProductId: null,
+      offerSyncSourcePackageId: null,
       packageComponents: scaledComponents,
       companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
     };
@@ -12484,6 +12599,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const clonedByTarget = Object.fromEntries(
       targetIds.map((targetId) => [targetId, clonePackageCompanions(sourceCompanions)])
     ) as Record<string, PackageCompanion[]>;
+    const syncSourceProductId = packageOfferCopyKeepSynced ? selectedProduct.id : null;
+    const syncSourcePackageId = packageOfferCopyKeepSynced ? selectedPackage.id : null;
 
     setPackageOfferCopyBusy(true);
     setProducts((value) =>
@@ -12494,7 +12611,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               ...product,
               packages: product.packages.map((pkg) =>
                 targetIds.includes(pkg.id)
-                  ? { ...pkg, companionProducts: clonedByTarget[pkg.id] ?? [] }
+                  ? {
+                      ...pkg,
+                      companionProducts: clonedByTarget[pkg.id] ?? [],
+                      offerSyncEnabled: packageOfferCopyKeepSynced,
+                      offerSyncSourceProductId: syncSourceProductId,
+                      offerSyncSourcePackageId: syncSourcePackageId
+                    }
                   : pkg
               )
             }
@@ -12504,7 +12627,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const results = await Promise.allSettled(
       targetIds.map((targetId) =>
         productsApi.updatePackage(selectedProduct.id, targetId, {
-          companionProducts: clonedByTarget[targetId] ?? []
+          companionProducts: clonedByTarget[targetId] ?? [],
+          offerSyncEnabled: packageOfferCopyKeepSynced,
+          offerSyncSourceProductId: syncSourceProductId,
+          offerSyncSourcePackageId: syncSourcePackageId
         })
       )
     );
@@ -12520,7 +12646,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 packages: product.packages.map((pkg) => {
                   if (!failedTargetIds.includes(pkg.id)) return pkg;
                   const snapshotPkg = productSnapshot.packages.find((candidate) => candidate.id === pkg.id);
-                  return snapshotPkg ? { ...pkg, companionProducts: snapshotPkg.companionProducts ?? [] } : pkg;
+                  return snapshotPkg
+                    ? {
+                        ...pkg,
+                        companionProducts: snapshotPkg.companionProducts ?? [],
+                        offerSyncEnabled: snapshotPkg.offerSyncEnabled ?? ((snapshotPkg as any).offer_sync_enabled ?? false),
+                        offerSyncSourceProductId: snapshotPkg.offerSyncSourceProductId ?? (snapshotPkg as any).offer_sync_source_product_id ?? null,
+                        offerSyncSourcePackageId: snapshotPkg.offerSyncSourcePackageId ?? (snapshotPkg as any).offer_sync_source_package_id ?? null
+                      }
+                    : pkg;
                 })
               }
         )
@@ -12529,11 +12663,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     const successCount = targetIds.length - failedTargetIds.length;
     if (successCount > 0 && failedTargetIds.length === 0) {
-      showToast(`Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`);
+      showToast(
+        packageOfferCopyKeepSynced
+          ? `Copied and linked this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}. Future source offer changes will flow there too.`
+          : `Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`
+      );
       setShowPackageOfferCopyPanel(false);
       setPackageOfferCopyTargetIds([]);
     } else if (successCount > 0) {
-      showToast(`Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`);
+      showToast(
+        packageOfferCopyKeepSynced
+          ? `Linked ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
+          : `Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
+      );
     } else {
       setProducts((value) => value.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
       showToast("Could not copy offers to the selected packages.");
@@ -33697,6 +33839,56 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >+ Add extra offer</button>
                     </div>
                   </div>
+                  {modal === "editPackage" && packageOfferSyncEnabled && (
+                    <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 space-y-2">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-emerald-700">Linked offer sync</p>
+                          <p className="m-0 text-xs text-emerald-900">
+                            {selectedPackageOfferSyncSource
+                              ? `This package is linked to ${selectedPackageOfferSyncSource.name}. When that source package's offers change and get saved, this bundle will inherit the same offer setup automatically.`
+                              : "This package is linked to another source package. Future source offer saves will continue to flow here automatically."}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {selectedPackageOfferSyncSource && (
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-100"
+                              onClick={() => {
+                                setPackageCompanions(clonePackageCompanions(selectedPackageOfferSyncSource.companionProducts ?? []));
+                                markPackageEditorDirty();
+                                showToast(`Loaded the latest offers from ${selectedPackageOfferSyncSource.name}.`);
+                              }}
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              Load source offers now
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            onClick={() => {
+                              setPackageOfferSyncEnabled(false);
+                              setPackageOfferSyncSourceProductId(null);
+                              setPackageOfferSyncSourcePackageId(null);
+                              markPackageEditorDirty();
+                              showToast("Offer sync removed for this package.");
+                            }}
+                          >
+                            Stop syncing
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {modal === "editPackage" && linkedOfferTargetCount > 0 && (
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
+                      <p className="m-0 text-xs text-blue-900">
+                        Saving this package&apos;s offers will also update <strong>{linkedOfferTargetCount}</strong> linked package{linkedOfferTargetCount === 1 ? "" : "s"} automatically.
+                      </p>
+                    </div>
+                  )}
                   {showPackageOfferCopyPanel && modal === "editPackage" && availablePackageOfferCopyTargets.length > 0 && (
                     <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-3">
                       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -33723,10 +33915,28 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </button>
                         </div>
                       </div>
+                      <label className="flex items-start gap-3 rounded-md border border-blue-100 bg-white px-3 py-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={packageOfferCopyKeepSynced}
+                          onChange={(event) => setPackageOfferCopyKeepSynced(event.target.checked)}
+                        />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-semibold text-gray-900">Keep selected packages synced with this source</span>
+                          <span className="block text-[11px] text-gray-500">
+                            Later offer edits on <strong>{packageName || selectedPackage?.name || "this package"}</strong> will automatically flow to linked targets when you save the source package again.
+                          </span>
+                        </span>
+                      </label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {availablePackageOfferCopyTargets.map((pkg) => {
                           const checked = packageOfferCopyTargetIds.includes(pkg.id);
                           const offerCount = pkg.companionProducts?.length ?? 0;
+                          const isAlreadyLinked =
+                            (((pkg as any).offerSyncEnabled ?? (pkg as any).offer_sync_enabled) === true) &&
+                            (((pkg as any).offerSyncSourceProductId ?? (pkg as any).offer_sync_source_product_id ?? null) === selectedProduct?.id) &&
+                            (((pkg as any).offerSyncSourcePackageId ?? (pkg as any).offer_sync_source_package_id ?? null) === selectedPackage?.id);
                           return (
                             <label
                               key={pkg.id}
@@ -33743,7 +33953,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 className="mt-0.5"
                               />
                               <span className="flex-1 min-w-0">
-                                <span className="block text-sm font-semibold text-gray-900">{pkg.name}</span>
+                                <span className="block text-sm font-semibold text-gray-900">
+                                  {pkg.name}
+                                  {isAlreadyLinked && (
+                                    <span className="ml-2 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                      Linked already
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="block text-[11px] text-gray-500">
                                   {pkg.quantity} pcs · {formatProductMoney(pkg.price, pkg.currency)} · currently {offerCount} offer{offerCount === 1 ? "" : "s"}
                                 </span>
@@ -33755,8 +33972,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
                         <p className="m-0 text-[11px] text-blue-900">
                           {packageOfferCopyTargetIds.length === 0
-                            ? "Choose the bundles that should inherit this same offer setup."
-                            : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
+                            ? packageOfferCopyKeepSynced
+                              ? "Choose the bundles that should inherit and stay linked to this offer setup."
+                              : "Choose the bundles that should inherit this same offer setup."
+                            : packageOfferCopyKeepSynced
+                              ? `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected for copy + sync.`
+                              : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
                         </p>
                         <button
                           type="button"
@@ -33765,7 +33986,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           onClick={applyCurrentPackageOffersToTargets}
                         >
                           <Copy className="w-3.5 h-3.5" />
-                          {packageOfferCopyBusy ? "Applying..." : "Apply to selected packages"}
+                          {packageOfferCopyBusy ? "Applying..." : packageOfferCopyKeepSynced ? "Apply and keep synced" : "Apply to selected packages"}
                         </button>
                       </div>
                     </div>

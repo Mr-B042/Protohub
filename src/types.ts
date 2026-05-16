@@ -171,6 +171,9 @@ export type ProductPackage = {
   active: boolean;
   companions?: PackageCompanion[];
   packageComponents?: PackageComponent[];
+  offerSyncEnabled?: boolean;
+  offerSyncSourceProductId?: string | null;
+  offerSyncSourcePackageId?: string | null;
 };
 
 export type PackBonusRule = {
