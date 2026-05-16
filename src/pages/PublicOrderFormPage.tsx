@@ -1168,6 +1168,10 @@ export default function PublicOrderFormPage() {
           0%, 100% { transform: translateX(0); }
           50% { transform: translateX(6px); }
         }
+        @keyframes publicBundleArrowBounce {
+          0%, 100% { transform: translateY(0); opacity: 0.88; }
+          50% { transform: translateY(4px); opacity: 1; }
+        }
         @keyframes publicRemovePulse {
           0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
           50% { transform: scale(1.02); box-shadow: 0 10px 24px rgba(239, 68, 68, 0.18); }
@@ -1486,9 +1490,34 @@ export default function PublicOrderFormPage() {
                             <strong style={{ fontSize: 18, color: "#111827" }}>
                               {companionDisplayName(displayCompanion, product, displayTargetPackage)}
                             </strong>
-                            <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+                            <span
+                              style={{
+                                fontSize: 13,
+                                color: "#6b7280",
+                                fontWeight: 700,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 8
+                              }}
+                            >
                               {hasVariantChoices
-                                ? "Choose the bundle you want below"
+                                ? (
+                                  <>
+                                    <span>Choose the bundle you want below</span>
+                                    <span
+                                      aria-hidden="true"
+                                      style={{
+                                        display: "inline-flex",
+                                        fontSize: 16,
+                                        lineHeight: 1,
+                                        color: "#1F8FE0",
+                                        animation: "publicBundleArrowBounce 1.1s ease-in-out infinite"
+                                      }}
+                                    >
+                                      ↓
+                                    </span>
+                                  </>
+                                )
                                 : companionDisplayDetail(displayCompanion, displayTargetPackage)}
                             </span>
                             <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
