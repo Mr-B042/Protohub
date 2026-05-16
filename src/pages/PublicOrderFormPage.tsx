@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
 import type { ProductCurrencyCode } from "../types";
 
@@ -453,6 +453,49 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string) {
   return null;
 }
 
+function renderCompanionTeaserVisual(companion: PublicCompanion, productName: string) {
+  const src = companion.imageUrl?.trim() || fallbackCompanionImageSrc(productName);
+  const hasDemo = Boolean((companion.embedHtml ?? "").trim() || (companion.videoUrl ?? "").trim());
+  return (
+    <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 22, overflow: "hidden", background: "#ffffff", border: "1px solid rgba(148, 163, 184, 0.18)" }}>
+      <img
+        src={src}
+        alt={productName}
+        onError={(event) => {
+          const target = event.currentTarget;
+          if (target.dataset.fallbackApplied === "true") return;
+          target.dataset.fallbackApplied = "true";
+          target.src = fallbackCompanionImageSrc(productName);
+        }}
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
+      {hasDemo && (
+        <div
+          style={{
+            position: "absolute",
+            right: 10,
+            bottom: 10,
+            padding: "6px 10px",
+            borderRadius: 999,
+            background: "rgba(15, 23, 42, 0.78)",
+            color: "#ffffff",
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: "0.03em",
+            textTransform: "uppercase",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1 }}>▶</span>
+          Demo inside
+        </div>
+      )}
+    </div>
+  );
+}
+
 function freeGiftVisibleInState(mainProduct: PublicProduct, giftProduct: PublicProduct, state: string) {
   if (!state) return true;
   const normalizedState = normalizeStateName(state);
@@ -520,6 +563,7 @@ export default function PublicOrderFormPage() {
   const [orderFormState, setOrderFormState] = useState("");
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<CrossSellSelection[]>([]);
+  const [expandedCardCompanionProductId, setExpandedCardCompanionProductId] = useState<string | null>(null);
   const [publicHoneypot, setPublicHoneypot] = useState("");
   const [orderFormConfirmed, setOrderFormConfirmed] = useState(false);
   const [orderFormCommitmentAccepted, setOrderFormCommitmentAccepted] = useState(false);
@@ -1132,34 +1176,51 @@ export default function PublicOrderFormPage() {
         : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
     );
 
-  const cardCompanionGroups = Object.values(
-    companionOptions
-      .filter((companion) => (companion.displayMode ?? "compact") === "card")
-      .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
-        const key = companion.productId;
-        if (!acc[key]) {
-          acc[key] = {
-            product: products.find((item) => item.id === companion.productId),
-            companions: [],
-            priority: companion.priority ?? 0
-          };
-        }
-        acc[key].companions.push(companion);
-        acc[key].priority = Math.max(acc[key].priority, companion.priority ?? 0);
-        return acc;
-      }, {})
-  )
-    .map((group) => ({
-      ...group,
-      companions: [...group.companions].sort((a, b) => {
-        if (a.quantity !== b.quantity) return a.quantity - b.quantity;
-        return (b.priority ?? 0) - (a.priority ?? 0);
-      })
-    }))
-    .sort((a, b) => b.priority - a.priority);
+  const cardCompanionGroups = useMemo(
+    () => Object.values(
+      companionOptions
+        .filter((companion) => (companion.displayMode ?? "compact") === "card")
+        .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
+          const key = companion.productId;
+          if (!acc[key]) {
+            acc[key] = {
+              product: products.find((item) => item.id === companion.productId),
+              companions: [],
+              priority: companion.priority ?? 0
+            };
+          }
+          acc[key].companions.push(companion);
+          acc[key].priority = Math.max(acc[key].priority, companion.priority ?? 0);
+          return acc;
+        }, {})
+    )
+      .map((group) => ({
+        ...group,
+        companions: [...group.companions].sort((a, b) => {
+          if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+          return (b.priority ?? 0) - (a.priority ?? 0);
+        })
+      }))
+      .sort((a, b) => b.priority - a.priority),
+    [companionOptions, products]
+  );
 
-  const compactCompanionOptions = companionOptions
-    .filter((companion) => (companion.displayMode ?? "compact") !== "card");
+  const compactCompanionOptions = useMemo(
+    () => companionOptions.filter((companion) => (companion.displayMode ?? "compact") !== "card"),
+    [companionOptions]
+  );
+
+  useEffect(() => {
+    if (cardCompanionGroups.length === 0) {
+      setExpandedCardCompanionProductId(null);
+      return;
+    }
+    setExpandedCardCompanionProductId((prev) => {
+      if (!prev) return null;
+      if (cardCompanionGroups.some((group) => group.product?.id === prev)) return prev;
+      return null;
+    });
+  }, [cardCompanionGroups]);
 
   return (
     <main className="public-order-page">
@@ -1171,6 +1232,10 @@ export default function PublicOrderFormPage() {
         @keyframes publicBundleArrowBounce {
           0%, 100% { transform: translateY(0); opacity: 0.88; }
           50% { transform: translateY(4px); opacity: 1; }
+        }
+        @keyframes publicCtaArrowBounce {
+          0%, 100% { transform: translateY(0); opacity: 0.82; }
+          50% { transform: translateY(5px); opacity: 1; }
         }
         @keyframes publicRemovePulse {
           0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
@@ -1466,231 +1531,343 @@ export default function PublicOrderFormPage() {
 
               {cardCompanionGroups.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-                  {cardCompanionGroups.map((group, index) => {
-                    const product = group.product;
-                    if (!product) return null;
-                    const hasVariantChoices = group.companions.length > 1;
-                    const selectedVariant = group.companions.find((companion) => isOrderFormCrossSellSelected(companion)) ?? null;
-                    const displayCompanion = selectedVariant ?? group.companions[0];
-                    const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
-                    const currency = primaryPricing(product)?.currency ?? "NGN";
-                    const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
-                    const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-                    const standardTotal = standard * displayCompanion.quantity;
-                    const savings = Math.max(0, standardTotal - total);
-                    const media = renderCompanionMedia(displayCompanion, product.name);
-                    return (
-                      <div key={`${product.id}-${index}`} style={{ border: "2px solid #1F8FE0", borderRadius: 18, overflow: "hidden", background: "#f8fbff" }}>
-                        <div style={{ background: "#1F8FE0", color: "white", padding: "9px 14px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                          {(displayCompanion.badgeText && displayCompanion.badgeText.trim()) || "Add this too"}
-                        </div>
-                        <div style={{ padding: 16, display: "grid", gap: 12 }}>
-                          {media}
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <strong style={{ fontSize: 18, color: "#111827" }}>
-                              {companionDisplayName(displayCompanion, product, displayTargetPackage)}
-                            </strong>
-                            <span
+                  <div style={{ border: "2px solid #cbd5e1", borderRadius: 22, background: "#f8fafc", padding: 14, display: "grid", gap: 14 }}>
+                    <div style={{ display: "grid", gap: 4, textAlign: "center" }}>
+                      <strong style={{ fontSize: 22, color: "#111827", lineHeight: 1.25 }}>
+                        Would you like to add additional items while this promo offer is still on?
+                      </strong>
+                      <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+                        Tap any item below to preview the demo, see the bundle choices, and add it to your order.
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {cardCompanionGroups.map((group, index) => {
+                        const product = group.product;
+                        if (!product) return null;
+                        const hasVariantChoices = group.companions.length > 1;
+                        const selectedVariant = group.companions.find((companion) => isOrderFormCrossSellSelected(companion)) ?? null;
+                        const previewCompanion = selectedVariant ?? group.companions[0];
+                        const previewTargetPackage = targetPackageForCompanion(previewCompanion, products);
+                        const currency = primaryPricing(product)?.currency ?? "NGN";
+                        const teaserTotal = companionLineTotal(previewCompanion, product, previewTargetPackage);
+                        const isExpanded = expandedCardCompanionProductId === product.id;
+                        const displayCompanion = selectedVariant ?? group.companions[0];
+                        const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
+                        const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
+                        const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
+                        const standardTotal = standard * displayCompanion.quantity;
+                        const savings = Math.max(0, standardTotal - total);
+                        const media = renderCompanionMedia(displayCompanion, product.name);
+                        return (
+                          <div key={`${product.id}-${index}`} style={{ display: "grid", gap: 10 }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedCardCompanionProductId((current) => current === product.id ? null : product.id)}
                               style={{
-                                fontSize: 13,
-                                color: "#6b7280",
-                                fontWeight: 700,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8
+                                width: "100%",
+                                border: isExpanded ? "2px solid #1F8FE0" : "1px solid #dbe4ef",
+                                background: isExpanded ? "#eef6ff" : "#ffffff",
+                                borderRadius: 22,
+                                padding: 14,
+                                textAlign: "left",
+                                cursor: "pointer",
+                                display: "grid",
+                                gap: 12,
+                                boxShadow: isExpanded ? "0 12px 28px rgba(31, 143, 224, 0.12)" : "0 8px 24px rgba(15, 23, 42, 0.06)"
                               }}
                             >
-                              {hasVariantChoices
-                                ? (
-                                  <>
-                                    <span>Choose the bundle you want below</span>
+                              <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 14, alignItems: "center" }}>
+                                <div style={{ width: 120 }}>
+                                  {renderCompanionTeaserVisual(previewCompanion, product.name)}
+                                </div>
+                                <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                                    <strong style={{ fontSize: 19, lineHeight: 1.15, color: "#111827", maxWidth: 220 }}>
+                                      {product.name}
+                                    </strong>
                                     <span
-                                      aria-hidden="true"
                                       style={{
-                                        display: "inline-flex",
-                                        fontSize: 16,
-                                        lineHeight: 1,
-                                        color: "#1F8FE0",
-                                        animation: "publicBundleArrowBounce 1.1s ease-in-out infinite"
+                                        flexShrink: 0,
+                                        padding: "6px 10px",
+                                        borderRadius: 999,
+                                        background: "#fef3c7",
+                                        color: "#b45309",
+                                        fontSize: 11,
+                                        fontWeight: 900,
+                                        letterSpacing: "0.04em",
+                                        textTransform: "uppercase"
                                       }}
                                     >
-                                      ↓
+                                      {(previewCompanion.badgeText?.trim() || "Promo").slice(0, 24)}
                                     </span>
-                                  </>
-                                )
-                                : companionDisplayDetail(displayCompanion, displayTargetPackage)}
-                            </span>
-                            <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
-                              {displayCompanion.pitch?.trim() || "Easy extra add-on that fits this order."}
-                            </p>
-                          </div>
-                          {hasVariantChoices && (
-                            <div style={{ display: "grid", gap: 8 }}>
-                              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "#475569" }}>
-                                Choose bundle
-                              </div>
-                              <div style={{ borderTop: "1px solid #dbe4ef", borderBottom: "1px solid #dbe4ef" }}>
-                                {group.companions.map((variant) => {
-                                  const variantTargetPackage = targetPackageForCompanion(variant, products);
-                                  const variantSelected = selectedVariant
-                                    ? companionSelectionKey(selectedVariant) === companionSelectionKey(variant)
-                                    : false;
-                                  const variantPrice = companionLineTotal(variant, product, variantTargetPackage);
-                                  return (
-                                    <button
-                                      key={companionSelectionKey(variant)}
-                                      type="button"
-                                      onClick={() => setOrderFormCrossSellSelection(variant, true, { exclusiveProduct: true })}
-                                      style={{
-                                        width: "100%",
-                                        border: "none",
-                                        borderBottom: "1px solid #e5e7eb",
-                                        background: variantSelected ? "#eff6ff" : "transparent",
-                                        color: "#0f172a",
-                                        padding: "12px 0",
-                                        fontSize: 13,
-                                        cursor: "pointer",
-                                        display: "flex",
-                                        alignItems: "flex-start",
-                                        gap: 12,
-                                        textAlign: "left"
-                                      }}
-                                    >
+                                  </div>
+                                  <span style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, maxWidth: 360 }}>
+                                    {previewCompanion.pitch?.trim() || "Quick extra add-on that fits this order."}
+                                  </span>
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                    <div style={{ display: "grid", gap: 4 }}>
+                                      <strong style={{ fontSize: 18, color: "#111827" }}>
+                                        {previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}
+                                      </strong>
+                                      {group.companions.length > 1 && (
+                                        <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                          {group.companions.length} bundle choices inside
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span style={{ display: "grid", justifyItems: "center", gap: 4 }}>
+                                      {!selectedVariant && (
+                                        <span
+                                          aria-hidden="true"
+                                          style={{
+                                            display: "inline-flex",
+                                            fontSize: 22,
+                                            lineHeight: 1,
+                                            color: "#f97316",
+                                            textShadow: "0 4px 14px rgba(249, 115, 22, 0.28)",
+                                            animation: "publicCtaArrowBounce 1.1s ease-in-out infinite"
+                                          }}
+                                        >
+                                          ↓
+                                        </span>
+                                      )}
                                       <span
-                                        aria-hidden="true"
                                         style={{
-                                          marginTop: 4,
-                                          width: 18,
-                                          height: 18,
-                                          borderRadius: "50%",
-                                          border: variantSelected ? "2px solid #1F8FE0" : "2px solid #9ca3af",
                                           display: "inline-flex",
                                           alignItems: "center",
                                           justifyContent: "center",
-                                          flexShrink: 0
+                                          padding: "11px 18px",
+                                          borderRadius: 999,
+                                          background: selectedVariant ? "#16a34a" : "#2563eb",
+                                          color: "#ffffff",
+                                          fontSize: 13,
+                                          fontWeight: 800,
+                                          minWidth: 170
                                         }}
                                       >
-                                        {variantSelected && (
-                                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1F8FE0", display: "block" }} />
-                                        )}
+                                        {selectedVariant ? "Already added" : isExpanded ? "Tap to close preview" : "Tap to preview & add"}
                                       </span>
-                                      <span style={{ flex: 1, minWidth: 0 }}>
-                                        <span style={{ display: "block", fontWeight: 800, fontSize: 16, color: "#111827" }}>
-                                          {companionDisplayName(variant, product, variantTargetPackage)}
-                                        </span>
-                                        <span style={{ display: "block", fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.45 }}>
-                                          {companionDisplayDetail(variant, variantTargetPackage)}
-                                          {variant.pitch?.trim() ? ` · ${variant.pitch.trim()}` : ""}
-                                        </span>
-                                      </span>
-                                      <strong style={{ fontSize: 16, color: "#111827", whiteSpace: "nowrap" }}>
-                                        {variant.pricingMode === "free" ? "FREE" : formatProductMoney(variantPrice, currency)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                            {isExpanded && (
+                              <div style={{ border: "2px solid #1F8FE0", borderRadius: 18, overflow: "hidden", background: "#f8fbff" }}>
+                                <div style={{ background: "#1F8FE0", color: "white", padding: "9px 14px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                                  {(displayCompanion.badgeText && displayCompanion.badgeText.trim()) || "Add this too"}
+                                </div>
+                                <div style={{ padding: 16, display: "grid", gap: 12 }}>
+                                  {media}
+                                  <div style={{ display: "grid", gap: 6 }}>
+                                    <strong style={{ fontSize: 18, color: "#111827" }}>
+                                      {companionDisplayName(displayCompanion, product, displayTargetPackage)}
+                                    </strong>
+                                    <span
+                                      style={{
+                                        fontSize: 13,
+                                        color: "#6b7280",
+                                        fontWeight: 700,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 8
+                                      }}
+                                    >
+                                      {hasVariantChoices
+                                        ? (
+                                          <>
+                                            <span>Choose the bundle you want below</span>
+                                            <span
+                                              aria-hidden="true"
+                                              style={{
+                                                display: "inline-flex",
+                                                fontSize: 16,
+                                                lineHeight: 1,
+                                                color: "#1F8FE0",
+                                                animation: "publicBundleArrowBounce 1.1s ease-in-out infinite"
+                                              }}
+                                            >
+                                              ↓
+                                            </span>
+                                          </>
+                                        )
+                                        : companionDisplayDetail(displayCompanion, displayTargetPackage)}
+                                    </span>
+                                    <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
+                                      {displayCompanion.pitch?.trim() || "Easy extra add-on that fits this order."}
+                                    </p>
+                                  </div>
+                                  {hasVariantChoices && (
+                                    <div style={{ display: "grid", gap: 8 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: "#475569" }}>
+                                        Choose bundle
+                                      </div>
+                                      <div style={{ borderTop: "1px solid #dbe4ef", borderBottom: "1px solid #dbe4ef" }}>
+                                        {group.companions.map((variant) => {
+                                          const variantTargetPackage = targetPackageForCompanion(variant, products);
+                                          const variantSelected = selectedVariant
+                                            ? companionSelectionKey(selectedVariant) === companionSelectionKey(variant)
+                                            : false;
+                                          const variantPrice = companionLineTotal(variant, product, variantTargetPackage);
+                                          return (
+                                            <button
+                                              key={companionSelectionKey(variant)}
+                                              type="button"
+                                              onClick={() => setOrderFormCrossSellSelection(variant, true, { exclusiveProduct: true })}
+                                              style={{
+                                                width: "100%",
+                                                border: "none",
+                                                borderBottom: "1px solid #e5e7eb",
+                                                background: variantSelected ? "#eff6ff" : "transparent",
+                                                color: "#0f172a",
+                                                padding: "12px 0",
+                                                fontSize: 13,
+                                                cursor: "pointer",
+                                                display: "flex",
+                                                alignItems: "flex-start",
+                                                gap: 12,
+                                                textAlign: "left"
+                                              }}
+                                            >
+                                              <span
+                                                aria-hidden="true"
+                                                style={{
+                                                  marginTop: 4,
+                                                  width: 18,
+                                                  height: 18,
+                                                  borderRadius: "50%",
+                                                  border: variantSelected ? "2px solid #1F8FE0" : "2px solid #9ca3af",
+                                                  display: "inline-flex",
+                                                  alignItems: "center",
+                                                  justifyContent: "center",
+                                                  flexShrink: 0
+                                                }}
+                                              >
+                                                {variantSelected && (
+                                                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1F8FE0", display: "block" }} />
+                                                )}
+                                              </span>
+                                              <span style={{ flex: 1, minWidth: 0 }}>
+                                                <span style={{ display: "block", fontWeight: 800, fontSize: 16, color: "#111827" }}>
+                                                  {companionDisplayName(variant, product, variantTargetPackage)}
+                                                </span>
+                                                <span style={{ display: "block", fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.45 }}>
+                                                  {companionDisplayDetail(variant, variantTargetPackage)}
+                                                  {variant.pitch?.trim() ? ` · ${variant.pitch.trim()}` : ""}
+                                                </span>
+                                              </span>
+                                              <strong style={{ fontSize: 16, color: "#111827", whiteSpace: "nowrap" }}>
+                                                {variant.pricingMode === "free" ? "FREE" : formatProductMoney(variantPrice, currency)}
+                                              </strong>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {(!hasVariantChoices || selectedVariant) && (
+                                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                                      <strong style={{ fontSize: 24, color: "#1F8FE0" }}>
+                                        {displayCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
                                       </strong>
-                                    </button>
-                                  );
-                                })}
+                                      {savings > 0 && (
+                                        <>
+                                          <span style={{ fontSize: 13, color: "#9ca3af", textDecoration: "line-through" }}>
+                                            {formatProductMoney(standardTotal, currency)}
+                                          </span>
+                                          <span style={{ fontSize: 12, fontWeight: 700, color: "#047857" }}>
+                                            Save {formatProductMoney(savings, currency)}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {selectedVariant ? (
+                                    <div style={{ display: "grid", gap: 8 }}>
+                                      <div
+                                        style={{ width: "100%", padding: "13px 16px", background: "#16a34a", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+                                      >
+                                        <span
+                                          aria-hidden="true"
+                                          style={{
+                                            width: 22,
+                                            height: 22,
+                                            borderRadius: "50%",
+                                            border: "2px solid rgba(255,255,255,0.95)",
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                          }}
+                                        >
+                                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
+                                        </span>
+                                        <span style={{ flex: 1, textAlign: "left" }}>
+                                          {companionDisplayName(selectedVariant, product, targetPackageForCompanion(selectedVariant, products))} added to your order
+                                        </span>
+                                        <span aria-hidden="true" style={{ fontSize: 18, fontWeight: 900, lineHeight: 1 }}>✓</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setOrderFormCrossSellSelection(selectedVariant, false, { exclusiveProduct: true })}
+                                        style={{
+                                          width: "100%",
+                                          padding: "11px 14px",
+                                          background: "#fef2f2",
+                                          color: "#b91c1c",
+                                          borderRadius: 12,
+                                          fontWeight: 800,
+                                          fontSize: 14,
+                                          border: "2px solid #fca5a5",
+                                          cursor: "pointer",
+                                          animation: "publicRemovePulse 1.6s ease-in-out infinite"
+                                        }}
+                                      >
+                                        Tap here to remove this product from your order
+                                      </button>
+                                    </div>
+                                  ) : !hasVariantChoices ? (
+                                    <div style={{ display: "grid", gap: 8 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => setOrderFormCrossSellSelection(displayCompanion, true, { exclusiveProduct: true })}
+                                        style={{ width: "100%", padding: "13px 16px", background: "#1F8FE0", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 14 }}
+                                      >
+                                        <span
+                                          aria-hidden="true"
+                                          style={{ fontSize: 20, fontWeight: 900, lineHeight: 1, animation: "publicBumpNudge 1s ease-in-out infinite", marginRight: 6 }}
+                                        >
+                                          →
+                                        </span>
+                                        <span
+                                          aria-hidden="true"
+                                          style={{
+                                            width: 22,
+                                            height: 22,
+                                            borderRadius: "50%",
+                                            border: "2px solid rgba(255,255,255,0.95)",
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                          }}
+                                        >
+                                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
+                                        </span>
+                                        <span style={{ flex: 1, textAlign: "left" }}>
+                                          {displayCompanion.ctaText?.trim() || "Yes, add to my order"}
+                                        </span>
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
                               </div>
-                            </div>
-                          )}
-                          {(!hasVariantChoices || selectedVariant) && (
-                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                              <strong style={{ fontSize: 24, color: "#1F8FE0" }}>
-                                {displayCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
-                              </strong>
-                              {savings > 0 && (
-                                <>
-                                  <span style={{ fontSize: 13, color: "#9ca3af", textDecoration: "line-through" }}>
-                                    {formatProductMoney(standardTotal, currency)}
-                                  </span>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: "#047857" }}>
-                                    Save {formatProductMoney(savings, currency)}
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          )}
-                          {selectedVariant ? (
-                            <div style={{ display: "grid", gap: 8 }}>
-                              <div
-                                style={{ width: "100%", padding: "13px 16px", background: "#16a34a", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  style={{
-                                    width: 22,
-                                    height: 22,
-                                    borderRadius: "50%",
-                                    border: "2px solid rgba(255,255,255,0.95)",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    flexShrink: 0
-                                  }}
-                                >
-                                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
-                                </span>
-                                <span style={{ flex: 1, textAlign: "left" }}>
-                                  {companionDisplayName(selectedVariant, product, targetPackageForCompanion(selectedVariant, products))} added to your order
-                                </span>
-                                <span aria-hidden="true" style={{ fontSize: 18, fontWeight: 900, lineHeight: 1 }}>✓</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => setOrderFormCrossSellSelection(selectedVariant, false, { exclusiveProduct: true })}
-                                style={{
-                                  width: "100%",
-                                  padding: "11px 14px",
-                                  background: "#fef2f2",
-                                  color: "#b91c1c",
-                                  borderRadius: 12,
-                                  fontWeight: 800,
-                                  fontSize: 14,
-                                  border: "2px solid #fca5a5",
-                                  cursor: "pointer",
-                                  animation: "publicRemovePulse 1.6s ease-in-out infinite"
-                                }}
-                              >
-                                Tap here to remove this product from your order
-                              </button>
-                            </div>
-                          ) : !hasVariantChoices ? (
-                            <div style={{ display: "grid", gap: 8 }}>
-                              <button
-                                type="button"
-                                onClick={() => setOrderFormCrossSellSelection(displayCompanion, true, { exclusiveProduct: true })}
-                                style={{ width: "100%", padding: "13px 16px", background: "#1F8FE0", color: "white", borderRadius: 12, fontWeight: 800, fontSize: 15, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 14 }}
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  style={{ fontSize: 20, fontWeight: 900, lineHeight: 1, animation: "publicBumpNudge 1s ease-in-out infinite", marginRight: 6 }}
-                                >
-                                  →
-                                </span>
-                                <span
-                                  aria-hidden="true"
-                                  style={{
-                                    width: 22,
-                                    height: 22,
-                                    borderRadius: "50%",
-                                    border: "2px solid rgba(255,255,255,0.95)",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    flexShrink: 0
-                                  }}
-                                >
-                                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
-                                </span>
-                                <span style={{ flex: 1, textAlign: "left" }}>
-                                  {displayCompanion.ctaText?.trim() || "Yes, add to my order"}
-                                </span>
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
 
