@@ -16301,12 +16301,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const previewPayroll = () => {
     setPayrollLabel(`${payrollMonth} Payroll`);
-    const totalRows = payrollPreviewRows.length;
-    if (totalRows === 0) {
-      showToast("No pay rates set yet. Use Pay Rates tab to configure pay structures.");
-    } else {
-      showToast(`${totalRows} team member${totalRows === 1 ? "" : "s"} included in ${payrollMonth} preview.`);
-    }
+    payrollApi.preview({ period: payrollMonth.trim() }).then((preview: any) => {
+      const rows = Array.isArray(preview?.rows) ? preview.rows : [];
+      setPayrollPreviewData({
+        period: preview?.period ?? payrollMonth.trim(),
+        rows,
+        total: Number(preview?.total ?? 0),
+        topPerformer: preview?.topPerformer ?? preview?.top_performer ?? undefined
+      });
+      if (rows.length === 0) {
+        showToast("No pay rates set yet. Use Pay Rates tab to configure pay structures.");
+      } else {
+        showToast(`${rows.length} team member${rows.length === 1 ? "" : "s"} included in ${payrollMonth} preview.`);
+      }
+    }).catch((err: any) => {
+      setPayrollPreviewData(null);
+      showToast(`Failed to preview payroll: ${err.message}`);
+    });
   };
 
   const savePayrollDraft = () => {
@@ -16314,26 +16325,31 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast("Set at least one pay rate before saving payroll.");
       return;
     }
+    if (!payrollPreviewData || payrollPreviewData.period !== payrollMonth.trim()) {
+      showToast("Preview this payroll first so the saved draft matches the latest calculation.");
+      return;
+    }
 
-    const localId = makePayrollRunId();
-    const run: PayrollRun = {
-      id: localId,
-      month: payrollMonth,
+    payrollApi.generate({
+      period: payrollMonth.trim(),
       label: payrollLabel || `${payrollMonth} Payroll`,
-      notes: payrollNotes,
-      total: payrollGrandTotal,
-      status: "Draft",
-      createdAt: new Date().toISOString(),
-      rows: payrollPreviewRows,
-      topPerformer: topPerformerInfo ?? undefined
-    };
-    setPayrollRuns((value) => [run, ...value]);
-    setPayrollTab("History");
-    showToast(`${run.label} saved as a draft.`);
-    payrollApi.generate({ period: payrollMonth }).then((saved: any) => {
-      if (saved?.id) setPayrollRuns((prev) => prev.map((r) => r.id === localId ? { ...r, id: saved.id } : r));
+      notes: payrollNotes
+    }).then((saved: any) => {
+      const run: PayrollRun = {
+        id: saved?.id ?? makePayrollRunId(),
+        month: saved?.month ?? saved?.period ?? payrollMonth.trim(),
+        label: saved?.label ?? (payrollLabel || `${payrollMonth} Payroll`),
+        notes: saved?.notes ?? payrollNotes,
+        total: Number(saved?.total ?? payrollGrandTotal),
+        status: saved?.status ?? "Draft",
+        createdAt: saved?.createdAt ?? saved?.created_at ?? new Date().toISOString(),
+        rows: Array.isArray(saved?.rows ?? saved?.entries) ? (saved?.rows ?? saved?.entries) : payrollPreviewRows,
+        topPerformer: saved?.topPerformer ?? saved?.top_performer ?? topPerformerInfo ?? undefined
+      };
+      setPayrollRuns((value) => [run, ...value.filter((item) => item.id !== run.id)]);
+      setPayrollTab("History");
+      showToast(`${run.label} saved as a draft.`);
     }).catch((err: any) => {
-      setPayrollRuns((prev) => prev.filter((r) => r.id !== localId));
       showToast(`Failed to save payroll: ${err.message}`);
     });
   };
@@ -25418,6 +25434,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {(() => {
+                const tabMeta = financeTabMeta[financeTab];
+                return (
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Finance tab guide">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <h2 className="text-sm font-bold text-gray-900 m-0">{financeTab}</h2>
+                          {tabMeta.lenses.map((lens) => (
+                            <span key={`${financeTab}-${lens}`} className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold border ${financeLensToneClasses[lens]}`}>
+                              {lens}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-sm text-gray-600">{tabMeta.summary}</p>
+                      </div>
+                      <div className="sm:max-w-sm">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Read It As</p>
+                        <p className="text-xs text-gray-500">{tabMeta.caution}</p>
+                      </div>
+                    </div>
+                  </section>
+                );
+              })()}
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -25724,7 +25764,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     onClick={() => openFinanceTab(tab)}
                     key={tab}
                   >
-                    {tab}
+                    <span className="block">{tab}</span>
+                    <span className="block mt-1 text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                      {financeTabMeta[tab].primaryLens}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -25738,7 +25781,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       onClick={() => openFinanceTab(tab)}
                       key={tab}
                     >
-                      {tab}
+                      <span className="block">{tab}</span>
+                      <span className="block mt-0.5 text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                        {financeTabMeta[tab].primaryLens}
+                      </span>
                     </button>
                   ))}
                 </nav>
@@ -25897,13 +25943,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {financeTab === "Weekly Accounting" && (() => {
                 // Sun→Sat range driven by weeklyAcctSunday
-                const start = new Date(`${weeklyAcctSunday}T00:00:00`);
+                const startKey = weeklyAcctSunday;
+                const start = new Date(`${startKey}T00:00:00`);
                 const end   = new Date(start); end.setDate(end.getDate() + 6); end.setHours(23, 59, 59, 999);
-                const startKey = start.toISOString().slice(0, 10);
-                const endKey   = end.toISOString().slice(0, 10);
+                const endKey   = formatDateKey(end);
                 const inWeek = (iso: string | undefined) => {
                   if (!iso) return false;
-                  const k = String(iso).slice(0, 10);
+                  const k = normalizeDateKey(iso);
                   return k >= startKey && k <= endKey;
                 };
                 // Honour the page-level Finance Product filter (string[] of product ids).
@@ -25913,30 +25959,44 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 // Expense rule: when a product filter is active, include only expenses
                 // for those products PLUS general (no productId) expenses — they're shared overhead.
                 const expenseMatchesPF = (e: ExpenseRecord) => productFilterIds.size === 0 || !e.productId || matchesProductFilter(e.productId, e.productName, productFilterIds);
+                const placedThisWeek = (
+                  weeklyAccountingData?.cohortOrders
+                  ?? trackedOrders.filter((o) => inWeek(orderCreatedKey(o)) && matchesPF(o.productId, o.productName))
+                ).filter((o) => matchesPF(o.productId, o.productName));
 
-                // CASH view: orders DELIVERED inside the week
-                const deliveredCash = trackedOrders.filter((o) =>
-                  (o.status ?? "New") === "Delivered"
-                  && inWeek(o.deliveredDate ?? o.createdAt ?? o.date)
-                  && matchesPF(o.productId, o.productName)
-                );
+                // Delivered-week view: orders DELIVERED inside the week
+                const deliveredCash = (
+                  weeklyAccountingData?.deliveredOrders
+                  ?? trackedOrders.filter((o) =>
+                    (o.status ?? "New") === "Delivered"
+                    && inWeek(orderDeliveredKey(o))
+                    && matchesPF(o.productId, o.productName)
+                  )
+                ).filter((o) => (o.status ?? "New") === "Delivered" && matchesPF(o.productId, o.productName));
+                const weeklyExpenses = (
+                  weeklyAccountingData?.expenses
+                  ?? expenses.filter((e) => inWeek(e.date) && expenseMatchesPF(e))
+                ).filter(expenseMatchesPF);
+                const weeklyRemittanceTransactions = weeklyAccountingData?.remittanceTransactions ?? [];
                 const cashRevenue   = deliveredCash.reduce((s, o) => s + (o.amount || 0), 0);
-                const cashAdSpend   = expenses.filter((e) => e.type === "Ad Spend" && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
-                const cashWaybill   = expenses.filter((e) => e.type === "Waybill" && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
-                const cashDelivery  = expenses.filter((e) => (e.type === "Delivery" || e.type === "Failed Delivery") && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
-                const cashOther     = expenses.filter((e) => !["Ad Spend", "Waybill", "Delivery", "Failed Delivery"].includes(e.type) && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                const cashAdSpend   = weeklyExpenses.filter((e) => e.type === "Ad Spend").reduce((s, e) => s + e.amount, 0);
+                const cashWaybill   = weeklyExpenses.filter((e) => e.type === "Waybill").reduce((s, e) => s + e.amount, 0);
+                const cashDelivery  = weeklyExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
+                const cashOther     = weeklyExpenses.filter((e) => !["Ad Spend", "Waybill", "Delivery", "Failed Delivery"].includes(e.type)).reduce((s, e) => s + e.amount, 0);
                 const cashCogs      = deliveredCash.reduce((s, o) => s + costForOrder(o), 0);
-                // Cash delivery rate = delivered / orders that REACHED a terminal state in the week
+                // Cash delivery rate = delivered this week / orders placed this week
                 const finalizedCashDenom = trackedOrders.filter((o) => {
                   const s = o.status ?? "New";
                   if (!["Delivered", "Cancelled", "Failed"].includes(s)) return false;
-                  const k = String(o.deliveredDate ?? o.createdAt ?? o.date ?? "").slice(0, 10);
+                  const k = s === "Delivered"
+                    ? orderDeliveredKey(o)
+                    : normalizeDateKey((o as any).updatedAt ?? o.createdAt ?? o.date);
                   return k >= startKey && k <= endKey && matchesPF(o.productId, o.productName);
                 });
-                const cashDeliveryRate = finalizedCashDenom.length === 0 ? 0 : Math.round((deliveredCash.length / finalizedCashDenom.length) * 100);
+                const cashDeliveryRate = placedThisWeek.length === 0 ? 0 : Math.round((deliveredCash.length / placedThisWeek.length) * 100);
 
                 // COHORT view: orders PLACED inside the week (revenue/delivery rate against THIS WEEK'S cohort)
-                const cohort         = trackedOrders.filter((o) => inWeek(o.createdAt ?? o.date) && matchesPF(o.productId, o.productName));
+                const cohort         = placedThisWeek;
                 const cohortDelivered = cohort.filter((o) => (o.status ?? "New") === "Delivered");
                 const cohortFinalized = cohort.filter((o) => ["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
                 const cohortPending   = cohort.length - cohortFinalized.length;
@@ -25970,14 +26030,98 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 const cashProfit    = cashRevenue - cashExpenses;
                 const cohortBonuses = cohortDelivered.reduce((s, o) => { const rs = getRepCohortStats(o.assignedRepId); return s + (computeOrderBonus(o, rs.rate, 0, rs.count).total ?? 0); }, 0);
                 const cohortProfit  = cohortRevenue - (cohortAdSpend + cohortCogs + cohortBonuses);
+                const prevWeekStart = addDaysToDateKey(startKey, -7);
+                const prevWeekEnd = addDaysToDateKey(startKey, -1);
+                const deliveriesFromThisWeekCohort = deliveredCash.filter((o) => {
+                  const createdKey = orderCreatedKey(o);
+                  return createdKey >= startKey && createdKey <= endKey;
+                });
+                const deliveriesFromLastWeekCohort = deliveredCash.filter((o) => {
+                  const createdKey = orderCreatedKey(o);
+                  return createdKey >= prevWeekStart && createdKey <= prevWeekEnd;
+                });
+                const deliveriesFromOlderCohorts = deliveredCash.filter((o) => {
+                  const createdKey = orderCreatedKey(o);
+                  return !!createdKey && createdKey < prevWeekStart;
+                });
+                const cohortDeliveredSameWeek = cohort.filter((o) => {
+                  if ((o.status ?? "New") !== "Delivered") return false;
+                  const deliveredKey = orderDeliveredKey(o);
+                  return deliveredKey >= startKey && deliveredKey <= endKey;
+                });
+                const cohortDeliveredLater = cohort.filter((o) => {
+                  if ((o.status ?? "New") !== "Delivered") return false;
+                  const deliveredKey = orderDeliveredKey(o);
+                  return !!deliveredKey && deliveredKey > endKey;
+                });
+                const cohortFailedOrCancelled = cohort.filter((o) => ["Cancelled", "Failed"].includes(o.status ?? "New"));
+                const cohortStillPending = cohort.filter((o) => !["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
+                const cashReceivedThisWeek = weeklyRemittanceTransactions.reduce((sum, row) => sum + Number(row.deltaAmount ?? 0), 0);
+                const cashReceivedOrderCount = new Set(weeklyRemittanceTransactions.map((row) => row.orderId).filter(Boolean)).size;
+                const deliveriesBySourceRows = [
+                  {
+                    label: "From this week's orders",
+                    helper: "Orders created between this Sunday and Saturday and already delivered this week.",
+                    orders: deliveriesFromThisWeekCohort,
+                    tone: "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  },
+                  {
+                    label: "From last week's orders",
+                    helper: "Orders placed last week that landed as deliveries this week.",
+                    orders: deliveriesFromLastWeekCohort,
+                    tone: "bg-blue-50 text-blue-700 border-blue-200"
+                  },
+                  {
+                    label: "From older orders",
+                    helper: "Deliveries this week coming from cohorts older than last week.",
+                    orders: deliveriesFromOlderCohorts,
+                    tone: "bg-violet-50 text-violet-700 border-violet-200"
+                  }
+                ].map((row) => ({
+                  ...row,
+                  count: row.orders.length,
+                  revenue: row.orders.reduce((sum, order) => sum + (order.amount || 0), 0)
+                }));
+                const cohortOutcomeRows = [
+                  {
+                    label: "Placed this week",
+                    value: cohort.length,
+                    helper: "All orders received between Sunday and Saturday."
+                  },
+                  {
+                    label: "Delivered same week",
+                    value: cohortDeliveredSameWeek.length,
+                    helper: "Cohort orders that already delivered before the week closed."
+                  },
+                  {
+                    label: "Delivered after week",
+                    value: cohortDeliveredLater.length,
+                    helper: "Cohort orders that delivered later, after this accounting week ended."
+                  },
+                  {
+                    label: "Pending now",
+                    value: cohortStillPending.length,
+                    helper: "Cohort orders still not finalized yet."
+                  },
+                  {
+                    label: "Failed / Cancelled",
+                    value: cohortFailedOrCancelled.length,
+                    helper: "Cohort orders that are already lost."
+                  },
+                  {
+                    label: "Final delivery rate",
+                    value: cohortFinalizedRate,
+                    helper: cohortFinalized.length === 0 ? "No finalized orders yet." : `${cohortDelivered.length} delivered of ${cohortFinalized.length} finalized`
+                  }
+                ];
 
                 // Per-day breakdown
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
                 const days = Array.from({ length: 7 }, (_, i) => {
                   const d = new Date(start); d.setDate(d.getDate() + i);
-                  const key = d.toISOString().slice(0, 10);
-                  const adSpend  = expenses.filter((e) => e.type === "Ad Spend" && String(e.date).slice(0, 10) === key && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
-                  const placed   = trackedOrders.filter((o) => String(o.createdAt ?? o.date ?? "").slice(0, 10) === key && matchesPF(o.productId, o.productName));
+                  const key = formatDateKey(d);
+                  const adSpend  = weeklyExpenses.filter((e) => e.type === "Ad Spend" && normalizeDateKey(e.date) === key).reduce((s, e) => s + e.amount, 0);
+                  const placed   = placedThisWeek.filter((o) => orderCreatedKey(o) === key);
                   const delivered = placed.filter((o) => (o.status ?? "New") === "Delivered");
                   const revenue  = delivered.reduce((s, o) => s + o.amount, 0);
                   const roi      = adSpend === 0 ? null : Math.round((revenue / adSpend) * 100);
@@ -25993,17 +26137,63 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div>
                         <p className="text-xs font-bold uppercase tracking-wider text-gray-400 m-0">Accounting week (Sun → Sat)</p>
                         <p className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{formatDateOnly(start)} – {formatDateOnly(end)}</p>
+                        {weeklyAccountingData?.generatedAt && (
+                          <p className="text-[11px] text-gray-500 mt-1">Server snapshot: {formatMoment(weeklyAccountingData.generatedAt)}</p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1">
-                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() - 7); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>
+                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() - 7); setWeeklyAcctSunday(formatDateKey(d)); }}>
                           <ChevronLeft className="w-4 h-4" />
                         </button>
-                        <button className="!min-h-0 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50" onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>This week</button>
-                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() + 7); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>
+                        <button className="!min-h-0 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50" onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0); setWeeklyAcctSunday(formatDateKey(d)); }}>This week</button>
+                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() + 7); setWeeklyAcctSunday(formatDateKey(d)); }}>
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
+
+                    {(weeklyAccountingLoading || weeklyAccountingError) && (
+                      <div className={`rounded-xl border px-4 py-3 text-sm ${weeklyAccountingError ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+                        {weeklyAccountingError
+                          ? `Weekly accounting is using the current workspace data because the server summary could not load: ${weeklyAccountingError}`
+                          : "Refreshing weekly accounting from the server..."}
+                      </div>
+                    )}
+
+                    <section className="grid grid-cols-1 md:grid-cols-3 gap-4" aria-label="Weekly accounting overview">
+                      {[
+                        {
+                          title: "Orders Placed This Week",
+                          value: String(placedThisWeek.length),
+                          helper: `${cohortPending} still pending · ${cohortFailedOrCancelled.length} failed/cancelled`,
+                          tone: "blue",
+                          icon: Package
+                        },
+                        {
+                          title: "Delivered This Week",
+                          value: String(deliveredCash.length),
+                          helper: `${formatMoney(cashRevenue)} revenue recognized on delivery week`,
+                          tone: "emerald",
+                          icon: BadgeCheck
+                        },
+                        {
+                          title: "Cash Received This Week",
+                          value: formatMoney(cashReceivedThisWeek),
+                          helper: weeklyRemittanceTransactions.length === 0 ? "No remittance entries logged in this week yet" : `${cashReceivedOrderCount} order${cashReceivedOrderCount === 1 ? "" : "s"} touched by remittance updates`,
+                          tone: "amber",
+                          icon: HandCoins
+                        }
+                      ].map(({ title, value, helper, tone, icon: Icon }) => (
+                        <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`w-9 h-9 rounded-full flex items-center justify-center ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "emerald" ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"}`}><Icon className="w-4 h-4" /></span>
+                          </div>
+                          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h2>
+                          <strong className="text-xl font-bold text-gray-900 block my-1">{value}</strong>
+                          <p className="text-[11px] text-gray-500">{helper}</p>
+                        </article>
+                      ))}
+                    </section>
 
                     {/* Cash vs Cohort side-by-side */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -26011,24 +26201,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <section className="bg-white rounded-xl border-2 border-emerald-200 shadow-sm p-5 space-y-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-sm font-extrabold text-emerald-700 m-0 uppercase tracking-wider">💵 Cash week</h3>
-                            <p className="text-xs text-gray-500 mt-0.5">Money that actually came in & went out this week. Use for payroll, cash-flow, weekly P&L.</p>
+                            <h3 className="text-sm font-extrabold text-emerald-700 m-0 uppercase tracking-wider">💵 Delivered week P&amp;L</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">Revenue, COGS, delivery costs, and bonuses recognized from orders delivered in this week.</p>
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><p className="text-[11px] text-gray-400 m-0">Revenue (delivered)</p><p className="text-lg font-extrabold text-gray-900 m-0">{formatMoney(cashRevenue)}</p><p className="text-[11px] text-gray-500 m-0">{deliveredCash.length} order{deliveredCash.length === 1 ? "" : "s"}</p></div>
+                          <div><p className="text-[11px] text-gray-400 m-0">Revenue (delivered)</p><p className="text-lg font-extrabold text-gray-900 m-0">{formatMoney(cashRevenue)}</p><p className="text-[11px] text-gray-500 m-0">{deliveredCash.length} delivered this week · {placedThisWeek.length} placed this week</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Net profit</p><p className={`text-lg font-extrabold m-0 ${cashProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(cashProfit)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Ad spend</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashAdSpend)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Bonuses paid</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashBonuses)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">COGS</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashCogs)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Delivery + Waybill</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashDelivery + cashWaybill)}</p></div>
                           <div className="col-span-2 mt-1 pt-2 border-t border-gray-100">
-                            <p className="text-[11px] text-gray-400 m-0">Delivery rate (orders that finalized this week)</p>
+                            <p className="text-[11px] text-gray-400 m-0">Delivery rate (delivered this week vs orders placed this week)</p>
                             <div className="flex items-center gap-2 mt-0.5">
                               <p className={`text-2xl font-extrabold m-0 ${cashDeliveryRate >= target ? "text-emerald-700" : "text-rose-700"}`}>{cashDeliveryRate}%</p>
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cashDeliveryRate >= target ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>target {target}%</span>
                             </div>
-                            <p className="text-[11px] text-gray-500 m-0 mt-0.5">{deliveredCash.length} of {finalizedCashDenom.length} finalized in week were delivered</p>
+                            <p className="text-[11px] text-gray-500 m-0 mt-0.5">{deliveredCash.length} delivered this week of {placedThisWeek.length} orders placed this week</p>
+                            {finalizedCashDenom.length > 0 && (
+                              <p className="text-[10px] text-gray-400 m-0 mt-0.5">Finalized in week: {finalizedCashDenom.length}</p>
+                            )}
                           </div>
                         </div>
                       </section>
@@ -26066,12 +26259,49 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </section>
                     </div>
 
+                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900 m-0">Delivered this week by source cohort</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">This is the missing bridge between the orders you received this week and the deliveries that actually landed this week.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {deliveriesBySourceRows.map((row) => (
+                          <article key={row.label} className={`rounded-xl border p-4 ${row.tone}`}>
+                            <p className="text-[11px] font-bold uppercase tracking-wider m-0">{row.label}</p>
+                            <strong className="text-2xl font-extrabold block mt-1">{row.count}</strong>
+                            <p className="text-sm font-semibold mt-1 mb-0">{formatMoney(row.revenue)}</p>
+                            <p className="text-[11px] mt-2 mb-0 opacity-80">{row.helper}</p>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900 m-0">Cohort week outcome split</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">This shows what happened to the orders received in this week, split by whether they delivered inside the same week or later.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {cohortOutcomeRows.map((row) => (
+                          <article key={row.label} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">{row.label}</p>
+                            <strong className="text-2xl font-extrabold text-gray-900 block mt-1">
+                              {row.label === "Final delivery rate" ? `${row.value}%` : row.value}
+                            </strong>
+                            <p className="text-[11px] text-gray-500 mt-2 mb-0">{row.helper}</p>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+
                     {/* Top performers — per-rep stats for the week */}
                     {(() => {
-                      // Build per-rep stats. We use CASH week for deliveries, revenue and bonus
-                      // (= what the rep gets paid this Saturday), and COHORT for the
-                      // delivery-rate against target (= quality of orders they brought in).
-                      const repStats = users.filter((u) => u.role === "Sales Rep" || u.role === "Owner" || u.role === "Admin").map((u) => {
+                      // Build per-rep stats. This block intentionally mixes:
+                      // - delivered-this-week output (deliveries, revenue, AOV)
+                      // - cohort-week quality (rate against this week's order cohort)
+                      // The bonus shown here is the per-order estimate for this week's delivered
+                      // orders using the cohort gate, not the final payroll preview total.
+                      const repStats = users.filter((u) => u.role === "Sales Rep").map((u) => {
                         const cashOrders   = deliveredCash.filter((o) => o.assignedRepId === u.id);
                         const cohortOrders = cohort.filter((o) => o.assignedRepId === u.id);
                         const cohortDeliveredOrders = cohortOrders.filter((o) => (o.status ?? "New") === "Delivered");
@@ -26113,7 +26343,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
                                 <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
-                                <p className="text-[10px] text-gray-400 m-0">Per-order only · final payroll may differ</p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">Per-order only · final payroll may differ</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Avg AOV</p>
