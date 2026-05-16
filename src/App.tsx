@@ -3460,6 +3460,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
+  const packageEditorHydrationKeyRef = useRef("");
   const seenFollowUpNotificationIdsRef = useRef<Set<string>>(new Set());
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
@@ -5212,17 +5213,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetPackageForm();
   }, [modal]);
   useEffect(() => {
-    if (modal !== "editPackage" || !selectedPackage) {
+    if (modal !== "editPackage") {
+      packageEditorHydrationKeyRef.current = "";
       return;
     }
+    if (!selectedProduct || !selectedPackage) {
+      return;
+    }
+    const hydrationKey = `${selectedProduct.id}:${selectedPackage.id}`;
+    if (packageEditorHydrationKeyRef.current === hydrationKey) {
+      return;
+    }
+    packageEditorHydrationKeyRef.current = hydrationKey;
     setPackageName(selectedPackage.name);
     setPackageDescription(selectedPackage.description);
     setPackageQuantity(String(selectedPackage.quantity));
     setPackagePrice(String(selectedPackage.price));
     setPackageCurrency(selectedPackage.currency);
     setPackageDisplayOrder(String(selectedPackage.displayOrder));
+    setPackageComponents((selectedPackage.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((selectedPackage.companionProducts ?? []).map(normalisePackageCompanion));
-  }, [modal, selectedPackage]);
+    setShowPackageOfferCopyPanel(false);
+    setPackageOfferCopyTargetIds([]);
+    setPackageOfferCopyBusy(false);
+  }, [modal, selectedProduct, selectedPackage]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
       return;
