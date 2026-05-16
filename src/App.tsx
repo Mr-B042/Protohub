@@ -12461,9 +12461,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast("Choose at least one package to update.");
       return;
     }
-    const sourceCompanions = packageCompanions
+    const draftSourceCompanions = packageCompanions
       .map(normalisePackageCompanion)
       .filter((companion) => companion.productId);
+    const savedSourceCompanions = (selectedPackage.companionProducts ?? [])
+      .map(normalisePackageCompanion)
+      .filter((companion) => companion.productId);
+    const sourceCompanions = draftSourceCompanions.length > 0 ? draftSourceCompanions : savedSourceCompanions;
+    if (sourceCompanions.length === 0) {
+      showToast("This package has no saved extra offers to copy yet.");
+      return;
+    }
     const invalidStateScopedOffer = sourceCompanions.find(
       (companion) => companion.stateFilterMode === "allow" && companion.stateRestrictions.length === 0
     );
@@ -12521,22 +12529,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     const successCount = targetIds.length - failedTargetIds.length;
     if (successCount > 0 && failedTargetIds.length === 0) {
-      showToast(
-        sourceCompanions.length === 0
-          ? `Cleared extra offers on ${successCount} package${successCount === 1 ? "" : "s"}.`
-          : `Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`
-      );
+      showToast(`Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`);
       setShowPackageOfferCopyPanel(false);
       setPackageOfferCopyTargetIds([]);
     } else if (successCount > 0) {
-      showToast(
-        sourceCompanions.length === 0
-          ? `Cleared extra offers on ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
-          : `Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
-      );
+      showToast(`Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`);
     } else {
       setProducts((value) => value.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
-      showToast(sourceCompanions.length === 0 ? "Could not clear offers on the selected packages." : "Could not copy offers to the selected packages.");
+      showToast("Could not copy offers to the selected packages.");
     }
 
     setPackageOfferCopyBusy(false);
@@ -33755,12 +33755,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
                         <p className="m-0 text-[11px] text-blue-900">
                           {packageOfferCopyTargetIds.length === 0
-                            ? packageCompanions.length === 0
-                              ? "Choose bundles to clear their current extra offers."
-                              : "Choose the bundles that should inherit this same offer setup."
-                            : packageCompanions.length === 0
-                              ? `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected to clear.`
-                              : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
+                            ? "Choose the bundles that should inherit this same offer setup."
+                            : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
                         </p>
                         <button
                           type="button"
@@ -33769,7 +33765,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           onClick={applyCurrentPackageOffersToTargets}
                         >
                           <Copy className="w-3.5 h-3.5" />
-                          {packageOfferCopyBusy ? "Applying..." : packageCompanions.length === 0 ? "Clear selected packages" : "Apply to selected packages"}
+                          {packageOfferCopyBusy ? "Applying..." : "Apply to selected packages"}
                         </button>
                       </div>
                     </div>
