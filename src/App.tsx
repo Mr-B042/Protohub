@@ -4939,10 +4939,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceTargetOrderId, setRemittanceTargetOrderId] = useState("");
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
+  const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
   const [repAmountToRemit, setRepAmountToRemit] = useState("");
+  const [repRemittanceReceivedDate, setRepRemittanceReceivedDate] = useState(todayKey());
   const [repExtraExpenses, setRepExtraExpenses] = useState<{ type: ExpenseType; amount: string; description: string }[]>([]);
   const [financeProductFilter, setFinanceProductFilter] = useState<string[]>([]);
   useEffect(() => {
@@ -5445,7 +5447,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
-  }, [modal, remittanceTargetOrderId, trackedOrders]);
+    setRemittanceReceivedDate(todayKey());
+  }, [modal, remittanceTargetOrderId]);
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    setRepRemittanceReceivedDate(todayKey());
+  }, [selectedOrderId]);
   useEffect(() => {
     if (modal !== "flagCustomer" || !flagTargetPhone) {
       return;
@@ -7323,6 +7330,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const recordRemittance = () => {
     const order = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
     if (!order) { showToast("Order not found."); return; }
+    if (!isDateValue(remittanceReceivedDate)) { showToast("Choose a valid remittance received date."); return; }
     const newLogistics = remittanceLogisticsCost.trim() === "" ? (order.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
     const expected = Math.max(0, order.amount - newLogistics);
@@ -7333,14 +7341,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
+      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
     closeModal();
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
-    showToast(`${order.id} remittance saved (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
-    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status }).catch((err: any) => {
+    setRemittanceReceivedDate(todayKey());
+    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
+    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
+      void loadFinanceRemittanceData({ quiet: true });
+      void loadWeeklyAccountingData({ quiet: true });
+    }).catch((err: any) => {
       setTrackedOrders(prevOrders);
       showToast(`Failed to save remittance: ${err.message}`);
     });
@@ -7350,6 +7362,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceTargetOrderId(order.id);
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
+    setRemittanceReceivedDate(todayKey());
     openFinanceRemittanceRoute(order.id);
   };
 
@@ -8344,13 +8357,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepAmountToRemit(String(Math.max(0, orderAmount - fee - newTotal)));
   };
   const saveRepDeliveryDetails = (order: TrackedOrder) => {
+    if (!isDateValue(repRemittanceReceivedDate)) {
+      showToast("Choose a valid remittance received date.");
+      return;
+    }
     const fee = Math.max(0, Number(repDeliveryFee) || 0);
     const remit = Math.max(0, Number(repAmountToRemit) || 0);
     const expected = Math.max(0, order.amount - fee);
     const status: "Pending" | "Partial" | "Paid" = remit <= 0 ? "Pending" : remit >= expected ? "Paid" : "Partial";
     const validExtras = repExtraExpenses.filter((e) => Number(e.amount) > 0);
     const nextNotes = [
-      orderTimelineNote(`Delivery fee ${formatProductMoney(fee, order.currency)} · remitted ${formatProductMoney(remit, order.currency)} (${status}).`, { by: repScopeName }),
+      orderTimelineNote(`Delivery fee ${formatProductMoney(fee, order.currency)} · remitted ${formatProductMoney(remit, order.currency)} (${status}) on ${repRemittanceReceivedDate}.`, { by: repScopeName }),
       ...orderNotesFor(order)
     ];
     const orderSnapshot = order;
@@ -8382,8 +8399,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       logistics_cost: fee,
       amount_remitted: remit,
       remittance_status: status,
+      remittance_received_at: repRemittanceReceivedDate,
       timeline_notes: nextNotes
     }).then(async () => {
+      void loadFinanceRemittanceData({ quiet: true });
+      void loadWeeklyAccountingData({ quiet: true });
       if (newExpenses.length === 0) {
         showToast(`${order.id} delivery details saved.`);
         return;
@@ -17783,6 +17803,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 className="w-full h-10 px-3 border border-emerald-300 bg-emerald-50/40 rounded-md text-sm font-semibold text-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
               <p className="text-[10px] text-gray-400">Auto = Order − Delivery − Extras. Override if partner remits a different amount.</p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cash Received Date</label>
+              <input
+                type="date"
+                value={repRemittanceReceivedDate}
+                onChange={(e) => setRepRemittanceReceivedDate(e.target.value)}
+                className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+              />
+              <p className="text-[10px] text-gray-400">This date drives cash-week reporting.</p>
             </div>
           </div>
 
@@ -36086,9 +36116,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span>Amount Remitted (cash actually received from partner)</span>
                   <input value={remittanceAmount} onChange={(e) => setRemittanceAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 61500" />
                 </label>
+                <label>
+                  <span>Cash Received Date</span>
+                  <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
+                </label>
                 <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                   <strong>Expected to receive:</strong> {formatProductMoney(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)), remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
-                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}
+                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}<br />
+                  <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
                 </p>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>

@@ -78,6 +78,15 @@ const numericAmount = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const remittanceReceivedAtToIso = (value: unknown) => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return null;
+  }
+  const iso = new Date(`${value.trim()}T12:00:00+01:00`).toISOString();
+  return Number.isNaN(new Date(iso).getTime()) ? null : iso;
+};
+
 const logRemittanceDelta = async (args: {
   orgId: string;
   orderId: string;
@@ -86,13 +95,14 @@ const logRemittanceDelta = async (args: {
   userId?: string | null;
   userName?: string | null;
   reason: string;
+  receivedAt?: string;
 }) => {
   const previous = numericAmount(args.previousAmountRemitted);
   const next = numericAmount(args.nextAmountRemitted);
   const delta = Math.round((next - previous) * 100) / 100;
   if (delta === 0) return;
 
-  const { error } = await supabase.from("remittance_transactions").insert({
+  const payload: Record<string, unknown> = {
     org_id: args.orgId,
     order_id: args.orderId,
     delta_amount: delta,
@@ -101,7 +111,12 @@ const logRemittanceDelta = async (args: {
     logged_by_user_id: args.userId ?? null,
     logged_by_name: args.userName ?? null,
     reason: args.reason
-  });
+  };
+  if (args.receivedAt) {
+    payload.received_at = args.receivedAt;
+  }
+
+  const { error } = await supabase.from("remittance_transactions").insert(payload);
 
   if (error) {
     logger.error("remittance: failed to log remittance transaction", {
@@ -927,6 +942,10 @@ router.get("/:id/audit", async (req, res) => {
 // Everything else is locked on terminal orders.
 const POST_TERMINAL_FIELDS = new Set([
   "response",
+  "logistics_cost", "logisticsCost",
+  "amount_remitted", "amountRemitted",
+  "remittance_status", "remittanceStatus",
+  "remittance_received_at", "remittanceReceivedAt",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
@@ -944,6 +963,14 @@ const MANUAL_BONUS_FIELDS = new Set([
 ]);
 
 router.patch("/:id", async (req, res) => {
+  const remittanceReceivedAt = remittanceReceivedAtToIso(
+    req.body.remittance_received_at ?? req.body.remittanceReceivedAt
+  );
+  if (remittanceReceivedAt === null) {
+    res.status(400).json({ error: "Remittance received date must be in YYYY-MM-DD format." });
+    return;
+  }
+
   const { data: current } = await supabase
     .from("orders")
     .select("status, notes, city, state, agent_id, agent_location_id, product_id, amount_remitted, remittance_status, logistics_cost")
@@ -1149,7 +1176,8 @@ router.patch("/:id", async (req, res) => {
     nextAmountRemitted: (data as any).amount_remitted,
     userId: req.user!.id,
     userName: req.user!.name,
-    reason: "Manual remittance update"
+    reason: "Manual remittance update",
+    receivedAt: remittanceReceivedAt
   });
   await syncOrderFollowUpTask({
     orgId: req.user!.orgId,
