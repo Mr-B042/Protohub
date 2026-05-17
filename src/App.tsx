@@ -124,6 +124,10 @@ import {
 } from "./data";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
+const CART_JOURNEY_POLL_MS = 5_000;
+const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
+const ORDER_DETAILS_POLL_MS = 10_000;
+const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
 
 function manifestVersionToken(brandName: string, logoUrl: string): string {
   return `${brandName.trim().length}-${logoUrl.trim().length}`;
@@ -4723,7 +4727,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 
   const loadAgentBalances = async (options: { quiet?: boolean } = {}) => {
-    setAgentBalanceLoading(true);
+    if (!options.quiet) {
+      setAgentBalanceLoading(true);
+    }
     try {
       const result = await weekendStockSummaryApi.weekly({
         weekStart: agentBalanceWeekStart,
@@ -4742,7 +4748,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setAgentBalanceError(message);
       if (!options.quiet) showToast(`Failed to load weekend stock summary: ${message}`);
     } finally {
-      setAgentBalanceLoading(false);
+      if (!options.quiet) {
+        setAgentBalanceLoading(false);
+      }
     }
   };
 
@@ -4906,8 +4914,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (!isWeekendStockSummaryPage(activePage)) return;
-    void loadAgentBalances({ quiet: agentBalanceRows.length > 0 });
-  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId]);
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadSummary = async (silent = false) => {
+      if (cancelled) return;
+      await loadAgentBalances({ quiet: silent || agentBalanceRows.length > 0 });
+    };
+
+    void loadSummary();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadSummary(true);
+    }, WEEKEND_STOCK_SUMMARY_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId, agentBalanceRows.length]);
 
   const loadSmsBalance = async (options: { quiet?: boolean } = {}) => {
     setSmsBalanceLoading(true);
@@ -5720,23 +5746,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     let cancelled = false;
-    setSelectedCartJourneyLoading(true);
-    cartsApi.journey(selectedCart.id)
-      .then((events) => {
+    let pollingHandle: number | undefined;
+    const loadJourney = async (silent = false) => {
+      if (!silent) {
+        setSelectedCartJourneyLoading(true);
+      }
+      try {
+        const events = await cartsApi.journey(selectedCart.id);
         if (cancelled) return;
         setSelectedCartJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
-        setSelectedCartJourney([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
+        if (!silent) {
+          setSelectedCartJourney([]);
+        }
+      } finally {
+        if (cancelled || silent) return;
         setSelectedCartJourneyLoading(false);
-      });
+      }
+    };
+
+    void loadJourney();
+    pollingHandle = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadJourney(true);
+    }, CART_JOURNEY_POLL_MS);
 
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [modal, selectedCart?.id]);
 
@@ -5748,24 +5788,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const sourceCartId = selectedOrder.sourceCartId;
     let cancelled = false;
-    setSelectedOrderJourneyLoading(true);
-    cartsApi.journey(selectedOrder.sourceCartId)
-      .then((events) => {
+    let pollingHandle: number | undefined;
+    const loadJourney = async (silent = false) => {
+      if (!silent) {
+        setSelectedOrderJourneyLoading(true);
+      }
+      try {
+        const events = await cartsApi.journey(sourceCartId);
         if (cancelled) return;
         setSelectedOrderJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
-        setSelectedOrderJourney([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
+        if (!silent) {
+          setSelectedOrderJourney([]);
+        }
+      } finally {
+        if (cancelled || silent) return;
         setSelectedOrderJourneyLoading(false);
-      });
+      }
+    };
+
+    void loadJourney();
+    pollingHandle = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadJourney(true);
+    }, CART_JOURNEY_POLL_MS);
 
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [modal, realRole, selectedOrder?.sourceCartId]);
   const selectedOrderJourneyAnalytics = useMemo(
@@ -5803,34 +5858,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const orderId = selectedOrderId;
     let cancelled = false;
-    setOrderFollowUpLoading(true);
-    Promise.all([
-      ordersApi.followUpTasks(selectedOrderId),
-      ordersApi.contactAttempts(selectedOrderId)
-    ])
-      .then(([tasks, attempts]) => {
+    let pollingHandle: number | undefined;
+    const loadFollowUpData = async (silent = false) => {
+      if (!silent) {
+        setOrderFollowUpLoading(true);
+      }
+      try {
+        const [tasks, attempts] = await Promise.all([
+          ordersApi.followUpTasks(orderId),
+          ordersApi.contactAttempts(orderId)
+        ]);
         if (cancelled) return;
         setOrderFollowUpTasksByOrder((value) => ({
           ...value,
-          [selectedOrderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
+          [orderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
         }));
         setOrderContactAttemptsByOrder((value) => ({
           ...value,
-          [selectedOrderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
+          [orderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
         }));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setOrderFollowUpTasksByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
-        setOrderContactAttemptsByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
-      })
-      .finally(() => {
-        if (!cancelled) setOrderFollowUpLoading(false);
-      });
+      } catch {
+        if (cancelled || silent) return;
+        setOrderFollowUpTasksByOrder((value) => ({ ...value, [orderId]: [] }));
+        setOrderContactAttemptsByOrder((value) => ({ ...value, [orderId]: [] }));
+      } finally {
+        if (!cancelled && !silent) setOrderFollowUpLoading(false);
+      }
+    };
+
+    void loadFollowUpData();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadFollowUpData(true);
+    }, ORDER_DETAILS_POLL_MS);
 
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [selectedOrderId, modal, repOrderDetailId]);
   useEffect(() => {
@@ -7143,27 +7211,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     let cancelled = false;
-    setAbandonedCartJourneyLoading(true);
-    cartsApi.journeyBulk(abandonedJourneyCartIds)
-      .then((grouped) => {
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setAbandonedCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(abandonedJourneyCartIds);
         if (cancelled) return;
         const normalized: Record<string, CartJourneyEvent[]> = {};
         for (const [cartId, events] of Object.entries(grouped ?? {})) {
           normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
         }
         setAbandonedCartJourneyMap(normalized);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
-        setAbandonedCartJourneyMap({});
-      })
-      .finally(() => {
-        if (cancelled) return;
+        if (!silent) {
+          setAbandonedCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
         setAbandonedCartJourneyLoading(false);
-      });
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
 
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [activePage, abandonedJourneyCartIdsKey]);
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
@@ -9566,27 +9648,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     let cancelled = false;
-    setRepCartJourneyLoading(true);
-    cartsApi.journeyBulk(repJourneyCartIds)
-      .then((grouped) => {
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setRepCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(repJourneyCartIds);
         if (cancelled) return;
         const normalized: Record<string, CartJourneyEvent[]> = {};
         for (const [cartId, events] of Object.entries(grouped ?? {})) {
           normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
         }
         setRepCartJourneyMap(normalized);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
-        setRepCartJourneyMap({});
-      })
-      .finally(() => {
-        if (cancelled) return;
+        if (!silent) {
+          setRepCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
         setRepCartJourneyLoading(false);
-      });
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
 
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [activePage, repJourneyCartIdsKey]);
   const repStatusFilteredOrders = repOrders.filter((order) => {
@@ -11335,12 +11431,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   // Fetch audit log when order details modal opens
   useEffect(() => {
-    if (modal === "orderDetails" && selectedOrderId) {
-      ordersApi.audit(selectedOrderId).then(setOrderAuditLog).catch(() => setOrderAuditLog([]));
-    } else {
+    if (modal !== "orderDetails" || !selectedOrderId) {
       setOrderAuditLog([]);
+      return;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    const orderId = selectedOrderId;
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadAudit = async (silent = false) => {
+      try {
+        const rows = await ordersApi.audit(orderId);
+        if (cancelled) return;
+        setOrderAuditLog(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (cancelled || silent) return;
+        setOrderAuditLog([]);
+      }
+    };
+
+    void loadAudit();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadAudit(true);
+    }, ORDER_DETAILS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
   }, [modal, selectedOrderId]);
 
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
