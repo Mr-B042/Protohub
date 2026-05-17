@@ -1292,7 +1292,7 @@ export default function PublicOrderFormPage() {
                     {publicUpsellOffer.companion.headline?.trim() || `Add ${publicUpsellOffer.product.name} to this order?`}
                   </h2>
                   <p style={{ margin: 0, fontSize: 15, color: "#4b5563", lineHeight: 1.6 }}>
-                    {publicUpsellOffer.companion.pitch?.trim() || "Quick extra add-on before you move to the thank-you page."}
+                    {publicUpsellOffer.companion.pitch?.trim() || "Quick extra additional item before you move to the thank-you page."}
                   </p>
                 </div>
                 <div style={{ border: "1px solid #dbeafe", borderRadius: 18, background: "#f8fbff", padding: 18, display: "grid", gap: 12 }}>
@@ -1559,6 +1559,22 @@ export default function PublicOrderFormPage() {
                       <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
                         Tap any item below to preview the demo, see the bundle choices, and add it to your order.
                       </span>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "#b45309",
+                          lineHeight: 1.5,
+                          fontWeight: 700,
+                          background: "#fff7ed",
+                          border: "1px solid #fdba74",
+                          borderRadius: 12,
+                          padding: "8px 10px",
+                          maxWidth: 620,
+                          margin: "4px auto 0"
+                        }}
+                      >
+                        These discounted additional items only apply when you complete this main order. They are not available as stand-alone purchases at this discounted price.
+                      </span>
                     </div>
                     <div style={{ display: "grid", gap: 12 }}>
                       {cardCompanionGroups.map((group, index) => {
@@ -1622,13 +1638,16 @@ export default function PublicOrderFormPage() {
                                     </span>
                                   </div>
                                   <span style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, maxWidth: 360 }}>
-                                    {previewCompanion.pitch?.trim() || "Quick extra add-on that fits this order."}
+                                    {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
                                   </span>
                                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                                     <div style={{ display: "grid", gap: 4 }}>
                                       <strong style={{ fontSize: 18, color: "#111827" }}>
                                         {previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}
                                       </strong>
+                                      <span style={{ fontSize: 10, fontWeight: 700, color: "#b45309", lineHeight: 1.45 }}>
+                                        Special price only when bought with this main order
+                                      </span>
                                       {group.companions.length > 1 && (
                                         <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                                           {group.companions.length} bundle choices inside
@@ -1714,7 +1733,7 @@ export default function PublicOrderFormPage() {
                                         : companionDisplayDetail(displayCompanion, displayTargetPackage)}
                                     </span>
                                     <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
-                                      {displayCompanion.pitch?.trim() || "Easy extra add-on that fits this order."}
+                                      {displayCompanion.pitch?.trim() || "Easy extra additional item that fits this order."}
                                     </p>
                                   </div>
                                   {hasVariantChoices && (
