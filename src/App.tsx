@@ -534,6 +534,7 @@ type CrossSellLine = {
   productName: string;
   quantity: number;
   amount: number;
+  selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
 };
 type FreeGiftLine = {
   id: string;
@@ -8123,7 +8124,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       productId: product.id,
       productName: product.name,
       quantity: qty,
-      amount: price
+      amount: price,
+      selectionSource: "manual_rep"
     };
     const orderSnapshot = order;
     const nextCrossSellLines = [...(order.crossSellLines ?? []), line];
@@ -8372,6 +8374,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // ===== Bonus engine =====
   // Computes per-order bonus given the rep's weekly delivery rate.
   // Pure compute (no side-effects) — returns components for transparency.
+  const customerSelectedCrossSellBonus = (lines: CrossSellLine[] | undefined) => {
+    if (!lines?.length) return 0;
+    return lines.filter((line) => line.selectionSource === "public_form" || line.selectionSource === "public_upsell").length * 100;
+  };
+  const repDrivenCrossSellLines = (lines: CrossSellLine[] | undefined) =>
+    (lines ?? []).filter((line) => line.selectionSource !== "public_form" && line.selectionSource !== "public_upsell");
   const computeOrderBonus = (
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
@@ -8419,9 +8427,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     // Cross-sell bonus
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const xsTotal = order.crossSellLines.reduce((sum, line) => sum + (line.amount || 0), 0);
-      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
-      if (crossSell > 0) components.push({ label: `Cross-sell ${cfg.crossSellPercent}%`, amount: crossSell });
+      const selfSelectedBonus = customerSelectedCrossSellBonus(order.crossSellLines);
+      const repLines = repDrivenCrossSellLines(order.crossSellLines);
+      const repCrossSellTotal = repLines.reduce((sum, line) => sum + (line.amount || 0), 0);
+      const repCrossSellBonus = Math.round(repCrossSellTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * repLines.length;
+      crossSell = selfSelectedBonus + repCrossSellBonus;
+      if (selfSelectedBonus > 0) components.push({ label: `Additional items (${selfSelectedBonus / 100})`, amount: selfSelectedBonus });
+      if (repCrossSellBonus > 0) components.push({ label: `Rep cross-sell ${cfg.crossSellPercent}%`, amount: repCrossSellBonus });
     }
 
     // Free-gift bonus
@@ -8472,9 +8484,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const xsTotal = order.crossSellLines.reduce((s, l) => s + (l.amount || 0), 0);
-      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
-      if (crossSell > 0) components.push({ label: `Cross-sell`, amount: crossSell });
+      const selfSelectedBonus = customerSelectedCrossSellBonus(order.crossSellLines);
+      const repLines = repDrivenCrossSellLines(order.crossSellLines);
+      const repCrossSellTotal = repLines.reduce((s, l) => s + (l.amount || 0), 0);
+      const repCrossSellBonus = Math.round(repCrossSellTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * repLines.length;
+      crossSell = selfSelectedBonus + repCrossSellBonus;
+      if (selfSelectedBonus > 0) components.push({ label: `Additional items (${selfSelectedBonus / 100})`, amount: selfSelectedBonus });
+      if (repCrossSellBonus > 0) components.push({ label: `Rep cross-sell`, amount: repCrossSellBonus });
     }
     let freeGift = 0;
     if (order.freeGiftLines && order.freeGiftLines.length > 0 && cfg.freeGiftBonus > 0) {
@@ -13052,7 +13068,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           productId: c.productId,
           productName: (product?.name ?? "Companion") + " (bundled)",
           quantity: c.quantity,
-          amount: companionConfiguredTotal(c, standardPrice)
+          amount: companionConfiguredTotal(c, standardPrice),
+          selectionSource: "auto_include"
         };
       });
   };
@@ -14495,7 +14512,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       } else if (p) {
         amount = crossSellPriceFor(publicProduct, p) * c.quantity;
       }
-      return { id: makeCrossSellLineId(), productId: c.productId, productName: p?.name ?? "Add-on", quantity: qty, amount };
+      return {
+        id: makeCrossSellLineId(),
+        productId: c.productId,
+        productName: p?.name ?? "Add-on",
+        quantity: qty,
+        amount,
+        selectionSource: "public_form"
+      };
     });
     // Auto-include companions ride along silently — append to xsLines so they
     // count toward total and appear as line items on the order.
@@ -17668,7 +17692,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Cross-sell</p>
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                      {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}
+                    </p>
                     <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
                   </div>
                   <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
@@ -17733,7 +17759,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </tr>
                 {(order.crossSellLines ?? []).map((line) => (
                   <tr key={line.id} className="bg-amber-50/40">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800">↳ Cross-sell</span><div className="text-gray-700">{line.productName}</div></td>
+                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}</span><div className="text-gray-700">{line.productName}</div></td>
                     <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
                     <td className="px-4 py-3 text-xs text-gray-700">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
                     <td className="px-4 py-3 text-right text-xs">
@@ -32905,7 +32931,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                        </tr>
 	                        {(selectedOrder.crossSellLines ?? []).map((line) => (
 	                          <tr key={line.id} className="bg-amber-50/40">
-	                            <td className="px-4 py-2 text-gray-800 text-xs">↳ Cross-sell · {line.productName}</td>
+	                            <td className="px-4 py-2 text-gray-800 text-xs">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"} · {line.productName}</td>
 	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
 	                            <td className="px-4 py-2 text-right text-gray-700 text-xs">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), selectedOrder.currency)}</td>
 	                            <td className="px-4 py-2 text-right text-xs">
@@ -36992,7 +37018,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <label><span>Quantity</span><input value={crossSellQuantity} onChange={(e) => setCrossSellQuantity(e.target.value)} inputMode="numeric" /></label>
                     <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><input value={crossSellAmount} onChange={(e) => setCrossSellAmount(e.target.value)} inputMode="decimal" placeholder={String(suggested)} /></label>
                   </div>
-                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Bonus is applied automatically based on this product's cross-sell %.</p>
+                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Manual rep-added cross-sells keep using this product&apos;s normal bonus rule.</p>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveCrossSell}>Add Cross-sell</button>

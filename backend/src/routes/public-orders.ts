@@ -98,6 +98,7 @@ type ResolvedLine = {
   packageName?: string;
   packageQuantity?: number;
   packageComponentsSnapshot?: Awaited<ReturnType<typeof buildPackageComponentSnapshot>>;
+  selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
 };
 
 const PublicUpsellAcceptSchema = z.object({
@@ -397,7 +398,8 @@ router.post("/", submitRateLimit, async (req, res) => {
       packageId:   targetPackage?.id,
       packageName: targetPackage?.name,
       packageQuantity: targetPackage?.quantity,
-      packageComponentsSnapshot
+      packageComponentsSnapshot,
+      selectionSource: "public_form"
     });
   }
 
@@ -445,7 +447,8 @@ router.post("/", submitRateLimit, async (req, res) => {
       packageId: targetPackage?.id,
       packageName: targetPackage?.name,
       packageQuantity: targetPackage?.quantity,
-      packageComponentsSnapshot
+      packageComponentsSnapshot,
+      selectionSource: "auto_include"
     });
   }
 
@@ -800,7 +803,8 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
       packageId: targetPackage?.id,
       packageName: targetPackage?.name,
       packageQuantity: targetPackage?.quantity,
-      packageComponentsSnapshot
+      packageComponentsSnapshot,
+      selectionSource: "public_upsell"
     }
   ];
   const nextAmount = Number(order.amount ?? 0) + lineAmount;

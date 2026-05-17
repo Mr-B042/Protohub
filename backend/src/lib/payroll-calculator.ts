@@ -169,6 +169,26 @@ const normalizedLineAmount = (line: unknown) => {
 
 const normalizedLineCount = (lines: unknown) => Array.isArray(lines) ? lines.length : 0;
 const normalizedLineTotal = (lines: unknown) => Array.isArray(lines) ? lines.reduce((sum, line) => sum + normalizedLineAmount(line), 0) : 0;
+const normalizedLineSelectionSource = (line: unknown) => {
+  if (!line || typeof line !== "object") return "";
+  const record = line as Record<string, unknown>;
+  const raw = record.selectionSource ?? record.selection_source;
+  return typeof raw === "string" ? raw : "";
+};
+const normalizedCustomerSelectedCrossSellCount = (lines: unknown) =>
+  Array.isArray(lines)
+    ? lines.filter((line) => {
+        const source = normalizedLineSelectionSource(line);
+        return source === "public_form" || source === "public_upsell";
+      }).length
+    : 0;
+const normalizedRepDrivenCrossSellLines = (lines: unknown) =>
+  Array.isArray(lines)
+    ? lines.filter((line) => {
+        const source = normalizedLineSelectionSource(line);
+        return source !== "public_form" && source !== "public_upsell";
+      })
+    : [];
 
 const computeOrderBonus = (
   order: PayrollOrder,
@@ -214,8 +234,11 @@ const computeOrderBonus = (
     }
   }
 
-  const crossSell = Math.round(normalizedLineTotal(order.cross_sell_lines) * (cfg.crossSellPercent / 100))
-    + (cfg.crossSellFixed * normalizedLineCount(order.cross_sell_lines));
+  const selfSelectedCrossSell = normalizedCustomerSelectedCrossSellCount(order.cross_sell_lines) * 100;
+  const repDrivenCrossSellLines = normalizedRepDrivenCrossSellLines(order.cross_sell_lines);
+  const crossSell = selfSelectedCrossSell
+    + Math.round(normalizedLineTotal(repDrivenCrossSellLines) * (cfg.crossSellPercent / 100))
+    + (cfg.crossSellFixed * normalizedLineCount(repDrivenCrossSellLines));
 
   const freeGift = cfg.freeGiftBonus * normalizedLineCount(order.free_gift_lines);
 

@@ -257,6 +257,7 @@ export type CrossSellLine = {
   productName: string;
   quantity: number;
   amount: number;
+  selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
 };
 
 export type PackageComponentSnapshotLine = {
