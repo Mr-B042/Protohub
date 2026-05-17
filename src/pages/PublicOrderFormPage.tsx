@@ -2004,10 +2004,20 @@ export default function PublicOrderFormPage() {
                         const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
                         const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
                         const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-                        const standardTotal = standard * displayCompanion.quantity;
-                        const savings = Math.max(0, standardTotal - total);
-                        const media = renderCompanionMedia(displayCompanion, product.name);
-                        return (
+	                        const standardTotal = standard * displayCompanion.quantity;
+	                        const savings = Math.max(0, standardTotal - total);
+	                        const media = renderCompanionMedia(displayCompanion, product.name);
+	                        const teaserCtaLabel = selectedVariant
+	                          ? "Already added"
+	                          : isExpanded
+	                            ? "Tap to close preview"
+	                            : hasVariantChoices
+	                              ? `Add this from just ${previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}`
+	                              : `Add this for just ${previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}`;
+	                        const detailCtaLabel = displayCompanion.pricingMode === "free"
+	                          ? "Add this for FREE"
+	                          : `Add this for just ${formatProductMoney(total, currency)}`;
+	                        return (
                           <div key={`${product.id}-${index}`} style={{ display: "grid", gap: 10 }}>
                             <button
                               type="button"
@@ -2094,13 +2104,13 @@ export default function PublicOrderFormPage() {
                                           color: "#ffffff",
                                           fontSize: 13,
                                           fontWeight: 800,
-                                          minWidth: 170
-                                        }}
-                                      >
-                                        {selectedVariant ? "Already added" : isExpanded ? "Tap to close preview" : "Tap to preview & add"}
-                                      </span>
-                                    </span>
-                                  </div>
+	                                          minWidth: 170
+	                                        }}
+	                                      >
+	                                        {teaserCtaLabel}
+	                                      </span>
+	                                    </span>
+	                                  </div>
                                 </div>
                               </div>
                             </button>
@@ -2318,13 +2328,13 @@ export default function PublicOrderFormPage() {
                                             flexShrink: 0
                                           }}
                                         >
-                                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
-                                        </span>
-                                        <span style={{ flex: 1, textAlign: "left" }}>
-                                          {displayCompanion.ctaText?.trim() || "Yes, add to my order"}
-                                        </span>
-                                      </button>
-                                    </div>
+	                                          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "white", display: "block" }} />
+	                                        </span>
+	                                        <span style={{ flex: 1, textAlign: "left" }}>
+	                                          {detailCtaLabel}
+	                                        </span>
+	                                      </button>
+	                                    </div>
                                   ) : null}
                                 </div>
                               </div>
