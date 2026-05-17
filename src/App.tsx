@@ -20867,7 +20867,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
-        <header className="app-topbar h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
+        <header className="app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:static lg:z-auto">
           <div className="flex items-center lg:hidden">
             <button
               className="topbar-icon-button p-2 -ml-2 text-gray-600 hover:text-gray-900"
@@ -20991,7 +20991,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-2 sm:pb-3 lg:p-8">
+        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8">
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
@@ -32953,7 +32953,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
+            <div className="sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0 bg-white/95 dark:bg-[#0f1822]/95 backdrop-blur">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
