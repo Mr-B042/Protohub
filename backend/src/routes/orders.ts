@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
+import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { logger } from "../lib/logger.js";
@@ -57,6 +58,9 @@ const parsePlannedOrderMetadata = (value: unknown) => {
     return { legacyText: value } as { scheduledAt?: string; timelineNotes?: unknown[]; legacyText?: string };
   }
 };
+
+const queueCartJourneyEvent = (args: Parameters<typeof appendCartJourneyEvent>[0]) =>
+  appendCartJourneyEvent(args).catch(() => undefined);
 const serializePlannedOrderMetadata = (
   currentNotes: unknown,
   next: { scheduledAt?: string | null; timelineNotes?: unknown[] | null }
@@ -501,6 +505,51 @@ router.post("/", async (req, res) => {
     timelineNotes: Array.isArray(timelineNotes) && timelineNotes.length > 0 ? timelineNotes : data.timeline_notes
   }).catch(() => undefined);
 
+  if (data.source_cart_id && data.assigned_rep_id) {
+    const { data: assignedRep } = await supabase
+      .from("users")
+      .select("id, name")
+      .eq("id", data.assigned_rep_id)
+      .eq("org_id", req.user!.orgId)
+      .maybeSingle();
+    void queueCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: data.source_cart_id,
+      productId: data.product_id ?? null,
+      packageId: data.package_id ?? null,
+      state: data.state ?? null,
+      eventType: "order_assigned",
+      metadata: {
+        orderId: data.id,
+        repId: data.assigned_rep_id,
+        repName: assignedRep?.name ?? null,
+        actorName: req.user!.name,
+        customerName: data.customer,
+        productName: data.product_name,
+        packageName: data.package_name ?? null
+      }
+    });
+  }
+  if (data.source_cart_id && data.agent_id) {
+    void queueCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: data.source_cart_id,
+      productId: data.product_id ?? null,
+      packageId: data.package_id ?? null,
+      state: data.state ?? null,
+      eventType: "delivery_agent_assigned",
+      metadata: {
+        orderId: data.id,
+        agentId: data.agent_id,
+        agentName: data.agent_name_snapshot ?? null,
+        actorName: req.user!.name,
+        customerName: data.customer,
+        productName: data.product_name,
+        packageName: data.package_name ?? null
+      }
+    });
+  }
+
   res.status(201).json(data);
 });
 
@@ -528,7 +577,7 @@ router.patch("/:id/status", async (req, res) => {
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, amount_remitted, remittance_status, logistics_cost, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .select("status, org_id, source_cart_id, package_id, package_name, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, amount_remitted, remittance_status, logistics_cost, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -727,6 +776,26 @@ router.patch("/:id/status", async (req, res) => {
       scheduledAt: scheduledAt !== undefined ? scheduledAt : data.scheduled_at ?? null,
       timelineNotes: timelineNotes !== undefined ? timelineNotes : data.timeline_notes
     }).catch(() => undefined);
+  }
+
+  if (!isDeliveredDateCorrection && existing?.source_cart_id && existing.status !== status) {
+    void queueCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: existing.source_cart_id,
+      productId: existing.product_id ?? null,
+      packageId: existing.package_id ?? null,
+      state: existing.state ?? null,
+      eventType: "order_status_changed",
+      metadata: {
+        orderId: req.params.id,
+        customerName: existing.customer ?? null,
+        productName: existing.product_name ?? null,
+        packageName: existing.package_name ?? null,
+        fromStatus: existing.status ?? null,
+        toStatus: status,
+        actorName: req.user!.name
+      }
+    });
   }
 
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
@@ -967,7 +1036,7 @@ router.patch("/:id", async (req, res) => {
 
   const { data: current } = await supabase
     .from("orders")
-    .select("status, notes, city, state, agent_id, agent_location_id, product_id, amount_remitted, remittance_status, logistics_cost")
+    .select("status, notes, city, state, source_cart_id, assigned_rep_id, agent_id, agent_location_id, product_id, package_id, product_name, package_name, customer, amount_remitted, remittance_status, logistics_cost")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -1192,6 +1261,56 @@ router.patch("/:id", async (req, res) => {
       note:        `Delivered date corrected to ${updates.delivered_date}`
     });
   }
+
+  if (current.source_cart_id && updates.assigned_rep_id !== undefined && current.assigned_rep_id !== data.assigned_rep_id) {
+    const { data: assignedRep } = data.assigned_rep_id
+      ? await supabase
+          .from("users")
+          .select("id, name")
+          .eq("id", data.assigned_rep_id)
+          .eq("org_id", req.user!.orgId)
+          .maybeSingle()
+      : { data: null };
+    void queueCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: current.source_cart_id,
+      productId: current.product_id ?? null,
+      packageId: current.package_id ?? null,
+      state: (data.state ?? current.state) ?? null,
+      eventType: current.assigned_rep_id ? "order_reassigned" : "order_assigned",
+      metadata: {
+        orderId: req.params.id,
+        customerName: data.customer ?? current.customer ?? null,
+        productName: data.product_name ?? current.product_name ?? null,
+        packageName: data.package_name ?? current.package_name ?? null,
+        fromRepId: current.assigned_rep_id ?? null,
+        toRepId: data.assigned_rep_id ?? null,
+        repName: assignedRep?.name ?? null,
+        actorName: req.user!.name
+      }
+    });
+  }
+
+  if (current.source_cart_id && updates.agent_id !== undefined && current.agent_id !== data.agent_id) {
+    void queueCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: current.source_cart_id,
+      productId: current.product_id ?? null,
+      packageId: current.package_id ?? null,
+      state: (data.state ?? current.state) ?? null,
+      eventType: current.agent_id ? "delivery_agent_reassigned" : "delivery_agent_assigned",
+      metadata: {
+        orderId: req.params.id,
+        customerName: data.customer ?? current.customer ?? null,
+        productName: data.product_name ?? current.product_name ?? null,
+        packageName: data.package_name ?? current.package_name ?? null,
+        fromAgentId: current.agent_id ?? null,
+        toAgentId: data.agent_id ?? null,
+        agentName: data.agent_name_snapshot ?? null,
+        actorName: req.user!.name
+      }
+    });
+  }
   res.json(data);
 });
 
@@ -1270,7 +1389,7 @@ router.post("/:id/contact-attempts", async (req, res) => {
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, assigned_rep_id")
+    .select("id, source_cart_id, assigned_rep_id, product_id, package_id, state, product_name, package_name, customer")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -1297,6 +1416,26 @@ router.post("/:id/contact-attempts", async (req, res) => {
       nextActionAt: parsed.data.nextActionAt ?? null,
       nextActionNote: parsed.data.nextActionNote ?? null
     });
+    if (order.source_cart_id) {
+      void queueCartJourneyEvent({
+        orgId: req.user!.orgId,
+        cartId: order.source_cart_id,
+        productId: order.product_id ?? null,
+        packageId: order.package_id ?? null,
+        state: order.state ?? null,
+        eventType: "contact_attempt_logged",
+        metadata: {
+          orderId: req.params.id,
+          customerName: order.customer ?? null,
+          productName: order.product_name ?? null,
+          packageName: order.package_name ?? null,
+          actorName: req.user!.name,
+          channel: parsed.data.channel,
+          outcomeCode: parsed.data.outcomeCode,
+          nextActionType: parsed.data.nextActionType ?? null
+        }
+      });
+    }
     res.status(201).json(attempt);
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Could not log this follow-up attempt." });

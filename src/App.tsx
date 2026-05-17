@@ -782,6 +782,12 @@ type CartJourneyEvent = {
     | "submit_attempted"
     | CartJourneyBlockedEventType
     | "order_submitted"
+    | "order_assigned"
+    | "order_reassigned"
+    | "delivery_agent_assigned"
+    | "delivery_agent_reassigned"
+    | "order_status_changed"
+    | "contact_attempt_logged"
     | "form_exited";
   companionProductId?: string;
   companionPackageId?: string;
@@ -3216,6 +3222,12 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
     case "additional_item_removed": return "Removed additional item";
     case "submit_attempted": return "Tried to submit";
     case "order_submitted": return "Order submitted";
+    case "order_assigned": return "Order assigned";
+    case "order_reassigned": return "Order reassigned";
+    case "delivery_agent_assigned": return "Delivery agent assigned";
+    case "delivery_agent_reassigned": return "Delivery agent changed";
+    case "order_status_changed": return "Order status changed";
+    case "contact_attempt_logged": return "Rep follow-up logged";
     case "form_exited": return "Left the form";
     default: return "Form activity";
   }
@@ -3230,6 +3242,14 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
   const variants = typeof metadata.variants === "number" ? metadata.variants : null;
   const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
   const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
+  const actorName = typeof metadata.actorName === "string" ? metadata.actorName : "";
+  const repName = typeof metadata.repName === "string" ? metadata.repName : "";
+  const agentName = typeof metadata.agentName === "string" ? metadata.agentName : "";
+  const fromStatus = typeof metadata.fromStatus === "string" ? metadata.fromStatus : "";
+  const toStatus = typeof metadata.toStatus === "string" ? metadata.toStatus : "";
+  const channel = typeof metadata.channel === "string" ? metadata.channel : "";
+  const outcomeCode = typeof metadata.outcomeCode === "string" ? metadata.outcomeCode : "";
+  const nextActionType = typeof metadata.nextActionType === "string" ? metadata.nextActionType : "";
   if (isCartJourneyBlockedEvent(event.eventType)) {
     return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
   }
@@ -3248,6 +3268,20 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
       return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;
     case "order_submitted":
       return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
+    case "order_assigned":
+      return repName ? `${repName} was assigned to handle this order.` : (actorName ? `${actorName} assigned this order.` : "A rep was assigned to this order.");
+    case "order_reassigned":
+      return repName ? `Reassigned to ${repName}.` : (actorName ? `${actorName} reassigned this order.` : "The order was reassigned.");
+    case "delivery_agent_assigned":
+      return agentName ? `${agentName} was assigned as the delivery agent.` : (actorName ? `${actorName} assigned a delivery agent.` : "A delivery agent was assigned.");
+    case "delivery_agent_reassigned":
+      return agentName ? `Delivery agent changed to ${agentName}.` : (actorName ? `${actorName} changed the delivery agent.` : "The delivery agent was changed.");
+    case "order_status_changed":
+      return fromStatus && toStatus ? `${fromStatus} → ${toStatus}` : (toStatus || "Order status updated");
+    case "contact_attempt_logged":
+      return outcomeCode
+        ? `${actorName || "Rep"} logged a ${channel || "follow-up"} contact attempt: ${outcomeCode}${nextActionType ? ` · next ${nextActionType.replace(/_/g, " ")}` : ""}`
+        : `${actorName || "Rep"} logged a follow-up attempt.`;
     case "form_exited":
       return additionalItems && additionalItems > 0 ? `Left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Left before submitting";
     default:
@@ -3326,6 +3360,73 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
   }
 
   return "Opened the form but didn’t finish.";
+};
+
+const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
+  if (events.length === 0) {
+    return { score: 5, band: "Cold" as const, summary: "No tracked intent yet." };
+  }
+  if (events.some((event) => event.eventType === "order_submitted")) {
+    return { score: 100, band: "Converted" as const, summary: "Already submitted." };
+  }
+
+  let score = 0;
+  const seen = new Set(events.map((event) => event.eventType));
+  const blockedCount = events.filter((event) => isCartJourneyBlockedEvent(event.eventType)).length;
+  const additionalAdded = events.filter((event) => event.eventType === "additional_item_added").length;
+  const additionalRemoved = events.filter((event) => event.eventType === "additional_item_removed").length;
+  const previewCount = events.filter((event) => event.eventType === "additional_item_preview_opened").length;
+  const contactAttempts = events.filter((event) => event.eventType === "contact_attempt_logged").length;
+  const postSubmitProgress = events.filter((event) =>
+    event.eventType === "order_assigned"
+    || event.eventType === "order_reassigned"
+    || event.eventType === "delivery_agent_assigned"
+    || event.eventType === "delivery_agent_reassigned"
+    || event.eventType === "order_status_changed"
+  ).length;
+
+  if (seen.has("form_opened")) score += 8;
+  if (seen.has("package_selected")) score += 14;
+  if (seen.has("state_selected")) score += 14;
+  if (seen.has("submit_attempted")) score += 28;
+  if (blockedCount > 0) score += 18;
+  if (previewCount > 0) score += 8;
+  if (additionalAdded > 0) score += 12;
+  if (additionalRemoved > 0) score += 4;
+  if (contactAttempts > 0) score += Math.min(8, contactAttempts * 4);
+  if (postSubmitProgress > 0) score += Math.min(14, postSubmitProgress * 4);
+
+  const lastEvent = events[events.length - 1];
+  if (lastEvent?.eventType === "form_exited" && seen.has("submit_attempted")) score += 6;
+  if (lastEvent?.eventType === "form_exited" && additionalAdded > additionalRemoved) score += 4;
+  if (seen.has("package_selected") && !seen.has("state_selected") && !seen.has("submit_attempted")) score -= 4;
+
+  score = Math.max(0, Math.min(100, score));
+  if (score >= 70) {
+    return { score, band: "Hot" as const, summary: "High intent. Prioritize follow-up." };
+  }
+  if (score >= 45) {
+    return { score, band: "Warm" as const, summary: "Strong interest, but still recoverable." };
+  }
+  if (score >= 20) {
+    return { score, band: "Cool" as const, summary: "Some intent shown. Needs context." };
+  }
+  return { score, band: "Cold" as const, summary: "Very light engagement so far." };
+};
+
+const cartJourneyRecoveryBadgeClass = (band: ReturnType<typeof cartJourneyRecoveryScore>["band"]) => {
+  switch (band) {
+    case "Converted":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "Hot":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "Warm":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "Cool":
+      return "border-sky-200 bg-sky-50 text-sky-700";
+    default:
+      return "border-gray-200 bg-gray-50 text-gray-600";
+  }
 };
 
 const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEvent[]>) => {
@@ -6980,6 +7081,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     () => summarizeCartJourneyAnalytics(abandonedCartJourneyMap),
     [abandonedCartJourneyMap]
   );
+  const abandonedCartRecoveryById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(abandonedCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
+      ),
+    [abandonedCartJourneyMap]
+  );
   useEffect(() => {
     if (activePage !== "Abandoned Carts") {
       setAbandonedCartJourneyLoading(false);
@@ -9393,6 +9501,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         Object.entries(repCartJourneyMap)
           .map(([cartId, events]) => [cartId, cartJourneyFollowUpHint(events)] as const)
           .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+      ),
+    [repCartJourneyMap]
+  );
+  const repCartRecoveryById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(repCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
       ),
     [repCartJourneyMap]
   );
@@ -19181,6 +19296,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <article key={cart.id} className="px-4 py-4 space-y-3">
                     {(() => {
                       const followUpHint = repCartHintById[cart.id];
+                      const recovery = repCartRecoveryById[cart.id];
                       return (
                         <>
                     <div className="flex items-start justify-between gap-3">
@@ -19203,6 +19319,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Product</p>
                         <p className="mt-1 font-semibold text-gray-800">{cart.productName}</p>
                         <p className="text-[11px] text-gray-500">{cart.packageName}</p>
+                        {recovery ? (
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+                            <span className="text-[11px] text-gray-500">{recovery.summary}</span>
+                          </div>
+                        ) : null}
                       </div>
                       <div>
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Last Activity</p>
@@ -19256,6 +19378,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <td className="px-4 py-4">
                           <div className="font-medium text-gray-900">{cart.productName}</div>
                           <div className="text-xs text-gray-400">{cart.packageName}</div>
+                          {repCartRecoveryById[cart.id] ? (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(repCartRecoveryById[cart.id].band)}`}>{repCartRecoveryById[cart.id].band} · {repCartRecoveryById[cart.id].score}</span>
+                              <span className="text-[11px] text-gray-500">{repCartRecoveryById[cart.id].summary}</span>
+                            </div>
+                          ) : null}
                           {repCartHintById[cart.id] ? (
                             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
                               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
@@ -21990,6 +22118,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   ) : (
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
+                      const recovery = abandonedCartRecoveryById[cart.id];
                       return (
                         <article key={cart.id} className="px-4 py-4 flex flex-col gap-3">
                           <div className="flex items-start justify-between gap-3">
@@ -22008,6 +22137,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Product</span>
                               <span className="text-gray-700">{cart.productName}</span>
                               <span className="text-gray-500">{cart.packageName}</span>
+                              {recovery ? (
+                                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+                                  <span className="text-[11px] text-gray-500">{recovery.summary}</span>
+                                </div>
+                              ) : null}
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Rep</span>
@@ -22117,6 +22252,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.productName}</div>
                               <div className="text-xs text-gray-400">{cart.packageName} · {formatProductMoney(cart.amount, cart.currency)}</div>
+                              {abandonedCartRecoveryById[cart.id] ? (
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(abandonedCartRecoveryById[cart.id].band)}`}>{abandonedCartRecoveryById[cart.id].band} · {abandonedCartRecoveryById[cart.id].score}</span>
+                                  <span className="text-[11px] text-gray-500">{abandonedCartRecoveryById[cart.id].summary}</span>
+                                </div>
+                              ) : null}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
@@ -34384,6 +34525,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
 	              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -34465,6 +34607,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last step reached</p><p className="font-semibold text-gray-900 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Journey events</p><p className="font-semibold text-gray-900 m-0">{selectedCartJourney.length}</p></div>
+	                      <div className="sm:col-span-2">
+	                        <p className="text-[11px] text-gray-400 m-0">Recovery priority</p>
+	                        <div className="mt-1 flex items-center gap-2 flex-wrap">
+	                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+	                          <span className="text-xs text-gray-500">{recovery.summary}</span>
+	                        </div>
+	                      </div>
 	                    </div>
 	                    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
 	                      <div className="flex items-center justify-between gap-2 mb-2">
