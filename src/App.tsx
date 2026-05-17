@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, Fragment, useEffect, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Archive,
@@ -755,6 +755,17 @@ type AbandonedCartRecord = {
   lastActivity: string;
   createdAt: string;
 };
+type CartJourneyBlockedEventType =
+  | "submit_blocked_missing_name"
+  | "submit_blocked_missing_phone"
+  | "submit_blocked_invalid_phone"
+  | "submit_blocked_missing_whatsapp"
+  | "submit_blocked_invalid_whatsapp"
+  | "submit_blocked_missing_address"
+  | "submit_blocked_missing_city"
+  | "submit_blocked_missing_delivery"
+  | "submit_blocked_missing_confirmation"
+  | "submit_blocked_missing_commitment";
 type CartJourneyEvent = {
   id: string;
   cartId: string;
@@ -769,6 +780,7 @@ type CartJourneyEvent = {
     | "additional_item_added"
     | "additional_item_removed"
     | "submit_attempted"
+    | CartJourneyBlockedEventType
     | "order_submitted"
     | "form_exited";
   companionProductId?: string;
@@ -3131,7 +3143,70 @@ const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
   };
 };
 
+const CART_JOURNEY_BLOCKED_LABELS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Submit blocked",
+  submit_blocked_missing_phone: "Submit blocked",
+  submit_blocked_invalid_phone: "Submit blocked",
+  submit_blocked_missing_whatsapp: "Submit blocked",
+  submit_blocked_invalid_whatsapp: "Submit blocked",
+  submit_blocked_missing_address: "Submit blocked",
+  submit_blocked_missing_city: "Submit blocked",
+  submit_blocked_missing_delivery: "Submit blocked",
+  submit_blocked_missing_confirmation: "Submit blocked",
+  submit_blocked_missing_commitment: "Submit blocked"
+};
+
+const CART_JOURNEY_BLOCKED_DETAILS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Customer tried to submit without entering a name.",
+  submit_blocked_missing_phone: "Customer tried to submit without entering a phone number.",
+  submit_blocked_invalid_phone: "Customer tried to submit but the phone number looked invalid.",
+  submit_blocked_missing_whatsapp: "Customer tried to submit without entering the required WhatsApp number.",
+  submit_blocked_invalid_whatsapp: "Customer tried to submit but the WhatsApp number looked invalid.",
+  submit_blocked_missing_address: "Customer tried to submit without entering a delivery address.",
+  submit_blocked_missing_city: "Customer tried to submit without entering a city.",
+  submit_blocked_missing_delivery: "Customer tried to submit without choosing a delivery time.",
+  submit_blocked_missing_confirmation: "Customer tried to submit without ticking the confirmation box.",
+  submit_blocked_missing_commitment: "Customer tried to submit without acknowledging the commitment notice."
+};
+
+const CART_JOURNEY_BLOCKED_HINTS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Tried to submit but didn’t enter a name.",
+  submit_blocked_missing_phone: "Tried to submit but didn’t enter a phone number.",
+  submit_blocked_invalid_phone: "Tried to submit but the phone number looked invalid.",
+  submit_blocked_missing_whatsapp: "Tried to submit but didn’t enter the required WhatsApp number.",
+  submit_blocked_invalid_whatsapp: "Tried to submit but the WhatsApp number looked invalid.",
+  submit_blocked_missing_address: "Tried to submit but didn’t enter the delivery address.",
+  submit_blocked_missing_city: "Tried to submit but didn’t enter a city.",
+  submit_blocked_missing_delivery: "Tried to submit but didn’t choose a delivery time.",
+  submit_blocked_missing_confirmation: "Tried to submit but didn’t tick the confirmation box.",
+  submit_blocked_missing_commitment: "Tried to submit but didn’t acknowledge the commitment notice."
+};
+
+const CART_JOURNEY_BLOCKED_ANALYTICS_LABELS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Missing name",
+  submit_blocked_missing_phone: "Missing phone",
+  submit_blocked_invalid_phone: "Invalid phone",
+  submit_blocked_missing_whatsapp: "Missing WhatsApp",
+  submit_blocked_invalid_whatsapp: "Invalid WhatsApp",
+  submit_blocked_missing_address: "Missing address",
+  submit_blocked_missing_city: "Missing city",
+  submit_blocked_missing_delivery: "Missing delivery time",
+  submit_blocked_missing_confirmation: "Missing confirmation",
+  submit_blocked_missing_commitment: "Missing commitment acknowledgement"
+};
+
+const isCartJourneyBlockedEvent = (eventType: CartJourneyEvent["eventType"]): eventType is CartJourneyBlockedEventType =>
+  Object.prototype.hasOwnProperty.call(CART_JOURNEY_BLOCKED_LABELS, eventType);
+
+const isAdditionalItemJourneyEventType = (
+  eventType: CartJourneyEvent["eventType"]
+): eventType is "additional_item_preview_opened" | "additional_item_added" | "additional_item_removed" =>
+  eventType === "additional_item_preview_opened"
+  || eventType === "additional_item_added"
+  || eventType === "additional_item_removed";
+
 const cartJourneyTitle = (event: CartJourneyEvent) => {
+  if (isCartJourneyBlockedEvent(event.eventType)) return CART_JOURNEY_BLOCKED_LABELS[event.eventType];
   switch (event.eventType) {
     case "form_opened": return "Journey started";
     case "package_selected": return "Package changed";
@@ -3155,6 +3230,9 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
   const variants = typeof metadata.variants === "number" ? metadata.variants : null;
   const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
   const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
+  if (isCartJourneyBlockedEvent(event.eventType)) {
+    return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
+  }
   switch (event.eventType) {
     case "package_selected":
       return packageName || productName || "Switched package";
@@ -3175,6 +3253,151 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
     default:
       return productName || packageName || stateName || "";
   }
+};
+
+const additionalItemNameFromJourneyEvent = (event: CartJourneyEvent) => {
+  const productName = event.metadata?.productName;
+  return typeof productName === "string" && productName.trim().length > 0
+    ? productName.trim()
+    : "Additional item";
+};
+
+const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
+  if (events.length === 0) return null;
+  if (events.some((event) => event.eventType === "order_submitted")) return null;
+
+  const latestBlocked = [...events].reverse().find((event) => isCartJourneyBlockedEvent(event.eventType));
+  if (latestBlocked && isCartJourneyBlockedEvent(latestBlocked.eventType)) {
+    return CART_JOURNEY_BLOCKED_HINTS[latestBlocked.eventType];
+  }
+
+  const lastEvent = events[events.length - 1];
+  const addedSelections = new Map<string, { name: string; added: number; removed: number; selected: boolean; previews: number }>();
+  for (const event of events) {
+    if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
+    const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
+    const existing = addedSelections.get(key) ?? {
+      name: additionalItemNameFromJourneyEvent(event),
+      added: 0,
+      removed: 0,
+      selected: false,
+      previews: 0
+    };
+    if (event.eventType === "additional_item_preview_opened") existing.previews += 1;
+    if (event.eventType === "additional_item_added") {
+      existing.added += 1;
+      existing.selected = true;
+    }
+    if (event.eventType === "additional_item_removed") {
+      existing.removed += 1;
+      existing.selected = false;
+    }
+    addedSelections.set(key, existing);
+  }
+
+  const removedItem = [...addedSelections.values()].sort((a, b) => (b.removed - a.removed) || (b.added - a.added))[0];
+  if (removedItem && removedItem.removed > 0 && removedItem.added > 0) {
+    return `Added ${removedItem.name} but removed it before leaving.`;
+  }
+
+  const repeatedPreview = [...addedSelections.values()].sort((a, b) => b.previews - a.previews)[0];
+  if (repeatedPreview && repeatedPreview.previews > 1 && repeatedPreview.added === 0) {
+    return `Viewed ${repeatedPreview.name} more than once but never added it.`;
+  }
+
+  if (lastEvent?.eventType === "form_exited" && events.some((event) => event.eventType === "submit_attempted")) {
+    return "Tried to submit before leaving. Follow up quickly.";
+  }
+
+  const selectedAdditionalItems = [...addedSelections.values()].filter((entry) => entry.selected).length;
+  if (lastEvent?.eventType === "form_exited" && selectedAdditionalItems > 0) {
+    return `Left after adding ${selectedAdditionalItems} additional item${selectedAdditionalItems === 1 ? "" : "s"}.`;
+  }
+
+  const latestState = [...events].reverse().find((event) => event.eventType === "state_selected");
+  if (latestState) {
+    const stateName = typeof latestState.metadata?.state === "string" ? latestState.metadata.state : latestState.state;
+    return stateName ? `Picked ${stateName} but didn’t submit yet.` : "Picked a state but didn’t submit yet.";
+  }
+
+  const latestPackage = [...events].reverse().find((event) => event.eventType === "package_selected");
+  if (latestPackage) {
+    return "Changed package but didn’t submit yet.";
+  }
+
+  return "Opened the form but didn’t finish.";
+};
+
+const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEvent[]>) => {
+  const funnel = {
+    opened: 0,
+    packageSelected: 0,
+    stateSelected: 0,
+    additionalItemViewed: 0,
+    additionalItemAdded: 0,
+    submitAttempted: 0,
+    submitted: 0,
+    exited: 0
+  };
+  const blockedCounts = new Map<CartJourneyBlockedEventType, number>();
+  const additionalItemStats = new Map<string, { key: string; name: string; previewed: number; added: number; removed: number; submittedWithItem: number }>();
+
+  for (const events of Object.values(journeyMap)) {
+    if (events.length === 0) continue;
+    const seenTypes = new Set(events.map((event) => event.eventType));
+    if (seenTypes.has("form_opened")) funnel.opened += 1;
+    if (seenTypes.has("package_selected")) funnel.packageSelected += 1;
+    if (seenTypes.has("state_selected")) funnel.stateSelected += 1;
+    if (seenTypes.has("additional_item_preview_opened")) funnel.additionalItemViewed += 1;
+    if (seenTypes.has("additional_item_added")) funnel.additionalItemAdded += 1;
+    if (seenTypes.has("submit_attempted")) funnel.submitAttempted += 1;
+    if (seenTypes.has("order_submitted")) funnel.submitted += 1;
+    if (seenTypes.has("form_exited")) funnel.exited += 1;
+
+    const submittedItemKeys = new Set<string>();
+    const selectedItemKeys = new Set<string>();
+    for (const event of events) {
+      if (isCartJourneyBlockedEvent(event.eventType)) {
+        blockedCounts.set(event.eventType, (blockedCounts.get(event.eventType) ?? 0) + 1);
+      }
+      if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
+      const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
+      const current = additionalItemStats.get(key) ?? {
+        key,
+        name: additionalItemNameFromJourneyEvent(event),
+        previewed: 0,
+        added: 0,
+        removed: 0,
+        submittedWithItem: 0
+      };
+      if (event.eventType === "additional_item_preview_opened") current.previewed += 1;
+      if (event.eventType === "additional_item_added") {
+        current.added += 1;
+        selectedItemKeys.add(key);
+      }
+      if (event.eventType === "additional_item_removed") {
+        current.removed += 1;
+        selectedItemKeys.delete(key);
+      }
+      additionalItemStats.set(key, current);
+    }
+    if (seenTypes.has("order_submitted")) {
+      for (const key of selectedItemKeys) submittedItemKeys.add(key);
+    }
+    for (const key of submittedItemKeys) {
+      const current = additionalItemStats.get(key);
+      if (current) current.submittedWithItem += 1;
+    }
+  }
+
+  return {
+    funnel,
+    blocked: [...blockedCounts.entries()]
+      .map(([eventType, count]) => ({ eventType, count, label: CART_JOURNEY_BLOCKED_ANALYTICS_LABELS[eventType] }))
+      .sort((a, b) => b.count - a.count),
+    additionalItems: [...additionalItemStats.values()]
+      .sort((a, b) => (b.submittedWithItem - a.submittedWithItem) || (b.added - a.added) || (b.previewed - a.previewed))
+  };
 };
 
 const normalizeRealtimeUser = (value: any): ManagedUser => {
@@ -4727,8 +4950,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
   const [selectedCartJourney, setSelectedCartJourney] = useState<CartJourneyEvent[]>([]);
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
+  const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
   const [selectedOrderJourney, setSelectedOrderJourney] = useState<CartJourneyEvent[]>([]);
   const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
+  const [repCartJourneyMap, setRepCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [repCartJourneyLoading, setRepCartJourneyLoading] = useState(false);
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
@@ -6733,6 +6960,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     return matchesSearch && matchesStatus && matchesPeriod && matchesProduct && matchesViewer;
   });
+  const abandonedJourneyCartIds = useMemo(
+    () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
+    [filteredAbandonedCarts]
+  );
+  const abandonedJourneyCartIdsKey = abandonedJourneyCartIds.join("|");
   const CARTS_PAGE_SIZE = 25;
   const cartsTotalPages = Math.max(1, Math.ceil(filteredAbandonedCarts.length / CARTS_PAGE_SIZE));
   const cartsPageClamped = Math.min(cartsPage, cartsTotalPages);
@@ -6744,6 +6976,45 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const assignedCartCount = pfCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
   const contactedCartCount = pfCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
   const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
+  const abandonedCartJourneyAnalytics = useMemo(
+    () => summarizeCartJourneyAnalytics(abandonedCartJourneyMap),
+    [abandonedCartJourneyMap]
+  );
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") {
+      setAbandonedCartJourneyLoading(false);
+      return;
+    }
+    if (abandonedJourneyCartIds.length === 0) {
+      setAbandonedCartJourneyMap({});
+      setAbandonedCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAbandonedCartJourneyLoading(true);
+    cartsApi.journeyBulk(abandonedJourneyCartIds)
+      .then((grouped) => {
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setAbandonedCartJourneyMap(normalized);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAbandonedCartJourneyMap({});
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAbandonedCartJourneyLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, abandonedJourneyCartIds, abandonedJourneyCartIdsKey]);
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
 
@@ -9107,6 +9378,59 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     contacted: repAssignedCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length,
     needsAttention: repAssignedCarts.filter((cart) => ["Abandoned", "No response", "Open abandoned"].includes(cart.status)).length
   };
+  const repJourneyCartIds = useMemo(
+    () => Array.from(new Set(repAssignedCarts.map((cart) => cart.id).filter(Boolean))),
+    [repAssignedCarts]
+  );
+  const repJourneyCartIdsKey = repJourneyCartIds.join("|");
+  const repCartJourneyAnalytics = useMemo(
+    () => summarizeCartJourneyAnalytics(repCartJourneyMap),
+    [repCartJourneyMap]
+  );
+  const repCartHintById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(repCartJourneyMap)
+          .map(([cartId, events]) => [cartId, cartJourneyFollowUpHint(events)] as const)
+          .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+      ),
+    [repCartJourneyMap]
+  );
+  useEffect(() => {
+    if (activePage !== "Sales Rep Workspace") {
+      setRepCartJourneyLoading(false);
+      return;
+    }
+    if (repJourneyCartIds.length === 0) {
+      setRepCartJourneyMap({});
+      setRepCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRepCartJourneyLoading(true);
+    cartsApi.journeyBulk(repJourneyCartIds)
+      .then((grouped) => {
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setRepCartJourneyMap(normalized);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRepCartJourneyMap({});
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRepCartJourneyLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, repJourneyCartIds, repJourneyCartIdsKey]);
   const repStatusFilteredOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
     if (repOrderStatusTab === "Pending") {
@@ -18662,6 +18986,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Abandoned Carts Assigned</h2>
                 <p className="text-xs text-gray-400 font-medium mt-0.5">{repScopeName} follow-up queue only.</p>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  {repCartJourneyAnalytics.blocked[0] ? (
+                    <span className="inline-flex items-center rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                      Top blocker: {repCartJourneyAnalytics.blocked[0].label}
+                    </span>
+                  ) : null}
+                  {repCartJourneyLoading ? (
+                    <span className="text-[11px] font-semibold text-gray-400">Loading journey hints…</span>
+                  ) : null}
+                </div>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-gray-100 border-b border-gray-100">
                 {[
@@ -18845,6 +19179,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="sm:hidden divide-y divide-gray-100">
                 {filteredRepCarts.map((cart) => (
                   <article key={cart.id} className="px-4 py-4 space-y-3">
+                    {(() => {
+                      const followUpHint = repCartHintById[cart.id];
+                      return (
+                        <>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="text-sm font-bold text-gray-900">{cart.id}</h3>
@@ -18871,6 +19209,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <p className="mt-1 font-semibold text-gray-800">{formatMoment(cart.lastActivity)}</p>
                       </div>
                     </div>
+                    {followUpHint ? (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
+                        <p className="text-xs font-medium text-amber-900 mt-1 mb-0">{followUpHint}</p>
+                      </div>
+                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openRepCartAssignRoute(cart.id)}>
                         <UserPlus className="w-3 h-3" /> Assign
@@ -18879,6 +19223,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <ShoppingCart className="w-3 h-3" /> Convert
                       </button>
                     </div>
+                        </>
+                      );
+                    })()}
                   </article>
                 ))}
               </div>
@@ -18909,6 +19256,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <td className="px-4 py-4">
                           <div className="font-medium text-gray-900">{cart.productName}</div>
                           <div className="text-xs text-gray-400">{cart.packageName}</div>
+                          {repCartHintById[cart.id] ? (
+                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
+                              <p className="text-[11px] font-medium text-amber-900 mt-1 mb-0 leading-5">{repCartHintById[cart.id]}</p>
+                            </div>
+                          ) : null}
                         </td>
                         <td className="px-4 py-4">
                           <select
@@ -21507,6 +21860,82 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </span>
                   </article>
                 ))}
+              </section>
+
+              <section className="grid grid-cols-1 xl:grid-cols-[1.25fr,0.9fr,1fr] gap-4" aria-label="Journey analytics">
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Journey Funnel</h2>
+                      <p className="text-xs text-gray-500 mt-1">Based on the currently visible carts in this filter.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    {[
+                      { label: "Opened", value: abandonedCartJourneyAnalytics.funnel.opened },
+                      { label: "Reached state", value: abandonedCartJourneyAnalytics.funnel.stateSelected },
+                      { label: "Tried submit", value: abandonedCartJourneyAnalytics.funnel.submitAttempted },
+                      { label: "Submitted", value: abandonedCartJourneyAnalytics.funnel.submitted }
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                        <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Top Submit Blocks</h2>
+                      <p className="text-xs text-gray-500 mt-1">What most often stopped customers from submitting.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  {abandonedCartJourneyAnalytics.blocked.length === 0 && !abandonedCartJourneyLoading ? (
+                    <p className="mt-4 text-sm text-gray-500">No blocked-submit reasons captured in this filter yet.</p>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      {abandonedCartJourneyAnalytics.blocked.slice(0, 4).map((item) => (
+                        <div key={item.eventType} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <span className="text-sm font-medium text-gray-700">{item.label}</span>
+                          <span className="text-sm font-bold text-gray-900">{item.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Additional Item Interest</h2>
+                      <p className="text-xs text-gray-500 mt-1">What customers previewed, added, removed, and carried into submit.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  {abandonedCartJourneyAnalytics.additionalItems.length === 0 && !abandonedCartJourneyLoading ? (
+                    <p className="mt-4 text-sm text-gray-500">No additional-item journey activity captured in this filter yet.</p>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {abandonedCartJourneyAnalytics.additionalItems.slice(0, 4).map((item) => (
+                        <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-gray-900 m-0">{item.name}</p>
+                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-1">
+                              {item.submittedWithItem} submitted
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2 mb-0">
+                            {item.previewed} viewed · {item.added} added · {item.removed} removed
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
               </section>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">

@@ -97,6 +97,16 @@ type PublicCartJourneyEventType =
   | "additional_item_added"
   | "additional_item_removed"
   | "submit_attempted"
+  | "submit_blocked_missing_name"
+  | "submit_blocked_missing_phone"
+  | "submit_blocked_invalid_phone"
+  | "submit_blocked_missing_whatsapp"
+  | "submit_blocked_invalid_whatsapp"
+  | "submit_blocked_missing_address"
+  | "submit_blocked_missing_city"
+  | "submit_blocked_missing_delivery"
+  | "submit_blocked_missing_confirmation"
+  | "submit_blocked_missing_commitment"
   | "order_submitted"
   | "form_exited";
 
@@ -665,6 +675,32 @@ export default function PublicOrderFormPage() {
     });
   };
 
+  const trackSubmitBlocked = (
+    eventType:
+      | "submit_blocked_missing_name"
+      | "submit_blocked_missing_phone"
+      | "submit_blocked_invalid_phone"
+      | "submit_blocked_missing_whatsapp"
+      | "submit_blocked_invalid_whatsapp"
+      | "submit_blocked_missing_address"
+      | "submit_blocked_missing_city"
+      | "submit_blocked_missing_delivery"
+      | "submit_blocked_missing_confirmation"
+      | "submit_blocked_missing_commitment",
+    message: string
+  ) => {
+    const cartId = abandonedDraftCartIdRef.current || ensureDraftCartId();
+    trackCartJourney(eventType, {
+      cartId: cartId || undefined,
+      dedupeKey: `${eventType}:${cartId || "draft"}`,
+      metadata: {
+        customerName: orderFormName.trim() || null,
+        message,
+        additionalItems: orderFormCrossSells.length
+      }
+    });
+  };
+
   useEffect(() => {
     if (publicEmbedIsPreview) {
       setAbandonedDraftCartId("");
@@ -1081,49 +1117,67 @@ export default function PublicOrderFormPage() {
       setPublicOrderSubmitted({ orderId: "blocked", customer: orderFormName.trim() });
       return;
     }
-    if (!publicProduct || !chosenPackage || !orderFormName.trim() || !orderFormPhone.trim()) {
-      showToast("Customer name and phone are required.");
+    if (!publicProduct || !chosenPackage) {
+      showToast("Please choose a package before submitting.");
+      return;
+    }
+    if (!orderFormName.trim()) {
+      trackSubmitBlocked("submit_blocked_missing_name", "Customer name is required.");
+      showToast("Customer name is required.");
+      return;
+    }
+    if (!orderFormPhone.trim()) {
+      trackSubmitBlocked("submit_blocked_missing_phone", "Phone number is required.");
+      showToast("Phone number is required.");
       return;
     }
 
     const phoneDigits = orderFormPhone.replace(/\D/g, "");
     const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
     if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      trackSubmitBlocked("submit_blocked_invalid_phone", "Phone number format is invalid.");
       showToast("Please enter a valid phone number.");
       return;
     }
 
     if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
+      trackSubmitBlocked("submit_blocked_missing_whatsapp", "WhatsApp number is required.");
       showToast("WhatsApp number is required.");
       return;
     }
 
     if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+      trackSubmitBlocked("submit_blocked_invalid_whatsapp", "WhatsApp number format is invalid.");
       showToast("Please enter a valid WhatsApp number.");
       return;
     }
 
     if (settings.addressRequired && !orderFormAddress.trim()) {
+      trackSubmitBlocked("submit_blocked_missing_address", "Delivery address is required.");
       showToast("Delivery address is required.");
       return;
     }
 
     if (settings.cityRequired && !orderFormCity.trim()) {
+      trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
       showToast("City is required.");
       return;
     }
 
     if (settings.askDelivery && !orderFormDeliveryWindow.trim()) {
+      trackSubmitBlocked("submit_blocked_missing_delivery", "Delivery time selection is required.");
       showToast("Please select a delivery time.");
       return;
     }
 
     if (settings.requireConfirmation && !orderFormConfirmed) {
+      trackSubmitBlocked("submit_blocked_missing_confirmation", "Customer confirmation checkbox was not ticked.");
       showToast("Please confirm before submitting.");
       return;
     }
 
     if (settings.showCommitment && !settings.allowDisagree && !orderFormCommitmentAccepted) {
+      trackSubmitBlocked("submit_blocked_missing_commitment", "Commitment notice acknowledgement is required.");
       showToast("Please acknowledge the commitment fee notice.");
       return;
     }

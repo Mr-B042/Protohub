@@ -44,6 +44,12 @@ const CartUpsertSchema = z.object({
   status:       z.string().optional()  // accepted iff present in cart_status enum (DB will reject otherwise)
 });
 
+const JourneyBulkSchema = z.object({
+  cartIds: z.array(
+    z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric")
+  ).max(500)
+});
+
 // DB enum only allows: Open abandoned | Assigned | Contacted | Converted | Lost.
 // Frontend draft states ("In progress", "Abandoned") are coerced to "Open abandoned".
 router.post("/", async (req, res) => {
@@ -130,6 +136,68 @@ router.post("/", async (req, res) => {
     source: data.source ?? "Website"
   });
   res.status(201).json(data);
+});
+
+// ── POST /api/carts/journey-bulk ───────────────────────
+// Returns grouped journey timelines for multiple carts at once. Useful for
+// abandoned-cart analytics and rep follow-up hints without opening each cart.
+router.post("/journey-bulk", async (req, res) => {
+  const parsed = JourneyBulkSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const requestedIds = Array.from(new Set(parsed.data.cartIds.map((id) => id.trim()).filter(Boolean)));
+  if (requestedIds.length === 0) {
+    res.json({});
+    return;
+  }
+
+  let allowedCartQuery = supabase
+    .from("abandoned_carts")
+    .select("id")
+    .eq("org_id", req.user!.orgId)
+    .in("id", requestedIds);
+
+  if (req.user!.role === "Sales Rep") {
+    allowedCartQuery = allowedCartQuery.eq("assigned_rep_id", req.user!.id);
+  }
+
+  const { data: allowedCarts, error: cartError } = await allowedCartQuery;
+  if (cartError) {
+    res.status(500).json({ error: cartError.message });
+    return;
+  }
+
+  const allowedIds = (allowedCarts ?? [])
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (allowedIds.length === 0) {
+    res.json({});
+    return;
+  }
+
+  const { data: events, error } = await supabase
+    .from("cart_journey_events")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .in("cart_id", allowedIds)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const grouped = Object.fromEntries(allowedIds.map((id) => [id, [] as any[]]));
+  for (const event of events ?? []) {
+    const cartId = typeof event.cart_id === "string" ? event.cart_id : "";
+    if (!cartId || !grouped[cartId]) continue;
+    grouped[cartId].push(event);
+  }
+
+  res.json(grouped);
 });
 
 // ── GET /api/carts/:id/journey ──────────────────────────

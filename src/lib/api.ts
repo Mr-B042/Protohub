@@ -489,6 +489,7 @@ export const cartsApi = {
     return snakeToCamel<any>(await res.json());
   },
   journey: (id: string) => get<any[]>(`/api/carts/${encodeURIComponent(id)}/journey`),
+  journeyBulk: (cartIds: string[]) => post<Record<string, any[]>>("/api/carts/journey-bulk", { cartIds }),
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
   delete: (id: string) => del<void>(`/api/carts/${id}`)
 };
