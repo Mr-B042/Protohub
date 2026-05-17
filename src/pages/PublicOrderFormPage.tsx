@@ -104,11 +104,23 @@ type PublicCartJourneyEventType =
   | "submit_blocked_invalid_whatsapp"
   | "submit_blocked_missing_address"
   | "submit_blocked_missing_city"
+  | "submit_blocked_missing_state"
   | "submit_blocked_missing_delivery"
   | "submit_blocked_missing_confirmation"
   | "submit_blocked_missing_commitment"
   | "order_submitted"
   | "form_exited";
+
+type PublicOrderFieldKey =
+  | "name"
+  | "phone"
+  | "whatsapp"
+  | "address"
+  | "city"
+  | "state"
+  | "delivery"
+  | "confirmation"
+  | "commitment";
 
 const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
 
@@ -578,6 +590,9 @@ export default function PublicOrderFormPage() {
   const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<PublicOrderFieldKey, string>>>({});
+  const [animatedInvalidField, setAnimatedInvalidField] = useState<PublicOrderFieldKey | null>(null);
+  const [submitButtonAttention, setSubmitButtonAttention] = useState(false);
 
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
@@ -604,11 +619,80 @@ export default function PublicOrderFormPage() {
   const lastTrackedStateRef = useRef("");
   const lastExpandedCardProductIdRef = useRef<string | null>(null);
   const exitTrackedRef = useRef(false);
+  const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
 
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
+  const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
+
+  const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
+    fieldRefs.current[field] = element;
+  };
+
+  const clearFieldError = (field: PublicOrderFieldKey) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    setAnimatedInvalidField((current) => (current === field ? null : current));
+  };
+
+  const focusField = (field: PublicOrderFieldKey) => {
+    const target = fieldRefs.current[field];
+    if (!target) return;
+    try {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch {
+      // Ignore scroll errors in embedded browsers.
+    }
+    window.setTimeout(() => {
+      if (typeof (target as any).focus === "function") {
+        try {
+          (target as any).focus({ preventScroll: true });
+        } catch {
+          (target as any).focus?.();
+        }
+      }
+    }, 90);
+  };
+
+  const inputErrorStyle = (field: PublicOrderFieldKey) => (
+    fieldErrors[field] || animatedInvalidField === field
+      ? {
+          borderColor: "#ef4444",
+          boxShadow: "0 0 0 3px rgba(239, 68, 68, 0.14)",
+          background: "#fffafa",
+          ...(animatedInvalidField === field
+            ? { animation: "publicInvalidFieldAlert 0.7s ease" }
+            : {})
+        }
+      : undefined
+  );
+
+  const optionGroupErrorStyle = (field: PublicOrderFieldKey) => (
+    fieldErrors[field] || animatedInvalidField === field
+      ? {
+          borderColor: "#ef4444",
+          boxShadow: "0 0 0 3px rgba(239, 68, 68, 0.12)",
+          ...(animatedInvalidField === field
+            ? { animation: "publicInvalidFieldAlert 0.7s ease" }
+            : {})
+        }
+      : undefined
+  );
+
+  const triggerValidationAttention = (field: PublicOrderFieldKey) => {
+    setAnimatedInvalidField(null);
+    setSubmitButtonAttention(false);
+    window.setTimeout(() => {
+      setAnimatedInvalidField(field);
+      setSubmitButtonAttention(true);
+    }, 0);
+  };
 
   const ensureDraftCartId = () => {
     if (publicEmbedIsPreview) return "";
@@ -684,6 +768,7 @@ export default function PublicOrderFormPage() {
       | "submit_blocked_invalid_whatsapp"
       | "submit_blocked_missing_address"
       | "submit_blocked_missing_city"
+      | "submit_blocked_missing_state"
       | "submit_blocked_missing_delivery"
       | "submit_blocked_missing_confirmation"
       | "submit_blocked_missing_commitment",
@@ -711,6 +796,15 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     abandonedDraftCartIdRef.current = abandonedDraftCartId;
   }, [abandonedDraftCartId]);
+
+  useEffect(() => {
+    if (!animatedInvalidField && !submitButtonAttention) return;
+    const timer = window.setTimeout(() => {
+      setAnimatedInvalidField(null);
+      setSubmitButtonAttention(false);
+    }, 850);
+    return () => window.clearTimeout(timer);
+  }, [animatedInvalidField, submitButtonAttention]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1085,6 +1179,7 @@ export default function PublicOrderFormPage() {
     setOrderFormConfirmed(false);
     setOrderFormCommitmentAccepted(false);
     setOrderFormCrossSells([]);
+    setFieldErrors({});
     setPublicHoneypot("");
     setAbandonedDraftCartId("");
     abandonedDraftCartIdRef.current = "";
@@ -1125,64 +1220,84 @@ export default function PublicOrderFormPage() {
       showToast("Please choose a package before submitting.");
       return;
     }
-    if (!orderFormName.trim()) {
-      trackSubmitBlocked("submit_blocked_missing_name", "Customer name is required.");
-      showToast("Customer name is required.");
-      return;
-    }
-    if (!orderFormPhone.trim()) {
-      trackSubmitBlocked("submit_blocked_missing_phone", "Phone number is required.");
-      showToast("Phone number is required.");
-      return;
-    }
-
     const phoneDigits = orderFormPhone.replace(/\D/g, "");
     const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
-    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-      trackSubmitBlocked("submit_blocked_invalid_phone", "Phone number format is invalid.");
-      showToast("Please enter a valid phone number.");
-      return;
+    const nextErrors: Partial<Record<PublicOrderFieldKey, string>> = {};
+    if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
+    if (!orderFormPhone.trim()) {
+      nextErrors.phone = "Phone number is required.";
+    } else if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      nextErrors.phone = "Please enter a valid phone number.";
     }
-
     if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
-      trackSubmitBlocked("submit_blocked_missing_whatsapp", "WhatsApp number is required.");
-      showToast("WhatsApp number is required.");
-      return;
+      nextErrors.whatsapp = "WhatsApp number is required.";
+    } else if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+      nextErrors.whatsapp = "Please enter a valid WhatsApp number.";
     }
-
-    if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
-      trackSubmitBlocked("submit_blocked_invalid_whatsapp", "WhatsApp number format is invalid.");
-      showToast("Please enter a valid WhatsApp number.");
-      return;
-    }
-
-    if (settings.addressRequired && !orderFormAddress.trim()) {
-      trackSubmitBlocked("submit_blocked_missing_address", "Delivery address is required.");
-      showToast("Delivery address is required.");
-      return;
-    }
-
-    if (settings.cityRequired && !orderFormCity.trim()) {
-      trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
-      showToast("City is required.");
-      return;
-    }
-
-    if (settings.askDelivery && !orderFormDeliveryWindow.trim()) {
-      trackSubmitBlocked("submit_blocked_missing_delivery", "Delivery time selection is required.");
-      showToast("Please select a delivery time.");
-      return;
-    }
-
-    if (settings.requireConfirmation && !orderFormConfirmed) {
-      trackSubmitBlocked("submit_blocked_missing_confirmation", "Customer confirmation checkbox was not ticked.");
-      showToast("Please confirm before submitting.");
-      return;
-    }
-
+    if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
+    if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
+    if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
+    if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
+    if (settings.requireConfirmation && !orderFormConfirmed) nextErrors.confirmation = "Please confirm before submitting.";
     if (settings.showCommitment && !settings.allowDisagree && !orderFormCommitmentAccepted) {
-      trackSubmitBlocked("submit_blocked_missing_commitment", "Commitment notice acknowledgement is required.");
-      showToast("Please acknowledge the commitment fee notice.");
+      nextErrors.commitment = "Please acknowledge the commitment fee notice.";
+    }
+
+    setFieldErrors(nextErrors);
+
+    const validationOrder: PublicOrderFieldKey[] = [
+      "name",
+      "phone",
+      "whatsapp",
+      "address",
+      "city",
+      "state",
+      "delivery",
+      "confirmation",
+      "commitment"
+    ];
+    const firstInvalidField = validationOrder.find((field) => nextErrors[field]);
+    if (firstInvalidField) {
+      switch (firstInvalidField) {
+        case "name":
+          trackSubmitBlocked("submit_blocked_missing_name", "Customer name is required.");
+          break;
+        case "phone":
+          trackSubmitBlocked(
+            !orderFormPhone.trim() ? "submit_blocked_missing_phone" : "submit_blocked_invalid_phone",
+            !orderFormPhone.trim() ? "Phone number is required." : "Phone number format is invalid."
+          );
+          break;
+        case "whatsapp":
+          trackSubmitBlocked(
+            !whatsappDigits ? "submit_blocked_missing_whatsapp" : "submit_blocked_invalid_whatsapp",
+            !whatsappDigits ? "WhatsApp number is required." : "WhatsApp number format is invalid."
+          );
+          break;
+        case "address":
+          trackSubmitBlocked("submit_blocked_missing_address", "Delivery address is required.");
+          break;
+        case "city":
+          trackSubmitBlocked("submit_blocked_missing_city", "City is required.");
+          break;
+        case "state":
+          trackSubmitBlocked("submit_blocked_missing_state", "State selection is required.");
+          break;
+        case "delivery":
+          trackSubmitBlocked("submit_blocked_missing_delivery", "Delivery time selection is required.");
+          break;
+        case "confirmation":
+          trackSubmitBlocked("submit_blocked_missing_confirmation", "Customer confirmation checkbox was not ticked.");
+          break;
+        case "commitment":
+          trackSubmitBlocked("submit_blocked_missing_commitment", "Commitment notice acknowledgement is required.");
+          break;
+        default:
+          break;
+      }
+      showToast(nextErrors[firstInvalidField] || "Please complete the highlighted fields.");
+      triggerValidationAttention(firstInvalidField);
+      focusField(firstInvalidField);
       return;
     }
 
@@ -1674,6 +1789,20 @@ export default function PublicOrderFormPage() {
           0%, 100% { transform: translateY(0); opacity: 0.82; }
           50% { transform: translateY(5px); opacity: 1; }
         }
+        @keyframes publicInvalidFieldAlert {
+          0% { transform: translateX(0); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+          16% { transform: translateX(-6px); box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.08); }
+          34% { transform: translateX(5px); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.14); }
+          52% { transform: translateX(-4px); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12); }
+          70% { transform: translateX(3px); box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.08); }
+          100% { transform: translateX(0); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        @keyframes publicSubmitButtonAlert {
+          0%, 100% { transform: translateX(0) scale(1); }
+          28% { transform: translateX(-4px) scale(1.01); }
+          56% { transform: translateX(4px) scale(1.015); }
+          78% { transform: translateX(-2px) scale(1.005); }
+        }
         @keyframes publicRemovePulse {
           0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
           50% { transform: scale(1.02); box-shadow: 0 10px 24px rgba(239, 68, 68, 0.18); }
@@ -1817,7 +1946,23 @@ export default function PublicOrderFormPage() {
                 />
 
                 <label className="field-full">
-                  <input value={orderFormName} onChange={(event) => setOrderFormName(event.target.value)} placeholder="Your Name *" />
+                  <input
+                    ref={setFieldRef("name") as any}
+                    value={orderFormName}
+                    onChange={(event) => {
+                      setOrderFormName(event.target.value);
+                      clearFieldError("name");
+                    }}
+                    placeholder="Your Name *"
+                    aria-invalid={Boolean(fieldErrors.name)}
+                    aria-describedby={fieldErrors.name ? "public-order-error-name" : undefined}
+                    style={inputErrorStyle("name")}
+                  />
+                  {fieldErrors.name && (
+                    <span id="public-order-error-name" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.name}
+                    </span>
+                  )}
                 </label>
 
                 <label className="field-full">
@@ -1826,15 +1971,26 @@ export default function PublicOrderFormPage() {
                       +234
                     </span>
                     <input
-                      style={{ flex: 1 }}
+                      ref={setFieldRef("phone") as any}
                       value={orderFormPhone}
-                      onChange={(event) => setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""))}
+                      onChange={(event) => {
+                        setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""));
+                        clearFieldError("phone");
+                      }}
                       placeholder="Your Phone Number *"
                       inputMode="tel"
                       pattern="[0-9\\s\\-]{7,15}"
                       autoComplete="tel-national"
+                      aria-invalid={Boolean(fieldErrors.phone)}
+                      aria-describedby={fieldErrors.phone ? "public-order-error-phone" : undefined}
+                      style={{ flex: 1, ...inputErrorStyle("phone") }}
                     />
                   </div>
+                  {fieldErrors.phone && (
+                    <span id="public-order-error-phone" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.phone}
+                    </span>
+                  )}
                 </label>
 
                 {settings.showWhatsapp && (
@@ -1844,16 +2000,27 @@ export default function PublicOrderFormPage() {
                         +234
                       </span>
                       <input
-                        style={{ flex: 1 }}
+                        ref={setFieldRef("whatsapp") as any}
+                        style={{ flex: 1, ...inputErrorStyle("whatsapp") }}
                         value={orderFormWhatsapp}
-                        onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))}
+                        onChange={(event) => {
+                          setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value));
+                          clearFieldError("whatsapp");
+                        }}
                         placeholder={`Your WhatsApp Number${settings.requireWhatsapp ? " *" : ""}`}
                         inputMode="tel"
                         pattern="[0-9]{7,15}"
                         autoComplete="tel-national"
                         maxLength={15}
+                        aria-invalid={Boolean(fieldErrors.whatsapp)}
+                        aria-describedby={fieldErrors.whatsapp ? "public-order-error-whatsapp" : undefined}
                       />
                     </div>
+                    {fieldErrors.whatsapp && (
+                      <span id="public-order-error-whatsapp" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                        {fieldErrors.whatsapp}
+                      </span>
+                    )}
                   </label>
                 )}
 
@@ -1864,20 +2031,68 @@ export default function PublicOrderFormPage() {
                 )}
 
                 <label className="field-full">
-                  <input value={orderFormAddress} onChange={(event) => setOrderFormAddress(event.target.value)} placeholder={`Your Address${settings.addressRequired ? " *" : ""}`} />
+                  <input
+                    ref={setFieldRef("address") as any}
+                    value={orderFormAddress}
+                    onChange={(event) => {
+                      setOrderFormAddress(event.target.value);
+                      clearFieldError("address");
+                    }}
+                    placeholder={`Your Address${settings.addressRequired ? " *" : ""}`}
+                    aria-invalid={Boolean(fieldErrors.address)}
+                    aria-describedby={fieldErrors.address ? "public-order-error-address" : undefined}
+                    style={inputErrorStyle("address")}
+                  />
+                  {fieldErrors.address && (
+                    <span id="public-order-error-address" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.address}
+                    </span>
+                  )}
                 </label>
 
                 <label className="field-full">
-                  <input value={orderFormCity} onChange={(event) => setOrderFormCity(event.target.value)} placeholder={`Your City${settings.cityRequired ? " *" : ""}`} />
+                  <input
+                    ref={setFieldRef("city") as any}
+                    value={orderFormCity}
+                    onChange={(event) => {
+                      setOrderFormCity(event.target.value);
+                      clearFieldError("city");
+                    }}
+                    placeholder={`Your City${settings.cityRequired ? " *" : ""}`}
+                    aria-invalid={Boolean(fieldErrors.city)}
+                    aria-describedby={fieldErrors.city ? "public-order-error-city" : undefined}
+                    style={inputErrorStyle("city")}
+                  />
+                  {fieldErrors.city && (
+                    <span id="public-order-error-city" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.city}
+                    </span>
+                  )}
                 </label>
 
                 <label className="field-full">
-                  <select required value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)}>
+                  <select
+                    ref={setFieldRef("state") as any}
+                    required
+                    value={orderFormState}
+                    onChange={(event) => {
+                      setOrderFormState(event.target.value);
+                      clearFieldError("state");
+                    }}
+                    aria-invalid={Boolean(fieldErrors.state)}
+                    aria-describedby={fieldErrors.state ? "public-order-error-state" : undefined}
+                    style={inputErrorStyle("state")}
+                  >
                     <option value="" disabled>Select your state *</option>
                     {allowedStates.map((state) => (
                       <option key={state} value={state}>{state}</option>
                     ))}
                   </select>
+                  {fieldErrors.state && (
+                    <span id="public-order-error-state" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.state}
+                    </span>
+                  )}
                 </label>
               </div>
 
@@ -2371,7 +2586,17 @@ export default function PublicOrderFormPage() {
                 settings.deliveryInputStyle === "quick" ? (
                   <label style={{ marginTop: 16 }}>
                     <span>When would you like it delivered? *</span>
-                    <select value={orderFormDeliveryWindow} onChange={(event) => setOrderFormDeliveryWindow(event.target.value)}>
+                    <select
+                      ref={setFieldRef("delivery") as any}
+                      value={orderFormDeliveryWindow}
+                      onChange={(event) => {
+                        setOrderFormDeliveryWindow(event.target.value);
+                        clearFieldError("delivery");
+                      }}
+                      aria-invalid={Boolean(fieldErrors.delivery)}
+                      aria-describedby={fieldErrors.delivery ? "public-order-error-delivery" : undefined}
+                      style={inputErrorStyle("delivery")}
+                    >
                       <option value="">Select a delivery time *</option>
                       {settings.deliveryQuickToday && <option value="Today">Today</option>}
                       {settings.deliveryQuickTomorrow && <option value="Tomorrow">Tomorrow</option>}
@@ -2380,36 +2605,64 @@ export default function PublicOrderFormPage() {
                         <option value="Tomorrow">Tomorrow</option>
                       )}
                     </select>
+                    {fieldErrors.delivery && (
+                      <span id="public-order-error-delivery" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                        {fieldErrors.delivery}
+                      </span>
+                    )}
                   </label>
                 ) : (
                   <label style={{ marginTop: 16 }}>
                     <span>When would you like it delivered? *</span>
                     <input
+                      ref={setFieldRef("delivery") as any}
                       type="date"
                       min={new Date(Date.now() + settings.deliveryRangeMinDays * 86400000).toISOString().slice(0, 10)}
                       max={new Date(Date.now() + settings.deliveryRangeMaxDays * 86400000).toISOString().slice(0, 10)}
                       value={orderFormDeliveryWindow}
-                      onChange={(event) => setOrderFormDeliveryWindow(event.target.value)}
+                      onChange={(event) => {
+                        setOrderFormDeliveryWindow(event.target.value);
+                        clearFieldError("delivery");
+                      }}
+                      aria-invalid={Boolean(fieldErrors.delivery)}
+                      aria-describedby={fieldErrors.delivery ? "public-order-error-delivery" : undefined}
+                      style={inputErrorStyle("delivery")}
                     />
+                    {fieldErrors.delivery && (
+                      <span id="public-order-error-delivery" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                        {fieldErrors.delivery}
+                      </span>
+                    )}
                   </label>
                 )
               )}
 
               {settings.showCommitment && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" style={{ marginTop: 16 }}>
+                <div
+                  ref={setFieldRef("commitment") as any}
+                  tabIndex={-1}
+                  className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                  style={{ marginTop: 16, ...optionGroupErrorStyle("commitment") }}
+                >
                   <p className="text-sm leading-5 text-amber-900 m-0">{settings.commitmentText}</p>
                   {settings.allowDisagree ? (
                     <div className="mt-3 flex flex-wrap gap-2" style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
-                        onClick={() => setOrderFormCommitmentAccepted(true)}
+                        onClick={() => {
+                          setOrderFormCommitmentAccepted(true);
+                          clearFieldError("commitment");
+                        }}
                         className={`!min-h-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${orderFormCommitmentAccepted ? "bg-amber-600 text-white border-amber-600" : "bg-white text-amber-800 border-amber-300 hover:bg-amber-100"}`}
                       >
                         ✓ I agree
                       </button>
                       <button
                         type="button"
-                        onClick={() => setOrderFormCommitmentAccepted(false)}
+                        onClick={() => {
+                          setOrderFormCommitmentAccepted(false);
+                          clearFieldError("commitment");
+                        }}
                         className={`!min-h-0 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${!orderFormCommitmentAccepted ? "bg-gray-700 text-white border-gray-700" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-100"}`}
                       >
                         ✗ I disagree
@@ -2417,8 +2670,23 @@ export default function PublicOrderFormPage() {
                     </div>
                   ) : (
                     <label className="preview-check" style={{ marginTop: 12 }}>
-                      <input type="checkbox" checked={orderFormCommitmentAccepted} onChange={(event) => setOrderFormCommitmentAccepted(event.target.checked)} /> I agree to the notice above.
+                      <input
+                        ref={setFieldRef("commitment") as any}
+                        type="checkbox"
+                        checked={orderFormCommitmentAccepted}
+                        onChange={(event) => {
+                          setOrderFormCommitmentAccepted(event.target.checked);
+                          clearFieldError("commitment");
+                        }}
+                        aria-invalid={Boolean(fieldErrors.commitment)}
+                        aria-describedby={fieldErrors.commitment ? "public-order-error-commitment" : undefined}
+                      /> I agree to the notice above.
                     </label>
+                  )}
+                  {fieldErrors.commitment && (
+                    <span id="public-order-error-commitment" style={{ marginTop: 8, display: "block", fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>
+                      {fieldErrors.commitment}
+                    </span>
                   )}
                 </div>
               )}
@@ -2431,16 +2699,63 @@ export default function PublicOrderFormPage() {
               </div>
 
               {settings.requireConfirmation && (
-                <label className="preview-check">
-                  <input type="checkbox" checked={orderFormConfirmed} onChange={(event) => setOrderFormConfirmed(event.target.checked)} /> {settings.confirmationText}
-                </label>
+                <div
+                  ref={setFieldRef("confirmation") as any}
+                  tabIndex={-1}
+                  style={{ ...optionGroupErrorStyle("confirmation"), borderRadius: 12, padding: fieldErrors.confirmation ? "8px 10px" : undefined }}
+                >
+                  <label className="preview-check">
+                    <input
+                      ref={setFieldRef("confirmation") as any}
+                      type="checkbox"
+                      checked={orderFormConfirmed}
+                      onChange={(event) => {
+                        setOrderFormConfirmed(event.target.checked);
+                        clearFieldError("confirmation");
+                      }}
+                      aria-invalid={Boolean(fieldErrors.confirmation)}
+                      aria-describedby={fieldErrors.confirmation ? "public-order-error-confirmation" : undefined}
+                    /> {settings.confirmationText}
+                  </label>
+                  {fieldErrors.confirmation && (
+                    <span id="public-order-error-confirmation" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+                      {fieldErrors.confirmation}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {fieldErrorEntries.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "12px 14px",
+                    borderRadius: 14,
+                    border: "1px solid #fecaca",
+                    background: "#fff1f2",
+                    color: "#991b1b",
+                    display: "grid",
+                    gap: 6
+                  }}
+                >
+                  <strong style={{ fontSize: 13 }}>Please complete the highlighted fields:</strong>
+                  <div style={{ display: "grid", gap: 4, fontSize: 12, lineHeight: 1.45 }}>
+                    {fieldErrorEntries.map(([field, message]) => (
+                      <span key={field}>• {message}</span>
+                    ))}
+                  </div>
+                </div>
               )}
 
               <button
                 className="primary-button public-order-submit-button"
                 onClick={submitPublicOrder}
                 disabled={publicOrderSubmitting}
-                style={{ opacity: publicOrderSubmitting ? 0.78 : 1, cursor: publicOrderSubmitting ? "not-allowed" : "pointer" }}
+                style={{
+                  opacity: publicOrderSubmitting ? 0.78 : 1,
+                  cursor: publicOrderSubmitting ? "not-allowed" : "pointer",
+                  ...(submitButtonAttention ? { animation: "publicSubmitButtonAlert 0.55s ease" } : {})
+                }}
               >
                 <span className="public-order-submit-button__label">
                   {publicOrderSubmitting ? "Submitting..." : "Order Now"}

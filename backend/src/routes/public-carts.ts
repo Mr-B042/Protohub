@@ -52,6 +52,7 @@ const JourneyEventSchema = z.object({
     "submit_blocked_invalid_whatsapp",
     "submit_blocked_missing_address",
     "submit_blocked_missing_city",
+    "submit_blocked_missing_state",
     "submit_blocked_missing_delivery",
     "submit_blocked_missing_confirmation",
     "submit_blocked_missing_commitment",

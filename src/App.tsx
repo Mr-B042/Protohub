@@ -763,6 +763,7 @@ type CartJourneyBlockedEventType =
   | "submit_blocked_invalid_whatsapp"
   | "submit_blocked_missing_address"
   | "submit_blocked_missing_city"
+  | "submit_blocked_missing_state"
   | "submit_blocked_missing_delivery"
   | "submit_blocked_missing_confirmation"
   | "submit_blocked_missing_commitment";
@@ -3157,6 +3158,7 @@ const CART_JOURNEY_BLOCKED_LABELS: Record<CartJourneyBlockedEventType, string> =
   submit_blocked_invalid_whatsapp: "Submit blocked",
   submit_blocked_missing_address: "Submit blocked",
   submit_blocked_missing_city: "Submit blocked",
+  submit_blocked_missing_state: "Submit blocked",
   submit_blocked_missing_delivery: "Submit blocked",
   submit_blocked_missing_confirmation: "Submit blocked",
   submit_blocked_missing_commitment: "Submit blocked"
@@ -3170,6 +3172,7 @@ const CART_JOURNEY_BLOCKED_DETAILS: Record<CartJourneyBlockedEventType, string> 
   submit_blocked_invalid_whatsapp: "Customer tried to submit but the WhatsApp number looked invalid.",
   submit_blocked_missing_address: "Customer tried to submit without entering a delivery address.",
   submit_blocked_missing_city: "Customer tried to submit without entering a city.",
+  submit_blocked_missing_state: "Customer tried to submit without selecting a state.",
   submit_blocked_missing_delivery: "Customer tried to submit without choosing a delivery time.",
   submit_blocked_missing_confirmation: "Customer tried to submit without ticking the confirmation box.",
   submit_blocked_missing_commitment: "Customer tried to submit without acknowledging the commitment notice."
@@ -3183,6 +3186,7 @@ const CART_JOURNEY_BLOCKED_HINTS: Record<CartJourneyBlockedEventType, string> = 
   submit_blocked_invalid_whatsapp: "Tried to submit but the WhatsApp number looked invalid.",
   submit_blocked_missing_address: "Tried to submit but didn’t enter the delivery address.",
   submit_blocked_missing_city: "Tried to submit but didn’t enter a city.",
+  submit_blocked_missing_state: "Tried to submit but didn’t select a state.",
   submit_blocked_missing_delivery: "Tried to submit but didn’t choose a delivery time.",
   submit_blocked_missing_confirmation: "Tried to submit but didn’t tick the confirmation box.",
   submit_blocked_missing_commitment: "Tried to submit but didn’t acknowledge the commitment notice."
@@ -3196,6 +3200,7 @@ const CART_JOURNEY_BLOCKED_ANALYTICS_LABELS: Record<CartJourneyBlockedEventType,
   submit_blocked_invalid_whatsapp: "Invalid WhatsApp",
   submit_blocked_missing_address: "Missing address",
   submit_blocked_missing_city: "Missing city",
+  submit_blocked_missing_state: "Missing state",
   submit_blocked_missing_delivery: "Missing delivery time",
   submit_blocked_missing_confirmation: "Missing confirmation",
   submit_blocked_missing_commitment: "Missing commitment acknowledgement"
