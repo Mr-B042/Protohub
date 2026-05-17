@@ -1573,7 +1573,7 @@ export default function PublicOrderFormPage() {
                           margin: "4px auto 0"
                         }}
                       >
-                        These discounted additional items only apply when you complete this main order. They are not available as stand-alone purchases at this discounted price.
+                        These discounted additional items only apply when you add them with the main offer. They are not available as stand-alone purchases at this discounted price.
                       </span>
                     </div>
                     <div style={{ display: "grid", gap: 12 }}>
@@ -1646,7 +1646,7 @@ export default function PublicOrderFormPage() {
                                         {previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}
                                       </strong>
                                       <span style={{ fontSize: 10, fontWeight: 700, color: "#b45309", lineHeight: 1.45 }}>
-                                        Special price only when bought with this main order
+                                        Special price only when added with the main offer
                                       </span>
                                       {group.companions.length > 1 && (
                                         <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -1744,7 +1744,7 @@ export default function PublicOrderFormPage() {
                                         padding: "8px 10px"
                                       }}
                                     >
-                                      These discounted additional items only apply when you complete this main order.
+                                      These discounted additional items only apply when you add them with the main offer.
                                     </div>
                                     <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
                                       {displayCompanion.pitch?.trim() || "Easy extra additional item that fits this order."}
