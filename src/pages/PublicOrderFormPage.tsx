@@ -1099,16 +1099,20 @@ export default function PublicOrderFormPage() {
 
   function finishPublicOrderJourney(orderId: string, customer: string) {
     setPublicUpsellOffer(null);
-    setPublicOrderSubmitted({ orderId, customer });
+    exitTrackedRef.current = true;
     if (publicRedirectUrl) {
-      redirectTimerRef.current = window.setTimeout(() => {
-        try {
-          (window.top ?? window).location.href = publicRedirectUrl;
-        } catch {
-          window.location.href = publicRedirectUrl;
-        }
-      }, 800);
+      if (redirectTimerRef.current) {
+        window.clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = null;
+      }
+      try {
+        (window.top ?? window).location.href = publicRedirectUrl;
+      } catch {
+        window.location.href = publicRedirectUrl;
+      }
+      return;
     }
+    setPublicOrderSubmitted({ orderId, customer });
   }
 
   async function submitPublicOrder() {
