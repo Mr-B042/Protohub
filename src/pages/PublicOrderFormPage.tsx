@@ -1732,6 +1732,20 @@ export default function PublicOrderFormPage() {
                                         )
                                         : companionDisplayDetail(displayCompanion, displayTargetPackage)}
                                     </span>
+                                    <div
+                                      style={{
+                                        fontSize: 11,
+                                        lineHeight: 1.45,
+                                        fontWeight: 700,
+                                        color: "#b45309",
+                                        background: "#fff7ed",
+                                        border: "1px solid #fdba74",
+                                        borderRadius: 10,
+                                        padding: "8px 10px"
+                                      }}
+                                    >
+                                      These discounted additional items only apply when you complete this main order.
+                                    </div>
                                     <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
                                       {displayCompanion.pitch?.trim() || "Easy extra additional item that fits this order."}
                                     </p>
