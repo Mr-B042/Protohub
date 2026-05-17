@@ -7014,7 +7014,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return () => {
       cancelled = true;
     };
-  }, [activePage, abandonedJourneyCartIds, abandonedJourneyCartIdsKey]);
+  }, [activePage, abandonedJourneyCartIdsKey]);
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
 
@@ -9430,7 +9430,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return () => {
       cancelled = true;
     };
-  }, [activePage, repJourneyCartIds, repJourneyCartIdsKey]);
+  }, [activePage, repJourneyCartIdsKey]);
   const repStatusFilteredOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
     if (repOrderStatusTab === "Pending") {
