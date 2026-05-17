@@ -18302,6 +18302,87 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
             <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Order Items</h2>
           </div>
+          {(() => {
+            const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+            const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+            const hasAdditionalItems = (order.crossSellLines?.length ?? 0) > 0;
+            const hasFreeGifts = (order.freeGiftLines?.length ?? 0) > 0;
+            const offerLabel = (line: CrossSellLine) =>
+              line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
+                ? "Additional item"
+                : "Cross-sell";
+            const offerDetail = (line: CrossSellLine) => {
+              const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
+              return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
+            };
+            return (
+              <div className={`mx-4 sm:mx-5 mt-4 rounded-2xl border px-4 sm:px-5 py-4 ${orderPanelInfoClass}`}>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <h3 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h3>
+                    <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
+                      Main offer plus any additional items saved with this order.
+                    </p>
+                  </div>
+                  <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
+                    {formatProductMoney(order.amount, order.currency)}
+                  </div>
+                </div>
+                <div className={`mt-4 border-t ${orderBorderClass} pt-4 grid gap-3`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
+                        {order.productName} · {order.packageName}
+                      </p>
+                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
+                    </div>
+                    <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
+                      {formatProductMoney(mainOfferTotal, order.currency)}
+                    </div>
+                  </div>
+                  {(order.crossSellLines ?? []).map((line) => (
+                    <div key={`breakdown-${line.id}`} className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-3`}>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
+                          {offerLabel(line)} · {line.productName}
+                        </p>
+                        <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
+                      </div>
+                      <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
+                        {formatProductMoney(line.amount, order.currency)}
+                      </div>
+                    </div>
+                  ))}
+                  {(order.freeGiftLines ?? []).map((line) => (
+                    <div key={`breakdown-gift-${line.id}`} className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-3`}>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
+                          Free gift · {line.productName}
+                        </p>
+                        <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                          {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
+                        </p>
+                      </div>
+                      <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
+                        FREE
+                      </div>
+                    </div>
+                  ))}
+                  <div className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-4`}>
+                    <div className="min-w-0">
+                      <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
+                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                        {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
+                      </p>
+                    </div>
+                    <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
+                      {formatProductMoney(order.amount, order.currency)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           <div className="sm:hidden divide-y divide-gray-100">
             <article className="px-4 py-4 space-y-3">
               <div>
@@ -33673,6 +33754,87 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {/* Section 4: Order Items */}
 	                <section>
 	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Items</h3>
+                    {(() => {
+                      const additionalItemTotal = (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+                      const mainOfferTotal = Math.max(0, (selectedOrder.amount || 0) - additionalItemTotal);
+                      const hasAdditionalItems = (selectedOrder.crossSellLines?.length ?? 0) > 0;
+                      const hasFreeGifts = (selectedOrder.freeGiftLines?.length ?? 0) > 0;
+                      const offerLabel = (line: CrossSellLine) =>
+                        line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
+                          ? "Additional item"
+                          : "Cross-sell";
+                      const offerDetail = (line: CrossSellLine) => {
+                        const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
+                        return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
+                      };
+                      return (
+                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-4 sm:px-5">
+                          <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div>
+                              <h4 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h4>
+                              <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
+                                Main offer plus any additional items saved with this order.
+                              </p>
+                            </div>
+                            <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
+                              {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
+                            </div>
+                          </div>
+                          <div className="mt-4 grid gap-3 border-t border-blue-100 pt-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
+                                  {selectedOrder.productName} · {selectedOrder.packageName}
+                                </p>
+                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
+                              </div>
+                              <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
+                                {formatProductMoney(mainOfferTotal, selectedOrder.currency)}
+                              </div>
+                            </div>
+                            {(selectedOrder.crossSellLines ?? []).map((line) => (
+                              <div key={`selected-breakdown-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
+                                    {offerLabel(line)} · {line.productName}
+                                  </p>
+                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
+                                </div>
+                                <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
+                                  {formatProductMoney(line.amount, selectedOrder.currency)}
+                                </div>
+                              </div>
+                            ))}
+                            {(selectedOrder.freeGiftLines ?? []).map((line) => (
+                              <div key={`selected-breakdown-gift-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
+                                    Free gift · {line.productName}
+                                  </p>
+                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                                    {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
+                                  </p>
+                                </div>
+                                <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
+                                  FREE
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-start justify-between gap-4 border-t border-blue-100 pt-4">
+                              <div className="min-w-0">
+                                <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
+                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                                  {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
+                                </p>
+                              </div>
+                              <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
+                                {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 	                  <div className="overflow-x-auto rounded-lg border border-gray-200">
 	                    <table className="w-full text-sm">
 	                      <thead>
