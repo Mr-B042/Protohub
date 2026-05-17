@@ -3438,7 +3438,8 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
     additionalItemAdded: 0,
     submitAttempted: 0,
     submitted: 0,
-    exited: 0
+    exited: 0,
+    submittedWithAdditionalItem: 0
   };
   const blockedCounts = new Map<CartJourneyBlockedEventType, number>();
   const additionalItemStats = new Map<string, { key: string; name: string; previewed: number; added: number; removed: number; submittedWithItem: number }>();
@@ -3455,8 +3456,7 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
     if (seenTypes.has("order_submitted")) funnel.submitted += 1;
     if (seenTypes.has("form_exited")) funnel.exited += 1;
 
-    const submittedItemKeys = new Set<string>();
-    const selectedItemKeys = new Set<string>();
+    const selectedByItem = new Map<string, boolean>();
     for (const event of events) {
       if (isCartJourneyBlockedEvent(event.eventType)) {
         blockedCounts.set(event.eventType, (blockedCounts.get(event.eventType) ?? 0) + 1);
@@ -3474,30 +3474,57 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
       if (event.eventType === "additional_item_preview_opened") current.previewed += 1;
       if (event.eventType === "additional_item_added") {
         current.added += 1;
-        selectedItemKeys.add(key);
+        selectedByItem.set(key, true);
       }
       if (event.eventType === "additional_item_removed") {
         current.removed += 1;
-        selectedItemKeys.delete(key);
+        selectedByItem.set(key, false);
       }
       additionalItemStats.set(key, current);
     }
+
     if (seenTypes.has("order_submitted")) {
-      for (const key of selectedItemKeys) submittedItemKeys.add(key);
-    }
-    for (const key of submittedItemKeys) {
-      const current = additionalItemStats.get(key);
-      if (current) current.submittedWithItem += 1;
+      const submittedWithAnyItem = [...selectedByItem.values()].some(Boolean);
+      if (submittedWithAnyItem) {
+        funnel.submittedWithAdditionalItem += 1;
+      }
+      for (const [key, selected] of selectedByItem.entries()) {
+        if (!selected) continue;
+        const current = additionalItemStats.get(key);
+        if (current) {
+          current.submittedWithItem += 1;
+          additionalItemStats.set(key, current);
+        }
+      }
     }
   }
+
+  const additionalItems = [...additionalItemStats.values()]
+    .map((item) => {
+      const previewToAddRate = item.previewed > 0 ? Math.round((item.added / item.previewed) * 100) : 0;
+      const addToSubmitRate = item.added > 0 ? Math.round((item.submittedWithItem / item.added) * 100) : 0;
+      const attachRate = funnel.submitted > 0 ? Math.round((item.submittedWithItem / funnel.submitted) * 100) : 0;
+      return {
+        ...item,
+        previewToAddRate,
+        addToSubmitRate,
+        attachRate
+      };
+    })
+    .sort((a, b) => (b.submittedWithItem - a.submittedWithItem) || (b.addToSubmitRate - a.addToSubmitRate) || (b.added - a.added) || (b.previewed - a.previewed));
+
+  const topAdditionalItem = additionalItems[0] ?? null;
 
   return {
     funnel,
     blocked: [...blockedCounts.entries()]
       .map(([eventType, count]) => ({ eventType, count, label: CART_JOURNEY_BLOCKED_ANALYTICS_LABELS[eventType] }))
       .sort((a, b) => b.count - a.count),
-    additionalItems: [...additionalItemStats.values()]
-      .sort((a, b) => (b.submittedWithItem - a.submittedWithItem) || (b.added - a.added) || (b.previewed - a.previewed))
+    additionalItems,
+    additionalItemSummary: {
+      attachRate: funnel.submitted > 0 ? Math.round((funnel.submittedWithAdditionalItem / funnel.submitted) * 100) : 0,
+      topAdditionalItem
+    }
   };
 };
 
@@ -5736,6 +5763,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       cancelled = true;
     };
   }, [modal, realRole, selectedOrder?.sourceCartId]);
+  const selectedOrderJourneyAnalytics = useMemo(
+    () =>
+      summarizeCartJourneyAnalytics(
+        selectedOrder?.sourceCartId
+          ? {
+              [selectedOrder.sourceCartId]: selectedOrderJourney
+            }
+          : {}
+      ),
+    [selectedOrder?.sourceCartId, selectedOrderJourney]
+  );
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -33934,22 +33972,77 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <p className={`m-0 mt-2 text-[18px] font-semibold ${orderTitleTextClass}`}>{selectedOrderJourney.length}</p>
                           </div>
                         </div>
-                        <div className={`mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
-                          <div>
-                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Linked form session</p>
-                            <p className={`m-0 mt-2 text-[15px] font-semibold break-all ${orderTitleTextClass}`}>{selectedOrder.sourceCartId}</p>
-                          </div>
+	                        <div className={`mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
+	                          <div>
+	                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Linked form session</p>
+	                            <p className={`m-0 mt-2 text-[15px] font-semibold break-all ${orderTitleTextClass}`}>{selectedOrder.sourceCartId}</p>
+	                          </div>
                           <div>
                             <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Last step reached</p>
                             <p className={`m-0 mt-2 text-[15px] font-semibold ${orderTitleTextClass}`}>
                               {selectedOrderJourney.length > 0 ? cartJourneyTitle(selectedOrderJourney[selectedOrderJourney.length - 1]) : "No tracked steps yet"}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-4 flex items-center justify-between gap-2">
-                          <p className={`m-0 text-[12px] ${orderMutedTextClass}`}>Owner/Admin only. Useful for seeing what they viewed, added, removed, and when they submitted.</p>
-                          {selectedOrderJourneyLoading ? <span className={`text-[11px] font-semibold ${orderFaintTextClass}`}>Loading...</span> : null}
-                        </div>
+	                            </p>
+	                          </div>
+	                        </div>
+	                        {selectedOrderJourneyAnalytics.additionalItems.length > 0 ? (
+	                          <div className={`mt-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
+	                            <div className="flex items-start justify-between gap-3 flex-wrap">
+	                              <div>
+	                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Additional item path</p>
+	                                <p className={`m-0 mt-2 text-[14px] leading-6 ${orderMutedTextClass}`}>
+	                                  {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0
+	                                    ? `Customer submitted this order with ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem} additional item${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem === 1 ? "" : "s"} still attached.`
+	                                    : "Customer explored additional items during the form but submitted without carrying one into the order."}
+	                                </p>
+	                              </div>
+	                              <div className="flex items-center gap-2 flex-wrap">
+	                                <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+	                                  {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "Submitted with additional item" : "Submitted without additional item"}
+	                                </span>
+	                              </div>
+	                            </div>
+	                            <div className="mt-3 grid gap-3">
+	                              {selectedOrderJourneyAnalytics.additionalItems.map((item) => (
+	                                <div key={item.key} className={`rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
+	                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+	                                    <div>
+	                                      <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{item.name}</p>
+	                                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+	                                        {item.previewed} previewed · {item.added} added · {item.removed} removed · {item.submittedWithItem} carried into submit
+	                                      </p>
+	                                    </div>
+	                                    <div className="flex items-center gap-2 flex-wrap justify-end">
+	                                      {item.previewed > 0 ? (
+	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-blue-200 bg-blue-50 text-blue-700">
+	                                          Previewed
+	                                        </span>
+	                                      ) : null}
+	                                      {item.added > 0 ? (
+	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-emerald-200 bg-emerald-50 text-emerald-700">
+	                                          Added
+	                                        </span>
+	                                      ) : null}
+	                                      {item.removed > 0 ? (
+	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-amber-200 bg-amber-50 text-amber-700">
+	                                          Removed before submit
+	                                        </span>
+	                                      ) : null}
+	                                      {item.submittedWithItem > 0 ? (
+	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-violet-200 bg-violet-50 text-violet-700">
+	                                          In submitted order
+	                                        </span>
+	                                      ) : null}
+	                                    </div>
+	                                  </div>
+	                                </div>
+	                              ))}
+	                            </div>
+	                          </div>
+	                        ) : null}
+	                        <div className="mt-4 flex items-center justify-between gap-2">
+	                          <p className={`m-0 text-[12px] ${orderMutedTextClass}`}>Owner/Admin only. Useful for seeing what they viewed, added, removed, and when they submitted.</p>
+	                          {selectedOrderJourneyLoading ? <span className={`text-[11px] font-semibold ${orderFaintTextClass}`}>Loading...</span> : null}
+	                        </div>
                         {selectedOrderJourney.length === 0 && !selectedOrderJourneyLoading ? (
                           <p className={`m-0 mt-4 text-sm ${orderMutedTextClass}`}>No journey timeline has been captured for this submitted order yet.</p>
                         ) : (
