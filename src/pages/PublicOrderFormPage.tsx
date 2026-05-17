@@ -1109,14 +1109,20 @@ export default function PublicOrderFormPage() {
         const targetPackage = targetPackageForCompanion(companion, products);
         return {
           name: companionDisplayName(companion, product, targetPackage),
+          detail: companionDisplayDetail(companion, targetPackage),
           qty: companion.quantity,
           total: companionLineTotal(companion, product, targetPackage)
         };
       }
       const unit = crossSellPriceFor(publicProduct, product);
-      return { name: product.name, qty: line.quantity, total: unit * line.quantity };
+      return {
+        name: product.name,
+        detail: `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this additional item`,
+        qty: line.quantity,
+        total: unit * line.quantity
+      };
     })
-    .filter(Boolean) as { name: string; qty: number; total: number }[];
+    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
 
   const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
     .filter((companion) => companion.autoInclude)
@@ -1127,11 +1133,12 @@ export default function PublicOrderFormPage() {
       const targetPackage = targetPackageForCompanion(companion, products);
       return {
         name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
+        detail: companionDisplayDetail(companion, targetPackage),
         qty: companion.quantity,
         total: companionLineTotal(companion, product, targetPackage)
       };
     })
-    .filter(Boolean) as { name: string; qty: number; total: number }[];
+    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
 
   const summaryGiftLines = (publicProduct.freeGiftProductIds ?? [])
     .map((giftId) => products.find((item) => item.id === giftId))
@@ -1141,6 +1148,79 @@ export default function PublicOrderFormPage() {
     + selectedCrossSellLines.reduce((sum, line) => sum + line.total, 0)
     + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
 
+  const inlineOrderBreakdownBlock = selectedCrossSellLines.length > 0 ? (
+    <div
+      style={{
+        padding: 14,
+        border: "1px solid #dbeafe",
+        background: "#f8fbff",
+        borderRadius: 16,
+        display: "grid",
+        gap: 10,
+        marginTop: 14
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "grid", gap: 2 }}>
+          <strong style={{ fontSize: 15, color: "#0f172a" }}>Order breakdown so far</strong>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Each additional item appears here as soon as you add it.</span>
+        </div>
+        <strong style={{ fontSize: 16, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackage.currency)}</strong>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+          paddingTop: 8,
+          borderTop: "1px solid #dbeafe"
+        }}
+      >
+        <div style={{ display: "grid", gap: 2 }}>
+          <strong style={{ fontSize: 13, color: "#0f172a" }}>{publicProduct.name} · {chosenPackage.name}</strong>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Main offer</span>
+        </div>
+        <strong style={{ fontSize: 13, color: "#0f172a" }}>{formatProductMoney(chosenPackage.price, chosenPackage.currency)}</strong>
+      </div>
+
+      {selectedCrossSellLines.map((line, index) => (
+        <div
+          key={`inline-xs-${index}`}
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            paddingTop: 8,
+            borderTop: "1px solid #e2e8f0"
+          }}
+        >
+          <div style={{ display: "grid", gap: 2 }}>
+            <strong style={{ fontSize: 13, color: "#92400e" }}>Additional item · {line.name}</strong>
+            {line.detail ? <span style={{ fontSize: 12, color: "#64748b" }}>{line.detail}</span> : null}
+          </div>
+          <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackage.currency)}</strong>
+        </div>
+      ))}
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          paddingTop: 10,
+          borderTop: "2px solid #bfdbfe"
+        }}
+      >
+        <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Total so far</span>
+        <strong style={{ fontSize: 18, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackage.currency)}</strong>
+      </div>
+    </div>
+  ) : null;
+
   const orderSummaryBlock = settings.formOrderSummaryEnabled ? (
     <div className="panel public-order-summary-rail" style={{ padding: 16, display: "grid", gap: 6 }}>
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
@@ -1149,14 +1229,20 @@ export default function PublicOrderFormPage() {
         <strong>{formatProductMoney(chosenPackage.price, chosenPackage.currency)}</strong>
       </div>
       {selectedCrossSellLines.map((line, index) => (
-        <div key={`xs-${index}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0", color: "#92400e" }}>
-          <span>↳ {line.name} × {line.qty}</span>
+        <div key={`xs-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#92400e" }}>
+          <div style={{ display: "grid", gap: 2 }}>
+            <span>↳ Additional item · {line.name}</span>
+            {line.detail ? <span style={{ color: "#94a3b8", fontSize: 11 }}>{line.detail}</span> : null}
+          </div>
           <span>{formatProductMoney(line.total, chosenPackage.currency)}</span>
         </div>
       ))}
       {autoCompanionLines.map((line, index) => (
-        <div key={`auto-${index}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0", color: "#1F8FE0" }}>
-          <span>+ {line.name} × {line.qty}</span>
+        <div key={`auto-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#1F8FE0" }}>
+          <div style={{ display: "grid", gap: 2 }}>
+            <span>+ {line.name}</span>
+            {line.detail ? <span style={{ color: "#94a3b8", fontSize: 11 }}>{line.detail}</span> : null}
+          </div>
           <span>{line.total === 0 ? "FREE" : formatProductMoney(line.total, chosenPackage.currency)}</span>
         </div>
       ))}
@@ -1923,6 +2009,8 @@ export default function PublicOrderFormPage() {
                   </div>
                 </div>
               )}
+
+              {inlineOrderBreakdownBlock}
 
               {autoCompanionLines.length > 0 && (
                 <div style={{ padding: 10, border: "1px solid #10b98140", background: "#ecfdf5", borderRadius: 12, fontSize: 13, marginTop: 12 }}>
