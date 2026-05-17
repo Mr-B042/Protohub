@@ -474,6 +474,21 @@ export const cartsApi = {
   // Public capture endpoint — no auth required, derives org from product_id.
   // Use this from the embed form so it works inside customer-facing iframes.
   capture: (body: unknown) => post<any>("/api/public/carts", body),
+  trackPublicJourney: async (id: string, body: unknown, options?: { keepalive?: boolean }) => {
+    const res = await fetch(`${BASE}/api/public/carts/${encodeURIComponent(id)}/events`, {
+      method: "POST",
+      cache: "no-store",
+      keepalive: options?.keepalive === true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, extractErrorMessage(payload, "Could not track form activity."));
+    }
+    return snakeToCamel<any>(await res.json());
+  },
+  journey: (id: string) => get<any[]>(`/api/carts/${encodeURIComponent(id)}/journey`),
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
   delete: (id: string) => del<void>(`/api/carts/${id}`)
 };

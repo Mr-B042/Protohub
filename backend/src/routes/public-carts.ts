@@ -33,6 +33,26 @@ const CaptureSchema = z.object({
   source:       z.string().max(60).optional()
 });
 
+const JourneyEventSchema = z.object({
+  productId: z.string().uuid(),
+  packageId: z.string().uuid().optional(),
+  state: z.string().max(80).optional(),
+  eventType: z.enum([
+    "form_opened",
+    "package_selected",
+    "state_selected",
+    "additional_item_preview_opened",
+    "additional_item_added",
+    "additional_item_removed",
+    "submit_attempted",
+    "order_submitted",
+    "form_exited"
+  ]),
+  companionProductId: z.string().uuid().optional(),
+  companionPackageId: z.string().uuid().optional(),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional()
+});
+
 // ── POST /api/public/carts ────────────────────────────────
 // Captures a partially-filled embed-form draft.
 // Org context derives from the product's org. No authentication.
@@ -140,6 +160,71 @@ router.post("/", captureRateLimit, async (req, res) => {
     currency: data.currency ?? "NGN",
     source: data.source ?? "Website"
   });
+  res.status(201).json(data);
+});
+
+// ── POST /api/public/carts/:id/events ────────────────────
+// Tracks the customer's journey through the public order form. Works even
+// before the abandoned cart row has been fully captured, as long as the
+// frontend uses the same cart id later for draft capture / submit.
+router.post("/:id/events", captureRateLimit, async (req, res) => {
+  const rawCartId = req.params.id;
+  const cartId = typeof rawCartId === "string" ? rawCartId.trim() : "";
+  if (!/^[A-Za-z0-9\-_]+$/.test(cartId)) {
+    res.status(400).json({ error: "Invalid cart id." });
+    return;
+  }
+
+  const parsed = JourneyEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  const event = parsed.data;
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, org_id")
+    .eq("id", event.productId)
+    .maybeSingle();
+
+  if (!product) {
+    res.status(404).json({ error: "Product not found." });
+    return;
+  }
+
+  const { data: existingCart } = await supabase
+    .from("abandoned_carts")
+    .select("id, org_id")
+    .eq("id", cartId)
+    .maybeSingle();
+
+  if (existingCart && existingCart.org_id !== product.org_id) {
+    res.status(409).json({ error: "Cart id collision." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("cart_journey_events")
+    .insert({
+      org_id: product.org_id,
+      cart_id: cartId,
+      product_id: event.productId,
+      package_id: event.packageId ?? null,
+      state: event.state ?? null,
+      event_type: event.eventType,
+      companion_product_id: event.companionProductId ?? null,
+      companion_package_id: event.companionPackageId ?? null,
+      metadata: event.metadata ?? {}
+    })
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
   res.status(201).json(data);
 });
 

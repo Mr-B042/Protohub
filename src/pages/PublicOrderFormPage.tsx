@@ -89,6 +89,17 @@ type CrossSellSelection = {
   quantity: number;
 };
 
+type PublicCartJourneyEventType =
+  | "form_opened"
+  | "package_selected"
+  | "state_selected"
+  | "additional_item_preview_opened"
+  | "additional_item_added"
+  | "additional_item_removed"
+  | "submit_attempted"
+  | "order_submitted"
+  | "form_exited";
+
 const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
 
 type PendingUpsellOffer = {
@@ -576,17 +587,94 @@ export default function PublicOrderFormPage() {
   const cartSyncTimerRef = useRef<number | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
   const publicOrderSubmittingRef = useRef(false);
+  const abandonedDraftCartIdRef = useRef("");
+  const journeyDedupRef = useRef<Set<string>>(new Set());
+  const previousCrossSellKeysRef = useRef<string[]>([]);
+  const lastTrackedPackageIdRef = useRef("");
+  const lastTrackedStateRef = useRef("");
+  const lastExpandedCardProductIdRef = useRef<string | null>(null);
+  const exitTrackedRef = useRef(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
 
   const publicProduct = products.find((product) => product.id === publicProductId);
   const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
   const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
 
+  const ensureDraftCartId = () => {
+    if (publicEmbedIsPreview) return "";
+    if (abandonedDraftCartIdRef.current) return abandonedDraftCartIdRef.current;
+    const nextId = makeCartId();
+    abandonedDraftCartIdRef.current = nextId;
+    setAbandonedDraftCartId(nextId);
+    if (publicProduct && chosenPackage) {
+      const dedupeKey = `form_opened:${nextId}`;
+      journeyDedupRef.current.add(dedupeKey);
+      cartsApi.trackPublicJourney(
+        nextId,
+        {
+          productId: publicProduct.id,
+          packageId: chosenPackage.id,
+          state: orderFormState.trim() || undefined,
+          eventType: "form_opened",
+          metadata: {
+            productName: publicProduct.name,
+            packageName: chosenPackage.name
+          }
+        }
+      ).catch(() => {
+        // Journey tracking is best-effort only.
+      });
+    }
+    return nextId;
+  };
+
+  const trackCartJourney = (
+    eventType: PublicCartJourneyEventType,
+    options?: {
+      cartId?: string;
+      dedupeKey?: string;
+      packageId?: string;
+      state?: string;
+      companionProductId?: string;
+      companionPackageId?: string;
+      metadata?: Record<string, string | number | boolean | null>;
+      keepalive?: boolean;
+    }
+  ) => {
+    if (publicEmbedIsPreview || !publicProduct) return;
+    const cartId = options?.cartId ?? ensureDraftCartId();
+    if (!cartId) return;
+    const dedupeKey = options?.dedupeKey?.trim();
+    if (dedupeKey && journeyDedupRef.current.has(dedupeKey)) return;
+    if (dedupeKey) journeyDedupRef.current.add(dedupeKey);
+
+    cartsApi.trackPublicJourney(
+      cartId,
+      {
+        productId: publicProduct.id,
+        packageId: options?.packageId ?? chosenPackage?.id ?? undefined,
+        state: options?.state ?? (orderFormState.trim() || undefined),
+        eventType,
+        companionProductId: options?.companionProductId,
+        companionPackageId: options?.companionPackageId,
+        metadata: options?.metadata
+      },
+      { keepalive: options?.keepalive === true }
+    ).catch(() => {
+      // Journey tracking is best-effort only.
+    });
+  };
+
   useEffect(() => {
     if (publicEmbedIsPreview) {
       setAbandonedDraftCartId("");
+      abandonedDraftCartIdRef.current = "";
     }
   }, [publicEmbedIsPreview, publicProductId]);
+
+  useEffect(() => {
+    abandonedDraftCartIdRef.current = abandonedDraftCartId;
+  }, [abandonedDraftCartId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -656,6 +744,13 @@ export default function PublicOrderFormPage() {
     setOrderFormPackageId("");
     setOrderFormCrossSells([]);
     setAbandonedDraftCartId("");
+    abandonedDraftCartIdRef.current = "";
+    journeyDedupRef.current.clear();
+    previousCrossSellKeysRef.current = [];
+    lastTrackedPackageIdRef.current = "";
+    lastTrackedStateRef.current = "";
+    lastExpandedCardProductIdRef.current = null;
+    exitTrackedRef.current = false;
 
     (async () => {
       let resolvedProduct: PublicProduct | null = null;
@@ -762,13 +857,18 @@ export default function PublicOrderFormPage() {
       orderFormCity.trim() ||
       orderFormState.trim()
     );
+    const primaryPackageId = publicPackages[0]?.id ?? "";
+    const meaningfulInteraction = Boolean(
+      formTouched ||
+      orderFormCrossSells.length > 0 ||
+      expandedCardCompanionProductId ||
+      (chosenPackage?.id && primaryPackageId && chosenPackage.id !== primaryPackageId)
+    );
 
-    if (publicEmbedIsPreview || !formTouched || !publicProduct || !chosenPackage) return;
+    if (publicEmbedIsPreview || !meaningfulInteraction || !publicProduct || !chosenPackage) return;
 
-    const cartId = abandonedDraftCartId || makeCartId();
-    if (!abandonedDraftCartId) {
-      setAbandonedDraftCartId(cartId);
-    }
+    const cartId = ensureDraftCartId();
+    if (!cartId) return;
 
     cartSyncTimerRef.current = window.setTimeout(() => {
       if (publicOrderSubmittingRef.current) return;
@@ -809,16 +909,98 @@ export default function PublicOrderFormPage() {
     orderFormState,
     orderFormWhatsapp,
     publicEmbedIsPreview,
+    publicPackages,
     publicProduct,
     publicUtmSource,
+    orderFormCrossSells.length,
+    expandedCardCompanionProductId,
   ]);
 
   useEffect(() => {
+    if (!abandonedDraftCartId || publicEmbedIsPreview || !publicProduct || !chosenPackage) return;
+    trackCartJourney("form_opened", {
+      dedupeKey: `form_opened:${abandonedDraftCartId}`,
+      packageId: chosenPackage.id,
+      metadata: {
+        productName: publicProduct.name,
+        packageName: chosenPackage.name
+      }
+    });
+  }, [abandonedDraftCartId, chosenPackage, publicEmbedIsPreview, publicProduct]);
+
+  useEffect(() => {
+    if (!chosenPackage) return;
+    if (!lastTrackedPackageIdRef.current) {
+      lastTrackedPackageIdRef.current = chosenPackage.id;
+      return;
+    }
+    if (lastTrackedPackageIdRef.current === chosenPackage.id) return;
+    lastTrackedPackageIdRef.current = chosenPackage.id;
+    trackCartJourney("package_selected", {
+      dedupeKey: `package_selected:${chosenPackage.id}`,
+      packageId: chosenPackage.id,
+      metadata: {
+        packageName: chosenPackage.name,
+        quantity: chosenPackage.quantity,
+        amount: chosenPackage.price
+      }
+    });
+  }, [chosenPackage]);
+
+  useEffect(() => {
+    const normalizedState = normalizeStateName(orderFormState);
+    if (!normalizedState) {
+      lastTrackedStateRef.current = "";
+      return;
+    }
+    if (lastTrackedStateRef.current === normalizedState) return;
+    lastTrackedStateRef.current = normalizedState;
+    trackCartJourney("state_selected", {
+      dedupeKey: `state_selected:${normalizedState}`,
+      state: normalizedState,
+      metadata: { state: normalizedState }
+    });
+  }, [orderFormState]);
+
+  useEffect(() => {
+    if (publicEmbedIsPreview) {
+      return () => {
+        if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current);
+        if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
+      };
+    }
+
+    const handlePageHide = () => {
+      if (publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+      const cartId = abandonedDraftCartIdRef.current;
+      if (!cartId || !publicProduct) return;
+      if (exitTrackedRef.current) return;
+      exitTrackedRef.current = true;
+      cartsApi.trackPublicJourney(
+        cartId,
+        {
+          productId: publicProduct.id,
+          packageId: chosenPackage?.id ?? undefined,
+          state: orderFormState.trim() || undefined,
+          eventType: "form_exited",
+          metadata: {
+            customerName: orderFormName.trim() || null,
+            additionalItems: orderFormCrossSells.length
+          }
+        },
+        { keepalive: true }
+      ).catch(() => {
+        // Ignore exit-tracking failures.
+      });
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
     return () => {
       if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current);
       if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
+      window.removeEventListener("pagehide", handlePageHide);
     };
-  }, []);
+  }, [chosenPackage, orderFormCrossSells.length, orderFormName, orderFormState, publicEmbedIsPreview, publicOrderSubmitted, publicProduct]);
 
   function showToast(message: string) {
     setToast(message);
@@ -869,6 +1051,13 @@ export default function PublicOrderFormPage() {
     setOrderFormCrossSells([]);
     setPublicHoneypot("");
     setAbandonedDraftCartId("");
+    abandonedDraftCartIdRef.current = "";
+    journeyDedupRef.current.clear();
+    previousCrossSellKeysRef.current = [];
+    lastTrackedPackageIdRef.current = "";
+    lastTrackedStateRef.current = "";
+    lastExpandedCardProductIdRef.current = null;
+    exitTrackedRef.current = false;
     if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
   }
 
@@ -940,12 +1129,21 @@ export default function PublicOrderFormPage() {
     }
 
     const customerName = orderFormName.trim();
+    const submissionCartId = abandonedDraftCartIdRef.current || ensureDraftCartId();
+    trackCartJourney("submit_attempted", {
+      cartId: submissionCartId || undefined,
+      dedupeKey: `submit_attempted:${submissionCartId || "draft"}`,
+      metadata: {
+        customerName: customerName || "Customer",
+        additionalItems: orderFormCrossSells.length
+      }
+    });
 
     setPublicOrderSubmitting(true);
     publicOrderSubmittingRef.current = true;
     try {
       const created = await publicOrdersApi.create({
-        cartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
+        cartId: publicEmbedIsPreview ? undefined : (submissionCartId || undefined),
         customer: customerName,
         phone: orderFormPhone.trim(),
         whatsapp: whatsappDigits || undefined,
@@ -1002,6 +1200,15 @@ export default function PublicOrderFormPage() {
       }
 
       if (created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct) {
+        trackCartJourney("order_submitted", {
+          cartId: submissionCartId || undefined,
+          dedupeKey: `order_submitted:${created.id}`,
+          metadata: {
+            orderId: created.id,
+            customerName: customerName || "Customer",
+            additionalItems: orderFormCrossSells.length
+          }
+        });
         setPublicUpsellOffer({
           orderId: created.id,
           customer: customerName,
@@ -1016,6 +1223,15 @@ export default function PublicOrderFormPage() {
         return;
       }
 
+      trackCartJourney("order_submitted", {
+        cartId: submissionCartId || undefined,
+        dedupeKey: `order_submitted:${created.id}`,
+        metadata: {
+          orderId: created.id,
+          customerName: customerName || "Customer",
+          additionalItems: orderFormCrossSells.length
+        }
+      });
       finishPublicOrderJourney(created.id, customerName);
       return;
     } catch (error: any) {
@@ -1315,6 +1531,63 @@ export default function PublicOrderFormPage() {
     () => companionOptions.filter((companion) => (companion.displayMode ?? "compact") !== "card"),
     [companionOptions]
   );
+
+  useEffect(() => {
+    if (!expandedCardCompanionProductId) {
+      lastExpandedCardProductIdRef.current = null;
+      return;
+    }
+    if (lastExpandedCardProductIdRef.current === expandedCardCompanionProductId) return;
+    lastExpandedCardProductIdRef.current = expandedCardCompanionProductId;
+    const group = cardCompanionGroups.find((entry) => entry.product?.id === expandedCardCompanionProductId);
+    if (!group?.product) return;
+    const previewCompanion = group.companions[0];
+    trackCartJourney("additional_item_preview_opened", {
+      companionProductId: group.product.id,
+      companionPackageId: previewCompanion?.packageId ?? undefined,
+      metadata: {
+        productName: group.product.name,
+        variants: group.companions.length
+      }
+    });
+  }, [cardCompanionGroups, expandedCardCompanionProductId]);
+
+  useEffect(() => {
+    const nextKeys = orderFormCrossSells.map((line) => companionSelectionKey(line)).sort();
+    const prevKeys = previousCrossSellKeysRef.current;
+    if (prevKeys.length === 0 && nextKeys.length === 0) return;
+
+    const addedKeys = nextKeys.filter((key) => !prevKeys.includes(key));
+    const removedKeys = prevKeys.filter((key) => !nextKeys.includes(key));
+
+    for (const key of addedKeys) {
+      const selection = orderFormCrossSells.find((line) => companionSelectionKey(line) === key);
+      if (!selection) continue;
+      const product = products.find((item) => item.id === selection.productId);
+      trackCartJourney("additional_item_added", {
+        companionProductId: selection.productId,
+        companionPackageId: selection.packageId ?? undefined,
+        metadata: {
+          productName: product?.name ?? "Additional item",
+          quantity: selection.quantity
+        }
+      });
+    }
+
+    for (const key of removedKeys) {
+      const [productId, packageId] = key.split("::");
+      const product = products.find((item) => item.id === productId);
+      trackCartJourney("additional_item_removed", {
+        companionProductId: productId,
+        companionPackageId: packageId || undefined,
+        metadata: {
+          productName: product?.name ?? "Additional item"
+        }
+      });
+    }
+
+    previousCrossSellKeysRef.current = nextKeys;
+  }, [orderFormCrossSells, products]);
 
   useEffect(() => {
     if (cardCompanionGroups.length === 0) {

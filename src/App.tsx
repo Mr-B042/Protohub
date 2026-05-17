@@ -597,6 +597,7 @@ type TrackedOrder = {
   id: string;
   productId?: string;
   packageId?: string;
+  sourceCartId?: string;
   customer: string;
   phone: string;
   whatsapp?: string;
@@ -752,6 +753,27 @@ type AbandonedCartRecord = {
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
   lastActivity: string;
+  createdAt: string;
+};
+type CartJourneyEvent = {
+  id: string;
+  cartId: string;
+  productId?: string;
+  packageId?: string;
+  state?: string;
+  eventType:
+    | "form_opened"
+    | "package_selected"
+    | "state_selected"
+    | "additional_item_preview_opened"
+    | "additional_item_added"
+    | "additional_item_removed"
+    | "submit_attempted"
+    | "order_submitted"
+    | "form_exited";
+  companionProductId?: string;
+  companionPackageId?: string;
+  metadata: Record<string, string | number | boolean | null>;
   createdAt: string;
 };
 type DeliveryAgentCoverage = {
@@ -2963,6 +2985,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
       : undefined;
   return {
     ...value,
+    sourceCartId: value?.sourceCartId ?? value?.source_cart_id ?? undefined,
     createdAt: typeof value?.createdAt === "string" && value.createdAt
       ? value.createdAt
       : typeof value?.created_at === "string" && value.created_at
@@ -3078,6 +3101,80 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
   };
+};
+
+const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
+  const event = snakeToCamel<any>(value);
+  const metadataCandidate = event.metadata;
+  const metadata: Record<string, string | number | boolean | null> =
+    metadataCandidate && typeof metadataCandidate === "object" && !Array.isArray(metadataCandidate)
+      ? Object.fromEntries(
+          Object.entries(metadataCandidate).filter(([, entry]) =>
+            typeof entry === "string"
+            || typeof entry === "number"
+            || typeof entry === "boolean"
+            || entry === null
+          )
+        ) as Record<string, string | number | boolean | null>
+      : {};
+  return {
+    id: event.id,
+    cartId: event.cartId ?? event.cart_id ?? "",
+    productId: event.productId ?? event.product_id ?? undefined,
+    packageId: event.packageId ?? event.package_id ?? undefined,
+    state: event.state ?? undefined,
+    eventType: (event.eventType ?? event.event_type ?? "form_opened") as CartJourneyEvent["eventType"],
+    companionProductId: event.companionProductId ?? event.companion_product_id ?? undefined,
+    companionPackageId: event.companionPackageId ?? event.companion_package_id ?? undefined,
+    metadata,
+    createdAt: event.createdAt ?? event.created_at ?? ""
+  };
+};
+
+const cartJourneyTitle = (event: CartJourneyEvent) => {
+  switch (event.eventType) {
+    case "form_opened": return "Journey started";
+    case "package_selected": return "Package changed";
+    case "state_selected": return "State selected";
+    case "additional_item_preview_opened": return "Viewed additional item";
+    case "additional_item_added": return "Added additional item";
+    case "additional_item_removed": return "Removed additional item";
+    case "submit_attempted": return "Tried to submit";
+    case "order_submitted": return "Order submitted";
+    case "form_exited": return "Left the form";
+    default: return "Form activity";
+  }
+};
+
+const cartJourneyDetail = (event: CartJourneyEvent) => {
+  const metadata = event.metadata ?? {};
+  const productName = typeof metadata.productName === "string" ? metadata.productName : "";
+  const packageName = typeof metadata.packageName === "string" ? metadata.packageName : "";
+  const stateName = typeof metadata.state === "string" ? metadata.state : event.state ?? "";
+  const quantity = typeof metadata.quantity === "number" ? metadata.quantity : null;
+  const variants = typeof metadata.variants === "number" ? metadata.variants : null;
+  const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
+  const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
+  switch (event.eventType) {
+    case "package_selected":
+      return packageName || productName || "Switched package";
+    case "state_selected":
+      return stateName || "Picked a state";
+    case "additional_item_preview_opened":
+      return variants && variants > 1 ? `${productName || "Additional item"} · ${variants} bundle choices` : (productName || "Opened an additional item");
+    case "additional_item_added":
+      return quantity && quantity > 1 ? `${productName || "Additional item"} · ${quantity} pcs` : (productName || "Added an additional item");
+    case "additional_item_removed":
+      return productName || "Removed an additional item";
+    case "submit_attempted":
+      return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;
+    case "order_submitted":
+      return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
+    case "form_exited":
+      return additionalItems && additionalItems > 0 ? `Left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Left before submitting";
+    default:
+      return productName || packageName || stateName || "";
+  }
 };
 
 const normalizeRealtimeUser = (value: any): ManagedUser => {
@@ -4628,6 +4725,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
   const [trackedOrders, setTrackedOrders] = useState<TrackedOrder[]>([]);
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
+  const [selectedCartJourney, setSelectedCartJourney] = useState<CartJourneyEvent[]>([]);
+  const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
+  const [selectedOrderJourney, setSelectedOrderJourney] = useState<CartJourneyEvent[]>([]);
+  const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
@@ -5251,6 +5352,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
+  useEffect(() => {
+    if (modal !== "cartDetails" || !selectedCart?.id) {
+      setSelectedCartJourney([]);
+      setSelectedCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedCartJourneyLoading(true);
+    cartsApi.journey(selectedCart.id)
+      .then((events) => {
+        if (cancelled) return;
+        setSelectedCartJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedCartJourney([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setSelectedCartJourneyLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, selectedCart?.id]);
+
+  useEffect(() => {
+    const canViewSubmittedOrderJourney = realRole === "Owner" || realRole === "Admin";
+    if (modal !== "orderDetails" || !selectedOrder?.sourceCartId || !canViewSubmittedOrderJourney) {
+      setSelectedOrderJourney([]);
+      setSelectedOrderJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedOrderJourneyLoading(true);
+    cartsApi.journey(selectedOrder.sourceCartId)
+      .then((events) => {
+        if (cancelled) return;
+        setSelectedOrderJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedOrderJourney([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setSelectedOrderJourneyLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, realRole, selectedOrder?.sourceCartId]);
+
   useEffect(() => {
     if (!selectedOrderId) {
       return;
@@ -33190,6 +33348,64 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 	                )}
 
+                  {(realRole === "Owner" || realRole === "Admin") && selectedOrder.sourceCartId && (
+                    <section>
+                      <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Customer Journey</h3>
+                      <div className={`rounded-[28px] px-5 py-5 ${orderPanelClass}`}>
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Source form timeline</p>
+                            <p className={`m-0 mt-2 text-[15px] sm:text-[16px] ${orderMutedTextClass}`}>
+                              What the customer did before this order was submitted from the form.
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Journey events</p>
+                            <p className={`m-0 mt-2 text-[18px] font-semibold ${orderTitleTextClass}`}>{selectedOrderJourney.length}</p>
+                          </div>
+                        </div>
+                        <div className={`mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Linked form session</p>
+                            <p className={`m-0 mt-2 text-[15px] font-semibold break-all ${orderTitleTextClass}`}>{selectedOrder.sourceCartId}</p>
+                          </div>
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Last step reached</p>
+                            <p className={`m-0 mt-2 text-[15px] font-semibold ${orderTitleTextClass}`}>
+                              {selectedOrderJourney.length > 0 ? cartJourneyTitle(selectedOrderJourney[selectedOrderJourney.length - 1]) : "No tracked steps yet"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 flex items-center justify-between gap-2">
+                          <p className={`m-0 text-[12px] ${orderMutedTextClass}`}>Owner/Admin only. Useful for seeing what they viewed, added, removed, and when they submitted.</p>
+                          {selectedOrderJourneyLoading ? <span className={`text-[11px] font-semibold ${orderFaintTextClass}`}>Loading...</span> : null}
+                        </div>
+                        {selectedOrderJourney.length === 0 && !selectedOrderJourneyLoading ? (
+                          <p className={`m-0 mt-4 text-sm ${orderMutedTextClass}`}>No journey timeline has been captured for this submitted order yet.</p>
+                        ) : (
+                          <div className="mt-4 grid gap-2">
+                            {selectedOrderJourney.map((event, index) => (
+                              <div key={event.id} className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
+                                <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-50 text-[#1F8FE0] text-xs font-extrabold flex items-center justify-center">
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                                    <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{cartJourneyTitle(event)}</p>
+                                    <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(event.createdAt)}</span>
+                                  </div>
+                                  {cartJourneyDetail(event) ? (
+                                    <p className={`m-0 mt-1 text-[13px] leading-6 ${orderMutedTextClass}`}>{cartJourneyDetail(event)}</p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  )}
+
 	                {/* Footer */}
 	                <div className="flex justify-end pt-2 border-t border-gray-100">
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
@@ -33738,6 +33954,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
+	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
 	              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -33817,6 +34034,39 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Last step reached</p><p className="font-semibold text-gray-900 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Journey events</p><p className="font-semibold text-gray-900 m-0">{selectedCartJourney.length}</p></div>
+	                    </div>
+	                    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+	                      <div className="flex items-center justify-between gap-2 mb-2">
+	                        <div>
+	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 m-0">Customer journey</p>
+	                          <p className="text-[12px] text-gray-500 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
+	                        </div>
+	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading...</span> : null}
+	                      </div>
+	                      {selectedCartJourney.length === 0 && !selectedCartJourneyLoading ? (
+	                        <p className="text-sm text-gray-500 m-0">No journey timeline has been captured for this cart yet.</p>
+	                      ) : (
+	                        <div className="grid gap-2">
+	                          {selectedCartJourney.map((event, index) => (
+	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 px-3 py-2">
+	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 text-[#1F8FE0] text-xs font-extrabold flex items-center justify-center">
+	                                {index + 1}
+	                              </div>
+	                              <div className="min-w-0 flex-1">
+	                                <div className="flex items-start justify-between gap-3 flex-wrap">
+	                                  <p className="text-sm font-semibold text-gray-900 m-0">{cartJourneyTitle(event)}</p>
+	                                  <span className="text-[11px] text-gray-400">{formatMoment(event.createdAt)}</span>
+	                                </div>
+	                                {cartJourneyDetail(event) ? (
+	                                  <p className="text-xs text-gray-600 m-0 mt-0.5">{cartJourneyDetail(event)}</p>
+	                                ) : null}
+	                              </div>
+	                            </div>
+	                          ))}
+	                        </div>
+	                      )}
 	                    </div>
 	                  </section>
 

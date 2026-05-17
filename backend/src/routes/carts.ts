@@ -132,6 +132,44 @@ router.post("/", async (req, res) => {
   res.status(201).json(data);
 });
 
+// ── GET /api/carts/:id/journey ──────────────────────────
+// Returns the public-form activity timeline for a draft/converted cart.
+router.get("/:id/journey", async (req, res) => {
+  let cartQuery = supabase
+    .from("abandoned_carts")
+    .select("id, org_id, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId);
+
+  if (req.user!.role === "Sales Rep") {
+    cartQuery = cartQuery.eq("assigned_rep_id", req.user!.id);
+  }
+
+  const { data: cart, error: cartError } = await cartQuery.maybeSingle();
+  if (cartError) {
+    res.status(500).json({ error: cartError.message });
+    return;
+  }
+  if (!cart) {
+    res.status(404).json({ error: "Cart not found." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("cart_journey_events")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("cart_id", req.params.id)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json(data ?? []);
+});
+
 // ── PATCH /api/carts/:id ─────────────────────────────────
 // Update status, assigned rep, etc.
 //
