@@ -1,15 +1,13 @@
-import React, { Suspense, lazy, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
+import { App } from "./App";
 import { auth } from "./lib/auth";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
+import { LoginScreen } from "./components/LoginScreen";
+import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import "./styles.css";
-
-const loadApp = () => import("./App");
-const App = lazy(async () => ({ default: (await loadApp()).App }));
-const LoginScreen = lazy(async () => ({ default: (await import("./components/LoginScreen")).LoginScreen }));
-const ResetPasswordScreen = lazy(async () => ({ default: (await import("./components/ResetPasswordScreen")).ResetPasswordScreen }));
 
 function RouteFallback({ message }: { message: string }) {
   return (
@@ -21,10 +19,49 @@ function RouteFallback({ message }: { message: string }) {
   );
 }
 
-function AppShellFallback() {
-  return (
-    <div style={{ minHeight: "100vh", background: "#ebebeb" }} aria-hidden="true" />
-  );
+const STALE_IMPORT_PATTERNS = [
+  /Failed to fetch dynamically imported module/i,
+  /Importing a module script failed/i,
+  /ChunkLoadError/i,
+  /Loading chunk [\w-]+ failed/i
+];
+const CHUNK_RECOVERY_SESSION_KEY = "protohub.chunk-recovery-once";
+
+function extractErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const candidate = error as { message?: unknown; reason?: unknown };
+    if (typeof candidate.message === "string") return candidate.message;
+    if (typeof candidate.reason === "string") return candidate.reason;
+  }
+  return "";
+}
+
+function isStaleImportError(error: unknown): boolean {
+  const message = extractErrorMessage(error);
+  return STALE_IMPORT_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function scheduleStaleChunkRecovery(error: unknown): boolean {
+  if (typeof window === "undefined" || !isStaleImportError(error)) {
+    return false;
+  }
+
+  const marker = `${window.location.pathname}${window.location.hash}`;
+  if (window.sessionStorage.getItem(CHUNK_RECOVERY_SESSION_KEY) === marker) {
+    return false;
+  }
+
+  window.sessionStorage.setItem(CHUNK_RECOVERY_SESSION_KEY, marker);
+  window.setTimeout(() => {
+    void ensureServiceWorkerRegistration()
+      .then((registration) => registration?.update?.().catch(() => undefined))
+      .catch(() => undefined)
+      .finally(() => {
+        window.location.reload();
+      });
+  }, 0);
+  return true;
 }
 
 // Sentry error tracking — set VITE_SENTRY_DSN in Vercel environment variables.
@@ -65,13 +102,32 @@ function Root() {
 
   useEffect(() => {
     if (hash.startsWith("#/order-form/embed")) return;
-    void loadApp();
+    void ensureServiceWorkerRegistration().catch(() => null);
   }, [hash]);
 
   useEffect(() => {
-    if (hash.startsWith("#/order-form/embed")) return;
-    void ensureServiceWorkerRegistration().catch(() => null);
-  }, [hash]);
+    const onWindowError = (event: ErrorEvent) => {
+      if (scheduleStaleChunkRecovery(event.error ?? event.message)) {
+        event.preventDefault?.();
+      }
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (scheduleStaleChunkRecovery(event.reason)) {
+        event.preventDefault();
+      }
+    };
+    const clearMarker = window.setTimeout(() => {
+      window.sessionStorage.removeItem(CHUNK_RECOVERY_SESSION_KEY);
+    }, 5000);
+
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.clearTimeout(clearMarker);
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
 
   const handleLogin  = () => setLoggedIn(true);
   const handleLogout = () => { auth.clear(); setLoggedIn(false); };
@@ -79,11 +135,7 @@ function Root() {
   // Recovery email lands on /#/reset-password — handle it before the auth gate
   // so the user can complete the reset even if they aren't "logged in" yet.
   if (hash.startsWith("#/reset-password")) {
-    return (
-      <Suspense fallback={<RouteFallback message="Loading reset screen..." />}>
-        <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />
-      </Suspense>
-    );
+    return <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />;
   }
 
   // Public embed form is hit by unauthenticated customers. App detects the
@@ -94,18 +146,10 @@ function Root() {
   }
 
   if (!loggedIn) {
-    return (
-      <Suspense fallback={<RouteFallback message="Loading sign-in..." />}>
-        <LoginScreen onLogin={handleLogin} />
-      </Suspense>
-    );
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
-  return (
-    <Suspense fallback={<AppShellFallback />}>
-      <App onLogout={handleLogout} />
-    </Suspense>
-  );
+  return <App onLogout={handleLogout} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -113,6 +157,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <Sentry.ErrorBoundary
       fallback={({ error }) => {
         const err = error as Error;
+        if (scheduleStaleChunkRecovery(err)) {
+          return <RouteFallback message="Refreshing the latest version..." />;
+        }
         return (
           <div style={{ padding: 40, maxWidth: 800, margin: "40px auto", fontFamily: "Inter, system-ui, sans-serif" }}>
             <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Something went wrong.</h2>
