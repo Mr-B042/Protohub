@@ -2,12 +2,14 @@ import { type Dispatch, type SetStateAction, Fragment, useEffect, useMemo, useRe
 import {
   ArrowRight,
   Archive,
+  Ban,
   Bell,
   BellRing,
   Check,
   ChevronRight,
   CalendarDays,
   CalendarClock,
+  Clock3,
   BadgeCheck,
   Banknote,
   BookOpen,
@@ -153,10 +155,11 @@ type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderAssignmentScope = "All assignments" | "Assigned by me";
+type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
@@ -1102,6 +1105,15 @@ const moneyValues = {
 };
 
 const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
+const followUpQueueStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Postponed"];
+const closedOrderStatuses: OrderStatus[] = ["All Orders", "Delivered", "Cancelled", "Failed"];
+const ORDER_WORKSPACE_PAGES: OrderWorkspacePage[] = ["Orders", "Follow-up Queue", "Closed Orders"];
+const orderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
+  Orders: "#/dashboard/admin/orders",
+  "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
+  "Closed Orders": "#/dashboard/admin/closed-orders"
+};
+const isOrderWorkspacePage = (page: ActivePage): page is OrderWorkspacePage => ORDER_WORKSPACE_PAGES.includes(page as OrderWorkspacePage);
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
@@ -1252,19 +1264,19 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
 type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Admin": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Manager": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
@@ -1274,7 +1286,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
   "Viewer": [
-    "Dashboard", "Orders", "Customers", "Notifications", "Settings"
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
   ]
 };
 
@@ -2682,8 +2694,15 @@ const timeSinceCreated = (order: TrackedOrder): string => {
   return `${days}d`;
 };
 
+const ageInHours = (value?: string) => {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (Date.now() - parsed.getTime()) / (60 * 60 * 1000));
+};
+
 const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string } => {
-  const terminal = status === "Delivered" || status === "Cancelled";
+  const terminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
   const created = new Date(order.createdAt ?? order.date);
   if (Number.isNaN(created.getTime())) return { label: "—", cls: "text-gray-400" };
   if (terminal) return { label: "—", cls: "text-gray-300" };
@@ -4406,6 +4425,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
   useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
+  useEffect(() => {
+    if (activePage === "Closed Orders" && !closedOrderStatuses.includes(orderStatus)) {
+      setOrderStatus("All Orders");
+      return;
+    }
+    if (activePage === "Follow-up Queue" && !followUpQueueStatuses.includes(orderStatus)) {
+      setOrderStatus("All Orders");
+    }
+  }, [activePage, orderStatus]);
   // Abandoned Carts filters — declared further down. We can't reference
   // cartsPeriod / cartProductIds here without TDZ errors; mirror happens via
   // setter wrappers further below in the carts state block.
@@ -7290,6 +7318,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return Array.from(acc.values()).sort((a, b) => b.revenue - a.revenue);
   })();
   const projectedRevenue = formatMoney(dashboardProjectedRevenue);
+  const orderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
+  const matchesFollowUpQueuePage = (order: TrackedOrder) => {
+    const status = statusForOrder(order);
+    if (CLOSED_ORDER_STATUSES.has(status)) return false;
+    if (status === "Postponed") return true;
+    if (nextFollowUpForOrder(order)) return true;
+    return followUpInsightsForOrder(order).length > 0;
+  };
+  const matchesOrderWorkspacePage = (order: TrackedOrder) => {
+    if (orderWorkspacePage === "Follow-up Queue") return matchesFollowUpQueuePage(order);
+    if (orderWorkspacePage === "Closed Orders") return CLOSED_ORDER_STATUSES.has(statusForOrder(order));
+    return true;
+  };
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -7303,8 +7344,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
     const matchesAssigner = matchesOrderAssignmentScope(order);
+    const matchesWorkspace = matchesOrderWorkspacePage(order);
 
-    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct && matchesAssigner;
+    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
   });
   const ORDERS_PAGE_SIZE = 25;
   const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
@@ -7312,9 +7354,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
+  const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
   const pfOrders = orderProductIds.size === 0
-    ? assignmentScopedPeriodOrders
-    : assignmentScopedPeriodOrders.filter((o) => matchesProductFilter(o.productId, o.productName, orderProductIds));
+    ? assignmentScopedWorkspaceOrders
+    : assignmentScopedWorkspaceOrders.filter((o) => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
@@ -7323,6 +7366,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
+  const pfFollowUpRows = pfOrders.filter(matchesFollowUpQueuePage);
+  const pfFollowUpDueNow = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.overdue).length;
+  const pfFollowUpDueSoon = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.dueSoon).length;
+  const pfFollowUpPostponed = pfFollowUpRows.filter((order) => statusForOrder(order) === "Postponed").length;
+  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((order) => {
+    const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
+    return latestAttempt ? ageInHours(latestAttempt.attemptedAt) <= 24 : false;
+  }).length;
+  const pfClosedDelivered = pfOrders.filter((order) => statusForOrder(order) === "Delivered").length;
+  const pfClosedCancelled = pfOrders.filter((order) => statusForOrder(order) === "Cancelled").length;
+  const pfClosedFailed = pfOrders.filter((order) => statusForOrder(order) === "Failed").length;
   const ordersByProduct = Object.entries(
     pfOrders.reduce<Record<string, { count: number; revenue: number; units: number }>>((acc, order) => {
       const current = acc[order.productName] ?? { count: 0, revenue: 0, units: 0 };
@@ -7335,6 +7389,50 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return acc;
     }, {})
   );
+  const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
+    ? [
+        { label: "Queue Total", value: pfOrders.length, sub: "non-terminal orders needing action", icon: Headphones, color: "bg-amber-50 text-amber-500" },
+        { label: "Due Now", value: pfFollowUpDueNow, sub: "follow-ups overdue right now", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
+        { label: "Due Soon", value: pfFollowUpDueSoon, sub: "follow-ups due within 2 hours", icon: Clock3, color: "bg-blue-50 text-blue-500" },
+        { label: "Postponed", value: pfFollowUpPostponed, sub: "customers waiting on a later callback", icon: CalendarDays, color: "bg-purple-50 text-purple-500" }
+      ]
+    : orderWorkspacePage === "Closed Orders"
+      ? [
+          { label: "Closed Total", value: pfOrders.length, sub: "terminal outcomes in this period", icon: Archive, color: "bg-slate-100 text-slate-600" },
+          { label: "Delivered", value: pfClosedDelivered, sub: "completed successfully", icon: BadgeCheck, color: "bg-green-50 text-green-500" },
+          { label: "Cancelled", value: pfClosedCancelled, sub: "customer or team cancelled", icon: Ban, color: "bg-amber-50 text-amber-500" },
+          { label: "Failed", value: pfClosedFailed, sub: "dispatch or completion failed", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" }
+        ]
+      : [
+          { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
+          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
+          { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
+          { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
+        ];
+  const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
+    ? {
+        icon: Headphones,
+        iconClassName: "bg-amber-50 text-amber-500",
+        title: "Queue Pressure",
+        helper: "Track the most urgent orders needing calls, confirmations, or callbacks.",
+        body: `${pfFollowUpDueNow} due now · ${pfFollowUpDueSoon} due soon · ${pfFollowUpRecentlyTouched} touched in the last 24 hours`
+      }
+    : orderWorkspacePage === "Closed Orders"
+      ? {
+          icon: Archive,
+          iconClassName: "bg-slate-100 text-slate-600",
+          title: "Closed Outcome Mix",
+          helper: "See how much of the archive is delivered versus cancelled or failed.",
+          body: `${pfClosedDelivered} delivered · ${pfClosedCancelled} cancelled · ${pfClosedFailed} failed`
+        }
+      : {
+          icon: TrendingUp,
+          iconClassName: "bg-purple-50 text-purple-500",
+          title: "Revenue Opportunity",
+          helper: "Model the impact of a higher delivery conversion rate.",
+          body: ""
+        };
+  const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName}`.toLowerCase().includes(search);
@@ -8797,8 +8895,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setModal("addCrossSell");
     if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
       syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-cross-sell`));
-    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-cross-sell`);
+    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
     }
   };
   const openFreeGiftModal = (order: TrackedOrder) => {
@@ -8809,8 +8907,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setModal("addFreeGift");
     if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
       syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-free-gift`));
-    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-free-gift`);
+    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-free-gift`));
     }
   };
   const openManualBonusModal = (order: TrackedOrder) => {
@@ -8819,8 +8917,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
     setManualBonusReasonText(order.manualBonusReason ?? "");
     setModal("manualBonus");
-    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/manual-bonus`);
+    if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/manual-bonus`));
     }
   };
   const openAddPenalty = (repId?: string, orderId?: string) => {
@@ -10026,6 +10124,49 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? `${ordersDateRange.start} to ${ordersDateRange.end}`
       : ordersPeriod;
 
+  const orderWorkspaceMeta: Record<OrderWorkspacePage, {
+    title: string;
+    subtitle: string;
+    exportTitle: string;
+    exportFilePrefix: string;
+    tableLabel: string;
+    statusOptions: OrderStatus[];
+    productHeading: string;
+    productHelper: string;
+  }> = {
+    Orders: {
+      title: "Orders Management",
+      subtitle: "Track and manage all customer orders in real-time",
+      exportTitle: "Orders Report",
+      exportFilePrefix: "orders-report",
+      tableLabel: "Orders table",
+      statusOptions: orderStatuses,
+      productHeading: "New Orders by Product",
+      productHelper: "All orders (any status) created in the selected period"
+    },
+    "Follow-up Queue": {
+      title: "Follow-up Queue",
+      subtitle: "Focus on non-terminal orders that still need customer action, callback, or confirmation.",
+      exportTitle: "Follow-up Queue Report",
+      exportFilePrefix: "follow-up-queue-report",
+      tableLabel: "Follow-up queue table",
+      statusOptions: followUpQueueStatuses,
+      productHeading: "Follow-up Queue by Product",
+      productHelper: "Products currently driving open customer follow-up work"
+    },
+    "Closed Orders": {
+      title: "Closed Orders",
+      subtitle: "Review delivered, cancelled, and failed orders without active pipeline noise.",
+      exportTitle: "Closed Orders Report",
+      exportFilePrefix: "closed-orders-report",
+      tableLabel: "Closed orders table",
+      statusOptions: closedOrderStatuses,
+      productHeading: "Closed Orders by Product",
+      productHelper: "Terminal orders closed in the selected period"
+    }
+  };
+  const activeOrderWorkspaceMeta = orderWorkspaceMeta[orderWorkspacePage];
+
   const selectedDeliveriesPeriodLabel =
     deliveriesPeriod === "Custom" && deliveriesDateRange.start && deliveriesDateRange.end
       ? `${deliveriesDateRange.start} to ${deliveriesDateRange.end}`
@@ -10109,7 +10250,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Follow-up Queue" ? "Follow-up queue is ready." : activePage === "Closed Orders" ? "Closed orders archive is ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -10287,6 +10428,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminRouteToPage: Record<string, ActivePage> = {
       "": "Dashboard",
       orders: "Orders",
+      "follow-up-queue": "Follow-up Queue",
+      "closed-orders": "Closed Orders",
       "abandoned-carts": "Abandoned Carts",
       "scheduled-deliveries": "Scheduled Deliveries",
       deliveries: "Deliveries",
@@ -10314,16 +10457,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       settings: "Settings"
     };
 
-    if (section === "orders" && parts[3] === "new") {
-      setActivePage("Orders");
+    const adminOrderWorkspaceRoutePage = section === "orders"
+      ? "Orders"
+      : section === "follow-up-queue"
+        ? "Follow-up Queue"
+        : section === "closed-orders"
+          ? "Closed Orders"
+          : null;
+
+    if (adminOrderWorkspaceRoutePage && parts[3] === "new") {
+      setActivePage(adminOrderWorkspaceRoutePage);
       openCreateOrderModal();
       return;
     }
 
-    if (section === "orders" && parts[3]) {
-      // Deep link to a specific admin order — land on the admin Orders page
-      // and open the same details modal the Eye-button uses.
-      setActivePage("Orders");
+    if (adminOrderWorkspaceRoutePage && parts[3]) {
+      setActivePage(adminOrderWorkspaceRoutePage);
       setSelectedOrderId(parts[3]);
       if (parts[4] === "edit") {
         setModal("editOrderItems");
@@ -10796,7 +10945,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   useEffect(() => {
     setOrdersPage(1);
     setSelectedOrderIds(new Set());
-  }, [orderSearch, orderStatus, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange]);
+  }, [orderSearch, orderStatus, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange, orderWorkspacePage]);
   useEffect(() => {
     setCartsPage(1);
     setSelectedCartIds(new Set());
@@ -12541,7 +12690,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? 0
       : Math.round((exportDelivered.length / filteredOrderRows.length) * 100);
     const rows = [
-      ["Orders Report"],
+      [activeOrderWorkspaceMeta.exportTitle],
       ["Period", selectedOrdersPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
@@ -12578,12 +12727,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `orders-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `${activeOrderWorkspaceMeta.exportFilePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    showToast("Orders CSV exported.");
+    showToast(`${activeOrderWorkspaceMeta.title} CSV exported.`);
   };
 
   const exportRepOrdersCsv = () => {
@@ -12896,6 +13045,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminHashByLabel: Record<string, string> = {
       Dashboard: "#/dashboard/admin",
       Orders: "#/dashboard/admin/orders",
+      "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
+      "Closed Orders": "#/dashboard/admin/closed-orders",
       "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
       "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
       Deliveries: "#/dashboard/admin/deliveries",
@@ -12935,6 +13086,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (label === "Orders") {
       syncAdminHash(label);
       setActivePage("Orders");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (label === "Follow-up Queue") {
+      syncAdminHash(label);
+      setActivePage("Follow-up Queue");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (label === "Closed Orders") {
+      syncAdminHash(label);
+      setActivePage("Closed Orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -15416,9 +15581,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
-    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+    if (isAdminOrderWorkspaceHash(hashRoute)) {
       setSelectedOrderId("");
-      syncHashRoute("#/dashboard/admin/orders");
+      syncHashRoute(activeOrderWorkspaceBaseHash);
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
@@ -17688,6 +17853,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setHashRoute(nextHash);
   };
 
+  const activeOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
+  const activeOrderWorkspaceBaseHash = orderWorkspaceHashByPage[activeOrderWorkspacePage];
+  const adminOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeOrderWorkspacePage) =>
+    `${orderWorkspaceHashByPage[page]}${suffix}`;
+  const isAdminOrderWorkspaceHash = (value: string) =>
+    value.startsWith("#/dashboard/admin/orders")
+    || value.startsWith("#/dashboard/admin/follow-up-queue")
+    || value.startsWith("#/dashboard/admin/closed-orders");
+
   const openRepTab = (tab: RepConsoleTab) => {
     setRepConsoleTab(tab);
     setRepOrderDetailId("");
@@ -17724,33 +17898,33 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminOrderDetail = (orderId: string) => {
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("orderDetails");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}`));
   };
 
   const openAdminCreateOrderRoute = () => {
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     openCreateOrderModal();
-    syncHashRoute("#/dashboard/admin/orders/new");
+    syncHashRoute(adminOrderWorkspaceHash("/new"));
   };
 
   const openAdminOrderEditRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     if (order) {
       openOrderModal(order, "editOrderItems");
     } else {
       setModal("editOrderItems");
     }
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit`));
   };
 
   const openAdminOrderEditCustomerRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     if (order) {
       setCreateOrderCustomer(order.customer);
@@ -17764,34 +17938,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setCreateOrderAmount(String(order.amount ?? ""));
     }
     setModal("editOrderCustomer");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit-customer`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit-customer`));
   };
 
   const openAdminOrderReassignRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setReassignRepId(order?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
     setHandoverReason("");
     setModal("reassignOrder");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/reassign`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/reassign`));
   };
 
   const openAdminOrderSendToAgentRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setCreateOrderAgentId(order?.agentId ?? "");
     setSendToAgentShowAllStates(false);
     setModal("sendToAgent");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/send-to-agent`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/send-to-agent`));
   };
 
   const openAdminOrderDeleteRoute = (orderId: string) => {
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("deleteOrder");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/delete`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/delete`));
   };
 
   const openAdminOrderStatusRoute = (
@@ -17800,13 +17974,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/change-status`));
   };
 
   const openAdminOrderRescheduleRoute = (orderId: string, reason = "", callOutcome?: string) => {
@@ -20485,17 +20659,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
-    if (modalBeforeClose === "orderDetails" && hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute("#/dashboard/admin/orders");
+    if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(activeOrderWorkspaceBaseHash);
     }
-    if (modalBeforeClose === "createOrder" && hashRoute === "#/dashboard/admin/orders/new") {
-      syncHashRoute("#/dashboard/admin/orders");
+    if (modalBeforeClose === "createOrder" && hashRoute === adminOrderWorkspaceHash("/new")) {
+      syncHashRoute(activeOrderWorkspaceBaseHash);
     }
     if (modalBeforeClose === "createOrder" && hashRoute.startsWith("#/dashboard/sales-rep/orders/new")) {
       syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders"));
     }
-    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(selectedOrderId ? `#/dashboard/admin/orders/${selectedOrderId}` : "#/dashboard/admin/orders");
+    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
     }
     if (modalBeforeClose && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
       syncHashRoute(selectedOrderId ? repRouteWithScope(`#/dashboard/sales-rep/orders/${selectedOrderId}`) : repRouteWithScope("#/dashboard/sales-rep/orders"));
@@ -21921,13 +22095,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               </div>
             </>
-          ) : activePage === "Orders" ? (
+          ) : isOrderWorkspacePage(activePage) ? (
             <div className="space-y-6">
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Orders Management</h1>
-                  <p className="text-sm font-medium text-gray-500">Track and manage all customer orders in real-time</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-2xl font-bold text-[#1F8FE0]">{activeOrderWorkspaceMeta.title}</h1>
+                    {orderWorkspacePage !== "Orders" && (
+                      <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700">
+                        Order workspace
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-gray-500">{activeOrderWorkspaceMeta.subtitle}</p>
                 </div>
                 {/* Desktop-only action buttons — on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -22002,12 +22183,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {/* Metric cards */}
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Orders summary">
-                {[
-                  { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-                  { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-                  { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
-                  { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" },
-                ].map(({ label, value, sub, icon: Icon, color }) => (
+                {orderWorkspaceMetricCards.map(({ label, value, sub, icon: Icon, color }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
                     <span className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${color}`}><Icon className="w-5 h-5" /></span>
                     <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</h2>
@@ -22025,12 +22201,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
                     <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><BookOpen className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">New Orders by Product</h2>
-                      <p className="text-xs text-gray-400">All orders (any status) created in the selected period</p>
+                      <h2 className="text-sm font-bold text-gray-900">{activeOrderWorkspaceMeta.productHeading}</h2>
+                      <p className="text-xs text-gray-400">{activeOrderWorkspaceMeta.productHelper}</p>
                     </div>
                   </div>
                   {ordersByProduct.length === 0 ? (
-                    <div className="px-5 py-10 text-center text-sm text-gray-400">No orders in this period.</div>
+                    <div className="px-5 py-10 text-center text-sm text-gray-400">
+                      {orderWorkspacePage === "Follow-up Queue"
+                        ? "No follow-up queue orders in this period."
+                        : orderWorkspacePage === "Closed Orders"
+                          ? "No closed orders in this period."
+                          : "No orders in this period."}
+                    </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
                       {ordersByProduct.map(([productName, item], idx) => (
@@ -22045,48 +22227,62 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   )}
                 </section>
 
-                {/* Revenue Opportunity */}
+                {/* Secondary workspace insight */}
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
-                    <span className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${orderWorkspaceInsight.iconClassName}`}><OrderWorkspaceInsightIcon className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">Revenue Opportunity</h2>
-                      <p className="text-xs text-gray-400">Model the impact of a higher delivery conversion rate.</p>
+                      <h2 className="text-sm font-bold text-gray-900">{orderWorkspaceInsight.title}</h2>
+                      <p className="text-xs text-gray-400">{orderWorkspaceInsight.helper}</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
-                      <strong className="text-xl font-bold text-gray-900">{pfDeliveryRateExact.toFixed(1)}%</strong>
+                  {orderWorkspacePage === "Orders" ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
+                          <strong className="text-xl font-bold text-gray-900">{pfDeliveryRateExact.toFixed(1)}%</strong>
+                        </div>
+                        <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current revenue</span>
+                          <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
+                        </div>
+                      </div>
+                      <label className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-gray-600">Conversion lift</span>
+                          <span className="font-bold text-[#1F8FE0]">+{ordersConversion}pp → {pfTargetConversion.toFixed(1)}%</span>
+                        </div>
+                        <input type="range" className="w-full accent-[#1F8FE0]" min="0" max={pfConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
+                        <div className="flex items-center gap-1.5">
+                          {[10, 20, 30, 100].map((rate) => (
+                            <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, pfConversionLiftMax))}>
+                              {rate === 100 ? "Max" : `+${rate}pp`}
+                            </button>
+                          ))}
+                        </div>
+                      </label>
+                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                        <span className="text-xs font-medium text-gray-500">Projected revenue</span>
+                        <strong className="text-lg font-bold text-[#1F8FE0]">{formatMoney(pfProjectedRevenue)}</strong>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1F8FE0] m-0">{orderWorkspaceInsight.title}</p>
+                      <strong className="text-2xl font-bold text-gray-900 block mt-2">{orderWorkspaceInsight.body}</strong>
+                      <p className="text-xs text-gray-500 mt-2 mb-0">
+                        {orderWorkspacePage === "Follow-up Queue"
+                          ? "Use this page to keep callbacks and pending customer actions from getting buried inside the full order list."
+                          : "Use this archive to review closed outcomes without active pipeline noise from open orders."}
+                      </p>
                     </div>
-                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current revenue</span>
-                      <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
-                    </div>
-                  </div>
-                  <label className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-gray-600">Conversion lift</span>
-                      <span className="font-bold text-[#1F8FE0]">+{ordersConversion}pp → {pfTargetConversion.toFixed(1)}%</span>
-                    </div>
-                    <input type="range" className="w-full accent-[#1F8FE0]" min="0" max={pfConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
-                    <div className="flex items-center gap-1.5">
-                      {[10, 20, 30, 100].map((rate) => (
-                        <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, pfConversionLiftMax))}>
-                          {rate === 100 ? "Max" : `+${rate}pp`}
-                        </button>
-                      ))}
-                    </div>
-                  </label>
-                  <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                    <span className="text-xs font-medium text-gray-500">Projected revenue</span>
-                    <strong className="text-lg font-bold text-[#1F8FE0]">{formatMoney(pfProjectedRevenue)}</strong>
-                  </div>
+                  )}
                 </section>
               </div>
 
               {/* Orders table */}
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Orders table">
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                 {/* Toolbar */}
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
                   <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[180px]">
@@ -22100,7 +22296,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     />
                   </label>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
-                    {orderStatuses.map((s) => <option key={s}>{s}</option>)}
+                    {activeOrderWorkspaceMeta.statusOptions.map((s) => <option key={s}>{s}</option>)}
                   </select>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
@@ -22180,12 +22376,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 {/* Mobile card list (sm and below) */}
                 <div className="block sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
                   {filteredOrderRows.length === 0 ? (
-                    <div className="px-5 py-12 text-center text-sm text-gray-400">No orders found</div>
+                    <div className="px-5 py-12 text-center text-sm text-gray-400">
+                      {orderWorkspacePage === "Follow-up Queue"
+                        ? "No follow-up orders match this filter."
+                        : orderWorkspacePage === "Closed Orders"
+                          ? "No closed orders match this filter."
+                          : "No orders found"}
+                    </div>
                   ) : (
                     pagedOrderRows.map((order) => {
                       const source = order.source ?? orderSourceFromUtm(order.utmSource);
                       const status = order.status ?? "New";
-                      const isTerminal = status === "Delivered" || status === "Cancelled";
+                      const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
@@ -22245,7 +22447,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                 {/* Table (sm and above) */}
                 <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm sticky-col-first">
+                  <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
                         <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
@@ -22278,12 +22480,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
                           const status = order.status ?? "New";
-                          const isTerminal = status === "Delivered" || status === "Cancelled";
+                          const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>

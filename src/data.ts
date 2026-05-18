@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowLeftRight,
   BadgeDollarSign,
   Banknote,
@@ -31,6 +32,8 @@ import {
 export const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, active: true },
   { label: "Orders", icon: ShoppingBag },
+  { label: "Follow-up Queue", icon: CalendarClock },
+  { label: "Closed Orders", icon: Archive },
   { label: "Abandoned Carts", icon: ShoppingCart },
   { label: "Scheduled Deliveries", icon: CalendarClock },
   { label: "Deliveries", icon: PackageCheck },
