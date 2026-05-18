@@ -34746,6 +34746,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
+                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+                      >
+                        <Copy className="w-4 h-4" /> Copy for WhatsApp Group
+                      </button>
                     </div>
 	                </div>
 
