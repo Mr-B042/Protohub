@@ -6940,27 +6940,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return `${selectedBundles}pc${selectedBundles === 1 ? "" : "s"}`;
   };
   const preferredPackageLineForOrder = (order: TrackedOrder) => {
+    const qty = Math.max(1, quantityForOrder(order));
+    const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
     const packageName = (order.packageName ?? "").trim();
     const productName = (order.productName ?? "").trim();
     if (packageName) {
       if (packageName.toLowerCase().includes(productName.toLowerCase())) {
-        return packageName;
+        return `${qtyLabel} Of ${packageName}`;
       }
-      return `${packageName} of ${productName}`;
+      return `${qtyLabel} Of ${packageName} of ${productName}`;
     }
-    const qty = Math.max(1, quantityForOrder(order));
-    return `${qty}pc${qty === 1 ? "" : "s"} of ${productName}`;
+    return `${qtyLabel} Of ${productName}`;
   };
   const preferredPackageLineForAdditionalItem = (line: CrossSellLine) => {
+    const qtyLabel = quantityLabelForOfferLine(line);
     const packageName = (line.packageName ?? "").trim();
     const productName = (line.productName ?? "").trim();
     if (packageName) {
       if (packageName.toLowerCase().includes(productName.toLowerCase())) {
-        return packageName;
+        return `${qtyLabel} Of ${packageName}`;
       }
-      return `${packageName} of ${productName}`;
+      return `${qtyLabel} Of ${packageName} of ${productName}`;
     }
-    return `${quantityLabelForOfferLine(line)} of ${productName}`;
+    return `${qtyLabel} Of ${productName}`;
   };
   const fullDeliveryLabelForOrder = (order: TrackedOrder) => {
     const parts = [order.address, order.city, order.state]
@@ -15596,6 +15598,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepDeliveryFee(order.logisticsCost != null ? String(order.logisticsCost) : "");
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
+    if (activePage === "Sales Rep Workspace") {
+      return;
+    }
     const nextHash = isOrderWorkspacePage(activePage)
       ? repOrderWorkspaceHash(`/${order.id}`, activeRepOrderWorkspacePage)
       : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
@@ -15605,6 +15610,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
+    if (activePage === "Sales Rep Workspace") {
+      return;
+    }
     const nextHash = isOrderWorkspacePage(activePage)
       ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
       : (hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders"));
@@ -19145,7 +19153,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             <Download className="w-4 h-4" /> Download Invoice
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}>
-            <Copy className="w-4 h-4" /> Copy for WhatsApp Group
+            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
             <Pencil className="w-4 h-4" /> Edit Order
@@ -34773,7 +34781,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
                         onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
                       >
-                        <Copy className="w-4 h-4" /> Copy for WhatsApp Group
+                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
                       </button>
                     </div>
 	                </div>
@@ -35354,7 +35362,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {/* Section 7: Form Submission Details */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Form Submission Details</h3>
+	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
+	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission Details</h3>
+	                      <button
+	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                      >
+	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+	                      </button>
+	                    </div>
 	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
@@ -35497,7 +35513,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id)}><Repeat2 /> Change Status</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(selectedOrder)}><BookOpen /> Print Invoice</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(selectedOrder)}><Download /> Download Invoice</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy /> Copy for WhatsApp Group</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy /> Copy Order To WhatsApp Group</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Send to Agent</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}><UserPlus /> Reassign Rep</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderEditRoute(selectedOrder.id)}><Pencil /> Edit Order</button>
@@ -36057,7 +36073,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  )}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy className="w-4 h-4" /> Copy for WhatsApp Group</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy className="w-4 h-4" /> Copy Order To WhatsApp Group</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </div>
