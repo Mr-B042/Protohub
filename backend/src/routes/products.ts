@@ -222,7 +222,13 @@ const CompanionSchema = z.object({
   videoUrl:          z.string().url().max(2048).optional().or(z.literal("")),
   embedHtml:         z.string().max(20000).optional().or(z.literal("")),
   priority:          z.number().int().optional(),
-  displayMode:       z.enum(["compact", "card"]).optional()
+  displayMode:       z.enum(["compact", "card"]).optional(),
+  proofMode:         z.enum(["real", "promo_copy", "hidden"]).optional(),
+  urgencyMode:       z.enum(["standard", "price_loss"]).optional(),
+  promoAllTimeBuyerCount:       z.number().int().min(0).max(10_000_000).optional(),
+  promoBuyersLast24HoursCount:  z.number().int().min(0).max(10_000).optional(),
+  promoLastAddedRelative:       z.string().max(60).optional(),
+  promoIsMostAdded:             z.boolean().optional()
 });
 const PackageComponentSchema = z.object({
   componentId: z.string().min(1).max(120).optional(),

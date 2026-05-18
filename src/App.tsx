@@ -455,6 +455,12 @@ type PackageCompanion = {
   embedHtml?: string;      // optional raw embed code rendered in sandboxed iframe
   priority?: number;       // higher shown first when multiple cards exist
   displayMode?: "compact" | "card"; // 'card' renders a big visual bump above Pay On Delivery
+  proofMode?: "real" | "promo_copy" | "hidden";
+  urgencyMode?: "standard" | "price_loss";
+  promoAllTimeBuyerCount?: number;
+  promoBuyersLast24HoursCount?: number;
+  promoLastAddedRelative?: string;
+  promoIsMostAdded?: boolean;
 };
 type PackageComponent = {
   componentId?: string;
@@ -2802,7 +2808,13 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   videoUrl: companion.videoUrl ?? "",
   embedHtml: companion.embedHtml ?? "",
   priority: typeof companion.priority === "number" ? companion.priority : 0,
-  displayMode: companion.displayMode === "card" ? "card" : "compact"
+  displayMode: companion.displayMode === "card" ? "card" : "compact",
+  proofMode: companion.proofMode === "promo_copy" || companion.proofMode === "hidden" ? companion.proofMode : "real",
+  urgencyMode: companion.urgencyMode === "price_loss" ? "price_loss" : "standard",
+  promoAllTimeBuyerCount: typeof companion.promoAllTimeBuyerCount === "number" && companion.promoAllTimeBuyerCount > 0 ? Math.floor(companion.promoAllTimeBuyerCount) : undefined,
+  promoBuyersLast24HoursCount: typeof companion.promoBuyersLast24HoursCount === "number" && companion.promoBuyersLast24HoursCount > 0 ? Math.floor(companion.promoBuyersLast24HoursCount) : undefined,
+  promoLastAddedRelative: typeof companion.promoLastAddedRelative === "string" && companion.promoLastAddedRelative.trim() ? companion.promoLastAddedRelative.trim() : undefined,
+  promoIsMostAdded: companion.promoIsMostAdded === true
 });
 const clonePackageCompanions = (companions: PackageCompanion[]) =>
   companions.map((companion) =>
@@ -37318,6 +37330,92 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       onChange={(e) => update({ pitch: e.target.value })}
                                     />
                                   </label>
+                                  {c.displayMode === "card" && (
+                                    <>
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Proof mode</span>
+                                        <select
+                                          className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                          value={c.proofMode ?? "real"}
+                                          onChange={(e) => update({ proofMode: e.target.value as "real" | "promo_copy" | "hidden" })}
+                                        >
+                                          <option value="real">Real proof only</option>
+                                          <option value="promo_copy">Promo copy only</option>
+                                          <option value="hidden">Hide proof row</option>
+                                        </select>
+                                        <span className="text-[10px] text-gray-400">Real proof uses true buyer data when it is strong enough. Promo copy lets you type the numbers buyers will see.</span>
+                                      </label>
+                                      {(c.proofMode ?? "real") === "promo_copy" && (
+                                        <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-3 rounded-md bg-amber-50 border border-amber-200">
+                                          <p className="sm:col-span-2 text-[11px] text-amber-800 font-medium m-0">Promo numbers shown on the buyer card. Leave any field blank or 0 to hide that line.</p>
+                                          <label className="flex flex-col gap-1">
+                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Cumulative buyers</span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={10000000}
+                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                              placeholder="1247"
+                                              value={typeof c.promoAllTimeBuyerCount === "number" ? c.promoAllTimeBuyerCount : ""}
+                                              onChange={(e) => {
+                                                const v = e.target.value.trim();
+                                                update({ promoAllTimeBuyerCount: v === "" ? undefined : Math.max(0, Math.floor(Number(v) || 0)) });
+                                              }}
+                                            />
+                                            <span className="text-[10px] text-gray-400">Buyer sees “Added to {(c.promoAllTimeBuyerCount ?? 1247).toLocaleString()} orders”</span>
+                                          </label>
+                                          <label className="flex flex-col gap-1">
+                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Added in last 24h</span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={10000}
+                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                              placeholder="12"
+                                              value={typeof c.promoBuyersLast24HoursCount === "number" ? c.promoBuyersLast24HoursCount : ""}
+                                              onChange={(e) => {
+                                                const v = e.target.value.trim();
+                                                update({ promoBuyersLast24HoursCount: v === "" ? undefined : Math.max(0, Math.floor(Number(v) || 0)) });
+                                              }}
+                                            />
+                                            <span className="text-[10px] text-gray-400">Buyer sees “{(c.promoBuyersLast24HoursCount ?? 12).toLocaleString()} buyers added this in the last 24 hours”</span>
+                                          </label>
+                                          <label className="flex flex-col gap-1 sm:col-span-2">
+                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Last added label</span>
+                                            <input
+                                              type="text"
+                                              maxLength={60}
+                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                              placeholder="2 hours ago"
+                                              value={c.promoLastAddedRelative ?? ""}
+                                              onChange={(e) => update({ promoLastAddedRelative: e.target.value })}
+                                            />
+                                          </label>
+                                          <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
+                                            <input
+                                              type="checkbox"
+                                              className="rounded border-gray-300 text-[#1F8FE0] focus:ring-[#1F8FE0]"
+                                              checked={!!c.promoIsMostAdded}
+                                              onChange={(e) => update({ promoIsMostAdded: e.target.checked })}
+                                            />
+                                            <span>Show “Most buyers add this” badge</span>
+                                          </label>
+                                        </div>
+                                      )}
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Urgency mode</span>
+                                        <select
+                                          className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                          value={c.urgencyMode ?? "standard"}
+                                          onChange={(e) => update({ urgencyMode: e.target.value as "standard" | "price_loss" })}
+                                        >
+                                          <option value="standard">Standard price note</option>
+                                          <option value="price_loss">Price-loss copy</option>
+                                        </select>
+                                        <span className="text-[10px] text-gray-400">Price-loss copy tells buyers the discounted add-on price disappears after they submit.</span>
+                                      </label>
+                                    </>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

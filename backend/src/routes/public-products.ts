@@ -32,6 +32,20 @@ type DbCompanion = {
   embedHtml?: string;
   priority?: number;
   displayMode?: "compact" | "card";
+  proofMode?: "real" | "promo_copy" | "hidden";
+  urgencyMode?: "standard" | "price_loss";
+  promoAllTimeBuyerCount?: number;
+  promoBuyersLast24HoursCount?: number;
+  promoLastAddedRelative?: string;
+  promoIsMostAdded?: boolean;
+};
+type CompanionSocialProof = {
+  buyersTodayCount: number;
+  buyersLast24HoursCount: number;
+  recentBuyerCount: number;
+  allTimeBuyerCount: number;
+  lastOrderedAt: string | null;
+  isMostAdded: boolean;
 };
 type DbPackageComponent = {
   componentId?: string;
@@ -68,7 +82,7 @@ const sanitisePricing = (p: DbPricing) => ({
   isPrimary:    p.is_primary
 });
 
-const sanitisePackage = (p: DbPackage) => ({
+const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
   id:           p.id,
   name:         p.name,
   description:  p.description ?? "",
@@ -105,7 +119,23 @@ const sanitisePackage = (p: DbPackage) => ({
     videoUrl:          c.videoUrl ?? "",
     embedHtml:         c.embedHtml ?? "",
     priority:          c.priority ?? 0,
-    displayMode:       c.displayMode ?? "compact"
+    displayMode:       c.displayMode ?? "compact",
+    proofMode:         c.proofMode === "promo_copy" || c.proofMode === "hidden" ? c.proofMode : "real",
+    urgencyMode:       c.urgencyMode === "price_loss" ? "price_loss" : "standard",
+    promoAllTimeBuyerCount:
+      typeof c.promoAllTimeBuyerCount === "number" && c.promoAllTimeBuyerCount > 0
+        ? Math.floor(c.promoAllTimeBuyerCount)
+        : null,
+    promoBuyersLast24HoursCount:
+      typeof c.promoBuyersLast24HoursCount === "number" && c.promoBuyersLast24HoursCount > 0
+        ? Math.floor(c.promoBuyersLast24HoursCount)
+        : null,
+    promoLastAddedRelative:
+      typeof c.promoLastAddedRelative === "string" && c.promoLastAddedRelative.trim()
+        ? c.promoLastAddedRelative.trim()
+        : null,
+    promoIsMostAdded: c.promoIsMostAdded === true,
+    socialProof: companionSocialProofByProductId?.[c.productId] ?? null
   })}),
   packageComponents: (p.package_components ?? []).map((component) => ({
     componentId: component.componentId ?? "",
@@ -116,7 +146,7 @@ const sanitisePackage = (p: DbPackage) => ({
   }))
 });
 
-const sanitiseProduct = (p: DbProduct) => ({
+const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
   id:                          p.id,
   orgId:                       p.org_id,
   name:                        p.name,
@@ -133,8 +163,103 @@ const sanitiseProduct = (p: DbProduct) => ({
   freeGiftStateRestrictions:   p.free_gift_state_restrictions ?? {},
   formCustomText:              p.form_custom_text ?? "",
   pricings:                    (p.pricings ?? []).map(sanitisePricing),
-  packages:                    (p.packages ?? []).filter((pkg) => pkg.active).map(sanitisePackage)
+  packages:                    (p.packages ?? []).filter((pkg) => pkg.active).map((pkg) => sanitisePackage(pkg, companionSocialProofByProductId))
 });
+
+type DbCrossSellLine = {
+  productId?: string;
+  selectionSource?: string;
+};
+
+const LAGOS_OFFSET_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const lagosDayStartUtcIso = (date: Date) => {
+  const lagosNow = new Date(date.getTime() + LAGOS_OFFSET_MS);
+  const year = lagosNow.getUTCFullYear();
+  const month = lagosNow.getUTCMonth();
+  const day = lagosNow.getUTCDate();
+  return new Date(Date.UTC(year, month, day) - LAGOS_OFFSET_MS).toISOString();
+};
+
+const buildCompanionSocialProof = async (product: DbProduct) => {
+  const companionProductIds = Array.from(
+    new Set(
+      (product.packages ?? [])
+        .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
+        .filter((companion) => !companion.autoInclude)
+        .filter((companion) => Boolean(companion.productId))
+        .map((companion) => companion.productId)
+    )
+  );
+  if (companionProductIds.length === 0) return {};
+
+  const todayStartIso = lagosDayStartUtcIso(new Date());
+  const last24HoursStartIso = new Date(Date.now() - DAY_MS).toISOString();
+  const recentWindowStartIso = new Date(new Date(todayStartIso).getTime() - (6 * DAY_MS)).toISOString();
+
+  const { data: recentOrders, error } = await supabase
+    .from("orders")
+    .select("created_at, cross_sell_lines")
+    .eq("org_id", product.org_id)
+    .eq("product_id", product.id)
+    .order("created_at", { ascending: false });
+  if (error || !recentOrders) return {};
+
+  const proofByProductId = Object.fromEntries(
+    companionProductIds.map((productId) => [productId, {
+      buyersTodayCount: 0,
+      buyersLast24HoursCount: 0,
+      recentBuyerCount: 0,
+      allTimeBuyerCount: 0,
+      lastOrderedAt: null,
+      isMostAdded: false
+    } satisfies CompanionSocialProof])
+  ) as Record<string, CompanionSocialProof>;
+
+  recentOrders.forEach((order) => {
+    const createdAt = typeof order.created_at === "string" ? order.created_at : "";
+    if (!createdAt) return;
+    const lines = Array.isArray(order.cross_sell_lines)
+      ? (order.cross_sell_lines as DbCrossSellLine[])
+      : [];
+    const seenCompanionProductIds = new Set<string>();
+    lines.forEach((line) => {
+      if (!line || typeof line.productId !== "string") return;
+      if (line.selectionSource !== "public_form" && line.selectionSource !== "public_upsell") return;
+      if (!proofByProductId[line.productId]) return;
+      seenCompanionProductIds.add(line.productId);
+    });
+    seenCompanionProductIds.forEach((productId) => {
+      const entry = proofByProductId[productId];
+      entry.allTimeBuyerCount += 1;
+      if (createdAt >= recentWindowStartIso) entry.recentBuyerCount += 1;
+      if (createdAt >= todayStartIso) entry.buyersTodayCount += 1;
+      if (createdAt >= last24HoursStartIso) entry.buyersLast24HoursCount += 1;
+      if (!entry.lastOrderedAt || createdAt > entry.lastOrderedAt) {
+        entry.lastOrderedAt = createdAt;
+      }
+    });
+  });
+
+  const mostAddedRecentCount = Math.max(...Object.values(proofByProductId).map((entry) => entry.allTimeBuyerCount), 0);
+  if (mostAddedRecentCount > 0) {
+    Object.values(proofByProductId).forEach((entry) => {
+      entry.isMostAdded = entry.recentBuyerCount === mostAddedRecentCount;
+    });
+  }
+  return proofByProductId;
+};
+
+const PUBLIC_PRODUCT_SELECT = `
+  id, org_id, name, description, active, available_states, catalog_type,
+  can_be_cross_sell, can_be_free_gift,
+  cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
+  free_gift_product_ids, free_gift_state_restrictions,
+  form_custom_text,
+  pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
+  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
+`;
 
 // ── GET /api/public/products/:id ──────────────────────────
 // Storefront-safe view of a single product, plus eagerly-loaded cross-sell
@@ -147,15 +272,7 @@ router.get("/:id", readRateLimit, async (req, res) => {
 
   const { data: rawProduct, error } = await supabase
     .from("products")
-    .select(`
-      id, org_id, name, description, active, available_states, catalog_type,
-      can_be_cross_sell, can_be_free_gift,
-      cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
-      free_gift_product_ids, free_gift_state_restrictions,
-      form_custom_text,
-      pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-      packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
-    `)
+    .select(PUBLIC_PRODUCT_SELECT)
     .eq("id", id)
     .maybeSingle();
 
@@ -165,6 +282,7 @@ router.get("/:id", readRateLimit, async (req, res) => {
     return;
   }
   const product = rawProduct as unknown as DbProduct;
+  const companionSocialProofByProductId = await buildCompanionSocialProof(product);
 
   // Resolve cross-sells + free gifts in one batched fetch so the form gets a
   // complete payload in one round trip.
@@ -180,23 +298,15 @@ router.get("/:id", readRateLimit, async (req, res) => {
   if (referenced.size > 0) {
     const { data: rawRelated } = await supabase
       .from("products")
-      .select(`
-        id, org_id, name, description, active, available_states, catalog_type,
-        can_be_cross_sell, can_be_free_gift,
-        cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
-        free_gift_product_ids, free_gift_state_restrictions,
-        form_custom_text,
-        pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-        packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
-      `)
+      .select(PUBLIC_PRODUCT_SELECT)
       .in("id", Array.from(referenced))
       .eq("active", true);
     related = (rawRelated ?? []) as unknown as DbProduct[];
   }
 
   res.json({
-    product: sanitiseProduct(product),
-    related: related.map(sanitiseProduct)
+    product: sanitiseProduct(product, companionSocialProofByProductId),
+    related: related.map((item) => sanitiseProduct(item))
   });
 });
 

@@ -8,6 +8,15 @@ type PublicPricing = {
   isPrimary?: boolean;
 };
 
+type PublicCompanionSocialProof = {
+  buyersTodayCount: number;
+  buyersLast24HoursCount: number;
+  recentBuyerCount: number;
+  allTimeBuyerCount: number;
+  lastOrderedAt?: string | null;
+  isMostAdded: boolean;
+};
+
 type PublicCompanion = {
   companionId?: string;
   productId: string;
@@ -29,6 +38,15 @@ type PublicCompanion = {
   embedHtml?: string;
   priority?: number;
   displayMode?: "compact" | "card";
+  proofMode?: "real" | "promo_copy" | "hidden";
+  urgencyMode?: "standard" | "price_loss";
+  // Admin-typed promo numbers — only rendered when proofMode === "promo_copy".
+  // Any null/blank/0 field is silently skipped.
+  promoAllTimeBuyerCount?: number | null;
+  promoBuyersLast24HoursCount?: number | null;
+  promoLastAddedRelative?: string | null;
+  promoIsMostAdded?: boolean | null;
+  socialProof?: PublicCompanionSocialProof | null;
 };
 
 type PublicPackage = {
@@ -336,6 +354,80 @@ function companionDisplayDetail(companion: PublicCompanion, targetPackage?: Publ
     return `${companion.quantity} ${companion.quantity === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`;
   }
   return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
+}
+
+function formatRelativeActivity(value: string | null | undefined) {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  const diffMs = Date.now() - timestamp;
+  if (diffMs < 0) return "just now";
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  if (diffMs < minuteMs) return "just now";
+  if (diffMs < hourMs) {
+    const minutes = Math.max(1, Math.round(diffMs / minuteMs));
+    return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
+  }
+  if (diffMs < dayMs) {
+    const hours = Math.max(1, Math.round(diffMs / hourMs));
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.max(1, Math.round(diffMs / dayMs));
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function companionSocialProofUi(companion: PublicCompanion | null | undefined) {
+  const proofMode = companion?.proofMode ?? "real";
+  if (proofMode === "hidden") {
+    return { badgeText: "", stats: [] as string[] };
+  }
+  if (proofMode === "promo_copy") {
+    const formatCount = (value: number) => new Intl.NumberFormat("en-NG").format(value);
+    const stats: string[] = [];
+    const promoAllTime = typeof companion?.promoAllTimeBuyerCount === "number" ? companion.promoAllTimeBuyerCount : 0;
+    const promoLast24 = typeof companion?.promoBuyersLast24HoursCount === "number" ? companion.promoBuyersLast24HoursCount : 0;
+    const promoLastAdded = typeof companion?.promoLastAddedRelative === "string" ? companion.promoLastAddedRelative.trim() : "";
+    if (promoAllTime > 0) stats.push(`Added to ${formatCount(promoAllTime)} orders`);
+    if (promoLast24 > 0) stats.push(`${formatCount(promoLast24)} buyers added this in the last 24 hours`);
+    if (promoLastAdded) stats.push(`Last added ${promoLastAdded}`);
+    if (stats.length === 0) {
+      return {
+        badgeText: "Popular additional item",
+        stats: ["Buyers often add this before they submit their order"]
+      };
+    }
+    return {
+      badgeText: companion?.promoIsMostAdded ? "Most buyers add this" : "Popular additional item",
+      stats
+    };
+  }
+  const socialProof = companion?.socialProof;
+  if (!socialProof) {
+    return { badgeText: "", stats: [] as string[] };
+  }
+  const formatCount = (value: number) => new Intl.NumberFormat("en-NG").format(value);
+  const hasStrongLifetimeProof = socialProof.allTimeBuyerCount >= 20;
+  const hasStrongVelocityProof = socialProof.buyersLast24HoursCount >= 4;
+  const stats: string[] = [];
+  if (hasStrongLifetimeProof) {
+    stats.push(`Added to ${formatCount(socialProof.allTimeBuyerCount)} orders`);
+  }
+  if (hasStrongVelocityProof) {
+    stats.push(`${formatCount(socialProof.buyersLast24HoursCount)} buyers added this in the last 24 hours`);
+  }
+  const relativeLastAdded = formatRelativeActivity(socialProof.lastOrderedAt ?? null);
+  if (relativeLastAdded && socialProof.lastOrderedAt && Date.now() - Date.parse(socialProof.lastOrderedAt) <= 12 * 60 * 60 * 1000) {
+    stats.push(`Last added ${relativeLastAdded}`);
+  }
+  if (stats.length === 0) {
+    return { badgeText: "", stats: [] as string[] };
+  }
+  return {
+    badgeText: socialProof.isMostAdded && (hasStrongLifetimeProof || hasStrongVelocityProof) ? "Most buyers add this" : "",
+    stats
+  };
 }
 
 function fallbackCompanionImageSrc(productName: string) {
@@ -1901,6 +1993,10 @@ export default function PublicOrderFormPage() {
           0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
           50% { transform: scale(1.02); box-shadow: 0 10px 24px rgba(239, 68, 68, 0.18); }
         }
+        @keyframes publicProofBadgeFloat {
+          0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 0 0 rgba(34, 197, 94, 0); }
+          50% { transform: translateY(-2px) scale(1.02); box-shadow: 0 10px 24px rgba(34, 197, 94, 0.16); }
+        }
       `}</style>
       <section className="public-order-shell">
         {publicEmbedIsPreview ? (
@@ -2320,6 +2416,7 @@ export default function PublicOrderFormPage() {
 	                        const standardTotal = standard * displayCompanion.quantity;
 	                        const savings = Math.max(0, standardTotal - total);
 	                        const media = renderCompanionMedia(displayCompanion, product.name);
+                        const socialProofUi = companionSocialProofUi(displayCompanion);
 	                        const teaserCtaLabel = selectedVariant
 	                          ? "Already added"
 	                          : isExpanded
@@ -2376,13 +2473,60 @@ export default function PublicOrderFormPage() {
                                   <span style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, maxWidth: 360 }}>
                                     {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
                                   </span>
+                                  {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      {socialProofUi.badgeText && (
+                                        <span
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            padding: "5px 9px",
+                                            borderRadius: 999,
+                                            background: "#ecfdf3",
+                                            border: "1px solid #86efac",
+                                            color: "#15803d",
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            animation: "publicProofBadgeFloat 2.8s ease-in-out infinite"
+                                          }}
+                                        >
+                                          {socialProofUi.badgeText}
+                                        </span>
+                                      )}
+                                      {socialProofUi.stats.length > 0 && (
+                                        <span
+                                          style={{
+                                            display: "block",
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            lineHeight: 1.45,
+                                            color: "#475569"
+                                          }}
+                                        >
+                                          {socialProofUi.stats.join(" · ")}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                                     <div style={{ display: "grid", gap: 4 }}>
                                       <strong style={{ fontSize: 18, color: "#111827" }}>
                                         {previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}
                                       </strong>
+                                      {savings > 0 && (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                          <span style={{ fontSize: 12, color: "#94a3b8", textDecoration: "line-through" }}>
+                                            {formatProductMoney(standardTotal, currency)}
+                                          </span>
+                                          <span style={{ fontSize: 11, fontWeight: 800, color: "#047857" }}>
+                                            Save {formatProductMoney(savings, currency)}
+                                          </span>
+                                        </div>
+                                      )}
                                       <span style={{ fontSize: 10, fontWeight: 700, color: "#b45309", lineHeight: 1.45 }}>
-                                        Special price only when added with the main offer
+                                        {(displayCompanion.urgencyMode ?? "standard") === "price_loss" && savings > 0
+                                          ? `If you skip this, it'll cost you ${formatProductMoney(standardTotal, currency)} later. This ${formatProductMoney(teaserTotal, currency)} price disappears the moment you submit.`
+                                          : "Special price only when added with the main offer"}
                                       </span>
                                       {group.companions.length > 1 && (
                                         <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -2480,11 +2624,48 @@ export default function PublicOrderFormPage() {
                                         padding: "8px 10px"
                                       }}
                                     >
-                                      These discounted additional items only apply when you add them with the main offer.
+                                      {(displayCompanion.urgencyMode ?? "standard") === "price_loss" && savings > 0
+                                        ? `If you skip this and come back later, it'll cost you ${formatProductMoney(standardTotal, currency)}. This ${formatProductMoney(total, currency)} price disappears the moment you submit your order.`
+                                        : "These discounted additional items only apply when you add them with the main offer."}
                                     </div>
                                     <p style={{ margin: 0, fontSize: 14, color: "#4b5563", lineHeight: 1.5 }}>
                                       {displayCompanion.pitch?.trim() || "Easy extra additional item that fits this order."}
                                     </p>
+                                    {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
+                                      <div style={{ display: "grid", gap: 6 }}>
+                                        {socialProofUi.badgeText && (
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              padding: "6px 10px",
+                                              borderRadius: 999,
+                                              background: "#ecfdf3",
+                                              border: "1px solid #86efac",
+                                              color: "#15803d",
+                                              fontSize: 11,
+                                              fontWeight: 800,
+                                              animation: "publicProofBadgeFloat 2.8s ease-in-out infinite"
+                                            }}
+                                          >
+                                            {socialProofUi.badgeText}
+                                          </span>
+                                        )}
+                                        {socialProofUi.stats.length > 0 && (
+                                          <span
+                                            style={{
+                                              display: "block",
+                                              fontSize: 11,
+                                              fontWeight: 700,
+                                              lineHeight: 1.5,
+                                              color: "#475569"
+                                            }}
+                                          >
+                                            {socialProofUi.stats.join(" · ")}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                   {hasVariantChoices && (
                                     <div style={{ display: "grid", gap: 8 }}>
