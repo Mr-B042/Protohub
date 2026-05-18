@@ -6922,6 +6922,73 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const packageRecord = product?.packages.find((item) => item.id === order.packageId);
     return order.quantity ?? packageRecord?.quantity ?? 1;
   };
+  const quantityForOfferLine = (line: CrossSellLine) => {
+    const selectedBundles = Math.max(1, Number(line.quantity ?? 1) || 1);
+    const bundleUnits = Math.max(0, Number(line.packageQuantity ?? 0) || 0);
+    return bundleUnits > 1 ? selectedBundles * bundleUnits : selectedBundles;
+  };
+  const quantityLabelForOfferLine = (line: CrossSellLine) => {
+    const selectedBundles = Math.max(1, Number(line.quantity ?? 1) || 1);
+    const bundleUnits = Math.max(0, Number(line.packageQuantity ?? 0) || 0);
+    if (bundleUnits > 1) {
+      const totalUnits = selectedBundles * bundleUnits;
+      return `${totalUnits}pc${totalUnits === 1 ? "" : "s"}`;
+    }
+    if (line.packageName && /\bset\b/i.test(line.packageName)) {
+      return `${selectedBundles} set${selectedBundles === 1 ? "" : "s"}`;
+    }
+    return `${selectedBundles}pc${selectedBundles === 1 ? "" : "s"}`;
+  };
+  const preferredPackageLineForOrder = (order: TrackedOrder) => {
+    const packageName = (order.packageName ?? "").trim();
+    const productName = (order.productName ?? "").trim();
+    if (packageName) {
+      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
+        return packageName;
+      }
+      return `${packageName} of ${productName}`;
+    }
+    const qty = Math.max(1, quantityForOrder(order));
+    return `${qty}pc${qty === 1 ? "" : "s"} of ${productName}`;
+  };
+  const preferredPackageLineForAdditionalItem = (line: CrossSellLine) => {
+    const packageName = (line.packageName ?? "").trim();
+    const productName = (line.productName ?? "").trim();
+    if (packageName) {
+      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
+        return packageName;
+      }
+      return `${packageName} of ${productName}`;
+    }
+    return `${quantityLabelForOfferLine(line)} of ${productName}`;
+  };
+  const fullDeliveryLabelForOrder = (order: TrackedOrder) => {
+    const parts = [order.address, order.city, order.state]
+      .map((value) => (value ?? "").trim())
+      .filter(Boolean);
+    return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
+  };
+  const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
+    const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+    const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+    const lines = [
+      `Full Name:  ${order.customer || "—"}`,
+      `Active Phone Number:  ${order.phone || "—"}`,
+      `Whatsapp Number:  ${order.whatsapp || order.phone || "—"}`,
+      `State: ${order.state || "—"}`,
+      `City:  ${order.city || "—"}`,
+      `Full Delivery: ${fullDeliveryLabelForOrder(order)}`,
+      `Preferred Package: 1. ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+    ];
+    (order.crossSellLines ?? []).forEach((line, index) => {
+      lines.push(`Preferred Package ${index + 2}: ${preferredPackageLineForAdditionalItem(line)} = ${formatProductMoney(line.amount, order.currency)}`);
+    });
+    (order.freeGiftLines ?? []).forEach((line, index) => {
+      lines.push(`Free Gift ${index + 1}: ${line.quantity}pc${line.quantity === 1 ? "" : "s"} of ${line.productName}`);
+    });
+    lines.push(`Total = ${formatProductMoney(order.amount, order.currency)}`);
+    return lines.join("\n\n");
+  };
   const costForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
     if (!product) {
@@ -19054,6 +19121,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
             <Download className="w-4 h-4" /> Download Invoice
+          </button>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}>
+            <Copy className="w-4 h-4" /> Copy for WhatsApp Group
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
             <Pencil className="w-4 h-4" /> Edit Order
@@ -35392,6 +35462,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id)}><Repeat2 /> Change Status</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(selectedOrder)}><BookOpen /> Print Invoice</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(selectedOrder)}><Download /> Download Invoice</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy /> Copy for WhatsApp Group</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Send to Agent</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}><UserPlus /> Reassign Rep</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderEditRoute(selectedOrder.id)}><Pencil /> Edit Order</button>
@@ -35951,6 +36022,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  )}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy className="w-4 h-4" /> Copy for WhatsApp Group</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </div>
