@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { supabase } from "./supabase.js";
+import {
+  type FollowUpOutcomeGroup,
+  type FollowUpRecoveryBucket,
+  classifyFollowUpOutcome
+} from "./follow-up-outcomes.js";
 
 export const FOLLOW_UP_TASK_TYPES = [
   "callback",
@@ -88,6 +93,8 @@ type ContactAttemptRow = {
   channel: ContactAttemptChannel;
   attempt_type: ContactAttemptType;
   outcome_code: string;
+  outcome_group?: FollowUpOutcomeGroup | null;
+  recovery_bucket?: FollowUpRecoveryBucket | null;
   outcome_note?: string | null;
   customer_reached?: boolean | null;
   next_action_type?: string | null;
@@ -122,6 +129,7 @@ type RecordAttemptInput = {
   channel: ContactAttemptChannel;
   attemptType: ContactAttemptType;
   outcomeCode: string;
+  recoveryBucket?: FollowUpRecoveryBucket | null;
   outcomeNote?: string | null;
   taskId?: string | null;
   nextActionType?: FollowUpTaskType | null;
@@ -141,10 +149,25 @@ type SyncOrderFollowUpInput = {
 
 const CLOSED_ORDER_STATUSES = new Set(["Delivered", "Cancelled", "Failed"]);
 const ACTIVE_FOLLOW_UP_STATUSES: FollowUpTaskStatus[] = ["open", "due", "overdue"];
-const HARD_STOP_OUTCOMES = new Set(["Refused", "Wrong Number", "Out of Stock", "out of coverage"]);
-const UNREACHABLE_OUTCOMES = new Set(["No Answer", "Line Busy", "Not Picking", "Switched off", "Not Reached", "Not Available", "Number not going"]);
-const WEAK_INTENT_OUTCOMES = new Set(["Will Call Back", "Scheduled Callback", "Not Ready", "Travelled", "Seat at home", "Will get back to us", "Have questions to ask", "Pending"]);
-const PROGRESS_OUTCOMES = new Set(["Confirmed", "Ready", "Delivered", "Recovered Delivery", "Waybill", "Awaiting payment"]);
+const HARD_STOP_OUTCOMES = new Set(["Refused", "Wrong Number", "Wrong number", "Out of Stock", "Out of coverage", "out of coverage", "Not interested"]);
+const UNREACHABLE_OUTCOMES = new Set(["No Answer", "No answer", "Line Busy", "Line busy", "Not Picking", "Switched off", "Phone switched off", "Not Reached", "Not Available", "Number not going"]);
+const WEAK_INTENT_OUTCOMES = new Set([
+  "Will Call Back",
+  "Scheduled Callback",
+  "Not Ready",
+  "Travelled",
+  "Seat at home",
+  "Will get back to us",
+  "Have questions to ask",
+  "Pending",
+  "Call tomorrow",
+  "Call in 2-3 days",
+  "Waiting for salary / payday",
+  "Needs spouse approval",
+  "Wants discount",
+  "Asked for WhatsApp details"
+]);
+const PROGRESS_OUTCOMES = new Set(["Confirmed", "Ready", "Ready now", "Delivered", "Recovered Delivery", "Waybill", "Awaiting payment"]);
 const NIGERIA_TIME_ZONE = "Africa/Lagos";
 
 const twoDigit = (value: number) => String(value).padStart(2, "0");
@@ -299,7 +322,7 @@ export const refreshOrderFollowUpSummary = async (orgId: string, orderId: string
       .order("due_at", { ascending: true }),
     supabase
       .from("order_contact_attempts")
-      .select("id, order_id, task_id, rep_id, team_id, manager_id, attempted_at, channel, attempt_type, outcome_code, outcome_note, customer_reached, next_action_type, next_action_at, promise_window, is_serious_signal")
+      .select("id, order_id, task_id, rep_id, team_id, manager_id, attempted_at, channel, attempt_type, outcome_code, outcome_group, recovery_bucket, outcome_note, customer_reached, next_action_type, next_action_at, promise_window, is_serious_signal")
       .eq("org_id", orgId)
       .eq("order_id", orderId)
       .order("attempted_at", { ascending: false })
@@ -469,13 +492,21 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
         .maybeSingle();
 
   const activeTask = (task ?? null) as FollowUpTaskRow | null;
-  const reached = inferCustomerReached(input.outcomeCode);
+  const outcome = classifyFollowUpOutcome({
+    outcomeCode: input.outcomeCode,
+    recoveryBucket: input.recoveryBucket ?? null
+  });
+  const reached = inferCustomerReached(outcome.outcomeCode);
   const dueDateKey = activeTask ? lagosDateKey(activeTask.due_at) : lagosDateKey(new Date());
   const nextActionDateKey = input.nextActionAt ? lagosDateKey(input.nextActionAt) : null;
 
+  if (outcome.requiresNextAction && (!input.nextActionType || !input.nextActionAt)) {
+    throw new Error("This follow-up reason needs a next callback date and time before you can save it.");
+  }
+
   if (
     activeTask
-    && shouldRequireSameDayRetry(activeTask.priority, input.outcomeCode)
+    && shouldRequireSameDayRetry(activeTask.priority, outcome.outcomeCode)
     && (!input.nextActionAt || nextActionDateKey !== dueDateKey)
   ) {
     throw new Error("This callback was promised for today. Log the outcome and set the next follow-up within the same working day.");
@@ -505,13 +536,15 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       attempted_at: new Date().toISOString(),
       channel: input.channel,
       attempt_type: input.attemptType,
-      outcome_code: input.outcomeCode,
+      outcome_code: outcome.outcomeCode,
+      outcome_group: outcome.outcomeGroup,
+      recovery_bucket: outcome.recoveryBucket,
       outcome_note: input.outcomeNote ?? null,
       customer_reached: reached ?? null,
       next_action_type: input.nextActionType ?? null,
       next_action_at: input.nextActionAt ?? null,
       promise_window: promiseWindow,
-      is_serious_signal: PROGRESS_OUTCOMES.has(input.outcomeCode) ? true : null
+      is_serious_signal: PROGRESS_OUTCOMES.has(outcome.outcomeCode) ? true : null
     })
     .select()
     .single();
@@ -532,7 +565,7 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       .eq("id", activeTask.id);
   }
 
-  const nextNoteText = `${statusTextForAttempt(order.status, order.status)}Follow-up attempt logged: ${input.outcomeCode}.${input.outcomeNote ? ` ${input.outcomeNote.trim()}` : ""}${input.nextActionAt ? ` Next action: ${input.nextActionType ?? "callback"} by ${input.nextActionAt}.` : ""}`;
+  const nextNoteText = `${statusTextForAttempt(order.status, order.status)}Follow-up attempt logged: ${outcome.outcomeCode}.${input.outcomeNote ? ` ${input.outcomeNote.trim()}` : ""}${input.nextActionAt ? ` Next action: ${input.nextActionType ?? "callback"} by ${input.nextActionAt}.` : ""}`;
   const currentNotes = orderNotesFor(order.notes, order.timeline_notes);
   const timelineNotes = [
     {
@@ -547,15 +580,15 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
   ];
 
   const nextResponse = input.nextActionAt
-    ? `Next ${input.nextActionType ?? "follow-up"} set for ${input.nextActionAt}`
-    : input.outcomeNote?.trim()
-      ? input.outcomeNote.trim()
-      : input.outcomeCode;
+      ? `Next ${input.nextActionType ?? "follow-up"} set for ${input.nextActionAt}`
+      : input.outcomeNote?.trim()
+        ? input.outcomeNote.trim()
+      : outcome.outcomeCode;
 
   await supabase
     .from("orders")
     .update({
-      call_outcome: input.outcomeCode,
+      call_outcome: outcome.outcomeCode,
       response: nextResponse,
       timeline_notes: timelineNotes
     })
@@ -569,7 +602,7 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       assignedRepId: input.repId ?? order.assigned_rep_id ?? null,
       dueAt: input.nextActionAt,
       taskType: input.nextActionType,
-      note: input.nextActionNote ?? input.outcomeNote ?? input.outcomeCode,
+      note: input.nextActionNote ?? input.outcomeNote ?? outcome.outcomeCode,
       sourceKind: "attempt_next_action",
       sourceRef: attempt.id,
       createdFromAttemptId: attempt.id

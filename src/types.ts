@@ -429,6 +429,8 @@ export type OrderContactAttempt = {
   channel: "call" | "whatsapp" | "sms" | "manual";
   attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
   outcomeCode: string;
+  outcomeGroup?: "progress" | "recoverable" | "unreachable" | "closed_loss" | "other";
+  recoveryBucket?: "ready_now" | "call_tomorrow" | "call_in_2_3_days" | "salary_wait" | "spouse_approval" | "wants_discount" | "asked_for_whatsapp" | "no_answer" | "switched_off" | "line_busy" | "not_interested" | "wrong_number" | "out_of_coverage";
   outcomeNote?: string;
   customerReached?: boolean;
   nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";

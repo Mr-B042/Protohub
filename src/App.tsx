@@ -110,6 +110,15 @@ import {
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
 } from "./lib/api";
 import {
+  FOLLOW_UP_OUTCOME_DEFINITIONS,
+  FOLLOW_UP_OUTCOME_GROUPS,
+  FOLLOW_UP_OUTCOME_GROUP_LABELS,
+  classifyFrontendFollowUpOutcome,
+  followUpOutcomeDefinitionForBucket,
+  followUpOutcomeToneClass,
+  type FollowUpRecoveryBucket
+} from "./lib/followUpOutcomes";
+import {
   Line,
   LineChart,
   ResponsiveContainer,
@@ -740,6 +749,8 @@ type OrderContactAttempt = {
   channel: "call" | "whatsapp" | "sms" | "manual";
   attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
   outcomeCode: string;
+  outcomeGroup?: "progress" | "recoverable" | "unreachable" | "closed_loss" | "other";
+  recoveryBucket?: "ready_now" | "call_tomorrow" | "call_in_2_3_days" | "salary_wait" | "spouse_approval" | "wants_discount" | "asked_for_whatsapp" | "no_answer" | "switched_off" | "line_busy" | "not_interested" | "wrong_number" | "out_of_coverage";
   outcomeNote?: string;
   customerReached?: boolean;
   nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
@@ -2363,6 +2374,35 @@ const humanizeFollowUpTaskType = (value?: FollowUpTask["taskType"]) => {
   if (value === "waybill_follow_up") return "Waybill Follow-up";
   return "Callback";
 };
+const followUpReasonBadgeText = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return null;
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  if (!outcome) return attempt.outcomeCode || null;
+  return outcome.label;
+};
+const followUpReasonGroupLabel = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return null;
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  if (!outcome) return null;
+  return FOLLOW_UP_OUTCOME_GROUP_LABELS[outcome.group] ?? null;
+};
+const followUpReasonBadgeClass = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return "bg-slate-100 text-slate-700";
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  return followUpOutcomeToneClass(outcome?.group ?? attempt.outcomeGroup ?? "other");
+};
 const percentOf = (part: number, total: number) => (total <= 0 ? 0 : Math.round((part / total) * 100));
 const statusForOrder = (order: Pick<TrackedOrder, "status">) => (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
 const MANAGER_OPEN_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["New", "Confirmed", "In Process", "Dispatched", "Postponed"]);
@@ -3179,6 +3219,8 @@ const normalizeContactAttempt = (value: any): OrderContactAttempt => ({
   channel: (value.channel ?? "manual") as OrderContactAttempt["channel"],
   attemptType: (value.attemptType ?? value.attempt_type ?? "fresh_follow_up") as OrderContactAttempt["attemptType"],
   outcomeCode: value.outcomeCode ?? value.outcome_code ?? "",
+  outcomeGroup: (value.outcomeGroup ?? value.outcome_group ?? undefined) as OrderContactAttempt["outcomeGroup"],
+  recoveryBucket: (value.recoveryBucket ?? value.recovery_bucket ?? undefined) as OrderContactAttempt["recoveryBucket"],
   outcomeNote: value.outcomeNote ?? value.outcome_note ?? undefined,
   customerReached: typeof (value.customerReached ?? value.customer_reached) === "boolean" ? (value.customerReached ?? value.customer_reached) : undefined,
   nextActionType: (value.nextActionType ?? value.next_action_type ?? undefined) as OrderContactAttempt["nextActionType"],
@@ -5747,6 +5789,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFollowUpTime, setOrderFollowUpTime] = useState(() => nextTimeValue());
   const [followUpAttemptChannel, setFollowUpAttemptChannel] = useState<OrderContactAttempt["channel"]>("call");
   const [followUpAttemptType, setFollowUpAttemptType] = useState<OrderContactAttempt["attemptType"]>("scheduled_callback");
+  const [followUpRecoveryBucket, setFollowUpRecoveryBucket] = useState<FollowUpRecoveryBucket | "custom" | "">("");
   const [followUpAttemptOutcome, setFollowUpAttemptOutcome] = useState("");
   const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
   const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
@@ -7348,10 +7391,66 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
   });
+  const prioritizedOrderRows = orderWorkspacePage === "Follow-up Queue"
+    ? filteredOrderRows.slice().sort((left, right) => {
+        const leftTasks = orderFollowUpTasksByOrder[left.id] ?? [];
+        const rightTasks = orderFollowUpTasksByOrder[right.id] ?? [];
+        const leftAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[left.id] ?? []);
+        const rightAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[right.id] ?? []);
+        const leftTask = activeFollowUpTaskForOrder(leftTasks);
+        const rightTask = activeFollowUpTaskForOrder(rightTasks);
+        const leftInsight = nextFollowUpForOrder(left);
+        const rightInsight = nextFollowUpForOrder(right);
+        const leftDueAt = leftTask?.dueAt ?? leftInsight?.dueAt ?? left.nextFollowUpAt ?? left.scheduledAt ?? "";
+        const rightDueAt = rightTask?.dueAt ?? rightInsight?.dueAt ?? right.nextFollowUpAt ?? right.scheduledAt ?? "";
+        const leftDueMs = leftDueAt ? new Date(leftDueAt).getTime() : Number.POSITIVE_INFINITY;
+        const rightDueMs = rightDueAt ? new Date(rightDueAt).getTime() : Number.POSITIVE_INFINITY;
+        const leftTimingRank = leftTask?.effectiveStatus === "overdue" || leftInsight?.overdue ? 0 : leftTask?.effectiveStatus === "due" ? 1 : leftInsight?.dueSoon ? 2 : leftDueAt ? 3 : 4;
+        const rightTimingRank = rightTask?.effectiveStatus === "overdue" || rightInsight?.overdue ? 0 : rightTask?.effectiveStatus === "due" ? 1 : rightInsight?.dueSoon ? 2 : rightDueAt ? 3 : 4;
+        const leftOutcome = classifyFrontendFollowUpOutcome({
+          outcomeCode: leftAttempt?.outcomeCode,
+          outcomeGroup: leftAttempt?.outcomeGroup,
+          recoveryBucket: leftAttempt?.recoveryBucket
+        });
+        const rightOutcome = classifyFrontendFollowUpOutcome({
+          outcomeCode: rightAttempt?.outcomeCode,
+          outcomeGroup: rightAttempt?.outcomeGroup,
+          recoveryBucket: rightAttempt?.recoveryBucket
+        });
+        const groupRank = (group?: string | null) => {
+          switch (group) {
+            case "recoverable": return 0;
+            case "unreachable": return 1;
+            case "progress": return 2;
+            case "closed_loss": return 3;
+            default: return 4;
+          }
+        };
+        const bucketRank = (bucket?: string | null) => {
+          switch (bucket) {
+            case "call_tomorrow": return 0;
+            case "call_in_2_3_days": return 1;
+            case "salary_wait":
+            case "spouse_approval":
+            case "wants_discount": return 2;
+            case "asked_for_whatsapp": return 3;
+            case "no_answer":
+            case "line_busy":
+            case "switched_off": return 4;
+            default: return 5;
+          }
+        };
+        return leftTimingRank - rightTimingRank
+          || leftDueMs - rightDueMs
+          || groupRank(leftOutcome?.group) - groupRank(rightOutcome?.group)
+          || bucketRank(leftOutcome?.bucket) - bucketRank(rightOutcome?.bucket)
+          || new Date(right.createdAt ?? right.date).getTime() - new Date(left.createdAt ?? left.date).getTime();
+      })
+    : filteredOrderRows;
   const ORDERS_PAGE_SIZE = 25;
-  const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
+  const ordersTotalPages = Math.max(1, Math.ceil(prioritizedOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
-  const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
+  const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
@@ -7366,14 +7465,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
-  const pfFollowUpRows = pfOrders.filter(matchesFollowUpQueuePage);
-  const pfFollowUpDueNow = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.overdue).length;
-  const pfFollowUpDueSoon = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.dueSoon).length;
-  const pfFollowUpPostponed = pfFollowUpRows.filter((order) => statusForOrder(order) === "Postponed").length;
-  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((order) => {
-    const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
-    return latestAttempt ? ageInHours(latestAttempt.attemptedAt) <= 24 : false;
-  }).length;
+  const pfFollowUpRows = pfOrders
+    .map((order) => ({
+      order,
+      followUp: nextFollowUpForOrder(order),
+      activeTask: activeFollowUpTaskForOrder(orderFollowUpTasksByOrder[order.id] ?? []),
+      latestAttempt: latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? [])
+    }))
+    .filter((entry) => matchesFollowUpQueuePage(entry.order));
+  const pfFollowUpDueNow = pfFollowUpRows.filter((entry) => entry.followUp?.overdue || (entry.activeTask?.effectiveStatus ?? entry.activeTask?.status) === "overdue").length;
+  const pfFollowUpDueSoon = pfFollowUpRows.filter((entry) => entry.followUp?.dueSoon).length;
+  const pfFollowUpRecoverable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
+    outcomeCode: entry.latestAttempt?.outcomeCode,
+    outcomeGroup: entry.latestAttempt?.outcomeGroup,
+    recoveryBucket: entry.latestAttempt?.recoveryBucket
+  })?.group === "recoverable").length;
+  const pfFollowUpUnreachable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
+    outcomeCode: entry.latestAttempt?.outcomeCode,
+    outcomeGroup: entry.latestAttempt?.outcomeGroup,
+    recoveryBucket: entry.latestAttempt?.recoveryBucket
+  })?.group === "unreachable").length;
+  const pfFollowUpTomorrow = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_tomorrow").length;
+  const pfFollowUpTwoThreeDays = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_in_2_3_days" || entry.latestAttempt?.recoveryBucket === "salary_wait" || entry.latestAttempt?.recoveryBucket === "spouse_approval").length;
+  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((entry) => Boolean(entry.latestAttempt?.attemptedAt || entry.order.lastContactAttemptAt)).length;
   const pfClosedDelivered = pfOrders.filter((order) => statusForOrder(order) === "Delivered").length;
   const pfClosedCancelled = pfOrders.filter((order) => statusForOrder(order) === "Cancelled").length;
   const pfClosedFailed = pfOrders.filter((order) => statusForOrder(order) === "Failed").length;
@@ -7391,10 +7505,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   );
   const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
     ? [
-        { label: "Queue Total", value: pfOrders.length, sub: "non-terminal orders needing action", icon: Headphones, color: "bg-amber-50 text-amber-500" },
-        { label: "Due Now", value: pfFollowUpDueNow, sub: "follow-ups overdue right now", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
-        { label: "Due Soon", value: pfFollowUpDueSoon, sub: "follow-ups due within 2 hours", icon: Clock3, color: "bg-blue-50 text-blue-500" },
-        { label: "Postponed", value: pfFollowUpPostponed, sub: "customers waiting on a later callback", icon: CalendarDays, color: "bg-purple-50 text-purple-500" }
+        { label: "Queue Total", value: pfOrders.length, sub: "orders needing follow-up", icon: Headphones, color: "bg-orange-50 text-orange-500" },
+        { label: "Due Now", value: pfFollowUpDueNow, sub: "overdue callbacks or actions", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
+        { label: "Recoverable", value: pfFollowUpRecoverable, sub: "buyers who asked for another try", icon: CalendarClock, color: "bg-sky-50 text-sky-500" },
+        { label: "Unreachable", value: pfFollowUpUnreachable, sub: "need another contact attempt", icon: PhoneOff, color: "bg-amber-50 text-amber-500" }
       ]
     : orderWorkspacePage === "Closed Orders"
       ? [
@@ -7414,8 +7528,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         icon: Headphones,
         iconClassName: "bg-amber-50 text-amber-500",
         title: "Queue Pressure",
-        helper: "Track the most urgent orders needing calls, confirmations, or callbacks.",
-        body: `${pfFollowUpDueNow} due now · ${pfFollowUpDueSoon} due soon · ${pfFollowUpRecentlyTouched} touched in the last 24 hours`
+        helper: "Track which callbacks need action now, and how many buyers are waiting for tomorrow or 2-3 day follow-ups.",
+        body: `${pfFollowUpRecentlyTouched}/${pfOrders.length || 0} touched recently · ${pfFollowUpTomorrow} tomorrow · ${pfFollowUpTwoThreeDays} in 2-3 days`
       }
     : orderWorkspacePage === "Closed Orders"
       ? {
@@ -15269,6 +15383,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const resetFollowUpAttemptDraft = (task?: FollowUpTask | null) => {
     setFollowUpAttemptChannel("call");
     setFollowUpAttemptType(task?.taskType === "delivery_confirmation" ? "delivery_confirmation" : "scheduled_callback");
+    setFollowUpRecoveryBucket("");
     setFollowUpAttemptOutcome("");
     setFollowUpAttemptNote("");
     setFollowUpAttemptTaskId(task?.id ?? "");
@@ -15277,6 +15392,47 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setFollowUpNextActionDate(task?.dueAt ? normalizeDateKey(task.dueAt) : todayKey());
     setFollowUpNextActionTime(task?.dueAt ? splitMomentForInput(task.dueAt).time || nextTimeValue() : nextTimeValue());
     setFollowUpNextActionNote("");
+  };
+
+  const recommendedNextActionForRecoveryBucket = (bucket: FollowUpRecoveryBucket) => {
+    const definition = followUpOutcomeDefinitionForBucket(bucket);
+    if (!definition?.requiresNextAction) return null;
+    const base = new Date();
+    if (definition.defaultOffsetDays) {
+      base.setDate(base.getDate() + definition.defaultOffsetDays);
+    }
+    if (definition.defaultOffsetMinutes) {
+      base.setMinutes(base.getMinutes() + definition.defaultOffsetMinutes);
+    }
+    const dateKey = formatDateKey(base);
+    const timeValue = `${String(base.getHours()).padStart(2, "0")}:${String(base.getMinutes()).padStart(2, "0")}`;
+    return {
+      date: dateKey,
+      time: timeValue,
+      taskType: bucket === "asked_for_whatsapp" ? "callback" as FollowUpTask["taskType"] : "callback" as FollowUpTask["taskType"]
+    };
+  };
+
+  const applyFollowUpOutcomePreset = (bucket: FollowUpRecoveryBucket | "custom") => {
+    if (bucket === "custom") {
+      setFollowUpRecoveryBucket("custom");
+      setFollowUpAttemptOutcome("");
+      setFollowUpNextActionEnabled(false);
+      return;
+    }
+    const definition = followUpOutcomeDefinitionForBucket(bucket);
+    if (!definition) return;
+    setFollowUpRecoveryBucket(bucket);
+    setFollowUpAttemptOutcome(definition.label);
+    if (definition.requiresNextAction) {
+      const recommended = recommendedNextActionForRecoveryBucket(bucket);
+      setFollowUpNextActionEnabled(true);
+      setFollowUpNextActionType(recommended?.taskType ?? "callback");
+      setFollowUpNextActionDate(recommended?.date ?? todayKey());
+      setFollowUpNextActionTime(recommended?.time ?? nextTimeValue());
+    } else {
+      setFollowUpNextActionEnabled(false);
+    }
   };
 
   const openFollowUpAttemptModal = (order: TrackedOrder, task?: FollowUpTask | null) => {
@@ -15289,6 +15445,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!selectedOrder) return;
     if (!followUpAttemptOutcome.trim()) {
       showToast("Pick the outcome of the follow-up attempt.");
+      return;
+    }
+    const selectedOutcomeDefinition = followUpRecoveryBucket && followUpRecoveryBucket !== "custom"
+      ? followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)
+      : null;
+    if (selectedOutcomeDefinition?.requiresNextAction && !followUpNextActionEnabled) {
+      showToast("This follow-up reason needs a callback date and time before you can save it.");
       return;
     }
     if (followUpNextActionEnabled && !isDateValue(followUpNextActionDate)) {
@@ -15310,6 +15473,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         channel: followUpAttemptChannel,
         attemptType: followUpAttemptType,
         outcomeCode: followUpAttemptOutcome.trim(),
+        recoveryBucket: followUpRecoveryBucket && followUpRecoveryBucket !== "custom" ? followUpRecoveryBucket : null,
         outcomeNote: followUpAttemptNote.trim() || null,
         nextActionType: followUpNextActionEnabled ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
@@ -18636,9 +18800,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Latest Attempt</p>
             {latestAttempt ? (
               <div className="mt-2 space-y-2">
-                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                  {latestAttempt.outcomeCode}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
+                    {followUpReasonBadgeText(latestAttempt)}
+                  </span>
+                  {followUpReasonGroupLabel(latestAttempt) && (
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                      {followUpReasonGroupLabel(latestAttempt)}
+                    </span>
+                  )}
+                </div>
                 <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(latestAttempt.attemptedAt)}</p>
                 <p className={`m-0 text-xs ${orderMutedTextClass}`}>{latestAttempt.outcomeNote || `${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
                 {latestAttempt.nextActionAt && (
@@ -18674,7 +18845,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div key={attempt.id} className={`rounded-xl border ${orderBorderClass} px-3 py-2.5`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>{attempt.outcomeCode}</span>
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpReasonBadgeClass(attempt)}`}>
+                        {followUpReasonBadgeText(attempt)}
+                      </span>
+                      {followUpReasonGroupLabel(attempt) && (
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                          {followUpReasonGroupLabel(attempt)}
+                        </span>
+                      )}
                       <span className={`text-[11px] ${orderMutedTextClass}`}>{attempt.channel} · {attempt.attemptType.replace(/_/g, " ")}</span>
                     </div>
                     <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
@@ -22499,6 +22677,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const status = order.status ?? "New";
                       const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+                      const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
                         <article key={order.id} className="p-4 flex flex-col gap-3 bg-white dark:bg-[#101a24]">
@@ -22521,6 +22700,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className="inline-flex items-center gap-1"><CalendarDays className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{formatOrderCreatedAt(order)}</span>
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
                           </div>
+                          {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
+                                {followUpReasonBadgeText(latestAttempt)}
+                              </span>
+                              {followUpReasonGroupLabel(latestAttempt) && (
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                                  {followUpReasonGroupLabel(latestAttempt)}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <div className="grid grid-cols-2 gap-2 pt-1">
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe57] transition-colors"
@@ -22601,6 +22792,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           const status = order.status ?? "New";
                           const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+                          const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
                               {currentRole !== "Sales Rep" && (
@@ -22634,6 +22826,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </td>
                               <td className="px-4 py-3.5">
                                 {renderOrderStatusSummary(order)}
+                                {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
+                                      {followUpReasonBadgeText(latestAttempt)}
+                                    </span>
+                                    {followUpReasonGroupLabel(latestAttempt) && (
+                                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                                        {followUpReasonGroupLabel(latestAttempt)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 {(() => {
@@ -35426,7 +35630,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </span>
                     </div>
                     {selectedOrderLatestAttempt && (
-                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {selectedOrderLatestAttempt.outcomeCode} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
+                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {followUpReasonBadgeText(selectedOrderLatestAttempt)} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
                     )}
                   </div>
 
@@ -35452,10 +35656,58 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </label>
                   </div>
 
-                  <label>
-                    <span>Outcome *</span>
-                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpAttemptOutcome(event.target.value)} placeholder="e.g. No Answer, Confirmed, Not Ready, Will Call Back..." />
-                  </label>
+                  <div className="space-y-3">
+                    <div>
+                      <span className={`block text-sm font-medium ${orderTitleTextClass}`}>Outcome *</span>
+                      <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>Pick the real reason so Protohub can bring the order back at the right time.</p>
+                    </div>
+                    <div className="space-y-3">
+                      {FOLLOW_UP_OUTCOME_GROUPS.filter((group) => group !== "other").map((group) => {
+                        const options = FOLLOW_UP_OUTCOME_DEFINITIONS.filter((definition) => definition.group === group);
+                        if (options.length === 0) return null;
+                        return (
+                          <div key={group} className="space-y-2">
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>{FOLLOW_UP_OUTCOME_GROUP_LABELS[group]}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {options.map((definition) => {
+                                const selected = followUpRecoveryBucket === definition.bucket;
+                                return (
+                                  <button
+                                    key={definition.bucket}
+                                    type="button"
+                                    className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${selected ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : orderSecondaryButtonClass}`}
+                                    onClick={() => applyFollowUpOutcomePreset(definition.bucket)}
+                                  >
+                                    {definition.label}
+                                  </button>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${followUpRecoveryBucket === "custom" ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : orderSecondaryButtonClass}`}
+                                onClick={() => applyFollowUpOutcomePreset("custom")}
+                              >
+                                Custom outcome
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {followUpRecoveryBucket === "custom" ? (
+                      <input
+                        value={followUpAttemptOutcome}
+                        onChange={(event) => setFollowUpAttemptOutcome(event.target.value)}
+                        placeholder="Type the exact outcome if it does not fit the presets"
+                      />
+                    ) : (
+                      followUpRecoveryBucket && (
+                        <p className={`m-0 rounded-xl ${orderPanelMutedClass} px-3 py-2 text-xs ${orderMutedTextClass}`}>
+                          {followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.helper}
+                        </p>
+                      )
+                    )}
+                  </div>
 
                   <label>
                     <span>What happened?</span>
@@ -35471,9 +35723,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <input
                         type="checkbox"
                         checked={followUpNextActionEnabled}
+                        disabled={Boolean(followUpRecoveryBucket && followUpRecoveryBucket !== "custom" && followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.requiresNextAction)}
                         onChange={(event) => setFollowUpNextActionEnabled(event.target.checked)}
                       />
-                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>Set the next follow-up action now</span>
+                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>
+                        {followUpRecoveryBucket && followUpRecoveryBucket !== "custom" && followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.requiresNextAction
+                          ? "Next callback required for this outcome"
+                          : "Set the next follow-up action now"}
+                      </span>
                     </label>
                     {followUpNextActionEnabled && (
                       <>

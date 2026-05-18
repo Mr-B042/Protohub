@@ -5,6 +5,7 @@ import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
+import { FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
@@ -1391,6 +1392,7 @@ const ContactAttemptSchema = z.object({
   channel: z.enum(["call", "whatsapp", "sms", "manual"]).default("call"),
   attemptType: z.enum(["scheduled_callback", "fresh_follow_up", "delivery_confirmation", "payment_follow_up", "waybill_follow_up"]).default("scheduled_callback"),
   outcomeCode: z.string().trim().min(1).max(120),
+  recoveryBucket: z.enum(FOLLOW_UP_RECOVERY_BUCKETS).optional().nullable(),
   outcomeNote: z.string().trim().max(1000).optional().nullable(),
   nextActionType: z.enum(["callback", "payment_check", "delivery_confirmation", "waybill_follow_up"]).optional().nullable(),
   nextActionAt: z.string().min(1).max(80).optional().nullable(),
@@ -1427,6 +1429,7 @@ router.post("/:id/contact-attempts", async (req, res) => {
       channel: parsed.data.channel,
       attemptType: parsed.data.attemptType,
       outcomeCode: parsed.data.outcomeCode,
+      recoveryBucket: parsed.data.recoveryBucket ?? null,
       outcomeNote: parsed.data.outcomeNote ?? null,
       taskId: parsed.data.taskId ?? null,
       nextActionType: parsed.data.nextActionType ?? null,
