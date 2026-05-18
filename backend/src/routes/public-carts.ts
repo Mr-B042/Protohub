@@ -30,7 +30,8 @@ const CaptureSchema = z.object({
   packageName:  z.string().min(1).max(160),
   amount:       z.number().min(0).max(1_000_000_000),
   currency:     z.enum(["NGN", "USD", "GBP"]),
-  source:       z.string().max(60).optional()
+  source:       z.string().max(60).optional(),
+  embedLabel:   z.string().max(120).optional()
 });
 
 const JourneyEventSchema = z.object({
@@ -39,6 +40,7 @@ const JourneyEventSchema = z.object({
   state: z.string().max(80).optional(),
   eventType: z.enum([
     "form_opened",
+    "first_interaction",
     "package_selected",
     "state_selected",
     "additional_item_preview_opened",
@@ -57,6 +59,7 @@ const JourneyEventSchema = z.object({
     "submit_blocked_missing_confirmation",
     "submit_blocked_missing_commitment",
     "order_submitted",
+    "redirect_triggered",
     "form_exited"
   ]),
   companionProductId: z.string().uuid().optional(),
@@ -103,6 +106,7 @@ router.post("/", captureRateLimit, async (req, res) => {
     amount:       d.amount,
     currency:     d.currency,
     source:       d.source ?? "Website",
+    embed_label:  (d.embedLabel ?? "").trim().slice(0, 120) || null,
     last_activity: new Date().toISOString()
   };
 
@@ -143,23 +147,47 @@ router.post("/", captureRateLimit, async (req, res) => {
       res.status(200).json({ id: d.id, ignored: true });
       return;
     }
-    const { data, error } = await supabase
+    let updateQuery = supabase
       .from("abandoned_carts")
       .update(row)
       .eq("id", d.id)
       .eq("org_id", product.org_id)
       .select()
       .single();
+    let { data, error } = await updateQuery;
+    if (error?.code === "42703" || /embed_label/i.test(error?.message ?? "")) {
+      const legacyRow = { ...row };
+      delete (legacyRow as Record<string, unknown>).embed_label;
+      updateQuery = supabase
+        .from("abandoned_carts")
+        .update(legacyRow)
+        .eq("id", d.id)
+        .eq("org_id", product.org_id)
+        .select()
+        .single();
+      ({ data, error } = await updateQuery);
+    }
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json(data);
     return;
   }
 
-  const { data, error } = await supabase
+  let insertQuery = supabase
     .from("abandoned_carts")
     .insert({ ...row, status: "Open abandoned" })
     .select()
     .single();
+  let { data, error } = await insertQuery;
+  if (error?.code === "42703" || /embed_label/i.test(error?.message ?? "")) {
+    const legacyRow = { ...row };
+    delete (legacyRow as Record<string, unknown>).embed_label;
+    insertQuery = supabase
+      .from("abandoned_carts")
+      .insert({ ...legacyRow, status: "Open abandoned" })
+      .select()
+      .single();
+    ({ data, error } = await insertQuery);
+  }
   if (error) { res.status(500).json({ error: error.message }); return; }
   void notifyNewAbandonedCart(product.org_id, {
     id: data.id,

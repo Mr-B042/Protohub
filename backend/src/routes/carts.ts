@@ -50,6 +50,95 @@ const JourneyBulkSchema = z.object({
   ).max(500)
 });
 
+const LIVE_PULSE_EVENT_TYPES = new Set([
+  "form_opened",
+  "first_interaction",
+  "package_selected",
+  "state_selected",
+  "additional_item_preview_opened",
+  "additional_item_added",
+  "additional_item_removed",
+  "submit_attempted",
+  "submit_blocked_missing_name",
+  "submit_blocked_missing_phone",
+  "submit_blocked_invalid_phone",
+  "submit_blocked_missing_whatsapp",
+  "submit_blocked_invalid_whatsapp",
+  "submit_blocked_missing_address",
+  "submit_blocked_missing_city",
+  "submit_blocked_missing_state",
+  "submit_blocked_missing_delivery",
+  "submit_blocked_missing_confirmation",
+  "submit_blocked_missing_commitment",
+  "order_submitted",
+  "redirect_triggered",
+  "form_exited"
+]);
+
+const PULSE_FEED_EVENT_TYPES = new Set([
+  "form_opened",
+  "first_interaction",
+  "submit_attempted",
+  "order_submitted",
+  "redirect_triggered"
+]);
+
+const LAGOS_OFFSET_MS = 60 * 60 * 1000;
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const lagosTodayDateKey = () => new Date(Date.now() + LAGOS_OFFSET_MS).toISOString().slice(0, 10);
+
+const lagosDateKeyToRange = (dateKey: string) => {
+  if (!DATE_KEY_RE.test(dateKey)) return null;
+  const [year, month, day] = dateKey.split("-").map((value) => Number(value));
+  if (!year || !month || !day) return null;
+  const startUtcMs = Date.UTC(year, month - 1, day) - LAGOS_OFFSET_MS;
+  return {
+    startIso: new Date(startUtcMs).toISOString(),
+    endExclusiveIso: new Date(startUtcMs + 24 * 60 * 60 * 1000).toISOString()
+  };
+};
+
+const lagosDateRangeToBounds = (dateFrom?: string, dateTo?: string) => {
+  const normalizedFrom = typeof dateFrom === "string" && DATE_KEY_RE.test(dateFrom) ? dateFrom : lagosTodayDateKey();
+  const normalizedTo = typeof dateTo === "string" && DATE_KEY_RE.test(dateTo) ? dateTo : normalizedFrom;
+  const dateStart = normalizedFrom <= normalizedTo ? normalizedFrom : normalizedTo;
+  const dateEnd = normalizedFrom <= normalizedTo ? normalizedTo : normalizedFrom;
+  const startRange = lagosDateKeyToRange(dateStart);
+  const endRange = lagosDateKeyToRange(dateEnd);
+  if (!startRange || !endRange) {
+    const today = lagosTodayDateKey();
+    const fallback = lagosDateKeyToRange(today)!;
+    return { dateFrom: today, dateTo: today, startIso: fallback.startIso, endExclusiveIso: fallback.endExclusiveIso };
+  }
+  return {
+    dateFrom: dateStart,
+    dateTo: dateEnd,
+    startIso: startRange.startIso,
+    endExclusiveIso: endRange.endExclusiveIso
+  };
+};
+
+const normalizePulseSource = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) return "Unknown";
+  return value.trim();
+};
+
+const normalizePulseEmbedLabel = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) return "Unlabelled embed";
+  return value.trim();
+};
+
+const isInteractionEvent = (eventType: string) =>
+  eventType === "first_interaction"
+  || eventType === "package_selected"
+  || eventType === "state_selected"
+  || eventType === "additional_item_preview_opened"
+  || eventType === "additional_item_added"
+  || eventType === "additional_item_removed"
+  || eventType === "submit_attempted"
+  || eventType.startsWith("submit_blocked_");
+
 // DB enum only allows: Open abandoned | Assigned | Contacted | Converted | Lost.
 // Frontend draft states ("In progress", "Abandoned") are coerced to "Open abandoned".
 router.post("/", async (req, res) => {
@@ -198,6 +287,321 @@ router.post("/journey-bulk", async (req, res) => {
   }
 
   res.json(grouped);
+});
+
+// ── GET /api/carts/live-pulse ───────────────────────────
+// Live health view for customer-facing order forms. Uses cart journey events
+// so owners/admins can see views, clicks, submits, redirects, and last-seen
+// timestamps without refreshing the whole page.
+router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
+  const rawProductIds = typeof req.query.productIds === "string" ? req.query.productIds : "";
+  const productIds = Array.from(
+    new Set(
+      rawProductIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => /^[0-9a-fA-F-]{36}$/.test(id))
+    )
+  ).slice(0, 50);
+  const rawEmbedLabels = typeof req.query.embedLabels === "string" ? req.query.embedLabels : "";
+  const embedLabels = Array.from(
+    new Set(
+      rawEmbedLabels
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .map((value) => value.slice(0, 120))
+    )
+  ).slice(0, 50);
+  const activeWindowMinutes = Math.max(
+    3,
+    Math.min(
+      30,
+      Number.isFinite(Number(req.query.activeWindowMinutes))
+        ? Math.round(Number(req.query.activeWindowMinutes))
+        : 10
+    )
+  );
+  const selectedRange = lagosDateRangeToBounds(
+    typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
+    typeof req.query.dateTo === "string" ? req.query.dateTo : undefined
+  );
+  const activeSinceIso = new Date(Date.now() - activeWindowMinutes * 60 * 1000).toISOString();
+  const recentSinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  let rangeQuery = supabase
+    .from("cart_journey_events")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .gte("created_at", selectedRange.startIso)
+    .lt("created_at", selectedRange.endExclusiveIso)
+    .order("created_at", { ascending: true });
+  let rangeFeedQuery = supabase
+    .from("cart_journey_events")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .gte("created_at", selectedRange.startIso)
+    .lt("created_at", selectedRange.endExclusiveIso)
+    .order("created_at", { ascending: false })
+    .limit(250);
+  let liveWindowQuery = supabase
+    .from("cart_journey_events")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .gte("created_at", recentSinceIso)
+    .order("created_at", { ascending: false })
+    .limit(250);
+
+  if (productIds.length > 0) {
+    rangeQuery = rangeQuery.in("product_id", productIds);
+    rangeFeedQuery = rangeFeedQuery.in("product_id", productIds);
+    liveWindowQuery = liveWindowQuery.in("product_id", productIds);
+  }
+
+  const [
+    { data: rangeEvents, error: rangeError },
+    { data: rangeFeedEvents, error: rangeFeedError },
+    { data: liveWindowEvents, error: liveWindowError }
+  ] = await Promise.all([rangeQuery, rangeFeedQuery, liveWindowQuery]);
+
+  if (rangeError || rangeFeedError || liveWindowError) {
+    res.status(500).json({ error: rangeError?.message ?? rangeFeedError?.message ?? liveWindowError?.message ?? "Could not load live pulse." });
+    return;
+  }
+
+  const combinedCartIds = Array.from(
+    new Set(
+      [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? [])]
+        .map((event) => (typeof event.cart_id === "string" ? event.cart_id.trim() : ""))
+        .filter(Boolean)
+    )
+  );
+
+  let cartRows: any[] = [];
+  if (combinedCartIds.length > 0) {
+    let cartRes: any = await supabase
+      .from("abandoned_carts")
+      .select("id, source, customer, product_name, package_name, last_activity, embed_label")
+      .eq("org_id", req.user!.orgId)
+      .in("id", combinedCartIds);
+    if (cartRes.error && (cartRes.error.code === "42703" || /embed_label/i.test(cartRes.error.message ?? ""))) {
+      cartRes = await supabase
+        .from("abandoned_carts")
+        .select("id, source, customer, product_name, package_name, last_activity")
+        .eq("org_id", req.user!.orgId)
+        .in("id", combinedCartIds);
+    }
+    if (cartRes.error) {
+      res.status(500).json({ error: cartRes.error.message });
+      return;
+    }
+    cartRows = cartRes.data ?? [];
+  }
+
+  const cartById = new Map(cartRows.map((row) => [row.id, row]));
+  const rangeByCart = new Map<string, any[]>();
+  const liveByCart = new Map<string, any[]>();
+
+  for (const event of rangeEvents ?? []) {
+    if (!LIVE_PULSE_EVENT_TYPES.has(String(event.event_type ?? ""))) continue;
+    const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
+    if (!cartId) continue;
+    const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const cartRow = cartById.get(cartId);
+    const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+    if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) continue;
+    const bucket = rangeByCart.get(cartId) ?? [];
+    bucket.push(event);
+    rangeByCart.set(cartId, bucket);
+  }
+
+  for (const event of [...(liveWindowEvents ?? [])].reverse()) {
+    if (!LIVE_PULSE_EVENT_TYPES.has(String(event.event_type ?? ""))) continue;
+    const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
+    if (!cartId) continue;
+    const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const cartRow = cartById.get(cartId);
+    const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+    if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) continue;
+    const bucket = liveByCart.get(cartId) ?? [];
+    bucket.push(event);
+    liveByCart.set(cartId, bucket);
+  }
+
+  const sourceStats = new Map<string, { source: string; viewed: number; interacted: number; submitted: number; lastSeenAt: string | null }>();
+  const embedStats = new Map<string, { embedLabel: string; viewed: number; interacted: number; submitted: number; lastSeenAt: string | null }>();
+  const pulseFeed = [...(rangeFeedEvents ?? [])]
+    .filter((event) => PULSE_FEED_EVENT_TYPES.has(String(event.event_type ?? "")))
+    .filter((event) => {
+      if (embedLabels.length === 0) return true;
+      const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
+      const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const cartRow = cartById.get(cartId);
+      const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+      return embedLabels.includes(embedLabel);
+    })
+    .slice(0, 12)
+    .map((event) => {
+      const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
+      const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const cartRow = cartById.get(cartId);
+      const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+      const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+      return {
+        cartId,
+        eventType: String(event.event_type ?? ""),
+        source,
+        embedLabel,
+        productName: typeof metadata.productName === "string" && metadata.productName.trim()
+          ? metadata.productName.trim()
+          : (cartRow?.product_name ?? "Order form"),
+        packageName: typeof metadata.packageName === "string" && metadata.packageName.trim()
+          ? metadata.packageName.trim()
+          : (cartRow?.package_name ?? null),
+        createdAt: event.created_at
+      };
+    });
+
+  const summary = {
+    activeNow: 0,
+    viewedToday: 0,
+    interactedToday: 0,
+    submitAttemptsToday: 0,
+    conversionsToday: 0,
+    redirectsToday: 0,
+    viewedLiveWindow: 0,
+    interactedLiveWindow: 0,
+    submitAttemptsLiveWindow: 0,
+    conversionsLiveWindow: 0,
+    redirectsLiveWindow: 0,
+    interactionRate: 0,
+    submitRate: 0,
+    conversionRate: 0,
+    lastViewedAt: null as string | null,
+    lastInteractionAt: null as string | null,
+    lastSubmitAttemptAt: null as string | null,
+    lastConversionAt: null as string | null,
+    lastRedirectAt: null as string | null
+  };
+
+  for (const [cartId, events] of rangeByCart.entries()) {
+    const cartRow = cartById.get(cartId);
+    const latestSource = normalizePulseSource(
+      [...events].reverse().map((event) => event?.metadata?.source).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.source
+    );
+    const sourceBucket = sourceStats.get(latestSource) ?? { source: latestSource, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+    const latestEmbedLabel = normalizePulseEmbedLabel(
+      [...events].reverse().map((event) => event?.metadata?.embedLabel).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.embed_label
+    );
+    const embedBucket = embedStats.get(latestEmbedLabel) ?? { embedLabel: latestEmbedLabel, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+
+    let hasView = false;
+    let hasInteraction = false;
+    let hasSubmitAttempt = false;
+    let hasConversion = false;
+    let hasRedirect = false;
+
+    for (const event of events) {
+      const eventType = String(event.event_type ?? "");
+      const createdAt = typeof event.created_at === "string" ? event.created_at : null;
+      if (eventType === "form_opened") {
+        hasView = true;
+        summary.lastViewedAt = createdAt && (!summary.lastViewedAt || createdAt > summary.lastViewedAt) ? createdAt : summary.lastViewedAt;
+      }
+      if (isInteractionEvent(eventType)) {
+        hasInteraction = true;
+        summary.lastInteractionAt = createdAt && (!summary.lastInteractionAt || createdAt > summary.lastInteractionAt) ? createdAt : summary.lastInteractionAt;
+      }
+      if (eventType === "submit_attempted") {
+        hasSubmitAttempt = true;
+        summary.lastSubmitAttemptAt = createdAt && (!summary.lastSubmitAttemptAt || createdAt > summary.lastSubmitAttemptAt) ? createdAt : summary.lastSubmitAttemptAt;
+      }
+      if (eventType === "order_submitted") {
+        hasConversion = true;
+        summary.lastConversionAt = createdAt && (!summary.lastConversionAt || createdAt > summary.lastConversionAt) ? createdAt : summary.lastConversionAt;
+      }
+      if (eventType === "redirect_triggered") {
+        hasRedirect = true;
+        summary.lastRedirectAt = createdAt && (!summary.lastRedirectAt || createdAt > summary.lastRedirectAt) ? createdAt : summary.lastRedirectAt;
+      }
+      if (createdAt && (!sourceBucket.lastSeenAt || createdAt > sourceBucket.lastSeenAt)) {
+        sourceBucket.lastSeenAt = createdAt;
+      }
+      if (createdAt && (!embedBucket.lastSeenAt || createdAt > embedBucket.lastSeenAt)) {
+        embedBucket.lastSeenAt = createdAt;
+      }
+    }
+
+    if (hasView) {
+      summary.viewedToday += 1;
+      sourceBucket.viewed += 1;
+      embedBucket.viewed += 1;
+    }
+    if (hasInteraction) {
+      summary.interactedToday += 1;
+      sourceBucket.interacted += 1;
+      embedBucket.interacted += 1;
+    }
+    if (hasSubmitAttempt) summary.submitAttemptsToday += 1;
+    if (hasConversion) {
+      summary.conversionsToday += 1;
+      sourceBucket.submitted += 1;
+      embedBucket.submitted += 1;
+    }
+    if (hasRedirect) summary.redirectsToday += 1;
+
+    sourceStats.set(latestSource, sourceBucket);
+    embedStats.set(latestEmbedLabel, embedBucket);
+  }
+
+  for (const [, events] of liveByCart.entries()) {
+    const lastEvent = events[events.length - 1];
+    const latestCreatedAt = typeof lastEvent?.created_at === "string" ? lastEvent.created_at : null;
+    const latestEventType = String(lastEvent?.event_type ?? "");
+    const inActiveWindow = Boolean(latestCreatedAt && latestCreatedAt >= activeSinceIso);
+    if (inActiveWindow && latestEventType !== "form_exited" && latestEventType !== "order_submitted" && latestEventType !== "redirect_triggered") {
+      summary.activeNow += 1;
+    }
+
+    const liveEventTypes = new Set(events.filter((event) => typeof event.created_at === "string" && event.created_at >= activeSinceIso).map((event) => String(event.event_type ?? "")));
+    if (liveEventTypes.has("form_opened")) summary.viewedLiveWindow += 1;
+    if ([...liveEventTypes].some((eventType) => isInteractionEvent(eventType))) summary.interactedLiveWindow += 1;
+    if (liveEventTypes.has("submit_attempted")) summary.submitAttemptsLiveWindow += 1;
+    if (liveEventTypes.has("order_submitted")) summary.conversionsLiveWindow += 1;
+    if (liveEventTypes.has("redirect_triggered")) summary.redirectsLiveWindow += 1;
+  }
+
+  summary.interactionRate = summary.viewedToday > 0 ? Math.round((summary.interactedToday / summary.viewedToday) * 100) : 0;
+  summary.submitRate = summary.interactedToday > 0 ? Math.round((summary.submitAttemptsToday / summary.interactedToday) * 100) : 0;
+  summary.conversionRate = summary.viewedToday > 0 ? Math.round((summary.conversionsToday / summary.viewedToday) * 100) : 0;
+
+  const health = (() => {
+    if (summary.viewedLiveWindow === 0 && summary.lastViewedAt) {
+      return { status: "quiet", message: "No fresh form views in the live window. Check ad traffic or landing-page reach." };
+    }
+    if (summary.viewedLiveWindow > 0 && summary.interactedLiveWindow === 0) {
+      return { status: "attention", message: "Views are coming in, but almost nobody is interacting yet." };
+    }
+    if (summary.submitAttemptsLiveWindow > 0 && summary.conversionsLiveWindow === 0) {
+      return { status: "attention", message: "Customers are trying to submit, but no completed orders have landed in the live window." };
+    }
+    if (summary.viewedLiveWindow > 0) {
+      return { status: "healthy", message: "The order form is receiving live traffic and still moving customers forward." };
+    }
+    return { status: "idle", message: "Waiting for fresh landing-page traffic." };
+  })();
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    activeWindowMinutes,
+    dateFrom: selectedRange.dateFrom,
+    dateTo: selectedRange.dateTo,
+    summary,
+    health,
+    sources: [...sourceStats.values()].sort((a, b) => b.viewed - a.viewed || b.submitted - a.submitted),
+    embeds: [...embedStats.values()].sort((a, b) => b.viewed - a.viewed || b.submitted - a.submitted),
+    recentEvents: pulseFeed
+  });
 });
 
 // ── GET /api/carts/:id/journey ──────────────────────────

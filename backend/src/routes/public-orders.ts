@@ -61,6 +61,7 @@ const PublicOrderSchema = z.object({
   utmMedium:    z.string().max(80).optional(),
   utmContent:   z.string().max(160).optional(),
   utmTerm:      z.string().max(160).optional(),
+  embedLabel:   z.string().max(120).optional(),
   referrer:     z.string().max(2048).optional(),
   confirmationChecked: z.boolean().optional(),
   preferredDelivery:   z.string().max(80).optional(),
@@ -112,6 +113,11 @@ const normalizeStateName = (value: string | undefined) => {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
   return (value ?? "").trim();
+};
+
+const cleanEmbedLabel = (value: string | undefined) => {
+  const normalized = (value ?? "").trim().slice(0, 120);
+  return normalized || null;
 };
 
 function sourceFromUtm(utm: string | undefined): typeof ALLOWED_SOURCES[number] {
@@ -241,7 +247,7 @@ const verifyPublicUpsellToken = (token: string): PublicUpsellTokenPayload | null
 };
 
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer/i.test(error?.message ?? "");
+  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label/i.test(error?.message ?? "");
 
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
@@ -569,6 +575,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     utm_medium:        d.utmMedium ?? null,
     utm_content:       d.utmContent ?? null,
     utm_term:          d.utmTerm ?? null,
+    embed_label:       cleanEmbedLabel(d.embedLabel),
     referrer:          d.referrer ?? null,
     confirmation_checked: d.confirmationChecked ?? null,
     preferred_delivery:   d.preferredDelivery ?? null,
@@ -578,6 +585,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.confirmation_checked;
   delete legacyInsert.preferred_delivery;
   delete legacyInsert.referrer;
+  delete legacyInsert.embed_label;
 
   let { data: order, error: orderErr } = await supabase
     .from("orders")
@@ -610,6 +618,31 @@ router.post("/", submitRateLimit, async (req, res) => {
       .update({ status: "Converted", last_activity: new Date().toISOString() })
       .eq("id", d.cartId)
       .eq("org_id", product.org_id);
+
+    const { error: journeyInsertError } = await supabase
+      .from("cart_journey_events")
+      .insert({
+        org_id: product.org_id,
+        cart_id: d.cartId,
+        product_id: product.id,
+        package_id: pkg.id,
+        state: d.state ?? null,
+        event_type: "order_submitted",
+        metadata: {
+          orderId: order.id,
+          customerName: d.customer,
+          additionalItems: resolved.length,
+          source,
+          embedLabel: cleanEmbedLabel(d.embedLabel)
+        }
+      });
+    if (journeyInsertError) {
+      logger.warn("public-orders: failed to record order_submitted journey event", {
+        orderId: order.id,
+        cartId: d.cartId,
+        error: journeyInsertError.message
+      });
+    }
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).

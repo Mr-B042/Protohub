@@ -490,6 +490,26 @@ export const cartsApi = {
   },
   journey: (id: string) => get<any[]>(`/api/carts/${encodeURIComponent(id)}/journey`),
   journeyBulk: (cartIds: string[]) => post<Record<string, any[]>>("/api/carts/journey-bulk", { cartIds }),
+  livePulse: (params?: { productIds?: string[]; embedLabels?: string[]; activeWindowMinutes?: number; dateFrom?: string; dateTo?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.productIds?.length) {
+      qs.set("productIds", params.productIds.join(","));
+    }
+    if (params?.embedLabels?.length) {
+      qs.set("embedLabels", params.embedLabels.join(","));
+    }
+    if (typeof params?.activeWindowMinutes === "number") {
+      qs.set("activeWindowMinutes", String(params.activeWindowMinutes));
+    }
+    if (params?.dateFrom) {
+      qs.set("dateFrom", params.dateFrom);
+    }
+    if (params?.dateTo) {
+      qs.set("dateTo", params.dateTo);
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<any>(`/api/carts/live-pulse${suffix}`);
+  },
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
   delete: (id: string) => del<void>(`/api/carts/${id}`)
 };

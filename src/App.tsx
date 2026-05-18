@@ -126,6 +126,7 @@ import {
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 const CART_JOURNEY_POLL_MS = 5_000;
 const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
+const FORM_PULSE_POLL_MS = 8_000;
 const ORDER_DETAILS_POLL_MS = 10_000;
 const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
 
@@ -754,6 +755,7 @@ type AbandonedCartRecord = {
   amount: number;
   currency: ProductCurrencyCode;
   source: Exclude<OrderSource, "All Sources">;
+  embedLabel?: string;
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
   lastActivity: string;
@@ -779,6 +781,7 @@ type CartJourneyEvent = {
   state?: string;
   eventType:
     | "form_opened"
+    | "first_interaction"
     | "package_selected"
     | "state_selected"
     | "additional_item_preview_opened"
@@ -787,6 +790,7 @@ type CartJourneyEvent = {
     | "submit_attempted"
     | CartJourneyBlockedEventType
     | "order_submitted"
+    | "redirect_triggered"
     | "order_assigned"
     | "order_reassigned"
     | "delivery_agent_assigned"
@@ -798,6 +802,64 @@ type CartJourneyEvent = {
   companionPackageId?: string;
   metadata: Record<string, string | number | boolean | null>;
   createdAt: string;
+};
+type LiveFormPulseSourceStat = {
+  source: string;
+  viewed: number;
+  interacted: number;
+  submitted: number;
+  lastSeenAt: string | null;
+};
+type LiveFormPulseEmbedStat = {
+  embedLabel: string;
+  viewed: number;
+  interacted: number;
+  submitted: number;
+  lastSeenAt: string | null;
+};
+type LiveFormPulseRecentEvent = {
+  cartId: string;
+  eventType: CartJourneyEvent["eventType"];
+  source: string;
+  embedLabel: string;
+  productName: string;
+  packageName?: string | null;
+  createdAt: string;
+};
+type LiveFormPulseSummary = {
+  activeNow: number;
+  viewedToday: number;
+  interactedToday: number;
+  submitAttemptsToday: number;
+  conversionsToday: number;
+  redirectsToday: number;
+  viewedLiveWindow: number;
+  interactedLiveWindow: number;
+  submitAttemptsLiveWindow: number;
+  conversionsLiveWindow: number;
+  redirectsLiveWindow: number;
+  interactionRate: number;
+  submitRate: number;
+  conversionRate: number;
+  lastViewedAt: string | null;
+  lastInteractionAt: string | null;
+  lastSubmitAttemptAt: string | null;
+  lastConversionAt: string | null;
+  lastRedirectAt: string | null;
+};
+type LiveFormPulseResponse = {
+  generatedAt: string;
+  activeWindowMinutes: number;
+  dateFrom?: string;
+  dateTo?: string;
+  summary: LiveFormPulseSummary;
+  health: {
+    status: "healthy" | "attention" | "quiet" | "idle";
+    message: string;
+  };
+  sources: LiveFormPulseSourceStat[];
+  embeds: LiveFormPulseEmbedStat[];
+  recentEvents: LiveFormPulseRecentEvent[];
 };
 type DeliveryAgentCoverage = {
   id?: string;
@@ -3119,6 +3181,7 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     amount: Number(cart.amount ?? 0),
     currency: cart.currency ?? "NGN",
     source: cart.source ?? "Website",
+    embedLabel: cart.embedLabel ?? undefined,
     status: cart.status ?? "Open abandoned",
     assignedRepId: cart.assignedRepId ?? undefined,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
@@ -3224,6 +3287,7 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
   if (isCartJourneyBlockedEvent(event.eventType)) return CART_JOURNEY_BLOCKED_LABELS[event.eventType];
   switch (event.eventType) {
     case "form_opened": return "Journey started";
+    case "first_interaction": return "First interaction";
     case "package_selected": return "Package changed";
     case "state_selected": return "State selected";
     case "additional_item_preview_opened": return "Viewed additional item";
@@ -3231,6 +3295,7 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
     case "additional_item_removed": return "Removed additional item";
     case "submit_attempted": return "Tried to submit";
     case "order_submitted": return "Order submitted";
+    case "redirect_triggered": return "Redirect fired";
     case "order_assigned": return "Order assigned";
     case "order_reassigned": return "Order reassigned";
     case "delivery_agent_assigned": return "Delivery agent assigned";
@@ -3263,6 +3328,8 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
     return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
   }
   switch (event.eventType) {
+    case "first_interaction":
+      return `${customerName || "Customer"} actively engaged with the form.`;
     case "package_selected":
       return packageName || productName || "Switched package";
     case "state_selected":
@@ -3277,6 +3344,8 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
       return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;
     case "order_submitted":
       return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
+    case "redirect_triggered":
+      return "Redirected to the landing-page thank-you destination.";
     case "order_assigned":
       return repName ? `${repName} was assigned to handle this order.` : (actorName ? `${actorName} assigned this order.` : "A rep was assigned to this order.");
     case "order_reassigned":
@@ -3395,6 +3464,7 @@ const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
   ).length;
 
   if (seen.has("form_opened")) score += 8;
+  if (seen.has("first_interaction")) score += 10;
   if (seen.has("package_selected")) score += 14;
   if (seen.has("state_selected")) score += 14;
   if (seen.has("submit_attempted")) score += 28;
@@ -3535,6 +3605,74 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
       topAdditionalItem
     }
   };
+};
+
+const liveFormPulseHealthBadgeClass = (status: LiveFormPulseResponse["health"]["status"]) => {
+  switch (status) {
+    case "healthy":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "attention":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "quiet":
+      return "border-sky-200 bg-sky-50 text-sky-700";
+    default:
+      return "border-gray-200 bg-gray-50 text-gray-600";
+  }
+};
+
+const liveFormPulseEventLabel = (eventType: LiveFormPulseRecentEvent["eventType"]) => {
+  switch (eventType) {
+    case "form_opened":
+      return "Viewed form";
+    case "first_interaction":
+      return "Started interacting";
+    case "submit_attempted":
+      return "Tried submit";
+    case "order_submitted":
+      return "Submitted order";
+    case "redirect_triggered":
+      return "Redirect fired";
+    default:
+      return cartJourneyTitle({
+        id: "",
+        cartId: "",
+        eventType,
+        metadata: {},
+        createdAt: ""
+      } as CartJourneyEvent);
+  }
+};
+
+const liveFormPulseLastSeenAt = (pulse?: LiveFormPulseResponse | null) => {
+  if (!pulse) return null;
+  const candidates = [
+    pulse.summary.lastViewedAt,
+    pulse.summary.lastInteractionAt,
+    pulse.summary.lastSubmitAttemptAt,
+    pulse.summary.lastConversionAt,
+    pulse.summary.lastRedirectAt
+  ].filter((value): value is string => Boolean(value));
+  if (candidates.length === 0) return null;
+  return candidates.reduce((latest, value) => (value > latest ? value : latest));
+};
+
+const liveFormPulseScopeLabel = (period: Period, bounds: { dateFrom: string; dateTo: string } | null) => {
+  if (period === "Today") return "today";
+  if (period === "This Week") return "this week";
+  if (period === "This Month") return "this month";
+  if (period === "This Year") return "this year";
+  if (bounds) {
+    return bounds.dateFrom === bounds.dateTo ? bounds.dateFrom : `${bounds.dateFrom} to ${bounds.dateTo}`;
+  }
+  return "the selected range";
+};
+
+const liveFormPulseMetricLabel = (base: string, period: Period) => {
+  if (period === "Today") return `${base} today`;
+  if (period === "This Week") return `${base} this week`;
+  if (period === "This Month") return `${base} this month`;
+  if (period === "This Year") return `${base} this year`;
+  return `${base} in range`;
 };
 
 const normalizeRealtimeUser = (value: any): ManagedUser => {
@@ -5111,6 +5249,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
   const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
+  const [liveFormPulse, setLiveFormPulse] = useState<LiveFormPulseResponse | null>(null);
+  const [liveFormPulseLoading, setLiveFormPulseLoading] = useState(false);
+  const [liveFormPulseEmbedFilter, setLiveFormPulseEmbedFilter] = useState("");
+  const [liveFormPulseEmbedOptions, setLiveFormPulseEmbedOptions] = useState<string[]>([]);
   const [selectedOrderJourney, setSelectedOrderJourney] = useState<CartJourneyEvent[]>([]);
   const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
   const [repCartJourneyMap, setRepCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
@@ -7196,6 +7338,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange));
   // Carts filtered by both period and active product selection — drives stat cards
   const pfCarts = cartProductIds.size === 0 ? periodCarts : periodCarts.filter(c => matchesProductFilter(c.productId, c.productName, cartProductIds));
+  const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds).sort(), [cartProductIds]);
+  const cartProductIdFilterKey = cartProductIdFilterList.join("|");
   const assignedCartCount = pfCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
   const contactedCartCount = pfCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
   const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
@@ -7259,6 +7403,62 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       }
     };
   }, [activePage, abandonedJourneyCartIdsKey]);
+  const liveFormPulseBounds = useMemo(() => periodBoundsForQuery(cartsPeriod, cartsDateRange), [cartsPeriod, cartsDateRange]);
+  const liveFormPulseScope = useMemo(
+    () => liveFormPulseScopeLabel(cartsPeriod, liveFormPulseBounds),
+    [cartsPeriod, liveFormPulseBounds]
+  );
+  useEffect(() => {
+    const canViewLiveFormPulse = realRole === "Owner" || realRole === "Admin";
+    if (activePage !== "Abandoned Carts" || !canViewLiveFormPulse) {
+      setLiveFormPulse(null);
+      setLiveFormPulseLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadPulse = async (silent = false) => {
+      if (!silent) {
+        setLiveFormPulseLoading(true);
+      }
+      try {
+        const pulse = await cartsApi.livePulse({
+          productIds: cartProductIdFilterList,
+          embedLabels: liveFormPulseEmbedFilter ? [liveFormPulseEmbedFilter] : undefined,
+          activeWindowMinutes: 10,
+          dateFrom: liveFormPulseBounds?.dateFrom,
+          dateTo: liveFormPulseBounds?.dateTo
+        });
+        if (cancelled) return;
+        setLiveFormPulse(pulse as LiveFormPulseResponse);
+        setLiveFormPulseEmbedOptions(
+          Array.from(
+            new Set(((pulse as LiveFormPulseResponse).embeds ?? []).map((embed) => embed.embedLabel).filter(Boolean))
+          ).sort((a, b) => a.localeCompare(b))
+        );
+      } catch {
+        if (cancelled || silent) return;
+        setLiveFormPulse(null);
+      } finally {
+        if (cancelled || silent) return;
+        setLiveFormPulseLoading(false);
+      }
+    };
+
+    void loadPulse();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadPulse(true);
+    }, FORM_PULSE_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, cartProductIdFilterKey, cartProductIdFilterList, cartsDateRange, cartsPeriod, liveFormPulseBounds, liveFormPulseEmbedFilter, realRole]);
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
 
@@ -22245,6 +22445,225 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </article>
                 ))}
               </section>
+
+              {(realRole === "Owner" || realRole === "Admin") && (
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4" aria-label="Live form pulse">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base font-bold text-gray-900 m-0">Live Form Pulse</h2>
+                        {liveFormPulse?.health ? (
+                          <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${liveFormPulseHealthBadgeClass(liveFormPulse.health.status)}`}>
+                            {liveFormPulse.health.status}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 mb-0">
+                        Live traffic, interaction, submit, redirect, and recovery signals from the customer order form.
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-3 flex-wrap justify-end">
+                      <label className="flex flex-col gap-1 text-left">
+                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Embed label</span>
+                        <select
+                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 min-w-[220px]"
+                          value={liveFormPulseEmbedFilter}
+                          onChange={(e) => setLiveFormPulseEmbedFilter(e.target.value)}
+                        >
+                          <option value="">All embeds</option>
+                          {liveFormPulseEmbedOptions.map((label) => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="text-right">
+                        {liveFormPulseLoading ? <p className="text-[11px] font-semibold text-gray-400 m-0">Refreshing live pulse…</p> : null}
+                        <p className="text-[11px] text-gray-400 mt-1 mb-0">
+                          {liveFormPulse?.generatedAt ? `Updated ${relativeMinutesLabel(liveFormPulse.generatedAt)}` : "Waiting for pulse data"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 via-white to-emerald-50 px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">Current health</p>
+                      <p className="text-sm text-gray-700 mt-2 mb-0">
+                        {liveFormPulse?.health?.message ?? "Once fresh traffic hits the form, Protohub will show the live health signal here."}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 w-full lg:w-auto">
+                      {[
+                        { label: "Active now", value: liveFormPulse?.summary.activeNow ?? 0, sub: `${liveFormPulse?.activeWindowMinutes ?? 10}m window` },
+                        { label: "Views", value: liveFormPulse?.summary.viewedLiveWindow ?? 0, sub: "live window" },
+                        { label: "Clicks", value: liveFormPulse?.summary.interactedLiveWindow ?? 0, sub: "live window" },
+                        { label: "Submits", value: liveFormPulse?.summary.submitAttemptsLiveWindow ?? 0, sub: "live window" },
+                        { label: "Orders", value: liveFormPulse?.summary.conversionsLiveWindow ?? 0, sub: "live window" }
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3 min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                          <p className="text-xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                          <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-700 m-0">Last seen live</p>
+                      <p className="text-lg font-bold text-slate-900 mt-1 mb-0">
+                        {relativeMinutesLabel(liveFormPulseLastSeenAt(liveFormPulse))}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-slate-500 mt-0 mb-0">
+                        {liveFormPulseLastSeenAt(liveFormPulse)
+                          ? `Freshest pulse at ${formatMoment(liveFormPulseLastSeenAt(liveFormPulse))}`
+                          : "No live signal has been captured yet"}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1 mb-0">
+                        Combines views, interactions, submit attempts, orders, and redirects.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.15fr,0.85fr] gap-4">
+                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h3 className="text-sm font-bold text-gray-900 m-0">
+                            {cartsPeriod === "Today" ? "Today’s conversion pulse" : `${liveFormPulseScope.charAt(0).toUpperCase()}${liveFormPulseScope.slice(1)} conversion pulse`}
+                          </h3>
+                          <p className="text-xs text-gray-500 mt-1 mb-0">
+                            Use this to spot if traffic is reaching the form but not turning into submitted orders across {liveFormPulseScope}.
+                            {liveFormPulseEmbedFilter ? ` Showing ${liveFormPulseEmbedFilter} only.` : " Showing all embeds."}
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1">
+                          {liveFormPulse?.summary.conversionRate ?? 0}% view → order
+                        </span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        {[
+                          { label: liveFormPulseMetricLabel("Views", cartsPeriod), value: liveFormPulse?.summary.viewedToday ?? 0, sub: liveFormPulse?.summary.lastViewedAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastViewedAt)}` : "No view yet" },
+                          { label: liveFormPulseMetricLabel("Clicks", cartsPeriod), value: liveFormPulse?.summary.interactedToday ?? 0, sub: `${liveFormPulse?.summary.interactionRate ?? 0}% of views` },
+                          { label: liveFormPulseMetricLabel("Submit tries", cartsPeriod), value: liveFormPulse?.summary.submitAttemptsToday ?? 0, sub: liveFormPulse?.summary.lastSubmitAttemptAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastSubmitAttemptAt)}` : "No attempt yet" },
+                          { label: liveFormPulseMetricLabel("Orders", cartsPeriod), value: liveFormPulse?.summary.conversionsToday ?? 0, sub: liveFormPulse?.summary.lastConversionAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastConversionAt)}` : "No order yet" },
+                          { label: liveFormPulseMetricLabel("Redirects", cartsPeriod), value: liveFormPulse?.summary.redirectsToday ?? 0, sub: liveFormPulse?.summary.lastRedirectAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastRedirectAt)}` : "No redirect yet" }
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                            <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+
+                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h3 className="text-sm font-bold text-gray-900 m-0">
+                            {cartsPeriod === "Today" ? "Traffic sources live" : "Traffic sources in range"}
+                          </h3>
+                          <p className="text-xs text-gray-500 mt-1 mb-0">
+                            This helps you see whether Facebook, WhatsApp, or other sources are actually reaching the form across {liveFormPulseScope}.
+                          </p>
+                        </div>
+                      </div>
+                      {liveFormPulse && liveFormPulse.sources.length > 0 ? (
+                        <div className="mt-4 space-y-2">
+                          {liveFormPulse.sources.slice(0, 5).map((source) => (
+                            <div key={source.source} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 m-0 truncate">{source.source}</p>
+                                <p className="text-[11px] text-gray-500 mt-1 mb-0">
+                                  {source.viewed} views · {source.interacted} clicks · {source.submitted} orders
+                                </p>
+                              </div>
+                              <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                                {source.lastSeenAt ? relativeMinutesLabel(source.lastSeenAt) : "Never"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-4 text-sm text-gray-500">No source activity captured across {liveFormPulseScope} yet.</p>
+                      )}
+
+                      <div className="mt-5 pt-4 border-t border-gray-200">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <h4 className="text-sm font-bold text-gray-900 m-0">Landing pages / embeds</h4>
+                            <p className="text-xs text-gray-500 mt-1 mb-0">Add <code>embed_label</code> to each iframe URL so Protohub can separate LP A, LP B, and combo pages cleanly.</p>
+                          </div>
+                        </div>
+                        {liveFormPulse && liveFormPulse.embeds.length > 0 ? (
+                          <div className="mt-4 space-y-2">
+                            {liveFormPulse.embeds.slice(0, 6).map((embed) => (
+                              <div key={embed.embedLabel} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-gray-900 m-0 truncate">{embed.embedLabel}</p>
+                                  <p className="text-[11px] text-gray-500 mt-1 mb-0">
+                                    {embed.viewed} views · {embed.interacted} clicks · {embed.submitted} orders
+                                  </p>
+                                </div>
+                                <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                                  {embed.lastSeenAt ? relativeMinutesLabel(embed.lastSeenAt) : "Never"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-4 text-sm text-gray-500">No embed label activity across {liveFormPulseScope} yet. Add <code>embed_label=your_lp_name</code> to each landing-page iframe URL.</p>
+                        )}
+                      </div>
+                    </article>
+                  </div>
+
+                  <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900 m-0">
+                          {cartsPeriod === "Today" ? "Live activity feed" : "Range activity feed"}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1 mb-0">
+                          Latest view, click, submit, and redirect signals captured across {liveFormPulseScope}.
+                        </p>
+                      </div>
+                    </div>
+                    {liveFormPulse && liveFormPulse.recentEvents.length > 0 ? (
+                      <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-3">
+                        {liveFormPulse.recentEvents.map((event, index) => (
+                          <div key={`${event.cartId}:${event.eventType}:${event.createdAt}:${index}`} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-semibold text-gray-900 m-0">{liveFormPulseEventLabel(event.eventType)}</p>
+                                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 bg-gray-100 rounded-full px-2 py-1">
+                                  {event.source}
+                                </span>
+                                <span className="text-[11px] font-bold tracking-[0.04em] text-blue-700 bg-blue-50 rounded-full px-2 py-1 border border-blue-100">
+                                  {event.embedLabel}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1 mb-0">
+                                {event.productName}{event.packageName ? ` · ${event.packageName}` : ""}
+                              </p>
+                              <p className="text-[11px] text-gray-400 mt-1 mb-0">Cart {event.cartId}</p>
+                            </div>
+                            <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                              {relativeMinutesLabel(event.createdAt)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-gray-500">No activity has been captured across {liveFormPulseScope} yet.</p>
+                    )}
+                  </article>
+                </section>
+              )}
 
               <section className="grid grid-cols-1 xl:grid-cols-[1.25fr,0.9fr,1fr] gap-4" aria-label="Journey analytics">
                 <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">

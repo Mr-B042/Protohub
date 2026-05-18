@@ -91,6 +91,7 @@ type CrossSellSelection = {
 
 type PublicCartJourneyEventType =
   | "form_opened"
+  | "first_interaction"
   | "package_selected"
   | "state_selected"
   | "additional_item_preview_opened"
@@ -109,6 +110,7 @@ type PublicCartJourneyEventType =
   | "submit_blocked_missing_confirmation"
   | "submit_blocked_missing_commitment"
   | "order_submitted"
+  | "redirect_triggered"
   | "form_exited";
 
 type PublicOrderFieldKey =
@@ -547,6 +549,7 @@ export default function PublicOrderFormPage() {
   const publicUtmMedium = (params?.get("utm_medium") ?? "").slice(0, 100);
   const publicUtmContent = (params?.get("utm_content") ?? "").slice(0, 100);
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
+  const publicEmbedLabel = (params?.get("embed_label") ?? "").trim().slice(0, 120);
   const publicEmbedIsPreview = params?.get("preview") === "1";
   const rawPublicRedirect = params?.get("redirect_url") ?? "";
   const publicRedirectUrl = useMemo(() => {
@@ -621,6 +624,7 @@ export default function PublicOrderFormPage() {
   const lastTrackedPackageIdRef = useRef("");
   const lastTrackedStateRef = useRef("");
   const lastExpandedCardProductIdRef = useRef<string | null>(null);
+  const firstInteractionTrackedRef = useRef(false);
   const exitTrackedRef = useRef(false);
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
@@ -721,7 +725,12 @@ export default function PublicOrderFormPage() {
           eventType: "form_opened",
           metadata: {
             productName: publicProduct.name,
-            packageName: chosenPackage.name
+            packageName: chosenPackage.name,
+            source: orderSourceFromUtm(publicUtmSource),
+            utmSource: publicUtmSource || null,
+            utmCampaign: publicUtmCampaign || null,
+            utmMedium: publicUtmMedium || null,
+            embedLabel: publicEmbedLabel || null
           }
         }
       ).catch(() => {
@@ -760,7 +769,10 @@ export default function PublicOrderFormPage() {
         eventType,
         companionProductId: options?.companionProductId,
         companionPackageId: options?.companionPackageId,
-        metadata: options?.metadata
+        metadata: {
+          ...(options?.metadata ?? {}),
+          embedLabel: publicEmbedLabel || null
+        }
       },
       { keepalive: options?.keepalive === true }
     ).catch(() => {
@@ -799,6 +811,7 @@ export default function PublicOrderFormPage() {
     if (publicEmbedIsPreview) {
       setAbandonedDraftCartId("");
       abandonedDraftCartIdRef.current = "";
+      firstInteractionTrackedRef.current = false;
     }
   }, [publicEmbedIsPreview, publicProductId]);
 
@@ -982,6 +995,53 @@ export default function PublicOrderFormPage() {
   }, [chosenPackage, orderFormState]);
 
   useEffect(() => {
+    const formTouched = Boolean(
+      orderFormName.trim() ||
+      orderFormPhone.trim() ||
+      orderFormWhatsapp.trim() ||
+      orderFormEmail.trim() ||
+      orderFormAddress.trim() ||
+      orderFormCity.trim() ||
+      orderFormState.trim()
+    );
+    const primaryPackageId = publicPackages[0]?.id ?? "";
+    const meaningfulInteraction = Boolean(
+      formTouched ||
+      orderFormCrossSells.length > 0 ||
+      expandedCardCompanionProductId ||
+      (chosenPackage?.id && primaryPackageId && chosenPackage.id !== primaryPackageId)
+    );
+
+    if (!meaningfulInteraction || firstInteractionTrackedRef.current || publicEmbedIsPreview || !publicProduct) return;
+    firstInteractionTrackedRef.current = true;
+    trackCartJourney("first_interaction", {
+      dedupeKey: `first_interaction:${abandonedDraftCartIdRef.current || "draft"}`,
+      metadata: {
+        productName: publicProduct.name,
+        packageName: chosenPackage?.name ?? null,
+        source: orderSourceFromUtm(publicUtmSource),
+        additionalItems: orderFormCrossSells.length
+      }
+    });
+  }, [
+    chosenPackage?.id,
+    chosenPackage?.name,
+    expandedCardCompanionProductId,
+    orderFormAddress,
+    orderFormCity,
+    orderFormCrossSells.length,
+    orderFormEmail,
+    orderFormName,
+    orderFormPhone,
+    orderFormState,
+    orderFormWhatsapp,
+    publicEmbedIsPreview,
+    publicPackages,
+    publicProduct,
+    publicUtmSource
+  ]);
+
+  useEffect(() => {
     if (cartSyncTimerRef.current) {
       window.clearTimeout(cartSyncTimerRef.current);
       cartSyncTimerRef.current = null;
@@ -1026,6 +1086,7 @@ export default function PublicOrderFormPage() {
         amount: chosenPackage.price,
         currency: chosenPackage.currency,
         source: orderSourceFromUtm(publicUtmSource),
+        embedLabel: publicEmbedLabel || undefined,
       }).catch(() => {
         // Draft capture is best-effort only.
       });
@@ -1047,12 +1108,13 @@ export default function PublicOrderFormPage() {
     orderFormPhone,
     orderFormState,
     orderFormWhatsapp,
+    expandedCardCompanionProductId,
     publicEmbedIsPreview,
     publicPackages,
     publicProduct,
     publicUtmSource,
     orderFormCrossSells.length,
-    expandedCardCompanionProductId,
+    publicEmbedLabel,
   ]);
 
   useEffect(() => {
@@ -1062,10 +1124,11 @@ export default function PublicOrderFormPage() {
       packageId: chosenPackage.id,
       metadata: {
         productName: publicProduct.name,
-        packageName: chosenPackage.name
+        packageName: chosenPackage.name,
+        source: orderSourceFromUtm(publicUtmSource)
       }
     });
-  }, [abandonedDraftCartId, chosenPackage, publicEmbedIsPreview, publicProduct]);
+  }, [abandonedDraftCartId, chosenPackage, publicEmbedIsPreview, publicProduct, publicUtmSource]);
 
   useEffect(() => {
     if (!chosenPackage) return;
@@ -1081,10 +1144,11 @@ export default function PublicOrderFormPage() {
       metadata: {
         packageName: chosenPackage.name,
         quantity: chosenPackage.quantity,
-        amount: chosenPackage.price
+        amount: chosenPackage.price,
+        source: orderSourceFromUtm(publicUtmSource)
       }
     });
-  }, [chosenPackage]);
+  }, [chosenPackage, publicUtmSource]);
 
   useEffect(() => {
     const normalizedState = normalizeStateName(orderFormState);
@@ -1097,9 +1161,12 @@ export default function PublicOrderFormPage() {
     trackCartJourney("state_selected", {
       dedupeKey: `state_selected:${normalizedState}`,
       state: normalizedState,
-      metadata: { state: normalizedState }
+      metadata: {
+        state: normalizedState,
+        source: orderSourceFromUtm(publicUtmSource)
+      }
     });
-  }, [orderFormState]);
+  }, [orderFormState, publicUtmSource]);
 
   useEffect(() => {
     if (publicEmbedIsPreview) {
@@ -1124,7 +1191,8 @@ export default function PublicOrderFormPage() {
           eventType: "form_exited",
           metadata: {
             customerName: orderFormName.trim() || null,
-            additionalItems: orderFormCrossSells.length
+            additionalItems: orderFormCrossSells.length,
+            source: orderSourceFromUtm(publicUtmSource)
           }
         },
         { keepalive: true }
@@ -1139,7 +1207,7 @@ export default function PublicOrderFormPage() {
       if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
       window.removeEventListener("pagehide", handlePageHide);
     };
-  }, [chosenPackage, orderFormCrossSells.length, orderFormName, orderFormState, publicEmbedIsPreview, publicOrderSubmitted, publicProduct]);
+  }, [chosenPackage, orderFormCrossSells.length, orderFormName, orderFormState, publicEmbedIsPreview, publicOrderSubmitted, publicProduct, publicUtmSource]);
 
   function showToast(message: string) {
     setToast(message);
@@ -1197,6 +1265,7 @@ export default function PublicOrderFormPage() {
     lastTrackedPackageIdRef.current = "";
     lastTrackedStateRef.current = "";
     lastExpandedCardProductIdRef.current = null;
+    firstInteractionTrackedRef.current = false;
     exitTrackedRef.current = false;
     if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
   }
@@ -1205,6 +1274,16 @@ export default function PublicOrderFormPage() {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     if (publicRedirectUrl) {
+      trackCartJourney("redirect_triggered", {
+        dedupeKey: `redirect_triggered:${orderId}`,
+        keepalive: true,
+        metadata: {
+          orderId,
+          customerName: customer || "Customer",
+          redirectUrl: publicRedirectUrl,
+          source: orderSourceFromUtm(publicUtmSource)
+        }
+      });
       if (redirectTimerRef.current) {
         window.clearTimeout(redirectTimerRef.current);
         redirectTimerRef.current = null;
@@ -1317,7 +1396,8 @@ export default function PublicOrderFormPage() {
       dedupeKey: `submit_attempted:${submissionCartId || "draft"}`,
       metadata: {
         customerName: customerName || "Customer",
-        additionalItems: orderFormCrossSells.length
+        additionalItems: orderFormCrossSells.length,
+        source: orderSourceFromUtm(publicUtmSource)
       }
     });
 
@@ -1347,6 +1427,7 @@ export default function PublicOrderFormPage() {
         utmMedium: publicUtmMedium || undefined,
         utmContent: publicUtmContent || undefined,
         utmTerm: publicUtmTerm || undefined,
+        embedLabel: publicEmbedLabel || undefined,
         referrer: publicReferrer || undefined,
         confirmationChecked: orderFormConfirmed,
         preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
@@ -1388,7 +1469,8 @@ export default function PublicOrderFormPage() {
           metadata: {
             orderId: created.id,
             customerName: customerName || "Customer",
-            additionalItems: orderFormCrossSells.length
+            additionalItems: orderFormCrossSells.length,
+            source: orderSourceFromUtm(publicUtmSource)
           }
         });
         setPublicUpsellOffer({
@@ -1411,7 +1493,8 @@ export default function PublicOrderFormPage() {
         metadata: {
           orderId: created.id,
           customerName: customerName || "Customer",
-          additionalItems: orderFormCrossSells.length
+          additionalItems: orderFormCrossSells.length,
+          source: orderSourceFromUtm(publicUtmSource)
         }
       });
       finishPublicOrderJourney(created.id, customerName);
