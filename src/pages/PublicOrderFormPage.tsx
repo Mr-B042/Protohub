@@ -535,7 +535,10 @@ function freeGiftVisibleInState(mainProduct: PublicProduct, giftProduct: PublicP
 
 export default function PublicOrderFormPage() {
   const hash = typeof window === "undefined" ? "" : window.location.hash;
-  const params = hash.startsWith("#/order-form/embed") ? new URLSearchParams(hash.split("?")[1] ?? "") : null;
+  const params = useMemo(
+    () => (hash.startsWith("#/order-form/embed") ? new URLSearchParams(hash.split("?")[1] ?? "") : null),
+    [hash]
+  );
   const publicProductId = params?.get("product") ?? "";
   const rawPublicCurrency = params?.get("currency") ?? "NGN";
   const publicCurrency: ProductCurrencyCode = rawPublicCurrency === "USD" || rawPublicCurrency === "GBP" ? rawPublicCurrency : "NGN";
@@ -546,7 +549,7 @@ export default function PublicOrderFormPage() {
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
   const publicEmbedIsPreview = params?.get("preview") === "1";
   const rawPublicRedirect = params?.get("redirect_url") ?? "";
-  const publicRedirectUrl = (() => {
+  const publicRedirectUrl = useMemo(() => {
     if (!rawPublicRedirect) return "";
     try {
       const u = new URL(rawPublicRedirect);
@@ -554,7 +557,7 @@ export default function PublicOrderFormPage() {
     } catch {
       return "";
     }
-  })();
+  }, [rawPublicRedirect]);
 
   const cachedProductBundle = publicProductId
     ? readCachedValue<{ products: PublicProduct[]; orgId: string | null }>(
@@ -622,8 +625,14 @@ export default function PublicOrderFormPage() {
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
 
-  const publicProduct = products.find((product) => product.id === publicProductId);
-  const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
+  const publicProduct = useMemo(
+    () => products.find((product) => product.id === publicProductId),
+    [products, publicProductId]
+  );
+  const publicPackages = useMemo(
+    () => (publicProduct ? activeProductPackages(publicProduct) : []),
+    [publicProduct]
+  );
   const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
 
@@ -1434,17 +1443,19 @@ export default function PublicOrderFormPage() {
     finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
   }
 
-  const normalizedAvailableStates = Array.from(new Set((publicProduct?.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
-  const treatAsAllNigeriaStates =
-    normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
-    !normalizedAvailableStates.includes("FCT Abuja");
-  const allowedStates = normalizedAvailableStates.length > 0
-    ? NIGERIA_STATES.filter(
-        (state) =>
-          normalizedAvailableStates.includes(normalizeStateName(state)) ||
-          (state === "FCT Abuja" && treatAsAllNigeriaStates)
-      )
-    : NIGERIA_STATES;
+  const allowedStates = useMemo(() => {
+    const normalizedAvailableStates = Array.from(new Set((publicProduct?.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
+    const treatAsAllNigeriaStates =
+      normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
+      !normalizedAvailableStates.includes("FCT Abuja");
+    return normalizedAvailableStates.length > 0
+      ? NIGERIA_STATES.filter(
+          (state) =>
+            normalizedAvailableStates.includes(normalizeStateName(state)) ||
+            (state === "FCT Abuja" && treatAsAllNigeriaStates)
+        )
+      : NIGERIA_STATES;
+  }, [publicProduct]);
 
   const normalizedSelectedState = normalizeStateName(orderFormState);
 

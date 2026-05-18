@@ -6299,9 +6299,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
   const previewPackages = previewProduct ? persistedActiveProductPackages(previewProduct) : [];
-  const publicEmbedParams = hashRoute.startsWith("#/order-form/embed")
-    ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
-    : null;
+  const publicEmbedParams = useMemo(
+    () => (
+      hashRoute.startsWith("#/order-form/embed")
+        ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
+        : null
+    ),
+    [hashRoute]
+  );
   const publicProductId = publicEmbedParams?.get("product") ?? "";
   // Clamp the currency param to the allowed enum so a hostile URL can't smuggle
   // an arbitrary string into the order record.
@@ -6328,8 +6333,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
   const [showPublicEmbedLoading, setShowPublicEmbedLoading] = useState(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
-  const publicProduct = products.find((product) => product.id === publicProductId);
-  const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
+  const publicProduct = useMemo(
+    () => products.find((product) => product.id === publicProductId),
+    [products, publicProductId]
+  );
+  const publicPackages = useMemo(
+    () => (publicProduct ? activeProductPackages(publicProduct) : []),
+    [publicProduct]
+  );
 const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
   useEffect(() => {
     if (publicEmbedIsPreview) {

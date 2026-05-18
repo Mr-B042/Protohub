@@ -7,8 +7,11 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "lint:hooks": "eslint src/App.tsx src/pages/PublicOrderFormPage.tsx",
     "mock:products": "node mock-api/products-server.mjs",
-    "test:products:curl": "bash scripts/test-product-api.sh"
+    "test:products:curl": "bash scripts/test-product-api.sh",
+    "test:public-form:smoke": "playwright test tests/public-form.smoke.spec.ts",
+    "release:public-form": "npm run lint:hooks && npm run build && npm --prefix backend run build && npm run test:public-form:smoke"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
@@ -39,10 +42,16 @@
     "vite": "^6.0.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^25.6.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.59.3",
+    "@typescript-eslint/parser": "^8.59.3",
     "autoprefixer": "^10.5.0",
+    "eslint": "^9.37.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "globals": "^16.4.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19"
   }
