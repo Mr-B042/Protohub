@@ -1280,7 +1280,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
+    "Sales Rep Workspace", "Orders", "Follow-up Queue", "Closed Orders", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
   ],
   "Inventory Manager": [
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
@@ -8893,8 +8893,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setCrossSellQuantity("1");
     setCrossSellAmount("");
     setModal("addCrossSell");
-    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-cross-sell`));
+    if (isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
     } else if (isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
     }
@@ -8905,8 +8905,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setFreeGiftProductId("");
     setFreeGiftQuantity("1");
     setModal("addFreeGift");
-    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-free-gift`));
+    if (isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-free-gift`));
     } else if (isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-free-gift`));
     }
@@ -10298,12 +10298,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
-    setActivePage("Sales Rep Workspace");
     const [, rawPath = ""] = hashRoute.split("#");
     const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
     const section = parts[2];
-    const isRepOrderSection = section === "orders";
+    const repOrderWorkspaceRoutePage = section === "orders"
+      ? "Orders"
+      : section === "follow-up-queue"
+        ? "Follow-up Queue"
+        : section === "closed-orders"
+          ? "Closed Orders"
+          : null;
+    const isRepOrderSection = Boolean(repOrderWorkspaceRoutePage);
     const isRepCartSection = section === "abandoned-carts";
     const orderId = isRepOrderSection && parts[3] !== "new" ? parts[3] : "";
     const cartId = isRepCartSection ? parts[3] ?? "" : "";
@@ -10324,7 +10330,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? requestedRepId
       : "all";
 
-    setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
+    setRepConsoleTab(repOrderWorkspaceRoutePage ? "Orders" : (routeToTab[section ?? ""] ?? "Dashboard"));
     if (currentRole === "Owner" || currentRole === "Admin") {
       if (repConsoleRepId !== resolvedRepId) {
         setRepConsoleRepId(resolvedRepId);
@@ -10332,6 +10338,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     } else if (repConsoleRepId !== "all") {
       setRepConsoleRepId("all");
     }
+
+    setActivePage(repOrderWorkspaceRoutePage ?? "Sales Rep Workspace");
     setRepOrderDetailId(orderId ?? "");
     if (orderId) {
       setSelectedOrderId(orderId);
@@ -10344,8 +10352,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setModal("changeOrderStatus");
       return;
     }
+    if (repOrderAction === "edit") {
+      setModal("editOrderItems");
+      return;
+    }
     if (repOrderAction === "edit-customer") {
       setModal("editOrderCustomer");
+      return;
+    }
+    if (repOrderAction === "delete") {
+      setModal("deleteOrder");
       return;
     }
     if (repOrderAction === "manual-bonus" && orderId) {
@@ -10358,6 +10374,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     if (repOrderAction === "add-free-gift") {
       setModal("addFreeGift");
+      return;
+    }
+    if (repOrderWorkspaceRoutePage && repOrderWorkspaceRoutePage !== "Orders" && orderId) {
+      setModal("orderDetails");
       return;
     }
     if (repCartAction === "assign" && cartId) {
@@ -10377,11 +10397,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (isRepOrderSection && parts[3] !== "new" && modal === "createOrder") {
       setModal(null);
     }
-    if (!isRepOrderSection && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+    if (!isRepOrderSection && modal && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
       setModal(null);
       return;
     }
-    if (isRepOrderSection && !repOrderAction && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+    if (isRepOrderSection && !repOrderAction && modal && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
       setModal(null);
     }
     if (isRepCartSection && !repCartAction && modal && ["assignCart", "convertCart"].includes(modal)) {
@@ -13084,21 +13104,39 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     if (label === "Orders") {
-      syncAdminHash(label);
+      if (currentRole === "Sales Rep") {
+        const nextHash = repOrderWorkspaceHashByPage.Orders;
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+        setHashRoute(nextHash);
+      } else {
+        syncAdminHash(label);
+      }
       setActivePage("Orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
 
     if (label === "Follow-up Queue") {
-      syncAdminHash(label);
+      if (currentRole === "Sales Rep") {
+        const nextHash = repOrderWorkspaceHashByPage["Follow-up Queue"];
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+        setHashRoute(nextHash);
+      } else {
+        syncAdminHash(label);
+      }
       setActivePage("Follow-up Queue");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
 
     if (label === "Closed Orders") {
-      syncAdminHash(label);
+      if (currentRole === "Sales Rep") {
+        const nextHash = repOrderWorkspaceHashByPage["Closed Orders"];
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+        setHashRoute(nextHash);
+      } else {
+        syncAdminHash(label);
+      }
       setActivePage("Closed Orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -15308,7 +15346,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openRepOrderDetail = (order: TrackedOrder) => {
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
-    setRepConsoleTab("Orders");
+    if (!isOrderWorkspacePage(activePage)) {
+      setRepConsoleTab("Orders");
+    }
     setCreateOrderAgentId(order.agentId ?? "");
     const plannedParts = splitMomentForInput(order.scheduledAt);
     setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
@@ -15319,14 +15359,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepDeliveryFee(order.logisticsCost != null ? String(order.logisticsCost) : "");
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
-    const nextHash = repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
+    const nextHash = isOrderWorkspacePage(activePage)
+      ? repOrderWorkspaceHash(`/${order.id}`, activeRepOrderWorkspacePage)
+      : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
-    const nextHash = hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders");
+    const nextHash = isOrderWorkspacePage(activePage)
+      ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
+      : (hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders"));
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
@@ -15584,6 +15628,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (isAdminOrderWorkspaceHash(hashRoute)) {
       setSelectedOrderId("");
       syncHashRoute(activeOrderWorkspaceBaseHash);
+    } else if (isRepOrderWorkspaceHash(hashRoute)) {
+      setSelectedOrderId("");
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
@@ -17853,6 +17900,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setHashRoute(nextHash);
   };
 
+  const activeRepOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
+  const repOrderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
+    Orders: "#/dashboard/sales-rep/orders",
+    "Follow-up Queue": "#/dashboard/sales-rep/follow-up-queue",
+    "Closed Orders": "#/dashboard/sales-rep/closed-orders"
+  };
+  const repOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeRepOrderWorkspacePage) =>
+    repRouteWithScope(`${repOrderWorkspaceHashByPage[page]}${suffix}`);
+  const isRepOrderWorkspaceHash = (value: string) =>
+    value.startsWith("#/dashboard/sales-rep/orders")
+    || value.startsWith("#/dashboard/sales-rep/follow-up-queue")
+    || value.startsWith("#/dashboard/sales-rep/closed-orders");
+
   const activeOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
   const activeOrderWorkspaceBaseHash = orderWorkspaceHashByPage[activeOrderWorkspacePage];
   const adminOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeOrderWorkspacePage) =>
@@ -17898,6 +17958,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminOrderDetail = (orderId: string) => {
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      setModal("orderDetails");
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}`));
+      return;
+    }
     setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("orderDetails");
@@ -17905,6 +17972,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminCreateOrderRoute = () => {
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      openRepCreateOrderModal();
+      syncHashRoute(repOrderWorkspaceHash("/new"));
+      return;
+    }
     setActivePage(activeOrderWorkspacePage);
     openCreateOrderModal();
     syncHashRoute(adminOrderWorkspaceHash("/new"));
@@ -17912,6 +17985,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const openAdminOrderEditRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      if (order) {
+        openOrderModal(order, "editOrderItems");
+      } else {
+        setModal("editOrderItems");
+      }
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/edit`));
+      return;
+    }
     setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     if (order) {
@@ -17924,7 +18008,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const openAdminOrderEditCustomerRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage(activeOrderWorkspacePage);
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+    } else {
+      setActivePage(activeOrderWorkspacePage);
+    }
     setSelectedOrderId(orderId);
     if (order) {
       setCreateOrderCustomer(order.customer);
@@ -17938,7 +18026,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setCreateOrderAmount(String(order.amount ?? ""));
     }
     setModal("editOrderCustomer");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit-customer`));
+    syncHashRoute(
+      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${orderId}/edit-customer`)
+        : adminOrderWorkspaceHash(`/${orderId}/edit-customer`)
+    );
   };
 
   const openAdminOrderReassignRoute = (orderId: string) => {
@@ -17962,6 +18054,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminOrderDeleteRoute = (orderId: string) => {
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      setModal("deleteOrder");
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/delete`));
+      return;
+    }
     setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("deleteOrder");
@@ -17974,13 +18073,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage(activeOrderWorkspacePage);
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+    } else {
+      setActivePage(activeOrderWorkspacePage);
+    }
     setSelectedOrderId(orderId);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/change-status`));
+    syncHashRoute(
+      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${orderId}/change-status`)
+        : adminOrderWorkspaceHash(`/${orderId}/change-status`)
+    );
   };
 
   const openAdminOrderRescheduleRoute = (orderId: string, reason = "", callOutcome?: string) => {
@@ -20662,17 +20769,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
     }
+    if (modalBeforeClose === "orderDetails" && isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+    }
     if (modalBeforeClose === "createOrder" && hashRoute === adminOrderWorkspaceHash("/new")) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
     }
-    if (modalBeforeClose === "createOrder" && hashRoute.startsWith("#/dashboard/sales-rep/orders/new")) {
-      syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders"));
+    if (modalBeforeClose === "createOrder" && isRepOrderWorkspaceHash(hashRoute) && hashRoute.endsWith("/new")) {
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
     if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
     }
-    if (modalBeforeClose && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(selectedOrderId ? repRouteWithScope(`#/dashboard/sales-rep/orders/${selectedOrderId}`) : repRouteWithScope("#/dashboard/sales-rep/orders"));
+    if (modalBeforeClose && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(selectedOrderId ? repOrderWorkspaceHash(`/${selectedOrderId}`, activeRepOrderWorkspacePage) : repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
     if (modalBeforeClose && ["cartDetails", "assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/abandoned-carts/")) {
       syncHashRoute(modalBeforeClose === "cartDetails" ? "#/dashboard/admin/abandoned-carts" : (selectedCartId ? `#/dashboard/admin/abandoned-carts/${selectedCartId}` : "#/dashboard/admin/abandoned-carts"));
@@ -22361,7 +22471,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
 
                 {/* Bulk action bar */}
-                {selectedOrderIds.size > 0 && (
+                {selectedOrderIds.size > 0 && currentRole !== "Sales Rep" && (
                   <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
                     <span className="font-semibold text-blue-800">{selectedOrderIds.size} selected</span>
                     <span className="hidden sm:inline text-blue-300">·</span>
@@ -22424,7 +22534,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
-                            {!isTerminal && (
+                            {!isTerminal && currentRole !== "Sales Rep" && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
@@ -22432,12 +22542,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
-                            <button
-                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
-                              onClick={() => openAdminOrderDeleteRoute(order.id)}
-                            >
-                              <Trash2 className="w-4 h-4" /> Delete
-                            </button>
+                            {currentRole !== "Sales Rep" && (
+                              <button
+                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
+                                onClick={() => openAdminOrderDeleteRoute(order.id)}
+                              >
+                                <Trash2 className="w-4 h-4" /> Delete
+                              </button>
+                            )}
                           </div>
                         </article>
                       );
@@ -22450,24 +22562,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
-                        <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
-                          <input
-                            type="checkbox"
-                            className="rounded border-gray-300"
-                            checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
-                              } else {
-                                setSelectedOrderIds((prev) => {
-                                  const next = new Set(prev);
-                                  pagedOrderRows.forEach((o) => next.delete(o.id));
-                                  return next;
-                                });
-                              }
-                            }}
-                          />
-                        </th>
+                        {currentRole !== "Sales Rep" && (
+                          <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
+                            <input
+                              type="checkbox"
+                              className="rounded border-gray-300"
+                              checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
+                                } else {
+                                  setSelectedOrderIds((prev) => {
+                                    const next = new Set(prev);
+                                    pagedOrderRows.forEach((o) => next.delete(o.id));
+                                    return next;
+                                  });
+                                }
+                              }}
+                            />
+                          </th>
+                        )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
@@ -22480,7 +22594,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
+                        <tr><td colSpan={currentRole === "Sales Rep" ? 8 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -22489,20 +22603,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
-                              <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
-                                <input
-                                  type="checkbox"
-                                  className="rounded border-gray-300"
-                                  checked={selectedOrderIds.has(order.id)}
-                                  onChange={(e) => {
-                                    setSelectedOrderIds((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) next.add(order.id); else next.delete(order.id);
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              </td>
+                              {currentRole !== "Sales Rep" && (
+                                <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-gray-300"
+                                    checked={selectedOrderIds.has(order.id)}
+                                    onChange={(e) => {
+                                      setSelectedOrderIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </td>
+                              )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
                               <td className="px-4 py-3.5">
@@ -22545,7 +22661,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   >
                                     <Eye className="w-3.5 h-3.5" /> Details
                                   </button>
-                                  {!isTerminal && (
+                                  {!isTerminal && currentRole !== "Sales Rep" && (
                                     <button
                                       className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
@@ -22554,13 +22670,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                   )}
-                                  <button
-                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
-                                    title="Delete"
-                                    onClick={() => openAdminOrderDeleteRoute(order.id)}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {currentRole !== "Sales Rep" && (
+                                    <button
+                                      className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
+                                      title="Delete"
+                                      onClick={() => openAdminOrderDeleteRoute(order.id)}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
