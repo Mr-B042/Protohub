@@ -18304,6 +18304,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/delete`));
   };
 
+  const openScopedOrderDetail = (order: TrackedOrder) => {
+    if (currentRole === "Sales Rep") {
+      openRepOrderDetail(order);
+      return;
+    }
+    openAdminOrderDetailPage(order);
+  };
+
+  const openScopedOrderEdit = (order: TrackedOrder) => {
+    if (currentRole === "Sales Rep") {
+      openRepEditOrderCustomer(order);
+      return;
+    }
+    openAdminOrderEditRoute(order.id);
+  };
+
   const openAdminOrderStatusRoute = (
     orderId: string,
     presetStatus?: OrderStatusAction,
@@ -19812,6 +19828,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:bg-green-700 transition-colors shadow-sm"
                   >
                     <WhatsAppIcon className="w-4 h-4" /> WhatsApp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openRepOrderDetail(order)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm"
+                  >
+                    <Eye className="w-4 h-4" /> Details
                   </button>
                 </div>
               </div>
@@ -22797,7 +22820,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </button>
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
-                              onClick={() => openAdminOrderDetailPage(order)}
+                              onClick={() => openScopedOrderDetail(order)}
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
@@ -22937,7 +22960,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   </button>
                                   <button
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
-                                    onClick={() => openAdminOrderDetailPage(order)}
+                                    onClick={() => openScopedOrderDetail(order)}
                                   >
                                     <Eye className="w-3.5 h-3.5" /> Details
                                   </button>
