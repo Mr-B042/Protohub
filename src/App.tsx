@@ -6971,6 +6971,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
     const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
     const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+    const extraPricedPackages = order.crossSellLines ?? [];
+    const hasMultiplePricedPackages = extraPricedPackages.length > 0;
     const lines = [
       `Full Name:  ${order.customer || "—"}`,
       `Active Phone Number:  ${order.phone || "—"}`,
@@ -6978,15 +6980,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       `State: ${order.state || "—"}`,
       `City:  ${order.city || "—"}`,
       `Full Delivery: ${fullDeliveryLabelForOrder(order)}`,
-      `Preferred Package: 1. ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+      hasMultiplePricedPackages
+        ? `Preferred Package 1: ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+        : `Preferred Package: ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
     ];
-    (order.crossSellLines ?? []).forEach((line, index) => {
+    extraPricedPackages.forEach((line, index) => {
       lines.push(`Preferred Package ${index + 2}: ${preferredPackageLineForAdditionalItem(line)} = ${formatProductMoney(line.amount, order.currency)}`);
     });
     (order.freeGiftLines ?? []).forEach((line, index) => {
       lines.push(`Free Gift ${index + 1}: ${line.quantity}pc${line.quantity === 1 ? "" : "s"} of ${line.productName}`);
     });
-    lines.push(`Total = ${formatProductMoney(order.amount, order.currency)}`);
+    if (hasMultiplePricedPackages) {
+      lines.push(`Total = ${formatProductMoney(order.amount, order.currency)}`);
+    }
     return lines.join("\n\n");
   };
   const costForOrder = (order: TrackedOrder) => {
