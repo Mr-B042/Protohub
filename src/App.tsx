@@ -156,6 +156,7 @@ type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout
 type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
+type OrderAssignmentScope = "All assignments" | "Assigned by me";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
@@ -635,6 +636,8 @@ type TrackedOrder = {
   scheduledAt?: string;
   deliveredDate?: string;
   assignedRepId?: string;
+  assignedByUserId?: string;
+  assignedByNameSnapshot?: string;
   agentId?: string;
   stockDeducted?: boolean;
   logisticsCost?: number;
@@ -3946,6 +3949,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(() =>
     readPref<OrderStatus>("protohub.orders.status", "All Orders", (raw) => raw as OrderStatus)
   );
+  const [orderAssignmentScope, setOrderAssignmentScope] = useState<OrderAssignmentScope>(() =>
+    readPref<OrderAssignmentScope>("protohub.orders.assignmentScope", "All assignments", (raw) =>
+      raw === "All assignments" || raw === "Assigned by me" ? raw : null
+    )
+  );
   const [orderSource, setOrderSource] = useState<OrderSource>(() =>
     readPref<OrderSource>("protohub.orders.source", "All Sources", (raw) => raw as OrderSource)
   );
@@ -4394,6 +4402,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
   useEffect(() => { writePref("protohub.orders.status",   orderStatus);   }, [orderStatus]);
+  useEffect(() => { writePref("protohub.orders.assignmentScope", orderAssignmentScope); }, [orderAssignmentScope]);
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
   useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
@@ -7001,6 +7010,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const periodOrders = trackedOrders
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
+  const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
+  const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
+  const matchesOrderAssignmentScope = (order: TrackedOrder) =>
+    !canFilterOrdersByAssigner
+    || orderAssignmentScope === "All assignments"
+    || (Boolean(orderAssignmentActorId) && order.assignedByUserId === orderAssignmentActorId);
   const dashboardOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
@@ -7287,15 +7302,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesSource = orderSource === "All Sources" || source === orderSource;
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
+    const matchesAssigner = matchesOrderAssignmentScope(order);
 
-    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct;
+    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct && matchesAssigner;
   });
   const ORDERS_PAGE_SIZE = 25;
   const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
-  const pfOrders = orderProductIds.size === 0 ? periodOrders : periodOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
+  const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
+  const pfOrders = orderProductIds.size === 0
+    ? assignmentScopedPeriodOrders
+    : assignmentScopedPeriodOrders.filter((o) => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
@@ -10777,7 +10796,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   useEffect(() => {
     setOrdersPage(1);
     setSelectedOrderIds(new Set());
-  }, [orderSearch, orderStatus, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange]);
+  }, [orderSearch, orderStatus, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange]);
   useEffect(() => {
     setCartsPage(1);
     setSelectedCartIds(new Set());
@@ -12527,6 +12546,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
       ["Status", orderStatus],
+      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScope : "All assignments"],
       ["Source", orderSource],
       ["Location", orderLocation],
       ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -12534,7 +12554,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Delivery Rate", `${exportDeliveryRate}%`],
       ["Revenue Generated", formatMoney(exportRevenue)],
       [],
-      ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Source", "Location", "Amount", "Date"],
+      ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Assigned To", "Assigned By", "Source", "Location", "Amount", "Date"],
       ...filteredOrderRows.map((order) => [
         order.id,
         order.customer,
@@ -12542,6 +12562,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         order.productName,
         order.packageName,
         order.status ?? "New",
+        users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned",
+        order.assignedByNameSnapshot ?? users.find((u) => u.id === order.assignedByUserId)?.name ?? (order.assignedRepId ? "Legacy / unrecorded" : "Not assigned"),
         order.source ?? orderSourceFromUtm(order.utmSource),
         order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
         formatProductMoney(order.amount, order.currency),
@@ -14723,6 +14745,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ...draftOrder,
         id: saved.id,
         assignedRepId: saved.assignedRepId ?? draftOrder.assignedRepId,
+        assignedByUserId: saved.assignedByUserId ?? authUser?.id ?? undefined,
+        assignedByNameSnapshot: saved.assignedByNameSnapshot ?? ownerName,
         createdAt: saved.createdAt ?? draftOrder.createdAt,
         date: saved.date ?? draftOrder.date,
         location: saved.location ?? draftOrder.location
@@ -14901,6 +14925,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       orderTimelineNote("Order details edited."),
       ...orderNotesFor(selectedOrder)
     ];
+    const nextAssignedRepId = createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId;
+    const assignmentChanged = nextAssignedRepId !== selectedOrder.assignedRepId;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -14923,7 +14949,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               source: createOrderSource,
               utmSource: createOrderSource.toLowerCase(),
               location: orderLocationFromFields(createOrderCity, createOrderState),
-              assignedRepId: createOrderRepId === "auto" ? order.assignedRepId : createOrderRepId,
+              assignedRepId: nextAssignedRepId,
+              assignedByUserId: assignmentChanged ? (authUser?.id ?? order.assignedByUserId) : order.assignedByUserId,
+              assignedByNameSnapshot: assignmentChanged ? ownerName : order.assignedByNameSnapshot,
               agentId: createOrderAgentId || undefined,
               scheduledDate: createOrderScheduleEnabled ? orderScheduleDate : undefined,
               scheduledAt: createOrderScheduleEnabled ? plannedMoment.iso : undefined,
@@ -14963,6 +14991,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           ? {
               ...order,
               assignedRepId: reassignRepId,
+              assignedByUserId: authUser?.id ?? order.assignedByUserId,
+              assignedByNameSnapshot: ownerName,
               response: nextResponse,
               notes: nextNotes
             }
@@ -21961,6 +21991,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
                     {currency} · {selectedCurrency.label}
                   </span>
+                  {canFilterOrdersByAssigner && orderAssignmentScope === "Assigned by me" && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-xs font-semibold text-amber-700">
+                      <UserPlus className="w-3 h-3" /> Assigned by me
+                    </span>
+                  )}
                 </div>
                 <span className="text-xs text-gray-400"><span className="hidden sm:inline">· </span>All amounts in this currency</span>
               </div>
@@ -22073,6 +22108,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
                     {orderLocations.map((l) => <option key={l}>{l}</option>)}
                   </select>
+                  {canFilterOrdersByAssigner && (
+                    <select
+                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                      aria-label="Order assignment scope"
+                      value={orderAssignmentScope}
+                      onChange={(e) => setOrderAssignmentScope(e.target.value as OrderAssignmentScope)}
+                    >
+                      <option value="All assignments">All assignments</option>
+                      <option value="Assigned by me">Assigned by me</option>
+                    </select>
+                  )}
                   {/* Product multi-select filter */}
                   <div className="relative w-full sm:w-auto">
                     <button
@@ -34226,6 +34272,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned To</p>
 	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
+	                    </div>
+	                    <div>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned By</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>
+                          {selectedOrder.assignedByNameSnapshot
+                            ?? users.find((u) => u.id === selectedOrder.assignedByUserId)?.name
+                            ?? (selectedOrder.assignedRepId
+                              ? (selectedOrder.sourceCartId ? "Round-robin / system" : "Legacy / unrecorded")
+                              : "Not assigned yet")}
+                        </p>
 	                    </div>
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Agent</p>

@@ -247,7 +247,7 @@ const verifyPublicUpsellToken = (token: string): PublicUpsellTokenPayload | null
 };
 
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label/i.test(error?.message ?? "");
+  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|assigned_by_user_id|assigned_by_name_snapshot/i.test(error?.message ?? "");
 
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
@@ -570,6 +570,8 @@ router.post("/", submitRateLimit, async (req, res) => {
     source,
     location,
     assigned_rep_id:   assignedRepId,
+    assigned_by_user_id: null,
+    assigned_by_name_snapshot: assignedRepId ? "Round-robin" : null,
     utm_source:        d.utmSource ?? null,
     utm_campaign:      d.utmCampaign ?? null,
     utm_medium:        d.utmMedium ?? null,
@@ -586,6 +588,8 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.preferred_delivery;
   delete legacyInsert.referrer;
   delete legacyInsert.embed_label;
+  delete legacyInsert.assigned_by_user_id;
+  delete legacyInsert.assigned_by_name_snapshot;
 
   let { data: order, error: orderErr } = await supabase
     .from("orders")

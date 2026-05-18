@@ -368,6 +368,8 @@ export type TrackedOrder = {
   scheduledDate?: string;
   deliveredDate?: string;
   assignedRepId?: string;
+  assignedByUserId?: string;
+  assignedByNameSnapshot?: string;
   agentId?: string;
   stockDeducted?: boolean;
   logisticsCost?: number;

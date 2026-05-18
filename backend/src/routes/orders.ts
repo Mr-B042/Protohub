@@ -394,6 +394,8 @@ router.post("/", async (req, res) => {
     source_cart_id:  d.sourceCartId ?? null,
     location:        d.location,
     assigned_rep_id: d.assignedRepId ?? req.user!.id,
+    assigned_by_user_id: req.user!.id,
+    assigned_by_name_snapshot: req.user!.name,
     agent_id:        d.agentId ?? null,
     ...agentSnapshot,
     ...agentLocationSnapshot,
@@ -414,6 +416,8 @@ router.post("/", async (req, res) => {
   const legacyInsert = {
     ...baseInsert
   } as Record<string, unknown>;
+  delete legacyInsert.assigned_by_user_id;
+  delete legacyInsert.assigned_by_name_snapshot;
   delete legacyInsert.confirmation_checked;
   delete legacyInsert.preferred_delivery;
 
@@ -1128,6 +1132,19 @@ router.patch("/:id", async (req, res) => {
       scheduledAt: updates.scheduled_at as string | null | undefined,
       timelineNotes: updates.timeline_notes as unknown[] | null | undefined
     });
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "assigned_rep_id")) {
+    const nextAssignedRepId = updates.assigned_rep_id ? String(updates.assigned_rep_id) : null;
+    const currentAssignedRepId = current.assigned_rep_id ? String(current.assigned_rep_id) : null;
+    if (nextAssignedRepId !== currentAssignedRepId) {
+      if (nextAssignedRepId) {
+        updates.assigned_by_user_id = req.user!.id;
+        updates.assigned_by_name_snapshot = req.user!.name;
+      } else {
+        updates.assigned_by_user_id = null;
+        updates.assigned_by_name_snapshot = null;
+      }
+    }
   }
 
   // Validate cross-org references
