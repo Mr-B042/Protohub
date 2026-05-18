@@ -10491,6 +10491,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
     const section = parts[2];
+    const workspaceOrderId = queryParams.get("order") ?? "";
     const repOrderWorkspaceRoutePage = section === "orders"
       ? "Orders"
       : section === "follow-up-queue"
@@ -10518,6 +10519,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const resolvedRepId = requestedRepId === "all" || salesRepUsers.some((user) => user.id === requestedRepId)
       ? requestedRepId
       : "all";
+
+    if (workspaceOrderId) {
+      setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
+      if (currentRole === "Owner" || currentRole === "Admin") {
+        if (repConsoleRepId !== resolvedRepId) {
+          setRepConsoleRepId(resolvedRepId);
+        }
+      } else if (repConsoleRepId !== "all") {
+        setRepConsoleRepId("all");
+      }
+      setActivePage("Sales Rep Workspace");
+      setRepOrderDetailId(workspaceOrderId);
+      setSelectedOrderId(workspaceOrderId);
+      return;
+    }
 
     setRepConsoleTab(repOrderWorkspaceRoutePage ? "Orders" : (routeToTab[section ?? ""] ?? "Dashboard"));
     if (currentRole === "Owner" || currentRole === "Admin") {
@@ -15585,8 +15601,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openRepOrderDetail = (order: TrackedOrder) => {
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
+    const nextTab: RepConsoleTab = activePage === "Sales Rep Workspace" ? repConsoleTab : "Orders";
     if (!isOrderWorkspacePage(activePage)) {
-      setRepConsoleTab("Orders");
+      setRepConsoleTab(nextTab);
     }
     setCreateOrderAgentId(order.agentId ?? "");
     const plannedParts = splitMomentForInput(order.scheduledAt);
@@ -15599,6 +15616,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
     if (activePage === "Sales Rep Workspace") {
+      syncHashRoute(repWorkspaceDetailHash(order.id, nextTab));
       return;
     }
     const nextHash = isOrderWorkspacePage(activePage)
@@ -15611,6 +15629,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
     if (activePage === "Sales Rep Workspace") {
+      syncHashRoute(repTabRoute(repConsoleTab));
       return;
     }
     const nextHash = isOrderWorkspacePage(activePage)
@@ -18139,6 +18158,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       tab === "Dashboard" ? "#/dashboard/sales-rep" : `#/dashboard/sales-rep/${slugify(tab)}`,
       repIdOverride
     );
+  const repWorkspaceDetailHash = (orderId: string, tab: RepConsoleTab = repConsoleTab, repIdOverride = repConsoleRepId) => {
+    const baseHash = repTabRoute(tab, repIdOverride);
+    const [path, rawQuery = ""] = baseHash.split("?");
+    const params = new URLSearchParams(rawQuery);
+    params.set("order", orderId);
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
+  };
 
   const syncHashRoute = (nextHash: string) => {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
@@ -19194,8 +19221,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Customer Info Card */}
         <article className={`${orderPanelClass} overflow-hidden`}>
-          <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
+          <div className={`px-5 py-4 border-b ${orderBorderClass} flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between`}>
             <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Customer Info</h2>
+            <button
+              className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+              onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+            >
+              <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+            </button>
           </div>
           <div className="p-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
@@ -34825,7 +34858,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                {/* Section 1: Customer Information */}
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Customer Information</h3>
+	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-2 mb-3 ${orderBorderClass}`}>
+	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Customer Information</h3>
+	                      <button
+	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                      >
+	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+	                      </button>
+	                    </div>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Name</p>
