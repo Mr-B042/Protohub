@@ -1434,6 +1434,132 @@ export default function PublicOrderFormPage() {
     finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
   }
 
+  const normalizedAvailableStates = Array.from(new Set((publicProduct?.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
+  const treatAsAllNigeriaStates =
+    normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
+    !normalizedAvailableStates.includes("FCT Abuja");
+  const allowedStates = normalizedAvailableStates.length > 0
+    ? NIGERIA_STATES.filter(
+        (state) =>
+          normalizedAvailableStates.includes(normalizeStateName(state)) ||
+          (state === "FCT Abuja" && treatAsAllNigeriaStates)
+      )
+    : NIGERIA_STATES;
+
+  const normalizedSelectedState = normalizeStateName(orderFormState);
+
+  const companionOptions = (chosenPackage?.companionProducts ?? [])
+    .filter((companion) => !companion.autoInclude)
+    .filter((companion) => (companion.placement ?? "inline") === "inline")
+    .filter((companion) =>
+      companion.stateRestrictions.length === 0
+        ? true
+        : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
+    );
+
+  const cardCompanionGroups = useMemo(
+    () => Object.values(
+      companionOptions
+        .filter((companion) => (companion.displayMode ?? "compact") === "card")
+        .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
+          const key = companion.productId;
+          if (!acc[key]) {
+            acc[key] = {
+              product: products.find((item) => item.id === companion.productId),
+              companions: [],
+              priority: companion.priority ?? 0
+            };
+          }
+          acc[key].companions.push(companion);
+          acc[key].priority = Math.max(acc[key].priority, companion.priority ?? 0);
+          return acc;
+        }, {})
+    )
+      .map((group) => ({
+        ...group,
+        companions: [...group.companions].sort((a, b) => {
+          if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+          return (b.priority ?? 0) - (a.priority ?? 0);
+        })
+      }))
+      .sort((a, b) => b.priority - a.priority),
+    [companionOptions, products]
+  );
+
+  const compactCompanionOptions = useMemo(
+    () => companionOptions.filter((companion) => (companion.displayMode ?? "compact") !== "card"),
+    [companionOptions]
+  );
+
+  useEffect(() => {
+    if (!expandedCardCompanionProductId) {
+      lastExpandedCardProductIdRef.current = null;
+      return;
+    }
+    if (lastExpandedCardProductIdRef.current === expandedCardCompanionProductId) return;
+    lastExpandedCardProductIdRef.current = expandedCardCompanionProductId;
+    const group = cardCompanionGroups.find((entry) => entry.product?.id === expandedCardCompanionProductId);
+    if (!group?.product) return;
+    const previewCompanion = group.companions[0];
+    trackCartJourney("additional_item_preview_opened", {
+      companionProductId: group.product.id,
+      companionPackageId: previewCompanion?.packageId ?? undefined,
+      metadata: {
+        productName: group.product.name,
+        variants: group.companions.length
+      }
+    });
+  }, [cardCompanionGroups, expandedCardCompanionProductId]);
+
+  useEffect(() => {
+    const nextKeys = orderFormCrossSells.map((line) => companionSelectionKey(line)).sort();
+    const prevKeys = previousCrossSellKeysRef.current;
+    if (prevKeys.length === 0 && nextKeys.length === 0) return;
+
+    const addedKeys = nextKeys.filter((key) => !prevKeys.includes(key));
+    const removedKeys = prevKeys.filter((key) => !nextKeys.includes(key));
+
+    for (const key of addedKeys) {
+      const selection = orderFormCrossSells.find((line) => companionSelectionKey(line) === key);
+      if (!selection) continue;
+      const product = products.find((item) => item.id === selection.productId);
+      trackCartJourney("additional_item_added", {
+        companionProductId: selection.productId,
+        companionPackageId: selection.packageId ?? undefined,
+        metadata: {
+          productName: product?.name ?? "Additional item",
+          quantity: selection.quantity
+        }
+      });
+    }
+
+    for (const key of removedKeys) {
+      const [productId, packageId] = key.split("::");
+      const product = products.find((item) => item.id === productId);
+      trackCartJourney("additional_item_removed", {
+        companionProductId: productId,
+        companionPackageId: packageId || undefined,
+        metadata: {
+          productName: product?.name ?? "Additional item"
+        }
+      });
+    }
+
+    previousCrossSellKeysRef.current = nextKeys;
+  }, [orderFormCrossSells, products]);
+
+  useEffect(() => {
+    if (cardCompanionGroups.length === 0) {
+      setExpandedCardCompanionProductId(null);
+      return;
+    }
+    setExpandedCardCompanionProductId((prev) => {
+      if (!prev) return null;
+      if (cardCompanionGroups.some((group) => group.product?.id === prev)) return prev;
+      return null;
+    });
+  }, [cardCompanionGroups]);
+
   if (loading && !publicProduct) {
     if (!showLoading) return null;
     return (
@@ -1647,132 +1773,6 @@ export default function PublicOrderFormPage() {
       </div>
     </div>
   ) : null;
-
-  const normalizedAvailableStates = Array.from(new Set((publicProduct.availableStates ?? []).map(normalizeStateName).filter(Boolean)));
-  const treatAsAllNigeriaStates =
-    normalizedAvailableStates.length >= NIGERIA_STATES.length - 1 &&
-    !normalizedAvailableStates.includes("FCT Abuja");
-  const allowedStates = normalizedAvailableStates.length > 0
-    ? NIGERIA_STATES.filter(
-        (state) =>
-          normalizedAvailableStates.includes(normalizeStateName(state)) ||
-          (state === "FCT Abuja" && treatAsAllNigeriaStates)
-      )
-    : NIGERIA_STATES;
-
-  const normalizedSelectedState = normalizeStateName(orderFormState);
-
-  const companionOptions = (chosenPackage?.companionProducts ?? [])
-    .filter((companion) => !companion.autoInclude)
-    .filter((companion) => (companion.placement ?? "inline") === "inline")
-    .filter((companion) =>
-      companion.stateRestrictions.length === 0
-        ? true
-        : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
-    );
-
-  const cardCompanionGroups = useMemo(
-    () => Object.values(
-      companionOptions
-        .filter((companion) => (companion.displayMode ?? "compact") === "card")
-        .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
-          const key = companion.productId;
-          if (!acc[key]) {
-            acc[key] = {
-              product: products.find((item) => item.id === companion.productId),
-              companions: [],
-              priority: companion.priority ?? 0
-            };
-          }
-          acc[key].companions.push(companion);
-          acc[key].priority = Math.max(acc[key].priority, companion.priority ?? 0);
-          return acc;
-        }, {})
-    )
-      .map((group) => ({
-        ...group,
-        companions: [...group.companions].sort((a, b) => {
-          if (a.quantity !== b.quantity) return a.quantity - b.quantity;
-          return (b.priority ?? 0) - (a.priority ?? 0);
-        })
-      }))
-      .sort((a, b) => b.priority - a.priority),
-    [companionOptions, products]
-  );
-
-  const compactCompanionOptions = useMemo(
-    () => companionOptions.filter((companion) => (companion.displayMode ?? "compact") !== "card"),
-    [companionOptions]
-  );
-
-  useEffect(() => {
-    if (!expandedCardCompanionProductId) {
-      lastExpandedCardProductIdRef.current = null;
-      return;
-    }
-    if (lastExpandedCardProductIdRef.current === expandedCardCompanionProductId) return;
-    lastExpandedCardProductIdRef.current = expandedCardCompanionProductId;
-    const group = cardCompanionGroups.find((entry) => entry.product?.id === expandedCardCompanionProductId);
-    if (!group?.product) return;
-    const previewCompanion = group.companions[0];
-    trackCartJourney("additional_item_preview_opened", {
-      companionProductId: group.product.id,
-      companionPackageId: previewCompanion?.packageId ?? undefined,
-      metadata: {
-        productName: group.product.name,
-        variants: group.companions.length
-      }
-    });
-  }, [cardCompanionGroups, expandedCardCompanionProductId]);
-
-  useEffect(() => {
-    const nextKeys = orderFormCrossSells.map((line) => companionSelectionKey(line)).sort();
-    const prevKeys = previousCrossSellKeysRef.current;
-    if (prevKeys.length === 0 && nextKeys.length === 0) return;
-
-    const addedKeys = nextKeys.filter((key) => !prevKeys.includes(key));
-    const removedKeys = prevKeys.filter((key) => !nextKeys.includes(key));
-
-    for (const key of addedKeys) {
-      const selection = orderFormCrossSells.find((line) => companionSelectionKey(line) === key);
-      if (!selection) continue;
-      const product = products.find((item) => item.id === selection.productId);
-      trackCartJourney("additional_item_added", {
-        companionProductId: selection.productId,
-        companionPackageId: selection.packageId ?? undefined,
-        metadata: {
-          productName: product?.name ?? "Additional item",
-          quantity: selection.quantity
-        }
-      });
-    }
-
-    for (const key of removedKeys) {
-      const [productId, packageId] = key.split("::");
-      const product = products.find((item) => item.id === productId);
-      trackCartJourney("additional_item_removed", {
-        companionProductId: productId,
-        companionPackageId: packageId || undefined,
-        metadata: {
-          productName: product?.name ?? "Additional item"
-        }
-      });
-    }
-
-    previousCrossSellKeysRef.current = nextKeys;
-  }, [orderFormCrossSells, products]);
-
-  useEffect(() => {
-    if (cardCompanionGroups.length === 0) {
-      setExpandedCardCompanionProductId(null);
-      return;
-    }
-    setExpandedCardCompanionProductId((prev) => {
-      if (!prev) return null;
-      if (cardCompanionGroups.some((group) => group.product?.id === prev)) return prev;
-      return null;
-    });
-  }, [cardCompanionGroups]);
 
   return (
     <main className="public-order-page">
