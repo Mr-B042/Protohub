@@ -124,9 +124,20 @@ const normalizePulseSource = (value: unknown) => {
   return value.trim();
 };
 
-const normalizePulseEmbedLabel = (value: unknown) => {
-  if (typeof value !== "string" || !value.trim()) return "Unlabelled embed";
+const normalizePulseProductName = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) return "";
   return value.trim();
+};
+
+const resolvePulseEmbedLabel = (embedLabelValue: unknown, productNameValue: unknown) => {
+  if (typeof embedLabelValue === "string" && embedLabelValue.trim()) {
+    return embedLabelValue.trim();
+  }
+  const productName = normalizePulseProductName(productNameValue);
+  if (productName) {
+    return `Unlabelled · ${productName}`;
+  }
+  return "Unlabelled embed";
 };
 
 const isInteractionEvent = (eventType: string) =>
@@ -408,7 +419,10 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (!cartId) continue;
     const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
     const cartRow = cartById.get(cartId);
-    const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+    const embedLabel = resolvePulseEmbedLabel(
+      metadata.embedLabel ?? cartRow?.embed_label,
+      metadata.productName ?? cartRow?.product_name
+    );
     if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) continue;
     const bucket = rangeByCart.get(cartId) ?? [];
     bucket.push(event);
@@ -421,7 +435,10 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (!cartId) continue;
     const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
     const cartRow = cartById.get(cartId);
-    const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+    const embedLabel = resolvePulseEmbedLabel(
+      metadata.embedLabel ?? cartRow?.embed_label,
+      metadata.productName ?? cartRow?.product_name
+    );
     if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) continue;
     const bucket = liveByCart.get(cartId) ?? [];
     bucket.push(event);
@@ -437,7 +454,10 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
       const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
       const cartRow = cartById.get(cartId);
-      const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+      const embedLabel = resolvePulseEmbedLabel(
+        metadata.embedLabel ?? cartRow?.embed_label,
+        metadata.productName ?? cartRow?.product_name
+      );
       return embedLabels.includes(embedLabel);
     })
     .slice(0, 12)
@@ -446,7 +466,10 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
       const cartRow = cartById.get(cartId);
       const source = normalizePulseSource(metadata.source ?? cartRow?.source);
-      const embedLabel = normalizePulseEmbedLabel(metadata.embedLabel ?? cartRow?.embed_label);
+      const embedLabel = resolvePulseEmbedLabel(
+        metadata.embedLabel ?? cartRow?.embed_label,
+        metadata.productName ?? cartRow?.product_name
+      );
       return {
         cartId,
         eventType: String(event.event_type ?? ""),
@@ -490,8 +513,9 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       [...events].reverse().map((event) => event?.metadata?.source).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.source
     );
     const sourceBucket = sourceStats.get(latestSource) ?? { source: latestSource, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
-    const latestEmbedLabel = normalizePulseEmbedLabel(
-      [...events].reverse().map((event) => event?.metadata?.embedLabel).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.embed_label
+    const latestEmbedLabel = resolvePulseEmbedLabel(
+      [...events].reverse().map((event) => event?.metadata?.embedLabel).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.embed_label,
+      [...events].reverse().map((event) => event?.metadata?.productName).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.product_name
     );
     const embedBucket = embedStats.get(latestEmbedLabel) ?? { embedLabel: latestEmbedLabel, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
 
