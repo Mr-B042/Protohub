@@ -814,6 +814,8 @@ type CartJourneyEvent = {
     | CartJourneyBlockedEventType
     | "order_submitted"
     | "redirect_triggered"
+    | "cart_date_changed"
+    | "order_date_changed"
     | "order_assigned"
     | "order_reassigned"
     | "delivery_agent_assigned"
@@ -3372,6 +3374,8 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
     case "submit_attempted": return "Tried to submit";
     case "order_submitted": return "Order submitted";
     case "redirect_triggered": return "Redirect fired";
+    case "cart_date_changed": return "Cart date changed";
+    case "order_date_changed": return "Order date changed";
     case "order_assigned": return "Order assigned";
     case "order_reassigned": return "Order reassigned";
     case "delivery_agent_assigned": return "Delivery agent assigned";
@@ -3400,6 +3404,9 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
   const channel = typeof metadata.channel === "string" ? metadata.channel : "";
   const outcomeCode = typeof metadata.outcomeCode === "string" ? metadata.outcomeCode : "";
   const nextActionType = typeof metadata.nextActionType === "string" ? metadata.nextActionType : "";
+  const fromDate = typeof metadata.fromDate === "string" ? metadata.fromDate : "";
+  const toDate = typeof metadata.toDate === "string" ? metadata.toDate : "";
+  const reason = typeof metadata.reason === "string" ? metadata.reason : "";
   if (isCartJourneyBlockedEvent(event.eventType)) {
     return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
   }
@@ -3422,6 +3429,10 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
       return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
     case "redirect_triggered":
       return "Redirected to the landing-page thank-you destination.";
+    case "cart_date_changed":
+      return `${actorName || "Admin"} changed the cart date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
+    case "order_date_changed":
+      return `${actorName || "Admin"} changed the order date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
     case "order_assigned":
       return repName ? `${repName} was assigned to handle this order.` : (actorName ? `${actorName} assigned this order.` : "A rep was assigned to this order.");
     case "order_reassigned":
@@ -5831,6 +5842,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
   const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
   const [orderScheduleTime, setOrderScheduleTime] = useState(() => nextTimeValue());
+  const [dateEditTarget, setDateEditTarget] = useState<null | { kind: "cart" | "order"; id: string }>(null);
+  const [dateEditDate, setDateEditDate] = useState("");
+  const [dateEditTime, setDateEditTime] = useState(() => nextTimeValue());
+  const [dateEditReason, setDateEditReason] = useState("");
+  const [dateEditSaving, setDateEditSaving] = useState(false);
   const [showRepFollowUpField, setShowRepFollowUpField] = useState(false);
   const [assignStockProductId, setAssignStockProductId] = useState("");
   const [assignStockQty, setAssignStockQty] = useState("1");
@@ -5966,12 +5982,71 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
   const selectedOrderLatestAttempt = latestContactAttemptForOrder(selectedOrderContactAttempts);
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
+  const isOwnerOrAdmin = realRole === "Owner" || realRole === "Admin";
+  const isEditingSelectedCartDate = dateEditTarget?.kind === "cart" && dateEditTarget.id === selectedCart?.id;
+  const isEditingSelectedOrderDate = dateEditTarget?.kind === "order" && dateEditTarget.id === selectedOrder?.id;
   const canDeleteAbandonedCarts = (() => {
     const role = auth.getUser()?.role;
     return role === "Owner" || role === "Admin";
   })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
+  const resetDateEditor = () => {
+    setDateEditTarget(null);
+    setDateEditDate("");
+    setDateEditTime(nextTimeValue());
+    setDateEditReason("");
+    setDateEditSaving(false);
+  };
+  const openCartDateEditor = (cart: AbandonedCartRecord) => {
+    const parts = splitMomentForInput(cart.createdAt);
+    setDateEditTarget({ kind: "cart", id: cart.id });
+    setDateEditDate(parts.date || todayKey());
+    setDateEditTime(parts.time || nextTimeValue());
+    setDateEditReason("");
+  };
+  const openOrderDateEditor = (order: TrackedOrder) => {
+    const parts = splitMomentForInput(order.createdAt ?? order.date);
+    setDateEditTarget({ kind: "order", id: order.id });
+    setDateEditDate(parts.date || todayKey());
+    setDateEditTime(parts.time || nextTimeValue());
+    setDateEditReason("");
+  };
+  const sortOrdersByCreatedAtDesc = (rows: TrackedOrder[]) =>
+    rows.slice().sort((left, right) => (orderCreatedTimestamp(right) ?? 0) - (orderCreatedTimestamp(left) ?? 0));
+  const sortCartsByCreatedAtDesc = (rows: AbandonedCartRecord[]) =>
+    rows.slice().sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const saveDateEditor = async () => {
+    if (!dateEditTarget) return;
+    const planned = combinePlannedMoment(dateEditDate, dateEditTime);
+    if (!planned.iso) {
+      showToast("Choose a valid date and time first.");
+      return;
+    }
+    const reason = dateEditReason.trim();
+    if (reason.length < 3) {
+      showToast("Give a clear reason before saving the date change.");
+      return;
+    }
+
+    setDateEditSaving(true);
+    try {
+      if (dateEditTarget.kind === "cart") {
+        const updated = normalizeRealtimeCart(await cartsApi.changeDate(dateEditTarget.id, { createdAt: planned.iso, reason }));
+        setAbandonedCarts((value) => sortCartsByCreatedAtDesc(value.map((cart) => cart.id === updated.id ? updated : cart)));
+        showToast(`Cart ${updated.id} date updated.`);
+      } else {
+        const updated = normalizeTrackedOrder(await ordersApi.changeDate(dateEditTarget.id, { createdAt: planned.iso, reason }));
+        setTrackedOrders((value) => sortOrdersByCreatedAtDesc(value.map((order) => order.id === updated.id ? updated : order)));
+        showToast(`Order ${updated.id} date updated.`);
+      }
+      resetDateEditor();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not update the date right now.");
+    } finally {
+      setDateEditSaving(false);
+    }
+  };
   useEffect(() => {
     if (modal !== "cartDetails" || !selectedCart?.id) {
       setSelectedCartJourney([]);
@@ -21087,6 +21162,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (modalBeforeClose && ["addPackage", "editPackage", "deletePackage"].includes(modalBeforeClose)) {
       clearPackageEditorDraftTracking();
     }
+    resetDateEditor();
     setModal(null);
     setCreateOrderContext("admin");
     setUserPassword("");
@@ -34899,7 +34975,74 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	
 	                {/* Section 2: Order Information */}
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Order Information</h3>
+                      <div className={`flex items-center justify-between gap-3 border-b pb-2 mb-3 ${orderBorderClass}`}>
+	                    <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Order Information</h3>
+                        {isOwnerOrAdmin && selectedOrder.sourceCartId && (
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 text-xs font-bold hover:bg-amber-50 transition-colors"
+                            onClick={() => openOrderDateEditor(selectedOrder)}
+                          >
+                            <CalendarDays className="w-3.5 h-3.5" /> Change order date
+                          </button>
+                        )}
+                      </div>
+                      {isEditingSelectedOrderDate && (
+                        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 grid gap-3">
+                          <div>
+                            <p className={`m-0 text-xs font-bold uppercase tracking-wider ${orderFaintTextClass}`}>Adjust converted order date</p>
+                            <p className={`m-0 mt-1 text-sm ${orderMutedTextClass}`}>Set the corrected order date and explain why this converted abandoned-cart order needs to move.</p>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="grid gap-1">
+                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Date</span>
+                              <input
+                                type="date"
+                                value={dateEditDate}
+                                onChange={(event) => setDateEditDate(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                            <label className="grid gap-1">
+                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Time</span>
+                              <input
+                                type="time"
+                                value={dateEditTime}
+                                onChange={(event) => setDateEditTime(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                          </div>
+                          <label className="grid gap-1">
+                            <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Reason for date change</span>
+                            <textarea
+                              rows={3}
+                              value={dateEditReason}
+                              onChange={(event) => setDateEditReason(event.target.value)}
+                              placeholder="Explain why this order date needs correction."
+                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100 resize-none"
+                            />
+                          </label>
+                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                              onClick={resetDateEditor}
+                              disabled={dateEditSaving}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                              onClick={saveDateEditor}
+                              disabled={dateEditSaving}
+                            >
+                              <CalendarDays className="w-4 h-4" /> {dateEditSaving ? "Saving..." : "Save order date"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
@@ -36219,7 +36362,74 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                  {/* Workflow + timeline */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Workflow</h4>
+                      <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-1.5 mb-2">
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 m-0">Workflow</h4>
+                        {isOwnerOrAdmin && (
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50 transition-colors"
+                            onClick={() => openCartDateEditor(selectedCart)}
+                          >
+                            <CalendarDays className="w-3.5 h-3.5" /> Change cart date
+                          </button>
+                        )}
+                      </div>
+                      {isEditingSelectedCartDate && (
+                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3 grid gap-3">
+                          <div>
+                            <p className="m-0 text-xs font-bold uppercase tracking-wider text-amber-800">Adjust abandoned cart date</p>
+                            <p className="m-0 mt-1 text-xs text-amber-900/80">Set the corrected cart date and give a reason before saving.</p>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="grid gap-1">
+                              <span className="text-[11px] font-semibold text-amber-800">Date</span>
+                              <input
+                                type="date"
+                                value={dateEditDate}
+                                onChange={(event) => setDateEditDate(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                            <label className="grid gap-1">
+                              <span className="text-[11px] font-semibold text-amber-800">Time</span>
+                              <input
+                                type="time"
+                                value={dateEditTime}
+                                onChange={(event) => setDateEditTime(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                          </div>
+                          <label className="grid gap-1">
+                            <span className="text-[11px] font-semibold text-amber-800">Reason for date change</span>
+                            <textarea
+                              rows={3}
+                              value={dateEditReason}
+                              onChange={(event) => setDateEditReason(event.target.value)}
+                              placeholder="Explain why this abandoned cart date needs correction."
+                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100 resize-none"
+                            />
+                          </label>
+                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                              onClick={resetDateEditor}
+                              disabled={dateEditSaving}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                              onClick={saveDateEditor}
+                              disabled={dateEditSaving}
+                            >
+                              <CalendarDays className="w-4 h-4" /> {dateEditSaving ? "Saving..." : "Save cart date"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>

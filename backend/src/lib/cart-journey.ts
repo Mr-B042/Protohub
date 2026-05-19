@@ -1,6 +1,8 @@
 import { supabase } from "./supabase.js";
 
 export type BackofficeCartJourneyEventType =
+  | "cart_date_changed"
+  | "order_date_changed"
   | "order_assigned"
   | "order_reassigned"
   | "delivery_agent_assigned"

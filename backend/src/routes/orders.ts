@@ -92,6 +92,22 @@ const remittanceReceivedAtToIso = (value: unknown) => {
   return Number.isNaN(new Date(iso).getTime()) ? null : iso;
 };
 
+const normalizeEditableCreatedAt = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  const inferredDateKey = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(trimmed)
+    ? trimmed.slice(0, 10)
+    : parsed.toISOString().slice(0, 10);
+  return {
+    iso: parsed.toISOString(),
+    dateKey: inferredDateKey
+  };
+};
+
 const logRemittanceDelta = async (args: {
   orgId: string;
   orderId: string;
@@ -1029,6 +1045,95 @@ const MANUAL_BONUS_FIELDS = new Set([
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
 ]);
+
+const OrderDatePatchSchema = z.object({
+  createdAt: z.string().trim().min(1).max(80),
+  reason: z.string().trim().min(3).max(500)
+}).strict();
+
+router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = OrderDatePatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const normalizedCreatedAt = normalizeEditableCreatedAt(parsed.data.createdAt);
+  if (!normalizedCreatedAt) {
+    res.status(400).json({ error: "Choose a valid order date and time." });
+    return;
+  }
+
+  const { data: current, error: currentError } = await supabase
+    .from("orders")
+    .select("id, status, created_at, date, source_cart_id, customer, product_id, package_id, state, product_name, package_name")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
+  if (currentError) {
+    res.status(500).json({ error: currentError.message });
+    return;
+  }
+  if (!current) {
+    res.status(404).json({ error: "Order not found." });
+    return;
+  }
+  if (!current.source_cart_id) {
+    res.status(400).json({ error: "Only orders converted from abandoned carts can have their order date adjusted here." });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      created_at: normalizedCreatedAt.iso,
+      date: normalizedCreatedAt.dateKey
+    })
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  if (!data) {
+    res.status(404).json({ error: "Order not found." });
+    return;
+  }
+
+  await supabase.from("order_audit").insert({
+    order_id: req.params.id,
+    org_id: req.user!.orgId,
+    changed_by: req.user!.id,
+    from_status: current.status,
+    to_status: current.status,
+    note: `Order date changed from ${current.created_at ?? current.date ?? "unknown"} to ${normalizedCreatedAt.iso}. Reason: ${parsed.data.reason}`
+  });
+
+  await appendCartJourneyEvent({
+    orgId: req.user!.orgId,
+    cartId: current.source_cart_id,
+    productId: current.product_id ?? null,
+    packageId: current.package_id ?? null,
+    state: current.state ?? null,
+    eventType: "order_date_changed",
+    metadata: {
+      orderId: String(req.params.id),
+      customerName: current.customer ?? null,
+      productName: current.product_name ?? null,
+      packageName: current.package_name ?? null,
+      actorName: req.user!.name,
+      fromDate: current.created_at ?? current.date ?? null,
+      toDate: normalizedCreatedAt.iso,
+      reason: parsed.data.reason
+    }
+  }).catch(() => undefined);
+
+  res.json(data);
+});
 
 router.patch("/:id", async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(

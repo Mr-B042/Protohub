@@ -288,6 +288,7 @@ export const ordersApi = {
   },
   create: (body: unknown) => post<any>("/api/orders", body),
   updateStatus: (id: string, body: unknown) => patch<any>(`/api/orders/${id}/status`, body),
+  changeDate: (id: string, body: { createdAt: string; reason: string }) => patch<any>(`/api/orders/${id}/date`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
   audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
@@ -510,6 +511,7 @@ export const cartsApi = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return get<any>(`/api/carts/live-pulse${suffix}`);
   },
+  changeDate: (id: string, body: { createdAt: string; reason: string }) => patch<any>(`/api/carts/${id}/date`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
   delete: (id: string) => del<void>(`/api/carts/${id}`)
 };

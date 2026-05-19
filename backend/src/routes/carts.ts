@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -117,6 +118,15 @@ const lagosDateRangeToBounds = (dateFrom?: string, dateTo?: string) => {
     startIso: startRange.startIso,
     endExclusiveIso: endRange.endExclusiveIso
   };
+};
+
+const normalizeEditableCreatedAt = (value: string) => {
+  const trimmed = value.trim();
+  const parsed = new Date(trimmed);
+  if (!trimmed || Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
 };
 
 const normalizePulseSource = (value: unknown) => {
@@ -681,6 +691,11 @@ const CartPatchSchema = z.object({
   lastActivity:    z.string().optional()
 }).strict();
 
+const CartDatePatchSchema = z.object({
+  createdAt: z.string().trim().min(1).max(80),
+  reason: z.string().trim().min(3).max(500)
+}).strict();
+
 router.patch("/:id",
   requireRole("Owner", "Admin", "Sales Rep"),
   async (req, res) => {
@@ -740,6 +755,70 @@ router.patch("/:id",
         assignedRepId: data.assigned_rep_id ?? null
       });
     }
+
+    res.json(data);
+  }
+);
+
+router.patch("/:id/date",
+  requireRole("Owner", "Admin"),
+  async (req, res) => {
+    const parsed = CartDatePatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
+    const createdAtIso = normalizeEditableCreatedAt(parsed.data.createdAt);
+    if (!createdAtIso) {
+      res.status(400).json({ error: "Choose a valid cart date and time." });
+      return;
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from("abandoned_carts")
+      .select("id, created_at, customer, product_id, package_id, product_name, package_name, state")
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (existingError || !existing) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("abandoned_carts")
+      .update({ created_at: createdAtIso })
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single();
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    if (!data) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+
+    await appendCartJourneyEvent({
+      orgId: req.user!.orgId,
+      cartId: existing.id,
+      productId: existing.product_id ?? null,
+      packageId: existing.package_id ?? null,
+      state: existing.state ?? null,
+      eventType: "cart_date_changed",
+      metadata: {
+        customerName: existing.customer ?? null,
+        productName: existing.product_name ?? null,
+        packageName: existing.package_name ?? null,
+        actorName: req.user!.name,
+        fromDate: existing.created_at ?? null,
+        toDate: createdAtIso,
+        reason: parsed.data.reason
+      }
+    }).catch(() => undefined);
 
     res.json(data);
   }
