@@ -210,6 +210,8 @@ type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restore
 type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
 type StockCountStatus = "Pending" | "Agent Submitted" | "Admin Confirmed" | "Verified" | "Discrepancy";
 type WriteOffReason = "Damaged" | "Theft" | "Unreported Sale" | "Return to Warehouse" | "Other";
+const orderAssignmentScopeLabel = (scope: OrderAssignmentScope) =>
+  scope === "Assigned by me" ? "My orders" : "All assignments";
 
 const STATE_STOCK_LOW_THRESHOLD = 5;
 const stateStockStatusMeta = (quantity: number) =>
@@ -7307,15 +7309,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
-  const matchesLegacySelfAssignedOrder = (order: TrackedOrder) =>
-    Boolean(orderAssignmentActorId)
-    && !order.assignedByUserId
-    && order.assignedRepId === orderAssignmentActorId;
   const matchesOrderAssignmentScope = (order: TrackedOrder) =>
     !canFilterOrdersByAssigner
     || orderAssignmentScope === "All assignments"
-    || (Boolean(orderAssignmentActorId) && order.assignedByUserId === orderAssignmentActorId)
-    || matchesLegacySelfAssignedOrder(order);
+    || (Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId);
   const dashboardOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
@@ -13080,7 +13077,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
       ["Status", orderStatus],
-      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScope : "All assignments"],
+      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScopeLabel(orderAssignmentScope) : "All assignments"],
       ["Source", orderSource],
       ["Location", orderLocation],
       ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -22776,7 +22773,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </span>
                   {canFilterOrdersByAssigner && orderAssignmentScope === "Assigned by me" && (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-xs font-semibold text-amber-700">
-                      <UserPlus className="w-3 h-3" /> Assigned by me
+                      <UserPlus className="w-3 h-3" /> My orders
                     </span>
                   )}
                 </div>
@@ -22914,7 +22911,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       onChange={(e) => setOrderAssignmentScope(e.target.value as OrderAssignmentScope)}
                     >
                       <option value="All assignments">All assignments</option>
-                      <option value="Assigned by me">Assigned by me</option>
+                      <option value="Assigned by me">My orders</option>
                     </select>
                   )}
                   {/* Product multi-select filter */}
