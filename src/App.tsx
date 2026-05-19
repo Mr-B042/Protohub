@@ -98,6 +98,7 @@ import {
   unsubscribeFromPush,
   ensureServiceWorkerRegistration,
   ensurePushSubscriptionCurrent,
+  initializeNativePushBridge,
   isCurrentlySubscribed,
   getCurrentPushEndpoint,
   getPermissionState,
@@ -5449,7 +5450,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, []);
   const pushNeedsStandaloneInstall = installGuidePlatform === "ios" && !isInstalled;
   const refreshPushDiagnostics = async (respectBannerDismissal = true) => {
-    const perm = getPermissionState();
+    const perm = await getPermissionState();
     setPushPermission(perm);
     const [{ configured, count, subscriptions }, browserSubscribed, currentEndpoint] = await Promise.all([
       getPushStatus(),
@@ -10570,6 +10571,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // Check push notification status on mount
   useEffect(() => {
     void (async () => {
+      await initializeNativePushBridge().catch(() => null);
       await ensureServiceWorkerRegistration().catch(() => null);
       await ensurePushSubscriptionCurrent().catch(() => false);
       await refreshPushDiagnostics();

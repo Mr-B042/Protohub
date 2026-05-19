@@ -1,3 +1,4 @@
+import jwt from "jsonwebtoken";
 import webpush from "web-push";
 import { supabase } from "./supabase.js";
 
@@ -13,6 +14,54 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   console.warn(`[push] VAPID NOT configured — VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY ? `(len ${VAPID_PUBLIC_KEY.length})` : "EMPTY"}, VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY ? `(len ${VAPID_PRIVATE_KEY.length})` : "EMPTY"}, VAPID_EMAIL=${VAPID_EMAIL}`);
 }
 
+type FirebaseAccountConfig = {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+};
+
+function parseFirebaseAccountConfig(): FirebaseAccountConfig | null {
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as {
+        project_id?: string;
+        client_email?: string;
+        private_key?: string;
+      };
+      if (parsed.project_id && parsed.client_email && parsed.private_key) {
+        return {
+          projectId: parsed.project_id.trim(),
+          clientEmail: parsed.client_email.trim(),
+          privateKey: parsed.private_key.replace(/\\n/g, "\n")
+        };
+      }
+    } catch (error) {
+      console.warn("[push] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:", error);
+    }
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim() ?? "";
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim() ?? "";
+  const privateKey = (process.env.FIREBASE_PRIVATE_KEY ?? "").replace(/\\n/g, "\n").trim();
+  if (!projectId || !clientEmail || !privateKey) {
+    return null;
+  }
+
+  return { projectId, clientEmail, privateKey };
+}
+
+const FIREBASE_ACCOUNT = parseFirebaseAccountConfig();
+const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+
+if (FIREBASE_ACCOUNT) {
+  console.log(`[push] Native FCM configured — project=${FIREBASE_ACCOUNT.projectId}, client=${FIREBASE_ACCOUNT.clientEmail}`);
+} else {
+  console.warn("[push] Native FCM NOT configured — mobile app push delivery will stay inactive until Firebase service-account env vars are set.");
+}
+
+let cachedFcmAccessToken: { token: string; expiresAt: number } | null = null;
+
 export function getVapidPublicKey(): string {
   return VAPID_PUBLIC_KEY;
 }
@@ -21,7 +70,11 @@ export function isPushConfigured(): boolean {
   return Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 }
 
-type PushPayload = {
+export function isNativePushConfigured(): boolean {
+  return Boolean(FIREBASE_ACCOUNT?.projectId && FIREBASE_ACCOUNT?.clientEmail && FIREBASE_ACCOUNT?.privateKey);
+}
+
+export type PushPayload = {
   title: string;
   body: string;
   kind?: string;
@@ -51,6 +104,14 @@ type StoredPushSubscription = {
   auth: string;
 };
 
+export type StoredNativePushDevice = {
+  id: string;
+  token: string;
+  platform: string;
+  provider: string;
+  user_id?: string;
+};
+
 function pushTopicForPayload(payload: PushPayload): string {
   const raw = payload.tag ?? payload.kind ?? payload.title ?? "protohub";
   const sanitized = raw
@@ -58,6 +119,89 @@ function pushTopicForPayload(payload: PushPayload): string {
     .replace(/[^a-z0-9_-]/g, "")
     .slice(0, 32);
   return sanitized || "protohub";
+}
+
+function pushPayloadData(payload: PushPayload): Record<string, string> {
+  const data: Record<string, string> = {};
+  const assign = (key: string, value: unknown) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      data[key] = JSON.stringify(value);
+      return;
+    }
+    data[key] = String(value);
+  };
+
+  assign("kind", payload.kind);
+  assign("icon", payload.icon);
+  assign("badge", payload.badge);
+  assign("image", payload.image);
+  assign("url", payload.url);
+  assign("tag", payload.tag);
+  assign("color", payload.color);
+  assign("brandName", payload.brandName);
+  assign("brandLogo", payload.brandLogo);
+  assign("requireInteraction", payload.requireInteraction);
+  assign("vibrate", payload.vibrate);
+  assign("timestamp", payload.timestamp);
+
+  return data;
+}
+
+function nativePushShouldPrune(status: number, errorText: string): boolean {
+  if (status === 404 || status === 410) return true;
+  return (
+    errorText.includes("unregistered") ||
+    errorText.includes("registration-token-not-registered") ||
+    errorText.includes("requested entity was not found")
+  );
+}
+
+async function getFcmAccessToken(): Promise<string> {
+  if (!FIREBASE_ACCOUNT) {
+    throw new Error("Native push is not configured on this server yet.");
+  }
+
+  if (cachedFcmAccessToken && cachedFcmAccessToken.expiresAt > Date.now() + 60_000) {
+    return cachedFcmAccessToken.token;
+  }
+
+  const assertion = jwt.sign(
+    {
+      iss: FIREBASE_ACCOUNT.clientEmail,
+      sub: FIREBASE_ACCOUNT.clientEmail,
+      aud: "https://oauth2.googleapis.com/token",
+      scope: FCM_SCOPE
+    },
+    FIREBASE_ACCOUNT.privateKey,
+    {
+      algorithm: "RS256",
+      expiresIn: "1h"
+    }
+  );
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion
+    })
+  });
+
+  const data = await res.json().catch(() => null) as { access_token?: string; expires_in?: number; error?: string; error_description?: string } | null;
+  if (!res.ok || !data?.access_token) {
+    throw new Error(data?.error_description ?? data?.error ?? "Failed to obtain Firebase access token.");
+  }
+
+  cachedFcmAccessToken = {
+    token: data.access_token,
+    expiresAt: Date.now() + Math.max(60, (data.expires_in ?? 3600) - 120) * 1000
+  };
+
+  return cachedFcmAccessToken.token;
 }
 
 async function getActiveUserIdsByRoles(orgId: string, roles: string[]): Promise<string[]> {
@@ -95,16 +239,14 @@ export async function sendPushToSubscriptions(
           },
           message,
           {
-            TTL: 60 * 60,         // 1 hour — drop if undeliverable that long
-            urgency: "high",      // bypass FCM coalescing / battery delays
+            TTL: 60 * 60,
+            urgency: "high",
             topic: pushTopicForPayload(payload)
           }
         );
       } catch (err: any) {
         const body = typeof err?.body === "string" ? err.body.toLowerCase() : "";
         const vapidMismatch = err?.statusCode === 403 && body.includes("vapid credentials");
-        // 410 Gone / 404 Not Found / specific 403 VAPID mismatch all mean the
-        // stored browser subscription is no longer usable and should be rebuilt.
         if (err.statusCode === 410 || err.statusCode === 404 || vapidMismatch) {
           await supabase.from("push_subscriptions").delete().eq("id", sub.id);
         }
@@ -117,32 +259,117 @@ export async function sendPushToSubscriptions(
   const attempted = subscriptions.length;
   const delivered = attempted - failed;
   if (failed > 0) {
-    console.warn(`[push] ${failed}/${subscriptions.length} push deliveries failed for ${logLabel}`);
+    console.warn(`[push] ${failed}/${subscriptions.length} web push deliveries failed for ${logLabel}`);
+  }
+  return { attempted, delivered, failed };
+}
+
+export async function sendNativePushToDevices(
+  devices: StoredNativePushDevice[] | null | undefined,
+  payload: PushPayload,
+  logLabel = "native devices"
+): Promise<PushDeliveryStats> {
+  if (!isNativePushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
+  if (!devices || devices.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+
+  const fcmDevices = devices.filter((device) => device.provider === "fcm");
+  if (fcmDevices.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+
+  const accessToken = await getFcmAccessToken();
+  const data = pushPayloadData(payload);
+
+  const results = await Promise.allSettled(
+    fcmDevices.map(async (device) => {
+      const res = await fetch(`https://fcm.googleapis.com/v1/projects/${FIREBASE_ACCOUNT!.projectId}/messages:send`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: {
+            token: device.token,
+            notification: {
+              title: payload.title,
+              body: payload.body
+            },
+            data,
+            android: {
+              priority: "high",
+              notification: {
+                channelId: "default",
+                tag: payload.tag,
+                image: payload.image
+              }
+            },
+            apns: {
+              headers: {
+                "apns-priority": "10"
+              },
+              payload: {
+                aps: {
+                  sound: "default"
+                }
+              }
+            }
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        const lowered = text.toLowerCase();
+        if (nativePushShouldPrune(res.status, lowered)) {
+          await supabase.from("native_push_devices").delete().eq("id", device.id);
+        }
+        throw new Error(text || `Native push failed with status ${res.status}`);
+      }
+    })
+  );
+
+  const failed = results.filter((result) => result.status === "rejected").length;
+  const attempted = fcmDevices.length;
+  const delivered = attempted - failed;
+  if (failed > 0) {
+    console.warn(`[push] ${failed}/${attempted} native push deliveries failed for ${logLabel}`);
   }
   return { attempted, delivered, failed };
 }
 
 /**
- * Send push notification to a specific user (all their subscriptions).
- * Silently removes stale/expired subscriptions (410 Gone).
+ * Send push notification to a specific user across web + native registrations.
  */
 export async function sendPushToUser(orgId: string, userId: string, payload: PushPayload): Promise<PushDeliveryStats> {
-  if (!isPushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
+  const [webRows, nativeRows] = await Promise.all([
+    isPushConfigured()
+      ? supabase
+          .from("push_subscriptions")
+          .select("id, endpoint, p256dh, auth")
+          .eq("org_id", orgId)
+          .eq("user_id", userId)
+      : Promise.resolve({ data: [] as StoredPushSubscription[] }),
+    supabase
+      .from("native_push_devices")
+      .select("id, token, platform, provider, user_id")
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .is("disabled_at", null)
+  ]);
 
-  const { data: subscriptions } = await supabase
-    .from("push_subscriptions")
-    .select("id, endpoint, p256dh, auth")
-    .eq("org_id", orgId)
-    .eq("user_id", userId);
+  const [webStats, nativeStats] = await Promise.all([
+    sendPushToSubscriptions(webRows.data as StoredPushSubscription[] | null | undefined, payload, `user ${userId}`),
+    sendNativePushToDevices(nativeRows.data as StoredNativePushDevice[] | null | undefined, payload, `user ${userId}`)
+  ]);
 
-  return sendPushToSubscriptions(subscriptions as StoredPushSubscription[] | null | undefined, payload, `user ${userId}`);
+  return {
+    attempted: webStats.attempted + nativeStats.attempted,
+    delivered: webStats.delivered + nativeStats.delivered,
+    failed: webStats.failed + nativeStats.failed
+  };
 }
 
-/**
- * Send push notification to multiple users.
- */
 export async function sendPushToUsers(orgId: string, userIds: string[], payload: PushPayload): Promise<PushDeliveryStats> {
-  if (!isPushConfigured() || userIds.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+  if (userIds.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
   const results = await Promise.allSettled(userIds.map((uid) => sendPushToUser(orgId, uid, payload)));
   return results.reduce<PushDeliveryStats>((acc, result) => {
     if (result.status === "fulfilled") {
@@ -156,11 +383,8 @@ export async function sendPushToUsers(orgId: string, userIds: string[], payload:
   }, { attempted: 0, delivered: 0, failed: 0 });
 }
 
-/**
- * Send push notifications to all active users in the given roles.
- */
 export async function sendPushToRoles(orgId: string, roles: string[], payload: PushPayload): Promise<PushDeliveryStats> {
-  if (!isPushConfigured() || roles.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
+  if (roles.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
   const userIds = await getActiveUserIdsByRoles(orgId, roles);
   if (userIds.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
   return sendPushToUsers(orgId, userIds, payload);
