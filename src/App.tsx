@@ -7307,10 +7307,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
+  const matchesLegacySelfAssignedOrder = (order: TrackedOrder) =>
+    Boolean(orderAssignmentActorId)
+    && !order.assignedByUserId
+    && order.assignedRepId === orderAssignmentActorId;
   const matchesOrderAssignmentScope = (order: TrackedOrder) =>
     !canFilterOrdersByAssigner
     || orderAssignmentScope === "All assignments"
-    || (Boolean(orderAssignmentActorId) && order.assignedByUserId === orderAssignmentActorId);
+    || (Boolean(orderAssignmentActorId) && order.assignedByUserId === orderAssignmentActorId)
+    || matchesLegacySelfAssignedOrder(order);
   const dashboardOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
