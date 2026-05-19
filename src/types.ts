@@ -352,6 +352,7 @@ export type TrackedOrder = {
   id: string;
   productId?: string;
   packageId?: string;
+  sourceCartId?: string;
   customer: string;
   phone: string;
   whatsapp?: string;

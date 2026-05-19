@@ -799,6 +799,7 @@ type AbandonedCartRecord = {
   lastActivity: string;
   createdAt: string;
 };
+type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
 type CartJourneyBlockedEventType =
   | "submit_blocked_missing_name"
   | "submit_blocked_missing_phone"
@@ -3145,6 +3146,51 @@ const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
   const details = publicFormSubmissionDetailsFor(order);
   return Object.values(details).some((value) => typeof value === "string" && value.trim().length > 0);
 };
+const sourceCartIdForOrder = (order: Partial<TrackedOrder> | null | undefined): string => {
+  const raw = order?.sourceCartId ?? (order as { source_cart_id?: unknown } | null | undefined)?.source_cart_id;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : "";
+};
+const abandonedCartConversionKindFor = (order: Partial<TrackedOrder> | null | undefined): AbandonedCartConversionKind | null => {
+  const cartId = sourceCartIdForOrder(order);
+  if (!cartId) return null;
+
+  const cartIdLower = cartId.toLowerCase();
+  const response = typeof order?.response === "string" ? order.response.trim().toLowerCase() : "";
+  if (response.includes("converted from abandoned cart")) {
+    return "manual_recovery";
+  }
+
+  const notesText = Array.isArray(order?.notes)
+    ? order.notes
+        .map((note) => (typeof note?.text === "string" ? note.text.trim().toLowerCase() : ""))
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  if (notesText.includes(`converted from ${cartIdLower}.`) || notesText.includes(`converted from ${cartIdLower}\n`) || notesText === `converted from ${cartIdLower}`) {
+    return "manual_recovery";
+  }
+  if (
+    notesText.includes(`converted from abandoned cart ${cartIdLower}`) ||
+    notesText.includes("order submitted from public embed form") ||
+    notesText.includes("order submitted from embed preview")
+  ) {
+    return "customer_self_completed";
+  }
+
+  return "customer_self_completed";
+};
+const abandonedCartConversionPathLabel = (order: Partial<TrackedOrder> | null | undefined): string | null => {
+  const kind = abandonedCartConversionKindFor(order);
+  if (kind === "manual_recovery") return "Recovered by team";
+  if (kind === "customer_self_completed") return "Customer finished later";
+  return null;
+};
+const abandonedCartConversionStatusLabel = (order: Partial<TrackedOrder> | null | undefined): string | null => {
+  const path = abandonedCartConversionPathLabel(order);
+  if (!path) return null;
+  const status = typeof order?.status === "string" && order.status.trim().length > 0 ? order.status.trim() : "New";
+  return `${path} · ${status}`;
+};
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
   const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
   const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
@@ -3161,7 +3207,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
       : undefined;
   return {
     ...value,
-    sourceCartId: value?.sourceCartId ?? value?.source_cart_id ?? undefined,
+    sourceCartId: sourceCartIdForOrder(value) || undefined,
     createdAt: typeof value?.createdAt === "string" && value.createdAt
       ? value.createdAt
       : typeof value?.created_at === "string" && value.created_at
@@ -7681,6 +7727,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return acc;
     }, {})
   );
+  const linkedOrderBySourceCartId = useMemo(() => {
+    const next = new Map<string, TrackedOrder>();
+    for (const order of trackedOrders) {
+      const cartId = sourceCartIdForOrder(order);
+      if (!cartId || next.has(cartId)) continue;
+      next.set(cartId, order);
+    }
+    return next;
+  }, [trackedOrders]);
   const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
     ? [
         { label: "Queue Total", value: pfOrders.length, sub: "orders needing follow-up", icon: Headphones, color: "bg-orange-50 text-orange-500" },
@@ -16176,6 +16231,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             location,
             deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
             assignedRepId: saved.assignedRepId ?? repForNewRecord(),
+            sourceCartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
             crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
             freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
             notes: [
@@ -17662,6 +17718,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       const order: TrackedOrder = {
         ...draftOrder,
         id: saved.id,
+        sourceCartId: selectedCart.id,
         assignedRepId: saved.assignedRepId ?? draftOrder.assignedRepId,
         createdAt: saved.createdAt ?? draftOrder.createdAt,
         date: saved.date ?? draftOrder.date,
@@ -23240,7 +23297,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
               </div>
-              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Abandoned carts summary">
+              <section className="grid grid-cols-2 lg:grid-cols-5 gap-4" aria-label="Abandoned carts summary">
                 {(() => {
                   const scoped = filteredAbandonedCarts;
                   const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length;
@@ -23248,11 +23305,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
                   const converted = scoped.filter((cart) => cart.status === "Converted").length;
                   const lost = scoped.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
+                  const recoveredDelivered = scoped.filter((cart) => {
+                    const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+                    return abandonedCartConversionKindFor(linkedOrder) === "manual_recovery" && (linkedOrder?.status ?? "New") === "Delivered";
+                  }).length;
+                  const customerFinishedLater = scoped.filter((cart) => abandonedCartConversionKindFor(linkedOrderBySourceCartId.get(cart.id)) === "customer_self_completed").length;
                   const rate = scoped.length === 0 ? 0 : Math.round((converted / scoped.length) * 100);
                   return [
                     { label: "Active", value: active, sub: "Open · Abandoned · In progress", icon: ShoppingCart },
                     { label: "Assigned", value: assigned, sub: "with a rep, not yet converted", icon: UserRound },
                     { label: "Contacted", value: contacted, sub: "any rep outcome recorded", icon: BadgeCheck },
+                    { label: "Recovered Delivered", value: recoveredDelivered, sub: customerFinishedLater > 0 ? `${customerFinishedLater} customer finished later` : "team recovered and delivered", icon: CheckCircle2 },
                     { label: "Conversion Rate", value: `${rate}%`, sub: `${converted} converted · ${lost} lost`, icon: TrendingUp }
                   ];
                 })().map(({ label, value, sub, icon: Icon }) => (
@@ -23726,7 +23789,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       {filteredAbandonedCarts.length === 0 ? (
                         <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">No carts found</td></tr>
                       ) : (
-                        pagedAbandonedCarts.map((cart) => (
+                        pagedAbandonedCarts.map((cart) => {
+                          const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+                          const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                          return (
                           <tr key={cart.id} className={`group hover:bg-gray-50 transition-colors ${selectedCartIds.has(cart.id) ? "bg-blue-50" : ""}`}>
                             <td className={`hidden sm:table-cell px-4 py-3 w-8 sticky left-0 z-10 border-r border-gray-200 group-hover:bg-gray-50 ${selectedCartIds.has(cart.id) ? "bg-blue-50" : "bg-white"}`}>
                               <input
@@ -23759,7 +23825,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
-                            <td className="px-4 py-3"><span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span></td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-col gap-1">
+                                <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
+                                {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
+                              </div>
+                            </td>
                             <td className="px-4 py-3 text-sm text-gray-500">{formatMoment(cart.lastActivity || cart.createdAt)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1 flex-wrap">
@@ -23775,7 +23846,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </div>
                             </td>
                           </tr>
-                        ))
+                        )})
                       )}
                     </tbody>
                   </table>
@@ -36331,6 +36402,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	            {modal === "cartDetails" && selectedCart && (() => {
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
+	              const linkedOrder = linkedOrderBySourceCartId.get(selectedCart.id);
+	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder);
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
@@ -36483,6 +36556,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
+                        {linkedOrder && (
+                          <>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Linked order</p><p className="font-semibold text-gray-900 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Conversion path</p><p className="font-semibold text-gray-900 m-0">{conversionPathLabel ?? "Converted"}</p></div>
+                          </>
+                        )}
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last step reached</p><p className="font-semibold text-gray-900 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Journey events</p><p className="font-semibold text-gray-900 m-0">{selectedCartJourney.length}</p></div>
 	                      <div className="sm:col-span-2">
