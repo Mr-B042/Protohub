@@ -182,11 +182,13 @@ type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout
 type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
+type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
 type OrderAssignmentScope = "All assignments" | "Assigned by me";
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
+type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Customer Finished Later";
 type DeliveryAgent = string;
 type ScheduleRange = "Today" | "Tomorrow" | "Day After" | "Custom";
 type ScheduleAuditMode = "Active" | "On Time" | "Late" | "Missed" | "History";
@@ -1143,6 +1145,7 @@ const moneyValues = {
 };
 
 const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
+const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Scheduled Delivered", "Scheduled Late", "Scheduled Pending"];
 const followUpQueueStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Postponed"];
 const closedOrderStatuses: OrderStatus[] = ["All Orders", "Delivered", "Cancelled", "Failed"];
 const ORDER_WORKSPACE_PAGES: OrderWorkspacePage[] = ["Orders", "Follow-up Queue", "Closed Orders"];
@@ -1155,6 +1158,7 @@ const isOrderWorkspacePage = (page: ActivePage): page is OrderWorkspacePage => O
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
+const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Customer Finished Later"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
 const scheduleAuditModes: { value: ScheduleAuditMode; label: string }[] = [
   { value: "Active", label: "Active" },
@@ -2274,6 +2278,36 @@ const scheduleModeHelperText = (mode: ScheduleAuditMode) => {
   if (mode === "Missed") return "promise date passed without delivery";
   return "full schedule history for this date";
 };
+const orderScheduleMarkerForOrder = (
+  order: Pick<TrackedOrder, "status" | "scheduledAt" | "scheduledDate" | "deliveredDate" | "createdAt" | "date">
+) => {
+  const scheduledKey = scheduledKeyForOrder(order);
+  if (!scheduledKey) return null;
+  const status = order.status ?? "New";
+  if (status === "Delivered") {
+    const outcome = deliveryScheduleOutcomeForOrder(order);
+    if (outcome.kind === "late") {
+      return {
+        label: "Scheduled · Late",
+        detail: outcome.detail,
+        pillClass: "bg-amber-100 text-amber-700"
+      };
+    }
+    return {
+      label: "Scheduled · Delivered",
+      detail: outcome.detail,
+      pillClass: "bg-emerald-100 text-emerald-700"
+    };
+  }
+  if (scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number])) {
+    return {
+      label: "Scheduled",
+      detail: `Due ${displayDateFromKey(scheduledKey)}`,
+      pillClass: "bg-blue-100 text-blue-700"
+    };
+  }
+  return null;
+};
 const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
   note.followUpAt ?? note.followUpDate;
 const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
@@ -3269,6 +3303,25 @@ const abandonedCartConversionStatusLabel = (order: Partial<TrackedOrder> | null 
   const status = typeof order?.status === "string" && order.status.trim().length > 0 ? order.status.trim() : "New";
   return `${path} · ${status}`;
 };
+const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | undefined) => {
+  const kind = abandonedCartConversionKindFor(order);
+  const status = typeof order?.status === "string" && order.status.trim().length > 0 ? order.status.trim() : "New";
+  if (kind === "manual_recovery") {
+    return {
+      label: status === "Delivered" ? "Recovered · Delivered" : "Recovered by Team",
+      detail: status === "Delivered" ? "Team follow-up converted and delivered" : `Linked order is ${status}`,
+      pillClass: status === "Delivered" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
+    };
+  }
+  if (kind === "customer_self_completed") {
+    return {
+      label: "Customer Finished Later",
+      detail: status === "Delivered" ? "Customer later completed and it delivered" : `Linked order is ${status}`,
+      pillClass: "bg-violet-100 text-violet-700"
+    };
+  }
+  return null;
+};
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
   const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
   const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
@@ -4172,6 +4225,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderStatus, setOrderStatus] = useState<OrderStatus>(() =>
     readPref<OrderStatus>("protohub.orders.status", "All Orders", (raw) => raw as OrderStatus)
   );
+  const [orderScheduleFilter, setOrderScheduleFilter] = useState<OrderScheduleFilter>(() =>
+    readPref<OrderScheduleFilter>("protohub.orders.scheduleFilter", "All schedule marks", (raw) => raw as OrderScheduleFilter)
+  );
   const [orderAssignmentScope, setOrderAssignmentScope] = useState<OrderAssignmentScope>(() =>
     readPref<OrderAssignmentScope>("protohub.orders.assignmentScope", "All assignments", (raw) =>
       raw === "All assignments" || raw === "Assigned by me" ? raw : null
@@ -4193,6 +4249,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartSearch, setCartSearch] = useState("");
   const [cartStatus, setCartStatus] = useState<CartStatus>(() =>
     readPref<CartStatus>("protohub.carts.status", "All statuses", (raw) => raw as CartStatus)
+  );
+  const [cartConversionFilter, setCartConversionFilter] = useState<CartConversionFilter>(() =>
+    readPref<CartConversionFilter>("protohub.carts.conversionFilter", "All conversion paths", (raw) => raw as CartConversionFilter)
   );
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
@@ -4626,6 +4685,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
   useEffect(() => { writePref("protohub.orders.status",   orderStatus);   }, [orderStatus]);
+  useEffect(() => { writePref("protohub.orders.scheduleFilter", orderScheduleFilter); }, [orderScheduleFilter]);
   useEffect(() => { writePref("protohub.orders.assignmentScope", orderAssignmentScope); }, [orderAssignmentScope]);
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
@@ -4643,6 +4703,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // cartsPeriod / cartProductIds here without TDZ errors; mirror happens via
   // setter wrappers further below in the carts state block.
   useEffect(() => { writePref("protohub.carts.status", cartStatus); }, [cartStatus]);
+  useEffect(() => { writePref("protohub.carts.conversionFilter", cartConversionFilter); }, [cartConversionFilter]);
   const [revPerfStatusOpen, setRevPerfStatusOpen] = useState(false);
   const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
   const cartSyncTimerRef = useRef<number | null>(null);
@@ -7685,18 +7746,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
     const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+    const scheduleMarker = orderScheduleMarkerForOrder(order);
     const search = orderSearch.trim().toLowerCase();
     const matchesSearch =
       !search ||
       `${order.id} ${order.customer} ${order.phone} ${order.productName} ${order.packageName}`.toLowerCase().includes(search);
     const matchesStatus = orderStatus === "All Orders" || status === orderStatus;
+    const matchesScheduleFilter =
+      orderScheduleFilter === "All schedule marks"
+        ? true
+        : orderScheduleFilter === "Scheduled Delivered"
+          ? status === "Delivered" && Boolean(scheduleMarker)
+          : orderScheduleFilter === "Scheduled Late"
+            ? scheduleMarker?.label === "Scheduled · Late"
+            : scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && Boolean(scheduleMarker);
     const matchesSource = orderSource === "All Sources" || source === orderSource;
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
     const matchesAssigner = matchesOrderAssignmentScope(order);
     const matchesWorkspace = matchesOrderWorkspacePage(order);
 
-    return matchesSearch && matchesStatus && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
+    return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
   });
   const prioritizedOrderRows = orderWorkspacePage === "Follow-up Queue"
     ? filteredOrderRows.slice().sort((left, right) => {
@@ -7865,12 +7935,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
+    const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+    const conversionKind = abandonedCartConversionKindFor(linkedOrder);
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName}`.toLowerCase().includes(search);
     const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
+    const matchesConversion =
+      cartConversionFilter === "All conversion paths"
+        ? true
+        : cartConversionFilter === "Recovered by Team"
+          ? conversionKind === "manual_recovery"
+          : cartConversionFilter === "Recovered Delivered"
+            ? conversionKind === "manual_recovery" && (linkedOrder?.status ?? "New") === "Delivered"
+            : conversionKind === "customer_self_completed";
     const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange);
     const matchesProduct = matchesProductFilter(cart.productId, cart.productName, cartProductIds);
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
-    return matchesSearch && matchesStatus && matchesPeriod && matchesProduct && matchesViewer;
+    return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer;
   });
   const abandonedJourneyCartIds = useMemo(
     () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
@@ -11526,11 +11606,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   useEffect(() => {
     setOrdersPage(1);
     setSelectedOrderIds(new Set());
-  }, [orderSearch, orderStatus, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange, orderWorkspacePage]);
+  }, [orderSearch, orderStatus, orderScheduleFilter, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange, orderWorkspacePage]);
   useEffect(() => {
     setCartsPage(1);
     setSelectedCartIds(new Set());
-  }, [cartSearch, cartStatus, cartProductIds, cartsPeriod, cartsDateRange]);
+  }, [cartSearch, cartStatus, cartConversionFilter, cartProductIds, cartsPeriod, cartsDateRange]);
 
   // ── Response-time tick (re-renders age badges every 60 s + on tab focus) ──
   const [responseTick, setResponseTick] = useState(0);
@@ -23125,6 +23205,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
                     {activeOrderWorkspaceMeta.statusOptions.map((s) => <option key={s}>{s}</option>)}
                   </select>
+                  <select
+                    className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    aria-label="Order schedule marker"
+                    value={orderScheduleFilter}
+                    onChange={(e) => setOrderScheduleFilter(e.target.value as OrderScheduleFilter)}
+                  >
+                    {orderScheduleFilters.map((filter) => <option key={filter}>{filter}</option>)}
+                  </select>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
                   </select>
@@ -23216,6 +23304,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const status = order.status ?? "New";
                       const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+                      const scheduleMarker = orderScheduleMarkerForOrder(order);
                       const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
@@ -23232,6 +23321,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div>
                             <div className={`font-bold text-base ${orderTitleTextClass}`}>{order.customer}</div>
                             <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
+                            {scheduleMarker && (
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
+                                <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
+                              </div>
+                            )}
                           </div>
                           <div className={`flex items-center gap-3 flex-wrap text-xs ${orderMutedTextClass}`}>
                             <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-gray-200" />{source}</span>
@@ -23331,6 +23426,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           const status = order.status ?? "New";
                           const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+                          const scheduleMarker = orderScheduleMarkerForOrder(order);
                           const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
@@ -23365,6 +23461,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </td>
                               <td className="px-4 py-3.5">
                                 {renderOrderStatusSummary(order)}
+                                {scheduleMarker ? (
+                                  <div className="mt-1.5 flex flex-col gap-1">
+                                    <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
+                                    <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
+                                  </div>
+                                ) : null}
                                 {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
                                   <div className="mt-1 flex flex-wrap items-center gap-1">
                                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
@@ -23887,6 +23989,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     >
                       {cartStatuses.map((status) => <option key={status}>{status}</option>)}
                     </select>
+                    <select
+                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                      aria-label="Abandoned cart conversion path"
+                      value={cartConversionFilter}
+                      onChange={(event) => setCartConversionFilter(event.target.value as CartConversionFilter)}
+                    >
+                      {cartConversionFilters.map((filter) => <option key={filter}>{filter}</option>)}
+                    </select>
                   </div>
                 </div>
 
@@ -23910,6 +24020,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
                       const recovery = abandonedCartRecoveryById[cart.id];
+                      const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+                      const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                       return (
                         <article key={cart.id} className="px-4 py-4 flex flex-col gap-3">
                           <div className="flex items-start justify-between gap-3">
@@ -23922,6 +24034,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div className="min-w-0">
                             <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
                             <div className="text-xs text-gray-500">{cart.phone}</div>
+                            {conversionMarker && (
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>
+                                <span className="text-[11px] text-gray-500">{conversionMarker.detail}</span>
+                              </div>
+                            )}
                           </div>
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
                             <div className="flex flex-col gap-0.5">
@@ -24022,6 +24140,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         pagedAbandonedCarts.map((cart) => {
                           const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                           const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                          const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                           return (
                           <tr key={cart.id} className={`group hover:bg-gray-50 transition-colors ${selectedCartIds.has(cart.id) ? "bg-blue-50" : ""}`}>
                             <td className={`hidden sm:table-cell px-4 py-3 w-8 sticky left-0 z-10 border-r border-gray-200 group-hover:bg-gray-50 ${selectedCartIds.has(cart.id) ? "bg-blue-50" : "bg-white"}`}>
@@ -24058,6 +24177,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-3">
                               <div className="flex flex-col gap-1">
                                 <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
+                                {conversionMarker && <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
                               </div>
                             </td>
