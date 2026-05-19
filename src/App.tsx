@@ -189,6 +189,7 @@ type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ib
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type DeliveryAgent = string;
 type ScheduleRange = "Today" | "Tomorrow" | "Day After" | "Custom";
+type ScheduleAuditMode = "Active" | "On Time" | "Late" | "Missed" | "History";
 type RepStatus = "All statuses" | "Active" | "Inactive";
 type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
@@ -1155,6 +1156,13 @@ const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "Whats
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
+const scheduleAuditModes: { value: ScheduleAuditMode; label: string }[] = [
+  { value: "Active", label: "Active" },
+  { value: "On Time", label: "On Time" },
+  { value: "Late", label: "Late" },
+  { value: "Missed", label: "Missed" },
+  { value: "History", label: "History" }
+];
 const repStatuses: RepStatus[] = ["All statuses", "Active", "Inactive"];
 const agentZones: AgentZone[] = ["All Zones", "Lagos Island", "Mainland", "Abuja"];
 const agentStatuses: AgentStatus[] = ["All Status", "Active", "Order in Progress", "Inactive"];
@@ -2198,6 +2206,74 @@ const scheduledKeyForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "schedul
   order.scheduledAt ? normalizeDateKey(order.scheduledAt) : order.scheduledDate ? normalizeDateKey(order.scheduledDate) : "";
 const scheduleSummaryForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
   scheduledMomentForOrder(order) ? formatPlannedMoment(order.scheduledAt, order.scheduledDate) : "Not scheduled";
+const scheduleOpenStatuses = ["Confirmed", "In Process", "Dispatched", "Postponed"] as const;
+type DeliveryScheduleOutcome = {
+  kind: "unscheduled" | "on_time" | "late";
+  label: string;
+  detail: string;
+  pillClass: string;
+};
+const deliveryScheduleOutcomeForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate" | "deliveredDate" | "createdAt" | "date">): DeliveryScheduleOutcome => {
+  const scheduledKey = scheduledKeyForOrder(order);
+  if (!scheduledKey) {
+    return {
+      kind: "unscheduled",
+      label: "Unscheduled delivery",
+      detail: "No promised delivery date was set",
+      pillClass: "bg-gray-100 text-gray-600"
+    };
+  }
+  const deliveredKey = orderDeliveredKey(order as TrackedOrder) || orderCreatedKey(order as TrackedOrder);
+  const scheduledTime = new Date(`${scheduledKey}T00:00:00`).getTime();
+  const deliveredTime = new Date(`${deliveredKey}T00:00:00`).getTime();
+  if (!Number.isFinite(scheduledTime) || !Number.isFinite(deliveredTime)) {
+    return {
+      kind: "on_time",
+      label: "Scheduled delivery",
+      detail: `Promised for ${displayDateFromKey(scheduledKey)}`,
+      pillClass: "bg-blue-100 text-blue-700"
+    };
+  }
+  const dayDelta = Math.round((deliveredTime - scheduledTime) / 86_400_000);
+  if (dayDelta <= 0) {
+    return {
+      kind: "on_time",
+      label: dayDelta === 0 ? "On-time delivery" : "Early delivery",
+      detail: dayDelta === 0 ? `Delivered on ${displayDateFromKey(scheduledKey)}` : `Delivered ${Math.abs(dayDelta)} day${Math.abs(dayDelta) === 1 ? "" : "s"} before ${displayDateFromKey(scheduledKey)}`,
+      pillClass: "bg-emerald-100 text-emerald-700"
+    };
+  }
+  return {
+    kind: "late",
+    label: "Delivered late",
+    detail: `${dayDelta} day${dayDelta === 1 ? "" : "s"} after ${displayDateFromKey(scheduledKey)}`,
+    pillClass: "bg-amber-100 text-amber-700"
+  };
+};
+const matchesScheduleAuditMode = (
+  order: Pick<TrackedOrder, "status" | "scheduledAt" | "scheduledDate" | "deliveredDate" | "createdAt" | "date">,
+  mode: ScheduleAuditMode,
+  today = todayKey()
+) => {
+  const status = order.status ?? "New";
+  const scheduledKey = scheduledKeyForOrder(order);
+  if (!scheduledKey) return false;
+  if (mode === "History") return true;
+  if (mode === "Active") return scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]);
+  if (mode === "Missed") return scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && scheduledKey < today;
+  if (status !== "Delivered") return false;
+  const outcome = deliveryScheduleOutcomeForOrder(order);
+  if (mode === "On Time") return outcome.kind === "on_time";
+  if (mode === "Late") return outcome.kind === "late";
+  return false;
+};
+const scheduleModeHelperText = (mode: ScheduleAuditMode) => {
+  if (mode === "Active") return "still pending or in progress";
+  if (mode === "On Time") return "delivered on or before promise";
+  if (mode === "Late") return "delivered after promise date";
+  if (mode === "Missed") return "promise date passed without delivery";
+  return "full schedule history for this date";
+};
 const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
   note.followUpAt ?? note.followUpDate;
 const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
@@ -4121,6 +4197,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
   );
+  const [scheduleAuditMode, setScheduleAuditMode] = useState<ScheduleAuditMode>("Active");
   const [scheduleCustomDate, setScheduleCustomDate] = useState("");
   const [scheduleWeekStart, setScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
@@ -5894,6 +5971,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repProductSort, setRepProductSort] = useState("Name A-Z");
   const [repCartSearch, setRepCartSearch] = useState("");
   const [repScheduleRange, setRepScheduleRange] = useState<ScheduleRange>("Today");
+  const [repScheduleAuditMode, setRepScheduleAuditMode] = useState<ScheduleAuditMode>("Active");
   const [repScheduleCustomDate, setRepScheduleCustomDate] = useState("");
   const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
@@ -7954,13 +8032,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     .sort((a, b) => new Date(a.createdAt ?? a.date).getTime() - new Date(b.createdAt ?? b.date).getTime());
   const callQueueOrder = callQueue[callQueueIndex] as TrackedOrder | undefined;
 
-  const scheduledDeliveryRows = trackedOrders.filter((order) => {
-    const status = order.status ?? "New";
-    const matchesSchedule = ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && scheduledKeyForOrder(order) === scheduleDateForRange(scheduleRange, scheduleCustomDate);
+  const scheduleTodayKey = todayKey();
+  const scheduleTargetKey = scheduleDateForRange(scheduleRange, scheduleCustomDate);
+  const scheduledDeliveryBaseRows = trackedOrders.filter((order) => {
+    const matchesSchedule = scheduledKeyForOrder(order) === scheduleTargetKey;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, scheduleProductIds);
     const matchesViewer = viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
     return matchesSchedule && matchesProduct && matchesViewer;
   });
+  const scheduledDeliveryRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, scheduleAuditMode, scheduleTodayKey));
+  const activeScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "Active", scheduleTodayKey));
+  const overdueScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "Missed", scheduleTodayKey));
+  const deliveredOnTimeScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "On Time", scheduleTodayKey));
+  const deliveredLateScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "Late", scheduleTodayKey));
   const SCHEDULE_PAGE_SIZE = 25;
   const scheduleTotalPages = Math.max(1, Math.ceil(scheduledDeliveryRows.length / SCHEDULE_PAGE_SIZE));
   const schedulePageClamped = Math.min(schedulePage, scheduleTotalPages);
@@ -7984,6 +8068,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? 0
       : Math.round((pfDeliveryBase.reduce((sum, order) => sum + fulfillmentDaysForOrder(order), 0) / pfDeliveryBase.length) * 10) / 10;
   const avgDeliveredPerDay = pfDeliveryBase.length === 0 ? 0 : Math.round((pfDeliveryBase.length / daysInPeriodSoFar(deliveriesPeriod, deliveriesDateRange)) * 10) / 10;
+  const deliveredScheduleOutcomes = pfDeliveryBase.map((order) => deliveryScheduleOutcomeForOrder(order));
+  const deliveredOnTimeCount = deliveredScheduleOutcomes.filter((entry) => entry.kind === "on_time").length;
+  const deliveredLateCount = deliveredScheduleOutcomes.filter((entry) => entry.kind === "late").length;
+  const deliveredUnscheduledCount = deliveredScheduleOutcomes.filter((entry) => entry.kind === "unscheduled").length;
   const salesRepRows = salesRepUsers.map((user) => {
     const assigned = trackedOrders.filter((order) =>
       order.assignedRepId === user.id
@@ -10483,10 +10571,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     return true;
   });
-  const repScheduledOrders = repOrders.filter((order) => {
-    const status = order.status ?? "New";
-    return ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(status) && scheduledKeyForOrder(order) === scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
-  });
+  const repScheduleTargetKey = scheduleDateForRange(repScheduleRange, repScheduleCustomDate);
+  const repScheduledBaseOrders = repOrders.filter((order) => scheduledKeyForOrder(order) === repScheduleTargetKey);
+  const repScheduledOrders = repScheduledBaseOrders.filter((order) => matchesScheduleAuditMode(order, repScheduleAuditMode, scheduleTodayKey));
+  const repActiveScheduledOrders = repScheduledBaseOrders.filter((order) => matchesScheduleAuditMode(order, "Active", scheduleTodayKey));
+  const repMissedScheduledOrders = repScheduledBaseOrders.filter((order) => matchesScheduleAuditMode(order, "Missed", scheduleTodayKey));
+  const repOnTimeScheduledOrders = repScheduledBaseOrders.filter((order) => matchesScheduleAuditMode(order, "On Time", scheduleTodayKey));
+  const repLateScheduledOrders = repScheduledBaseOrders.filter((order) => matchesScheduleAuditMode(order, "Late", scheduleTodayKey));
   const repFollowUpRows = repOrders
     .map((order) => ({ order, followUp: nextFollowUpForOrder(order) }))
     .filter((entry) => !!entry.followUp)
@@ -10533,7 +10624,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           key: `fu-${order.id}-${followUp?.label ?? ""}`,
           msg: `Follow-up due: ${order.id} for ${order.customer}${followUp ? ` · ${followUp.label}` : ""}`
         })),
-      ...repScheduledOrders.slice(0, 4).map((order) => ({ key: `sched-${order.id}`, msg: `Delivery scheduled ${repScheduleRange.toLowerCase()}: ${order.id}` }))
+      ...repActiveScheduledOrders.slice(0, 4).map((order) => ({ key: `sched-${order.id}`, msg: `Delivery scheduled ${repScheduleRange.toLowerCase()}: ${order.id}` }))
     ];
     return all.filter(({ key }) => { if (seen.has(key)) return false; seen.add(key); return true; }).map(({ msg }) => msg);
   })();
@@ -20576,10 +20667,28 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ) : repConsoleTab === "Scheduled Deliveries" ? (
           <div className="space-y-6">
           {renderRepWorkspaceFilters()}
+          <section className="grid grid-cols-2 xl:grid-cols-5 gap-3">
+            {[
+              { title: "Scheduled", value: String(repScheduledBaseOrders.length), helper: "all scheduled in this date view", tone: "blue" },
+              { title: "Active", value: String(repActiveScheduledOrders.length), helper: "still pending or in progress", tone: "cyan" },
+              { title: "On Time", value: String(repOnTimeScheduledOrders.length), helper: "delivered on time or early", tone: "green" },
+              { title: "Late", value: String(repLateScheduledOrders.length), helper: "delivered after promise", tone: "amber" },
+              { title: "Missed", value: String(repMissedScheduledOrders.length), helper: "promise date already passed", tone: "rose" }
+            ].map((metric) => (
+              <article key={metric.title} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${metric.tone === "green" ? "text-green-600" : metric.tone === "blue" ? "text-blue-600" : metric.tone === "amber" ? "text-amber-600" : metric.tone === "rose" ? "text-rose-600" : "text-cyan-600"}`}>{metric.title}</h3>
+                <strong className="block mt-2 text-2xl font-bold text-gray-900">{metric.value}</strong>
+                <p className="mt-1 text-[11px] text-gray-500">{metric.helper}</p>
+              </article>
+            ))}
+          </section>
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="px-4 py-4 border-b border-gray-200 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Scheduled Deliveries</h2>
+                  <p className="mt-1 text-xs text-gray-500">Showing <span className="font-semibold text-gray-900">{repScheduleAuditMode}</span> scheduled orders for <span className="font-semibold text-gray-900">{displayDateFromKey(repScheduleTargetKey)}</span>.</p>
+                </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-auto">
                     {(["Today", "Tomorrow", "Day After"] as ScheduleRange[]).map((range) => (
@@ -20587,6 +20696,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-colors whitespace-nowrap text-center ${repScheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
                         onClick={() => setRepScheduleRange(range)}>
                         {range}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 sm:flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-lg w-full sm:w-auto">
+                    {scheduleAuditModes.map((mode) => (
+                      <button
+                        key={mode.value}
+                        className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-colors whitespace-nowrap text-center ${repScheduleAuditMode === mode.value ? "bg-[#1F8FE0] text-white shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}
+                        onClick={() => setRepScheduleAuditMode(mode.value)}
+                      >
+                        {mode.label}
                       </button>
                     ))}
                   </div>
@@ -20612,7 +20732,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   const d = new Date(`${repScheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
                   const dayKey = formatDateKey(d);
                   const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
-                  const count = repOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && scheduledKeyForOrder(o) === dayKey).length;
+                  const count = repOrders.filter((o) => scheduledKeyForOrder(o) === dayKey && matchesScheduleAuditMode(o, repScheduleAuditMode, scheduleTodayKey)).length;
                   const isToday = dayKey === todayKey();
                   const isSelected = repScheduleRange === "Custom" && repScheduleCustomDate === dayKey;
                   return (
@@ -20629,7 +20749,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
             </div>
             <div className="p-0">
-              {renderRepOrderTable(repScheduledOrders, "No scheduled deliveries in this range.")}
+              {renderRepOrderTable(repScheduledOrders, "No scheduled deliveries match this view.")}
             </div>
           </section>
           </div>
@@ -24013,6 +24133,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
+              <section className="grid grid-cols-2 lg:grid-cols-5 gap-4" aria-label="Scheduled deliveries summary">
+                {[
+                  { title: "Scheduled In Range", value: String(scheduledDeliveryBaseRows.length), helper: "all scheduled orders on this date", icon: CalendarDays, tone: "blue" },
+                  { title: "Active Queue", value: String(activeScheduledRows.length), helper: "still pending or in progress", icon: Clock, tone: "cyan" },
+                  { title: "Delivered On Time", value: String(deliveredOnTimeScheduledRows.length), helper: "met the promised date", icon: CheckCircle2, tone: "green" },
+                  { title: "Delivered Late", value: String(deliveredLateScheduledRows.length), helper: "completed after the promise", icon: AlertTriangle, tone: "amber" },
+                  { title: "Missed / Overdue", value: String(overdueScheduledRows.length), helper: "promise date passed without delivery", icon: AlertTriangle, tone: "rose" }
+                ].map((metric) => {
+                  const Icon = metric.icon;
+                  return (
+                    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow" key={metric.title}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "green" ? "bg-green-50 text-green-500" : metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "amber" ? "bg-amber-50 text-amber-500" : metric.tone === "rose" ? "bg-rose-50 text-rose-500" : "bg-cyan-50 text-cyan-500"}`}>
+                          <Icon className="w-5 h-5" />
+                        </span>
+                      </div>
+                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                      <strong className={`text-2xl font-bold block my-1 ${metric.tone === "amber" ? "text-amber-700" : metric.tone === "rose" ? "text-rose-700" : "text-gray-900"}`}>{metric.value}</strong>
+                      <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
+                    </article>
+                  );
+                })}
+              </section>
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 {/* Week navigator */}
                 <div className="p-4 border-b border-gray-200 bg-gray-50/50 space-y-3">
@@ -24024,6 +24167,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${scheduleRange === range ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
                           onClick={() => { setScheduleRange(range); setSchedulePage(1); }}>
                           {range}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-lg">
+                      {scheduleAuditModes.map((mode) => (
+                        <button
+                          key={mode.value}
+                          className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${scheduleAuditMode === mode.value ? "bg-[#1F8FE0] text-white shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}
+                          onClick={() => { setScheduleAuditMode(mode.value); setSchedulePage(1); }}
+                        >
+                          {mode.label}
                         </button>
                       ))}
                     </div>
@@ -24082,7 +24236,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const d = new Date(`${scheduleWeekStart}T00:00:00`); d.setDate(d.getDate() + i);
                       const dayKey = formatDateKey(d);
                       const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
-                      const count = trackedOrders.filter((o) => ["Confirmed","In Process","Dispatched","Postponed"].includes(o.status ?? "New") && scheduledKeyForOrder(o) === dayKey && matchesProductFilter(o.productId, o.productName, scheduleProductIds)).length;
+                      const count = trackedOrders.filter((o) => {
+                        const matchesViewer = viewerScopeRepId === null || o.assignedRepId === viewerScopeRepId;
+                        return scheduledKeyForOrder(o) === dayKey
+                          && matchesViewer
+                          && matchesProductFilter(o.productId, o.productName, scheduleProductIds)
+                          && matchesScheduleAuditMode(o, scheduleAuditMode, scheduleTodayKey);
+                      }).length;
                       const isToday = dayKey === todayKey();
                       const isSelected = scheduleRange === "Custom" && scheduleCustomDate === dayKey;
                       return (
@@ -24100,6 +24260,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 
                 <div className="overflow-x-auto">
+                  <div className="px-4 pt-4 text-xs font-medium text-gray-500">
+                    Showing <span className="font-bold text-gray-900">{scheduleAuditMode}</span> scheduled orders for <span className="font-bold text-gray-900">{displayDateFromKey(scheduleTargetKey)}</span> · {scheduleModeHelperText(scheduleAuditMode)}.
+                  </div>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -24117,7 +24280,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {scheduledDeliveryRows.length === 0 ? (
-                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No scheduled deliveries in this range.</td></tr>
+                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No scheduled deliveries match this view.</td></tr>
                       ) : (
                         pagedScheduleRows.map((order) => {
                           const phoneClean    = (order.phone ?? "").replace(/\D/g, "");
@@ -24128,6 +24291,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           const sk            = scheduledKeyForOrder(order);
                           const isOverdue     = sk && sk < today && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New");
                           const isToday       = sk === today;
+                          const scheduleOutcome = deliveryScheduleOutcomeForOrder(order);
                           return (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">
@@ -24156,8 +24320,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </td>
                               <td className="px-4 py-4 text-right whitespace-nowrap">
                                 <div className={`font-bold ${isOverdue ? "text-rose-600" : isToday ? "text-emerald-600" : "text-[#1F8FE0]"}`}>{formatPlannedMoment(order.scheduledAt, order.scheduledDate)}</div>
-                                {isOverdue && <div className="text-[10px] text-rose-600 font-bold uppercase">⚠ Overdue</div>}
-                                {isToday && !isOverdue && <div className="text-[10px] text-emerald-600 font-bold uppercase">Today</div>}
+                                {(order.status ?? "New") === "Delivered" ? (
+                                  <div className="mt-1 space-y-1">
+                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleOutcome.pillClass}`}>{scheduleOutcome.label}</span>
+                                    <div className="text-[10px] text-gray-500">{scheduleOutcome.detail}</div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {isOverdue && <div className="text-[10px] text-rose-600 font-bold uppercase">⚠ Overdue</div>}
+                                    {isToday && !isOverdue && <div className="text-[10px] text-emerald-600 font-bold uppercase">Today</div>}
+                                  </>
+                                )}
                               </td>
                               <td className="px-4 py-4">
                                 <div className="flex items-center justify-end gap-1.5">
@@ -24279,12 +24452,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange)}
               </div>
 
-              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Deliveries summary">
+              <section className="grid grid-cols-2 xl:grid-cols-6 gap-4" aria-label="Deliveries summary">
                 {[
                   { title: "Total Delivered", value: String(pfDeliveryBase.length), helper: "orders fulfilled", icon: PackageCheck, tone: "green" },
                   { title: "Total Revenue", value: formatMoney(deliveredRevenueInPeriod), helper: "from delivered orders", icon: CircleDollarSign, tone: "blue" },
                   { title: "Avg Fulfillment", value: `${averageFulfillmentDays.toFixed(1)} days`, helper: "order to delivery", icon: Clock, tone: "orange" },
-                  { title: "Avg Per Day", value: `${avgDeliveredPerDay.toFixed(1)} orders`, helper: "daily delivery rate", icon: TrendingUp, tone: "cyan" }
+                  { title: "Avg Per Day", value: `${avgDeliveredPerDay.toFixed(1)} orders`, helper: "daily delivery rate", icon: TrendingUp, tone: "cyan" },
+                  { title: "On Time / Early", value: String(deliveredOnTimeCount), helper: deliveredUnscheduledCount > 0 ? `${deliveredUnscheduledCount} delivered without schedule` : "met promised delivery date", icon: BadgeCheck, tone: "green" },
+                  { title: "Delivered Late", value: String(deliveredLateCount), helper: "completed after the promised date", icon: AlertTriangle, tone: "amber" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -24329,15 +24504,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Location</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Agent</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Delivered</th>
+                        <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Schedule Result</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredDeliveryRows.length === 0 ? (
-                        <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
                       ) : (
-                        pagedDeliveryRows.map((order) => (
+                        pagedDeliveryRows.map((order) => {
+                          const scheduleOutcome = deliveryScheduleOutcomeForOrder(order);
+                          return (
                           <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
                             <td className="px-4 py-4">
@@ -24351,10 +24529,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-4 text-gray-700">{order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}</td>
                             <td className="px-4 py-4 text-gray-700">{agentNameForOrder(order)}</td>
                             <td className="px-4 py-4 text-gray-700">{formatDateTime(order.deliveredDate)}</td>
+                            <td className="px-4 py-4">
+                              <div className="flex flex-col gap-1">
+                                <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${scheduleOutcome.pillClass}`}>{scheduleOutcome.label}</span>
+                                <span className="text-[11px] text-gray-500">{scheduleOutcome.detail}</span>
+                              </div>
+                            </td>
                             <td className="px-4 py-4 font-medium text-gray-900">{fulfillmentDaysForOrder(order).toFixed(1)} days</td>
                             <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
                           </tr>
-                        ))
+                        )})
                       )}
                     </tbody>
                   </table>
