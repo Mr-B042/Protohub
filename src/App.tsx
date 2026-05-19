@@ -10685,10 +10685,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setModal("addFreeGift");
       return;
     }
-    if (repOrderWorkspaceRoutePage && repOrderWorkspaceRoutePage !== "Orders" && orderId) {
-      setModal("orderDetails");
-      return;
-    }
     if (repCartAction === "assign" && cartId) {
       setSelectedCartId(cartId);
       setModal("assignCart");
@@ -15749,7 +15745,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
+    syncHashRoute(
+      isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${order.id}/change-status`, activeRepOrderWorkspacePage)
+        : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`)
+    );
   };
 
   const openRepRescheduleModal = (order: TrackedOrder, reason = "", callOutcome?: string) => {
@@ -15820,7 +15820,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setCreateOrderQuantity(String(order.quantity ?? 1));
     setCreateOrderAmount(String(order.amount ?? ""));
     setModal("editOrderCustomer");
-    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`));
+    syncHashRoute(
+      isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${order.id}/edit-customer`, activeRepOrderWorkspacePage)
+        : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`)
+    );
   };
 
   const saveOrderCustomerEdit = () => {
@@ -22629,6 +22633,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
             </>
           ) : isOrderWorkspacePage(activePage) ? (
+            repOrderDetail && isRepOrderWorkspaceHash(hashRoute) ? (
+            renderRepOrderDetail(repOrderDetail)
+            ) : (
             <div className="space-y-6">
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -23183,6 +23190,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </section>
               </div>
             </div>
+            )
           ) : activePage === "Abandoned Carts" ? (
             <>
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
