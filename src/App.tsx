@@ -178,7 +178,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -5931,6 +5931,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
+  const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
+  const [remittanceBatchAmount, setRemittanceBatchAmount] = useState("");
+  const [remittanceBatchReceivedDate, setRemittanceBatchReceivedDate] = useState(todayKey());
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
@@ -8730,12 +8733,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return map;
   })();
   const remittanceRows = (() => {
-    const partnerMap = new Map<string, { partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; transactionCount: number; orders: TrackedOrder[] }>();
+    const partnerMap = new Map<string, { key: string; partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; transactionCount: number; orders: TrackedOrder[] }>();
     financeDeliveredRows.forEach((order) => {
       const agent = agents.find((a) => a.id === order.agentId);
       const partnerName = agent?.name ?? "Unassigned";
       const key = remittancePartnerKey(agent?.id ?? null, partnerName);
-      const current = partnerMap.get(key) ?? { partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, transactionCount: 0, orders: [] };
+      const current = partnerMap.get(key) ?? { key, partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, transactionCount: 0, orders: [] };
       current.orderCount += 1;
       current.revenue += order.amount;
       current.logisticsCost += orderLogisticsCost(order);
@@ -8750,6 +8753,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
     partnerCashMap.forEach((cashRow, key) => {
       const current = partnerMap.get(key) ?? {
+        key,
         partnerName: cashRow.partnerName,
         agentId: cashRow.agentId,
         orderCount: 0,
@@ -8781,6 +8785,32 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchSearch = !search || row.partnerName.toLowerCase().includes(search);
     return matchPartner && matchSearch;
   });
+  const highlightedRemittanceBatchRow = filteredRemittanceRows.length === 1 && filteredRemittanceRows[0].outstanding > 0
+    ? filteredRemittanceRows[0]
+    : null;
+  const remittanceRowCurrency = (row: { orders: TrackedOrder[] }) => row.orders[0]?.currency ?? "NGN";
+  const remittanceOrderSortValue = (order: TrackedOrder) => {
+    const raw = order.deliveredDate ?? order.createdAt ?? order.date ?? "";
+    const normalized = String(raw).includes("T") ? String(raw) : `${String(raw).slice(0, 10)}T00:00:00`;
+    const parsed = new Date(normalized).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const remittanceBatchTargetRow = remittanceRows.find((row) => row.key === remittanceBatchPartnerKeyValue) ?? null;
+  const remittanceBatchOrders = (remittanceBatchTargetRow?.orders ?? [])
+    .filter((order) => orderRemittanceOutstanding(order) > 0 || orderRemittanceStatus(order) !== "Paid")
+    .sort((a, b) => remittanceOrderSortValue(a) - remittanceOrderSortValue(b));
+  const remittanceBatchOutstandingTotal = remittanceBatchOrders.reduce((sum, order) => sum + orderRemittanceOutstanding(order), 0);
+  const remittanceBatchAmountValue = Math.max(0, Number(remittanceBatchAmount) || 0);
+  const remittanceBatchAllocationPreview = (() => {
+    let remaining = remittanceBatchAmountValue;
+    return remittanceBatchOrders.map((order) => {
+      const outstanding = orderRemittanceOutstanding(order);
+      const applied = Math.max(0, Math.min(remaining, outstanding));
+      remaining = Math.max(0, remaining - applied);
+      return { order, outstanding, applied, after: Math.max(0, outstanding - applied) };
+    });
+  })();
+  const remittanceBatchUnappliedAmount = Math.max(0, remittanceBatchAmountValue - remittanceBatchOutstandingTotal);
 
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
@@ -8902,6 +8932,84 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
     openFinanceRemittanceRoute(order.id);
+  };
+  const openRecordBatchRemittance = (partnerKey: string) => {
+    setRemittanceBatchPartnerKeyValue(partnerKey);
+    setRemittanceBatchAmount("");
+    setRemittanceBatchReceivedDate(todayKey());
+    setModal("recordBatchRemittance");
+  };
+  const recordBatchRemittance = async () => {
+    if (!remittanceBatchTargetRow) {
+      showToast("Partner batch not found.");
+      return;
+    }
+    if (remittanceBatchOrders.length === 0) {
+      showToast("No outstanding delivered orders remain for this logistics partner in the selected period.");
+      return;
+    }
+    if (!isDateValue(remittanceBatchReceivedDate)) {
+      showToast("Choose a valid remittance received date.");
+      return;
+    }
+    if (remittanceBatchAmountValue <= 0) {
+      showToast("Enter the total amount remitted by the logistics partner.");
+      return;
+    }
+    if (remittanceBatchAmountValue > remittanceBatchOutstandingTotal) {
+      showToast(`The remitted amount cannot exceed ${formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))} for this batch.`);
+      return;
+    }
+    const allocations = remittanceBatchAllocationPreview.filter((entry) => entry.applied > 0);
+    if (allocations.length === 0) {
+      showToast("There is nothing to allocate in this remittance batch.");
+      return;
+    }
+    const previousOrders = trackedOrders;
+    const optimisticMap = new Map(allocations.map((entry) => {
+      const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
+      const nextStatus: "Pending" | "Partial" | "Paid" =
+        nextAmountRemitted <= 0
+          ? "Pending"
+          : nextAmountRemitted >= orderAmountToRemit(entry.order)
+            ? "Paid"
+            : "Partial";
+      return [entry.order.id, {
+        ...entry.order,
+        amountRemitted: nextAmountRemitted,
+        remittanceStatus: nextStatus,
+        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.`), ...orderNotesFor(entry.order)]
+      }];
+    }));
+    setTrackedOrders((prev) => prev.map((order) => optimisticMap.get(order.id) ?? order));
+    closeModal();
+    setRemittanceBatchPartnerKeyValue("");
+    setRemittanceBatchAmount("");
+    setRemittanceBatchReceivedDate(todayKey());
+    showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.`);
+    try {
+      await Promise.all(allocations.map((entry) => {
+        const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
+        const nextStatus: "Pending" | "Partial" | "Paid" =
+          nextAmountRemitted <= 0
+            ? "Pending"
+            : nextAmountRemitted >= orderAmountToRemit(entry.order)
+              ? "Paid"
+              : "Partial";
+        return ordersApi.update(entry.order.id, {
+          amount_remitted: nextAmountRemitted,
+          remittance_status: nextStatus,
+          remittance_received_at: remittanceBatchReceivedDate
+        });
+      }));
+      void loadFinanceSummaryData({ quiet: true });
+      void loadFinanceRemittanceData({ quiet: true });
+      void loadWeeklyAccountingData({ quiet: true });
+    } catch (err: any) {
+      setTrackedOrders(previousOrders);
+      void loadFinanceRemittanceData({ quiet: true });
+      showToast(`Failed to save batch remittance: ${err?.message ?? "please retry"}`);
+    }
   };
 
   const remittanceTargetOrder = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
@@ -11285,7 +11393,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       if (section === "expenses" && parts[3] !== "new" && modal === "addExpense") {
         setModal(null);
       }
-      if (isFinanceSection && parts[3] !== "remittance" && modal === "recordRemittance") {
+      if (isFinanceSection && parts[3] !== "remittance" && (modal === "recordRemittance" || modal === "recordBatchRemittance")) {
         setModal(null);
       }
       if (section === "customers" && parts[3] !== "flag" && modal === "flagCustomer") {
@@ -18987,7 +19095,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openFinanceTab = (tab: FinanceTab) => {
     setActivePage("Finance & Accounting");
     setFinanceTab(tab);
-    if (tab !== "Remittance" && modal === "recordRemittance") {
+    if (tab !== "Remittance" && (modal === "recordRemittance" || modal === "recordBatchRemittance")) {
       setModal(null);
     }
     syncHashRoute(financeTabRoute(tab));
@@ -21312,7 +21420,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (modalBeforeClose && ["newStockCount", "stockCountEntry", "adjustStockCount"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/inventory/stock-count")) {
       syncHashRoute(activeStockCountId ? `#/dashboard/admin/inventory/stock-count/${activeStockCountId}` : "#/dashboard/admin/inventory/stock-count");
     }
-    if (modalBeforeClose === "recordRemittance" && hashRoute.startsWith("#/dashboard/admin/finance-accounting/remittance")) {
+    if ((modalBeforeClose === "recordRemittance" || modalBeforeClose === "recordBatchRemittance") && hashRoute.startsWith("#/dashboard/admin/finance-accounting/remittance")) {
       syncHashRoute("#/dashboard/admin/finance-accounting/remittance");
     }
     if (modalBeforeClose === "flagCustomer" && hashRoute.startsWith("#/dashboard/admin/customers/flag/")) {
@@ -29116,6 +29224,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${aging.cls}`}>{aging.label}</span>
                                   </div>
                                 )}
+                                {row.outstanding > 0 && (
+                                  <button
+                                    className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full"
+                                    onClick={() => openRecordBatchRemittance(row.key)}
+                                  >
+                                    <HandCoins className="w-3 h-3" />
+                                    Record Batch Remittance
+                                  </button>
+                                )}
                               </article>
                             );
                           })}
@@ -29151,16 +29268,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Outstanding", "Aging", "Receipts"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Outstanding", "Aging", "Receipts", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {filteredRemittanceRows.length === 0 ? (
-                            <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
+                            <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
                           ) : (
                             filteredRemittanceRows.map((row) => {
                               return (
-                                <tr key={row.partnerName} className="hover:bg-gray-50 transition-colors">
+                                <tr key={row.key} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-4">
                                     <div className="font-bold text-gray-900">{row.partnerName}</div>
                                     {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "—"}</div>}
@@ -29177,6 +29294,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       : <span className="text-gray-300 text-xs">—</span>}
                                   </td>
                                   <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.transactionCount > 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{row.transactionCount}</span></td>
+                                  <td className="px-4 py-4">
+                                    {row.outstanding > 0 ? (
+                                      <button
+                                        className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors"
+                                        onClick={() => openRecordBatchRemittance(row.key)}
+                                      >
+                                        <HandCoins className="w-3 h-3" />
+                                        Batch
+                                      </button>
+                                    ) : (
+                                      <span className="text-gray-300 text-xs">—</span>
+                                    )}
+                                  </td>
                                 </tr>
                               );
                             })
@@ -29192,6 +29322,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-3 text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
                               <td className="px-4 py-3 text-gray-700">—</td>
                               <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((sum, row) => sum + row.transactionCount, 0)}</td>
+                              <td className="px-4 py-3 text-gray-700">—</td>
                             </tr>
                           )}
                         </tbody>
@@ -29206,6 +29337,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <h2 className="text-sm font-bold text-gray-800">Outstanding Orders</h2>
                         <p className="text-xs text-gray-400">Delivered orders with money still owed by the logistics partner</p>
                       </div>
+                      {highlightedRemittanceBatchRow && (
+                        <button
+                          className="!min-h-0 hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#1F8FE0] text-[#1F8FE0] text-xs font-semibold hover:bg-blue-50 transition-colors"
+                          onClick={() => openRecordBatchRemittance(highlightedRemittanceBatchRow.key)}
+                        >
+                          <HandCoins className="w-3.5 h-3.5" />
+                          Record {highlightedRemittanceBatchRow.partnerName} Batch
+                        </button>
+                      )}
                     </div>
                     {(() => {
                       const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid").sort((a, b) => orderRemittanceOutstanding(b) - orderRemittanceOutstanding(a));
@@ -34468,6 +34608,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {modal === "salesRepDetails" && "Sales Rep Profile"}
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
 	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance — ${remittanceTargetOrder.id}`}
+	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && `Record Batch Remittance — ${remittanceBatchTargetRow.partnerName}`}
 	                {modal === "bonusSettings" && "Bonus Settings"}
 	                {modal === "stateAvailability" && "State Availability"}
 	                {modal === "addCrossSell" && "Add Cross-sell"}
@@ -39507,6 +39648,72 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
+                </div>
+              </div>
+            )}
+
+            {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
+              <div className="modal-form">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.partnerName}</strong></article>
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Orders In Batch</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchOrders.length}</strong></article>
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Logistics Fees</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceBatchTargetRow.logisticsCost, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Expected To Receive</span><strong className="text-sm font-semibold text-blue-700">{formatProductMoney(remittanceBatchTargetRow.expected, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
+                </div>
+                <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                  This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.
+                </p>
+                <label>
+                  <span>Total Amount Remitted By Partner</span>
+                  <input value={remittanceBatchAmount} onChange={(e) => setRemittanceBatchAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 222500" />
+                </label>
+                <label>
+                  <span>Cash Received Date</span>
+                  <input type="date" value={remittanceBatchReceivedDate} onChange={(e) => setRemittanceBatchReceivedDate(e.target.value)} />
+                </label>
+                <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                  <strong>Already received:</strong> {formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Outstanding before this:</strong> {formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue), remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.
+                </p>
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <strong className="text-sm text-gray-900">Allocation preview</strong>
+                    <p className="text-xs text-gray-500 mt-1">This shows how the total remittance will settle the partner&apos;s outstanding delivered orders.</p>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                    {remittanceBatchAllocationPreview.map(({ order, outstanding, applied, after }) => (
+                      <div key={order.id} className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))] gap-3 text-sm">
+                        <div>
+                          <div className="font-semibold text-[#1F8FE0]">{order.id}</div>
+                          <div className="text-gray-900">{order.customer}</div>
+                          <div className="text-xs text-gray-400">{order.deliveredDate ?? orderCreatedKey(order) ?? "No delivered date"}</div>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
+                          <div className="font-semibold text-amber-700">{formatProductMoney(outstanding, order.currency)}</div>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Applied now</span>
+                          <div className="font-semibold text-green-700">{formatProductMoney(applied, order.currency)}</div>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider text-gray-400">After save</span>
+                          <div className={`font-semibold ${after > 0 ? "text-amber-700" : "text-gray-500"}`}>{formatProductMoney(after, order.currency)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {remittanceBatchUnappliedAmount > 0 && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    The entered amount is higher than this batch&apos;s current outstanding by {formatProductMoney(remittanceBatchUnappliedAmount, remittanceRowCurrency(remittanceBatchTargetRow))}. Reduce the remitted total or widen the date range before saving.
+                  </p>
+                )}
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordBatchRemittance}>Save Batch Remittance</button>
                 </div>
               </div>
             )}
