@@ -138,6 +138,20 @@ const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 const CART_JOURNEY_POLL_MS = 5_000;
 const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
 const FORM_PULSE_POLL_MS = 8_000;
+const isNativePushShell = (() => {
+  try {
+    const maybeCapacitor = (globalThis as any)?.Capacitor;
+    if (typeof maybeCapacitor?.isNativePlatform === "function") {
+      return !!maybeCapacitor.isNativePlatform();
+    }
+    if (typeof maybeCapacitor?.getPlatform === "function") {
+      return maybeCapacitor.getPlatform() !== "web";
+    }
+  } catch {
+    // fall through to false
+  }
+  return false;
+})();
 const ORDER_DETAILS_POLL_MS = 10_000;
 const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
 
@@ -5458,6 +5472,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pushLoading, setPushLoading] = useState(false);
   const [pushTestLoading, setPushTestLoading] = useState(false);
   const browserPushSupported = pushPermission !== "unsupported";
+  const nativePushTroubleshootingDisabled = isNativePushShell;
   const pushBackgroundReady =
     browserPushSupported &&
     pushServerConfigured &&
@@ -31626,13 +31641,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : null}
                       {pushPermission === "denied" ? (
                         <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                      ) : nativePushTroubleshootingDisabled ? (
+                        <p className="text-xs text-amber-600 font-medium">This mobile app build does not support the browser re-register flow yet, so those web push controls are disabled here.</p>
                       ) : !pushServerConfigured ? (
                         <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
                       ) : pushSubscribed ? (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
-                          disabled={pushLoading}
+                          disabled={pushLoading || nativePushTroubleshootingDisabled}
                           onClick={async () => {
+                            if (nativePushTroubleshootingDisabled) {
+                              showToast("Notification controls are not available inside the mobile app yet.");
+                              return;
+                            }
                             setPushLoading(true);
                             try {
                               await unsubscribeFromPush();
@@ -31651,8 +31672,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          disabled={pushLoading || !pushServerConfigured}
+                          disabled={pushLoading || !pushServerConfigured || nativePushTroubleshootingDisabled}
                           onClick={async () => {
+                            if (nativePushTroubleshootingDisabled) {
+                              showToast("Notification controls are not available inside the mobile app yet.");
+                              return;
+                            }
                             setPushLoading(true);
                             try {
                               await subscribeToPush();
@@ -31676,8 +31701,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
-                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
+                        disabled={nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Service worker tools are not available inside the mobile app.");
+                            return;
+                          }
                           if ("serviceWorker" in navigator) {
                             const reg = await navigator.serviceWorker.getRegistration();
                             if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
@@ -31687,8 +31717,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Update Service Worker</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushLoading}
+                        disabled={pushLoading || nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Force re-subscribe is not available inside the mobile app yet.");
+                            return;
+                          }
                           setPushLoading(true);
                           try {
                             await unsubscribeFromPush();
@@ -31705,8 +31739,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Force Re-subscribe</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
+                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted" || nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Web push test tools are not available inside the mobile app yet.");
+                            return;
+                          }
                           setPushTestLoading(true);
                           try {
                             await sendTestPush();

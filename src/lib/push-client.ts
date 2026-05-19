@@ -4,6 +4,20 @@ import { auth } from "./auth";
 const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 const SERVICE_WORKER_SCOPE = "/";
 const SERVICE_WORKER_URL = "/sw.js";
+const isNativeShell = (() => {
+  try {
+    const maybeCapacitor = (globalThis as any)?.Capacitor;
+    if (typeof maybeCapacitor?.isNativePlatform === "function") {
+      return !!maybeCapacitor.isNativePlatform();
+    }
+    if (typeof maybeCapacitor?.getPlatform === "function") {
+      return maybeCapacitor.getPlatform() !== "web";
+    }
+  } catch {
+    // fall through to false
+  }
+  return false;
+})();
 
 function getAuthHeaders(): Record<string, string> {
   const token = auth.getAccessToken();
@@ -52,7 +66,7 @@ async function waitForActivatedRegistration(registration: ServiceWorkerRegistrat
 }
 
 export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+  if (isNativeShell || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     return null;
   }
 
@@ -179,7 +193,7 @@ async function removeServerSubscription(endpoint: string): Promise<void> {
 }
 
 export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOptions = {}): Promise<boolean> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+  if (isNativeShell || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     return false;
   }
 
@@ -222,6 +236,9 @@ export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOpt
  * Returns true on success, throws on failure.
  */
 export async function subscribeToPush(options: SaveSubscriptionOptions = {}): Promise<boolean> {
+  if (isNativeShell) {
+    throw new Error("Web push re-registration is not available inside the mobile app yet.");
+  }
   // 1. Check browser support
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     throw new Error("Push notifications are not supported in this browser.");
@@ -251,7 +268,7 @@ export async function subscribeToPush(options: SaveSubscriptionOptions = {}): Pr
  * Unsubscribe from push notifications.
  */
 export async function unsubscribeFromPush(): Promise<boolean> {
-  if (!("serviceWorker" in navigator)) return false;
+  if (isNativeShell || !("serviceWorker" in navigator)) return false;
 
   const registration = await ensureServiceWorkerRegistration();
   if (!registration) return false;
@@ -272,6 +289,9 @@ export async function unsubscribeFromPush(): Promise<boolean> {
  * Send a real push notification to the current user for diagnostics.
  */
 export async function sendTestPush(body?: { title?: string; body?: string }): Promise<{ message: string }> {
+  if (isNativeShell) {
+    throw new Error("Web push test tools are not available inside the mobile app yet.");
+  }
   const endpoint = await getCurrentPushEndpoint();
   const res = await fetch(`${BASE}/api/push/test`, {
     method: "POST",
@@ -292,7 +312,7 @@ export async function sendTestPush(body?: { title?: string; body?: string }): Pr
  * Check if currently subscribed (browser-level check).
  */
 export async function isCurrentlySubscribed(): Promise<boolean> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  if (isNativeShell || !("serviceWorker" in navigator) || !("PushManager" in window)) return false;
   try {
     const registration = await ensureServiceWorkerRegistration();
     if (!registration) return false;
@@ -304,7 +324,7 @@ export async function isCurrentlySubscribed(): Promise<boolean> {
 }
 
 export async function getCurrentPushEndpoint(): Promise<string | null> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  if (isNativeShell || !("serviceWorker" in navigator) || !("PushManager" in window)) return null;
   try {
     const registration = await ensureServiceWorkerRegistration();
     if (!registration) return null;
@@ -319,6 +339,6 @@ export async function getCurrentPushEndpoint(): Promise<string | null> {
  * Get current permission state.
  */
 export function getPermissionState(): NotificationPermission | "unsupported" {
-  if (!("Notification" in window)) return "unsupported";
+  if (isNativeShell || !("Notification" in window)) return "unsupported";
   return Notification.permission;
 }
