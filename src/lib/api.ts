@@ -371,6 +371,19 @@ export const expensesApi = {
     return get<any[]>(`/api/expenses${qs}`);
   },
   create: (body: unknown) => post<any>("/api/expenses", body),
+  saveAdSpendBatch: (body: {
+    weekStart: string;
+    weekEnd: string;
+    scopeProductIds: string[];
+    entries: Array<{
+      id: string;
+      date: string;
+      productId: string;
+      description?: string;
+      amount: number;
+      currency: "NGN" | "USD" | "GBP";
+    }>;
+  }) => post<{ savedCount: number; totalAmount: number; rows: any[] }>("/api/expenses/batch-ad-spend", body),
   delete: (id: string) => del<void>(`/api/expenses/${id}`)
 };
 

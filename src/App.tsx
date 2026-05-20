@@ -7415,37 +7415,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setAdSpendSaving(true);
     const activeProds = catalogProducts.filter((p) => p.active);
     const prevExpenses = expenses;
-    let savedEntries = 0;
-    let savedTotal = 0;
     try {
+      const entries: Array<{
+        id: string;
+        date: string;
+        productId: string;
+        description: string;
+        amount: number;
+        currency: CurrencyCode;
+      }> = [];
+
       for (const product of activeProds) {
         const productCurrency = (["NGN", "USD", "GBP"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
         for (const day of adSpendWeekDays) {
           const key = `${product.id}-${day}`;
           const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
-          const toDelete = expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === product.id && normalizeDateKey(e.date) === day);
-          for (const e of toDelete) {
-            await expensesApi.delete(e.id);
-            setExpenses((prev) => prev.filter((x) => x.id !== e.id));
-          }
           if (draftVal > 0) {
-            const newExp: ExpenseRecord = {
-              id: `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-              type: "Ad Spend", amount: draftVal, currency: productCurrency, date: day,
-              productId: product.id, productName: product.name,
-              description: `Ad spend – ${product.name} – ${day}`
-            };
-            await expensesApi.create({
-              id: newExp.id, date: newExp.date, category: "Ad Spend",
-              description: newExp.description, amount: newExp.amount, currency: newExp.currency,
-              productId: product.id
+            entries.push({
+              id: `adspend-${product.id}-${day}`,
+              date: day,
+              productId: product.id,
+              description: `Ad spend – ${product.name} – ${day}`,
+              amount: draftVal,
+              currency: productCurrency
             });
-            setExpenses((prev) => [...prev, newExp]);
-            savedEntries += 1;
-            savedTotal += newExp.amount;
           }
         }
       }
+
+      const batchResult = await expensesApi.saveAdSpendBatch({
+        weekStart: adSpendWeekDays[0],
+        weekEnd: adSpendWeekDays[adSpendWeekDays.length - 1],
+        scopeProductIds: activeProds.map((product) => product.id),
+        entries
+      });
+
       try {
         const freshExpenses = await expensesApi.list();
         setExpenses((freshExpenses as any[]).map((expense: any) => normalizeExpenseRecord(expense)));
@@ -7453,10 +7457,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         // Keep the optimistic state if the follow-up refresh fails.
       }
       void loadWeeklyAccountingData({ quiet: true });
+      const savedEntries = Number(batchResult?.savedCount ?? entries.length ?? 0);
+      const savedTotal = Number(batchResult?.totalAmount ?? entries.reduce((sum, entry) => sum + entry.amount, 0));
       showToast(`Ad spend saved. ${savedEntries} entr${savedEntries === 1 ? "y" : "ies"} synced (${formatMoney(savedTotal)}).`);
-    } catch {
+    } catch (err: any) {
       setExpenses(prevExpenses);
-      showToast("Save failed — changes rolled back. Check connection.");
+      showToast(`Save failed — ${err?.message ?? "changes rolled back. Check connection."}`);
     }
     setAdSpendSaving(false);
   };

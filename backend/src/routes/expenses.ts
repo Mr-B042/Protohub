@@ -31,6 +31,22 @@ const ExpenseSchema = z.object({
   productId:   z.string().optional()
 });
 
+const AdSpendBatchEntrySchema = z.object({
+  id: z.string().min(1),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  productId: z.string().min(1),
+  description: z.string().optional(),
+  amount: z.number().min(0),
+  currency: z.enum(["NGN", "USD", "GBP"]).default("NGN")
+});
+
+const AdSpendBatchSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  scopeProductIds: z.array(z.string().min(1)).min(1).max(1000),
+  entries: z.array(AdSpendBatchEntrySchema).max(5000)
+});
+
 router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
   const parsed = ExpenseSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -59,6 +75,62 @@ router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) =>
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(201).json(data);
+});
+
+router.post("/batch-ad-spend", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = AdSpendBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { weekStart, weekEnd, scopeProductIds, entries } = parsed.data;
+  const orgId = req.user!.orgId;
+  const positiveEntries = entries.filter((entry) => entry.amount > 0);
+
+  const { error: deleteError } = await supabase
+    .from("expenses")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("category", "Ad Spend")
+    .gte("date", weekStart)
+    .lte("date", weekEnd)
+    .in("product_id", scopeProductIds);
+  if (deleteError) {
+    res.status(500).json({ error: deleteError.message });
+    return;
+  }
+
+  if (positiveEntries.length === 0) {
+    res.status(200).json({ savedCount: 0, totalAmount: 0, rows: [] });
+    return;
+  }
+
+  const rows = positiveEntries.map((entry) => ({
+    id: entry.id,
+    org_id: orgId,
+    date: entry.date,
+    category: "Ad Spend",
+    description: entry.description,
+    amount: entry.amount,
+    currency: entry.currency,
+    product_id: entry.productId
+  }));
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .upsert(rows, { onConflict: "id" })
+    .select("*");
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.status(201).json({
+    savedCount: positiveEntries.length,
+    totalAmount: positiveEntries.reduce((sum, entry) => sum + entry.amount, 0),
+    rows: data ?? []
+  });
 });
 
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
