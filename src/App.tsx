@@ -789,6 +789,7 @@ type AbandonedCartRecord = {
   phone: string;
   whatsapp?: string;
   email?: string;
+  address?: string;
   city?: string;
   state?: string;
   productId?: string;
@@ -801,6 +802,9 @@ type AbandonedCartRecord = {
   embedLabel?: string;
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
+  preferredDelivery?: string;
+  outageCaptured?: boolean;
+  outageCapturedAt?: string;
   lastActivity: string;
   createdAt: string;
 };
@@ -11870,6 +11874,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             phone:        c.phone ?? "",
             whatsapp:     c.whatsapp ?? undefined,
             email:        c.email ?? undefined,
+            address:      c.address ?? undefined,
             city:         c.city ?? undefined,
             state:        c.state ?? undefined,
             productId:    c.productId ?? c.product_id ?? undefined,
@@ -11879,8 +11884,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             amount:       Number(c.amount ?? 0),
             currency:     c.currency ?? "NGN",
             source:       c.source ?? "Website",
+            embedLabel:   c.embedLabel ?? c.embed_label ?? undefined,
             status:       c.status ?? "Open abandoned",
             assignedRepId: c.assignedRepId ?? c.assigned_rep_id ?? undefined,
+            preferredDelivery: c.preferredDelivery ?? c.preferred_delivery ?? undefined,
+            outageCaptured: c.outageCaptured ?? c.outage_captured ?? false,
+            outageCapturedAt: c.outageCapturedAt ?? c.outage_captured_at ?? undefined,
             lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
             createdAt:    c.createdAt ?? c.created_at ?? ""
           })) as any);
@@ -17974,6 +17983,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       phone: selectedCart.phone,
       whatsapp: selectedCart.whatsapp,
       email: selectedCart.email,
+      address: selectedCart.address,
       city: selectedCart.city,
       state: selectedCart.state,
       productName: selectedCart.productName,
@@ -17987,6 +17997,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       status: "New",
       response: "Converted from abandoned cart",
       location: orderLocationFromFields(selectedCart.city ?? "", selectedCart.state ?? ""),
+      preferredDelivery: selectedCart.preferredDelivery,
+      deliveryWindow: selectedCart.preferredDelivery,
       assignedRepId: selectedCart.assignedRepId ?? repForNewRecord(),
       createdAt: nowIso(),
       date: displayDateFromKey(todayKey()),
@@ -36875,6 +36887,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
 	                        <StatusBadge s={selectedCart.status} />
 	                        <span className="text-xs text-gray-500">{selectedCart.source}</span>
+	                        {selectedCart.outageCaptured && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold">Saved during outage</span>}
 	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">⚠ {Math.floor(stale)}d stale</span>}
 	                      </div>
 	                    </div>
@@ -36905,7 +36918,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "—"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "—"}</p></div>
 	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className="font-semibold text-gray-900 m-0">{selectedCart.email}</p></div>}
+	                      {selectedCart.preferredDelivery && <div><p className="text-[11px] text-gray-400 m-0">Preferred Delivery</p><p className="font-semibold text-gray-900 m-0">{selectedCart.preferredDelivery}</p></div>}
 	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
+	                      {selectedCart.address && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Address</p><p className="font-semibold text-gray-900 m-0">{selectedCart.address}</p></div>}
 	                    </div>
 	                  </section>
 
@@ -37003,6 +37018,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
+	                      {selectedCart.outageCaptured && <div><p className="text-[11px] text-gray-400 m-0">Outage capture</p><p className="font-semibold text-amber-700 m-0">{formatMoment(selectedCart.outageCapturedAt ?? selectedCart.createdAt)}</p></div>}
                         {linkedOrder && (
                           <>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Linked order</p><p className="font-semibold text-gray-900 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>

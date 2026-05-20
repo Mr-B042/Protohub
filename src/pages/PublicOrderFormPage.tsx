@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
+import { browserSupabaseClient } from "../lib/realtime";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -154,6 +155,12 @@ type PendingUpsellOffer = {
   quantity: number;
   amount: number;
   currency: ProductCurrencyCode;
+};
+
+type PublicOrderSubmissionState = {
+  orderId: string;
+  customer: string;
+  mode: "confirmed_order" | "outage_capture";
 };
 
 const DEFAULT_CONFIRMATION_TEXT =
@@ -683,7 +690,7 @@ export default function PublicOrderFormPage() {
   const [showLoading, setShowLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState("");
-  const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
+  const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<PublicOrderSubmissionState | null>(null);
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
   const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
@@ -1387,13 +1394,108 @@ export default function PublicOrderFormPage() {
       }
       return;
     }
-    setPublicOrderSubmitted({ orderId, customer });
+    setPublicOrderSubmitted({ orderId, customer, mode: "confirmed_order" });
+  }
+
+  function finishOutageCaptureJourney(orderId: string, customer: string) {
+    setPublicUpsellOffer(null);
+    exitTrackedRef.current = true;
+    if (publicRedirectUrl) {
+      if (redirectTimerRef.current) {
+        window.clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = null;
+      }
+      try {
+        (window.top ?? window).location.href = publicRedirectUrl;
+      } catch {
+        window.location.href = publicRedirectUrl;
+      }
+      return;
+    }
+    setPublicOrderSubmitted({ orderId, customer, mode: "outage_capture" });
+  }
+
+  function shouldCapturePublicOrderOutage(error: any) {
+    const status = typeof error?.status === "number" ? error.status : null;
+    if (status == null || status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504) {
+      return true;
+    }
+    const message = String(error?.message ?? "").toLowerCase();
+    return message.includes("failed to fetch")
+      || message.includes("networkerror")
+      || message.includes("load failed")
+      || message.includes("unable to reach the server");
+  }
+
+  async function saveOutageCapturedCart(options: {
+    cartId?: string;
+    customerName: string;
+    phone: string;
+    whatsapp?: string;
+  }) {
+    if (!browserSupabaseClient || !publicProduct || !chosenPackage) {
+      return null;
+    }
+    const outageCartId = `${options.cartId || makeCartId()}-outage-${Date.now().toString(36)}`;
+    const capturedAt = new Date().toISOString();
+    const { error } = await browserSupabaseClient
+      .from("abandoned_carts")
+      .insert({
+        id: outageCartId,
+        org_id: publicProduct.orgId,
+        customer: options.customerName,
+        phone: options.phone,
+        whatsapp: options.whatsapp || null,
+        email: orderFormEmail.trim() || null,
+        address: orderFormAddress.trim() || null,
+        city: orderFormCity.trim() || null,
+        state: orderFormState.trim() || null,
+        product_id: publicProduct.id,
+        package_id: chosenPackage.id,
+        product_name: publicProduct.name,
+        package_name: chosenPackage.name,
+        amount: summaryTotal,
+        currency: chosenPackage.currency,
+        source: orderSourceFromUtm(publicUtmSource),
+        embed_label: publicEmbedLabel || null,
+        status: "Open abandoned",
+        preferred_delivery: orderFormDeliveryWindow.trim() || null,
+        outage_captured: true,
+        outage_captured_at: capturedAt,
+        last_activity: capturedAt,
+        capture_payload: {
+          customerName: options.customerName,
+          phone: options.phone,
+          whatsapp: options.whatsapp || null,
+          email: orderFormEmail.trim() || null,
+          address: orderFormAddress.trim() || null,
+          city: orderFormCity.trim() || null,
+          state: orderFormState.trim() || null,
+          packageId: chosenPackage.id,
+          packageName: chosenPackage.name,
+          packageQuantity: chosenPackage.quantity,
+          selectedCrossSellLines,
+          autoCompanionLines,
+          utmSource: publicUtmSource || null,
+          utmCampaign: publicUtmCampaign || null,
+          utmMedium: publicUtmMedium || null,
+          utmContent: publicUtmContent || null,
+          utmTerm: publicUtmTerm || null,
+          embedLabel: publicEmbedLabel || null,
+          referrer: publicReferrer || null,
+          confirmationChecked: orderFormConfirmed,
+          preferredDelivery: orderFormDeliveryWindow.trim() || null,
+          redirectedAfterSave: Boolean(publicRedirectUrl)
+        }
+      });
+    if (error) throw error;
+    return outageCartId;
   }
 
   async function submitPublicOrder() {
     if (publicOrderSubmitting) return;
     if (publicHoneypot) {
-      setPublicOrderSubmitted({ orderId: "blocked", customer: orderFormName.trim() });
+      setPublicOrderSubmitted({ orderId: "blocked", customer: orderFormName.trim(), mode: "confirmed_order" });
       return;
     }
     if (!publicProduct || !chosenPackage) {
@@ -1592,6 +1694,30 @@ export default function PublicOrderFormPage() {
       finishPublicOrderJourney(created.id, customerName);
       return;
     } catch (error: any) {
+      if (shouldCapturePublicOrderOutage(error)) {
+        try {
+          const savedCaptureId = await saveOutageCapturedCart({
+            cartId: submissionCartId || undefined,
+            customerName,
+            phone: orderFormPhone.trim(),
+            whatsapp: whatsappDigits || undefined
+          });
+          if (savedCaptureId) {
+            resetOrderForm();
+            setPublicOrderSubmitting(false);
+            publicOrderSubmittingRef.current = false;
+            if (cartSyncTimerRef.current) {
+              window.clearTimeout(cartSyncTimerRef.current);
+              cartSyncTimerRef.current = null;
+            }
+            showToast("We saved your request while the order system was temporarily offline. Our team will contact you shortly.");
+            finishOutageCaptureJourney(savedCaptureId, customerName);
+            return;
+          }
+        } catch {
+          // Fall through to the default error path if direct capture also fails.
+        }
+      }
       setPublicOrderSubmitting(false);
       publicOrderSubmittingRef.current = false;
       showToast(error?.message ?? "Could not submit your order. Please try again.");
@@ -2095,10 +2221,12 @@ export default function PublicOrderFormPage() {
                   Thank you{publicOrderSubmitted.customer ? `, ${publicOrderSubmitted.customer.split(" ")[0]}` : ""}!
                 </h1>
                 <p style={{ margin: 0, fontSize: 15, color: "#374151", maxWidth: 440, lineHeight: 1.5 }}>
-                  Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery.
+                  {publicOrderSubmitted.mode === "outage_capture"
+                    ? "We saved your request while the order system was temporarily offline. Our team will contact you shortly to confirm the details and arrange delivery."
+                    : "Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery."}
                 </p>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f3f4f6", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "#374151" }}>
-                  Order ID: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
+                  {publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
                 </div>
                 {publicRedirectUrl ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>Redirecting…</p>

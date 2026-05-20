@@ -454,6 +454,7 @@ export type AbandonedCartRecord = {
   phone: string;
   whatsapp?: string;
   email?: string;
+  address?: string;
   city?: string;
   state?: string;
   productId?: string;
@@ -463,8 +464,12 @@ export type AbandonedCartRecord = {
   amount: number;
   currency: ProductCurrencyCode;
   source: Exclude<OrderSource, "All Sources">;
+  embedLabel?: string;
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
+  preferredDelivery?: string;
+  outageCaptured?: boolean;
+  outageCapturedAt?: string;
   lastActivity: string;
   createdAt: string;
 };
