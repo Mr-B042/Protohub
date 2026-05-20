@@ -805,6 +805,7 @@ type AbandonedCartRecord = {
   preferredDelivery?: string;
   outageCaptured?: boolean;
   outageCapturedAt?: string;
+  capturePayload?: Record<string, unknown>;
   lastActivity: string;
   createdAt: string;
 };
@@ -3160,6 +3161,25 @@ const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDe
   }
   return out;
 };
+const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
+  const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+  const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+  const quantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
+  const lines = [
+    `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(mainOfferTotal, order.currency)})`
+  ];
+  (order.crossSellLines ?? []).forEach((line, index) => {
+    const detail = line.packageName ? `${line.productName} · ${line.packageName}` : line.productName;
+    lines.push(`Additional Package ${index + 1}: ${detail} (${line.quantity} pc${line.quantity === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
+  });
+  (order.freeGiftLines ?? []).forEach((line, index) => {
+    lines.push(`Free Gift ${index + 1}: ${line.productName} (${line.quantity} unit${line.quantity === 1 ? "" : "s"})`);
+  });
+  if ((order.crossSellLines?.length ?? 0) > 0) {
+    lines.push(`Total: ${formatProductMoney(order.amount, order.currency)}`);
+  }
+  return lines.join("\n");
+};
 const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissionDetails => {
   const publicNote = orderNotesFor(order).find((note) => typeof note.text === "string" && note.text.toLowerCase().startsWith("public form submission details:"));
   const parsed = publicNote ? parsePublicFormSubmissionNote(publicNote.text) : {};
@@ -3173,7 +3193,10 @@ const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissi
     address: formattedAddress || parsed.address,
     preferredDelivery: order.preferredDelivery ?? order.deliveryWindow ?? parsed.preferredDelivery,
     confirmation: order.confirmationChecked != null ? (order.confirmationChecked ? "Accepted" : "Not accepted") : parsed.confirmation,
-    selectedPackages: parsed.selectedPackages || `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(order.amount, order.currency)})`,
+    selectedPackages:
+      (order.crossSellLines?.length ?? 0) > 0 || (order.freeGiftLines?.length ?? 0) > 0
+        ? selectedPackagesSummaryForOrder(order)
+        : parsed.selectedPackages || `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(order.amount, order.currency)})`,
     utmSource: order.utmSource || parsed.utmSource,
     utmCampaign: order.utmCampaign || parsed.utmCampaign,
     utmMedium: order.utmMedium || parsed.utmMedium,
@@ -7266,6 +7289,105 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       .map((value) => (value ?? "").trim())
       .filter(Boolean);
     return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
+  };
+  type CapturedCartOfferLine = {
+    name: string;
+    detail?: string;
+    qty: number;
+    total: number;
+  };
+  const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
+    const payload = cart.capturePayload;
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  };
+  const capturedOfferLinesFrom = (raw: unknown): CapturedCartOfferLine[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return null;
+        const line = entry as Record<string, unknown>;
+        const name = String(line.name ?? line.productName ?? "").trim();
+        if (!name) return null;
+        const detailSource = typeof line.detail === "string"
+          ? line.detail
+          : typeof line.packageName === "string"
+            ? line.packageName
+            : "";
+        const detail = detailSource.trim() || undefined;
+        const qtyValue = Math.floor(Number(line.qty ?? line.quantity ?? 1) || 1);
+        const totalValue = Number(line.total ?? line.amount ?? 0) || 0;
+        return {
+          name,
+          detail,
+          qty: Math.max(1, qtyValue),
+          total: Math.max(0, totalValue)
+        };
+      })
+      .filter(Boolean) as CapturedCartOfferLine[];
+  };
+  const additionalPackageLinesForCart = (cart: AbandonedCartRecord): CapturedCartOfferLine[] => {
+    const payload = cartCapturePayloadFor(cart);
+    if (!payload) return [];
+    return [
+      ...capturedOfferLinesFrom(payload.selectedCrossSellLines),
+      ...capturedOfferLinesFrom(payload.autoCompanionLines)
+    ];
+  };
+  const packageQuantityForCart = (cart: AbandonedCartRecord) => {
+    const payload = cartCapturePayloadFor(cart);
+    const payloadQty = Math.floor(Number(payload?.packageQuantity ?? 0) || 0);
+    if (payloadQty > 0) return payloadQty;
+    const product = products.find((item) => item.id === cart.productId);
+    const packageRecord = product?.packages.find((item) => item.id === cart.packageId);
+    return Math.max(1, Number(packageRecord?.quantity ?? 1) || 1);
+  };
+  const preferredPackageLineForCart = (cart: AbandonedCartRecord) => {
+    const qty = packageQuantityForCart(cart);
+    const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
+    const packageName = (cart.packageName ?? "").trim();
+    const productName = (cart.productName ?? "").trim();
+    if (packageName) {
+      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
+        return `${qtyLabel} Of ${packageName}`;
+      }
+      return `${qtyLabel} Of ${packageName} of ${productName}`;
+    }
+    return `${qtyLabel} Of ${productName}`;
+  };
+  const preferredPackageLineForCapturedCartOffer = (line: CapturedCartOfferLine) => {
+    const qtyLabel = `${line.qty}pc${line.qty === 1 ? "" : "s"}`;
+    const cleanedName = line.name.replace(/\s*\(bundled\)\s*$/i, "").trim();
+    return `${qtyLabel} Of ${cleanedName}${line.detail ? ` (${line.detail})` : ""}`;
+  };
+  const fullDeliveryLabelForCart = (cart: AbandonedCartRecord) => {
+    const parts = [cart.address, cart.city, cart.state]
+      .map((value) => (value ?? "").trim())
+      .filter(Boolean);
+    return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
+  };
+  const formatCartForWhatsAppDispatch = (cart: AbandonedCartRecord) => {
+    const extraPricedPackages = additionalPackageLinesForCart(cart);
+    const extraPricedTotal = extraPricedPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
+    const mainOfferTotal = Math.max(0, (cart.amount || 0) - extraPricedTotal);
+    const hasMultiplePricedPackages = extraPricedPackages.length > 0;
+    const lines = [
+      `Full Name:  ${cart.customer || "—"}`,
+      `Active Phone Number:  ${cart.phone || "—"}`,
+      `Whatsapp Number:  ${cart.whatsapp || cart.phone || "—"}`,
+      `State: ${cart.state || "—"}`,
+      `City:  ${cart.city || "—"}`,
+      `Full Delivery: ${fullDeliveryLabelForCart(cart)}`,
+      hasMultiplePricedPackages
+        ? `Preferred Package 1: ${preferredPackageLineForCart(cart)} = ${formatProductMoney(mainOfferTotal, cart.currency)}`
+        : `Preferred Package: ${preferredPackageLineForCart(cart)} = ${formatProductMoney(mainOfferTotal, cart.currency)}`
+    ];
+    extraPricedPackages.forEach((line, index) => {
+      lines.push(`Preferred Package ${index + 2}: ${preferredPackageLineForCapturedCartOffer(line)} = ${formatProductMoney(line.total, cart.currency)}`);
+    });
+    if (hasMultiplePricedPackages) {
+      lines.push(`Total = ${formatProductMoney(cart.amount, cart.currency)}`);
+    }
+    return lines.join("\n\n");
   };
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
     const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
@@ -11988,6 +12110,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             preferredDelivery: c.preferredDelivery ?? c.preferred_delivery ?? undefined,
             outageCaptured: c.outageCaptured ?? c.outage_captured ?? false,
             outageCapturedAt: c.outageCapturedAt ?? c.outage_captured_at ?? undefined,
+            capturePayload: (() => {
+              const raw = c.capturePayload ?? c.capture_payload;
+              return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined;
+            })(),
             lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
             createdAt:    c.createdAt ?? c.created_at ?? ""
           })) as any);
@@ -19716,27 +19842,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {/* Header & Breadcrumbs */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-2">
-            <button className="hover:text-[#1F8FE0] transition-colors" onClick={closeRepOrderDetail}>Orders</button>
+          <nav className={`flex items-center gap-2 text-sm font-medium mb-2 ${orderMutedTextClass}`}>
+            <button className="hover:text-[#1F8FE0] dark:hover:text-sky-300 transition-colors" onClick={closeRepOrderDetail}>Orders</button>
             <ArrowRight className="w-4 h-4" />
-            <span className="text-gray-900">{order.id}</span>
+            <span className={orderTitleTextClass}>{order.id}</span>
           </nav>
           <h1 className="text-2xl font-bold text-[#1F8FE0]">{order.customer}</h1>
-          <p className="text-sm font-medium text-gray-500 mt-1">
+          <p className={`text-sm font-medium mt-1 ${orderMutedTextClass}`}>
             {order.phone} · {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")} · {repScopeDescription}
           </p>
         </div>
         <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
+          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => openRepStatusChangeModal(order)}>
             <Repeat2 className="w-4 h-4" /> Change Status
           </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(order)}>
+          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => printInvoiceForOrder(order)}>
             <BookOpen className="w-4 h-4" /> Print Invoice
           </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
+          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => downloadInvoiceForOrder(order)}>
             <Download className="w-4 h-4" /> Download Invoice
           </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors dark:border-emerald-500/35 dark:bg-[#16212c] dark:text-emerald-300 dark:hover:bg-emerald-500/10" onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}>
             <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
@@ -19902,68 +20028,68 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className="sm:hidden divide-y divide-gray-100">
             <article className="px-4 py-4 space-y-3">
               <div>
-                <p className="text-sm font-semibold text-gray-900">{order.productName}</p>
-                <p className="text-xs text-gray-400">{order.packageName}</p>
+                <p className={`text-sm font-semibold ${orderTitleTextClass}`}>{order.productName}</p>
+                <p className={`text-xs ${orderFaintTextClass}`}>{order.packageName}</p>
               </div>
               <div className="grid grid-cols-3 gap-3 text-xs">
                 <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                  <p className="mt-1 font-semibold text-gray-800">{quantityForOrder(order)}</p>
+                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
+                  <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{quantityForOrder(order)}</p>
                 </div>
                 <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
-                  <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</p>
+                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Unit</p>
+                  <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatProductMoney(Math.round(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(order))), order.currency)}</p>
                 </div>
                 <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                  <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</p>
+                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
+                  <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>{formatProductMoney(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), order.currency)}</p>
                 </div>
               </div>
             </article>
             {(order.crossSellLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40">
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40 dark:bg-amber-500/10">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
                       {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}
                     </p>
-                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
+                    <p className={`mt-1 text-sm font-semibold ${orderTitleTextClass}`}>{line.productName}</p>
                   </div>
                   <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
                 </div>
-                <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-3 gap-3 text-xs">
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{line.quantity}</p>
                   </div>
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
-                    <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Unit</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
                   </div>
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                    <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
+                    <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>{formatProductMoney(line.amount, order.currency)}</p>
                   </div>
                 </div>
               </article>
             ))}
             {(order.freeGiftLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40">
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40 dark:bg-emerald-500/10">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Free Gift</p>
-                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
+                    <p className={`mt-1 text-sm font-semibold ${orderTitleTextClass}`}>{line.productName}</p>
                   </div>
                   <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{line.quantity}</p>
                   </div>
                   <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                    <p className="mt-1 font-semibold text-gray-900">FREE</p>
+                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
+                    <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>FREE</p>
                   </div>
                 </div>
               </article>
@@ -19972,41 +20098,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Product</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Qty</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Price per unit</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right">Total Amount</th>
+                <tr className={`${orderTableHeaderClass} text-left`}>
+                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider">Product</th>
+                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-center">Qty</th>
+                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider">Price per unit</th>
+                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-right">Total Amount</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                <tr className="hover:bg-gray-50 transition-colors">
+              <tbody className={`divide-y ${orderBorderClass}`}>
+                <tr className="hover:bg-gray-50 transition-colors dark:hover:bg-[#16212c]">
                   <td className="px-4 py-4">
-                    <div className="font-medium text-gray-900">{order.productName}</div>
-                    <div className="text-xs text-gray-400">{order.packageName}</div>
+                    <div className={`font-medium ${orderTitleTextClass}`}>{order.productName}</div>
+                    <div className={`text-xs ${orderFaintTextClass}`}>{order.packageName}</div>
                   </td>
-                  <td className="px-4 py-4 text-center text-gray-700">{quantityForOrder(order)}</td>
-                  <td className="px-4 py-4 text-gray-700">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</td>
-                  <td className="px-4 py-4 text-right font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</td>
+                  <td className={`px-4 py-4 text-center ${orderBodyTextClass}`}>{quantityForOrder(order)}</td>
+                  <td className={`px-4 py-4 ${orderBodyTextClass}`}>{formatProductMoney(Math.round(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(order))), order.currency)}</td>
+                  <td className={`px-4 py-4 text-right font-semibold ${orderTitleTextClass}`}>{formatProductMoney(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), order.currency)}</td>
                 </tr>
                 {(order.crossSellLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-amber-50/40">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}</span><div className="text-gray-700">{line.productName}</div></td>
-                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
-                    <td className="px-4 py-3 text-xs text-gray-700">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
+                  <tr key={line.id} className="bg-amber-50/40 dark:bg-amber-500/10">
+                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800 dark:text-amber-300">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}</span><div className={orderBodyTextClass}>{line.productName}</div></td>
+                    <td className={`px-4 py-3 text-center text-xs ${orderBodyTextClass}`}>{line.quantity}</td>
+                    <td className={`px-4 py-3 text-xs ${orderBodyTextClass}`}>{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
                     <td className="px-4 py-3 text-right text-xs">
-                      <span className="font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</span>
+                      <span className={`font-semibold ${orderTitleTextClass}`}>{formatProductMoney(line.amount, order.currency)}</span>
                       <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
                     </td>
                   </tr>
                 ))}
                 {(order.freeGiftLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-emerald-50/40">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-emerald-800">🎁 Free Gift</span><div className="text-gray-700">{line.productName}</div></td>
-                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
-                    <td className="px-4 py-3 text-xs text-gray-500 italic">FREE</td>
+                  <tr key={line.id} className="bg-emerald-50/40 dark:bg-emerald-500/10">
+                    <td className="px-4 py-3 text-xs"><span className="font-medium text-emerald-800 dark:text-emerald-300">🎁 Free Gift</span><div className={orderBodyTextClass}>{line.productName}</div></td>
+                    <td className={`px-4 py-3 text-center text-xs ${orderBodyTextClass}`}>{line.quantity}</td>
+                    <td className={`px-4 py-3 text-xs italic ${orderMutedTextClass}`}>FREE</td>
                     <td className="px-4 py-3 text-right text-xs">
-                      <span className="text-gray-500">—</span>
+                      <span className={orderMutedTextClass}>—</span>
                       <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
                     </td>
                   </tr>
@@ -20022,29 +20148,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </div>
 
       {/* Bonus & Upsell Tracking */}
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
-          <h2 className="text-base font-bold text-gray-900">Bonus &amp; Upsell Tracking</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Record when you upgraded the customer's pack. The bonus is computed automatically using the product's bonus rules.</p>
+      <section className={`${orderPanelClass} overflow-hidden`}>
+        <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
+          <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Bonus &amp; Upsell Tracking</h2>
+          <p className={`text-xs mt-0.5 ${orderMutedTextClass}`}>Record when you upgraded the customer's pack. The bonus is computed automatically using the product's bonus rules.</p>
         </div>
         <div className="p-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell from (qty)</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
+            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Upsell from (qty)</span>
+            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
               updateOrderUpsellFields(order, { upsellFromQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell to (qty)</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
+            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Upsell to (qty)</span>
+            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
               updateOrderUpsellFields(order, { upsellToQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</span>
-            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
+            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Note</span>
+            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
               updateOrderUpsellFields(order, { upsellNote: e.target.value });
             }} />
           </label>
@@ -20054,25 +20180,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           const earned = isDelivered ? computeOrderBonus(order, 100, 0, 0) : null;
           const projected = projectedOrderBonus(order);
           return (
-            <div className={`mx-5 mb-5 p-3 border rounded-lg flex flex-col gap-1.5 ${isDelivered ? "bg-emerald-50 border-emerald-200" : "bg-gray-50 border-gray-200"}`}>
+            <div className={`mx-5 mb-5 p-3 border rounded-lg flex flex-col gap-1.5 ${isDelivered ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/25" : "bg-gray-50 border-gray-200 dark:bg-[#16212c] dark:border-slate-800/80"}`}>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
-                  <strong className="text-sm text-gray-900">{isDelivered ? "Earned Bonus" : "Projected Bonus"}</strong>
-                  {!isDelivered && <span className="text-xs text-gray-400">Estimated if order is delivered</span>}
+                  <strong className={`text-sm ${orderTitleTextClass}`}>{isDelivered ? "Earned Bonus" : "Projected Bonus"}</strong>
+                  {!isDelivered && <span className={`text-xs ${orderFaintTextClass}`}>Estimated if order is delivered</span>}
                 </div>
                 <span className={`text-lg font-extrabold ${isDelivered ? "text-emerald-700" : "text-gray-500"}`}>
                   {formatProductMoney(isDelivered ? (earned?.total ?? 0) : projected.total, order.currency)}
                 </span>
               </div>
               {(isDelivered ? earned?.components ?? [] : projected.components).length > 0 && (
-                <ul className="text-xs text-gray-600 list-disc pl-5">
+                <ul className={`text-xs list-disc pl-5 ${orderBodyTextClass}`}>
                   {(isDelivered ? earned?.components ?? [] : projected.components).map((c, i) => (
                     <li key={i}>{c.label}: <span className="font-semibold">{formatProductMoney(c.amount, order.currency)}</span></li>
                   ))}
                 </ul>
               )}
               {(isDelivered ? earned?.components ?? [] : projected.components).length === 0 && (
-                <p className="text-xs text-gray-400">No bonus rules matched — check product bonus settings.</p>
+                <p className={`text-xs ${orderFaintTextClass}`}>No bonus rules matched — check product bonus settings.</p>
               )}
               {order.bonusManuallyAdjusted && (
                 <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` — ${order.manualBonusReason}` : ""}</p>
@@ -20083,9 +20209,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
 
       {/* Status Workflow Panel */}
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="text-base font-bold text-gray-900">Status Workflow</h2>
+      <section className={`${orderPanelClass} overflow-hidden`}>
+        <div className={`px-5 py-4 border-b ${orderBorderClass} flex items-center justify-between`}>
+          <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Status Workflow</h2>
           {renderOrderStatusSummary(order, "right")}
         </div>
           <div className="p-6">
@@ -35989,8 +36115,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                            )}
 	                            {quantityForOrder(selectedOrder)}
 	                          </td>
-	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(selectedOrder.amount / quantityForOrder(selectedOrder)), selectedOrder.currency)}</td>
-	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
+	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(selectedOrder))), selectedOrder.currency)}</td>
+	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), selectedOrder.currency)}</td>
 	                        </tr>
 	                        {(selectedOrder.crossSellLines ?? []).map((line) => (
 	                          <tr key={line.id} className="bg-amber-50/40">
@@ -36973,6 +37099,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	            {modal === "cartDetails" && selectedCart && (() => {
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
+                const cartAdditionalPackages = additionalPackageLinesForCart(selectedCart);
+                const cartAdditionalTotal = cartAdditionalPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
+                const cartMainOfferTotal = Math.max(0, (selectedCart.amount || 0) - cartAdditionalTotal);
+                const cartPackageQuantity = packageQuantityForCart(selectedCart);
 	              const linkedOrder = linkedOrderBySourceCartId.get(selectedCart.id);
 	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder);
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
@@ -36994,13 +37124,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  {/* Header */}
 	                  <div className="flex items-start justify-between gap-3 flex-wrap">
 	                    <div className="min-w-0">
-	                      <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Abandoned cart · {selectedCart.id}</p>
-	                      <h3 className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{selectedCart.customer || "Partial lead"}</h3>
+	                      <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Abandoned cart · {selectedCart.id}</p>
+	                      <h3 className="text-lg font-extrabold text-gray-900 dark:text-slate-100 m-0 mt-0.5">{selectedCart.customer || "Partial lead"}</h3>
 	                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
 	                        <StatusBadge s={selectedCart.status} />
-	                        <span className="text-xs text-gray-500">{selectedCart.source}</span>
-	                        {selectedCart.outageCaptured && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold">Saved during outage</span>}
-	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">⚠ {Math.floor(stale)}d stale</span>}
+	                        <span className="text-xs text-gray-500 dark:text-slate-400">{selectedCart.source}</span>
+	                        {selectedCart.outageCaptured && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold dark:bg-amber-500/12 dark:text-amber-300">Saved during outage</span>}
+	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold dark:bg-rose-500/12 dark:text-rose-300">⚠ {Math.floor(stale)}d stale</span>}
 	                      </div>
 	                    </div>
 	                    {/* Quick contact */}
@@ -37013,9 +37143,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
 	                        </button>
 	                      )}
+                        <button
+                          type="button"
+                          onClick={() => copyText(formatCartForWhatsAppDispatch(selectedCart), `${selectedCart.id} WhatsApp group copy`)}
+                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-200 bg-white text-emerald-700 text-xs font-bold hover:bg-emerald-50 transition-colors dark:border-emerald-500/35 dark:bg-[#16212c] dark:text-emerald-300 dark:hover:bg-emerald-500/10">
+                          <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
+                        </button>
 	                      {phoneClean && (
 	                        <a href={`tel:${phoneClean}`}
-	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
+	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50 dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-200 dark:hover:bg-[#1a2834]">
 	                          <Phone className="w-3.5 h-3.5" /> Call
 	                        </a>
 	                      )}
@@ -37024,45 +37160,75 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                  {/* Customer */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer</h4>
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Customer</h4>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "—"}</p></div>
-	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className="font-semibold text-gray-900 m-0">{selectedCart.email}</p></div>}
-	                      {selectedCart.preferredDelivery && <div><p className="text-[11px] text-gray-400 m-0">Preferred Delivery</p><p className="font-semibold text-gray-900 m-0">{selectedCart.preferredDelivery}</p></div>}
-	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
-	                      {selectedCart.address && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Address</p><p className="font-semibold text-gray-900 m-0">{selectedCart.address}</p></div>}
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Name</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.customer || "—"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Phone</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.phone || "—"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">WhatsApp</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.whatsapp || "—"}</p></div>
+	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Email</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.email}</p></div>}
+	                      {selectedCart.preferredDelivery && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Preferred Delivery</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.preferredDelivery}</p></div>}
+	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Location</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
+	                      {selectedCart.address && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Address</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.address}</p></div>}
 	                    </div>
 	                  </section>
 
 	                  {/* Product / package */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Selected package</h4>
-	                    <div className="rounded-xl border border-gray-200 p-3 flex items-start gap-3">
-	                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
-	                      <div className="flex-1 min-w-0">
-	                        <p className="text-sm font-bold text-gray-900 m-0">{selectedCart.productName}</p>
-	                        {selectedCart.packageName && (
-	                          <p className="text-xs text-gray-600 m-0 mt-0.5">{selectedCart.packageName}{pkg ? ` · ${pkg.quantity} unit${pkg.quantity === 1 ? "" : "s"}` : ""}</p>
-	                        )}
-	                        {pkg?.description && <p className="text-xs text-gray-500 italic m-0 mt-1 leading-snug">{pkg.description}</p>}
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Selected package(s)</h4>
+	                    <div className="rounded-xl border border-gray-200 dark:border-slate-800/80 bg-white dark:bg-[#101a24] p-3 flex flex-col gap-3">
+	                      <div className="flex items-start gap-3">
+	                        <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
+	                        <div className="flex-1 min-w-0">
+	                          <p className="text-sm font-bold text-gray-900 dark:text-slate-100 m-0">{selectedCart.productName}</p>
+	                          {selectedCart.packageName && (
+	                            <p className="text-xs text-gray-600 dark:text-slate-300 m-0 mt-0.5">{selectedCart.packageName} · {cartPackageQuantity} unit{cartPackageQuantity === 1 ? "" : "s"}</p>
+	                          )}
+	                          {pkg?.description && <p className="text-xs text-gray-500 dark:text-slate-400 italic m-0 mt-1 leading-snug">{pkg.description}</p>}
+	                        </div>
+	                        <div className="text-right shrink-0">
+	                          <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Amount</p>
+	                          <p className="text-base font-extrabold text-[#1F8FE0] dark:text-sky-300 m-0">{formatProductMoney(cartMainOfferTotal, selectedCart.currency)}</p>
+	                        </div>
 	                      </div>
-	                      <div className="text-right shrink-0">
-	                        <p className="text-[11px] text-gray-400 m-0">Amount</p>
-	                        <p className="text-base font-extrabold text-[#1F8FE0] m-0">{formatProductMoney(selectedCart.amount, selectedCart.currency)}</p>
-	                      </div>
+                        {cartAdditionalPackages.length > 0 && (
+                          <div className="grid gap-2 border-t border-gray-100 dark:border-slate-800/80 pt-3">
+                            {cartAdditionalPackages.map((line, index) => (
+                              <div key={`cart-breakdown-${index}-${line.name}`} className="rounded-lg border border-amber-100 bg-amber-50/50 px-3 py-2 dark:border-amber-500/20 dark:bg-amber-500/10">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="m-0 text-xs font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                                      Additional package {index + 1}
+                                    </p>
+                                    <p className="m-0 mt-1 text-sm font-semibold text-gray-900 dark:text-slate-100">{line.name.replace(/\s*\(bundled\)\s*$/i, "")}</p>
+                                    {line.detail && <p className="m-0 mt-0.5 text-xs text-gray-600 dark:text-slate-300">{line.detail}</p>}
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">Amount</p>
+                                    <p className="m-0 text-sm font-bold text-amber-800 dark:text-amber-300">{formatProductMoney(line.total, selectedCart.currency)}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] px-3 py-2">
+                              <div>
+                                <p className="m-0 text-sm font-bold text-gray-900 dark:text-slate-100">Total</p>
+                                <p className="m-0 mt-0.5 text-xs text-gray-500 dark:text-slate-400">Main package plus all added packages.</p>
+                              </div>
+                              <p className="m-0 text-base font-extrabold text-[#1F8FE0] dark:text-sky-300">{formatProductMoney(selectedCart.amount, selectedCart.currency)}</p>
+                            </div>
+                          </div>
+                        )}
 	                    </div>
 	                  </section>
 
 	                  {/* Workflow + timeline */}
 	                  <section>
-                      <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-1.5 mb-2">
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 m-0">Workflow</h4>
+                      <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Workflow</h4>
                         {isOwnerOrAdmin && (
                           <button
                             type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50 transition-colors"
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50 transition-colors dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
                             onClick={() => openCartDateEditor(selectedCart)}
                           >
                             <CalendarDays className="w-3.5 h-3.5" /> Change cart date
@@ -37126,51 +37292,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         </div>
                       )}
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
-	                      {selectedCart.outageCaptured && <div><p className="text-[11px] text-gray-400 m-0">Outage capture</p><p className="font-semibold text-amber-700 m-0">{formatMoment(selectedCart.outageCapturedAt ?? selectedCart.createdAt)}</p></div>}
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Sales Rep</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{repName}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Source</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.source}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Created</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last activity</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
+	                      {selectedCart.outageCaptured && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Outage capture</p><p className="font-semibold text-amber-700 dark:text-amber-300 m-0">{formatMoment(selectedCart.outageCapturedAt ?? selectedCart.createdAt)}</p></div>}
                         {linkedOrder && (
                           <>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Linked order</p><p className="font-semibold text-gray-900 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Conversion path</p><p className="font-semibold text-gray-900 m-0">{conversionPathLabel ?? "Converted"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Linked order</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Conversion path</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{conversionPathLabel ?? "Converted"}</p></div>
                           </>
                         )}
-	                      <div><p className="text-[11px] text-gray-400 m-0">Last step reached</p><p className="font-semibold text-gray-900 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Journey events</p><p className="font-semibold text-gray-900 m-0">{selectedCartJourney.length}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last step reached</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Journey events</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartJourney.length}</p></div>
 	                      <div className="sm:col-span-2">
-	                        <p className="text-[11px] text-gray-400 m-0">Recovery priority</p>
+	                        <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Recovery priority</p>
 	                        <div className="mt-1 flex items-center gap-2 flex-wrap">
 	                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
-	                          <span className="text-xs text-gray-500">{recovery.summary}</span>
+	                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
 	                        </div>
 	                      </div>
 	                    </div>
-	                    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
 	                      <div className="flex items-center justify-between gap-2 mb-2">
 	                        <div>
-	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 m-0">Customer journey</p>
-	                          <p className="text-[12px] text-gray-500 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
+	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Customer journey</p>
+	                          <p className="text-[12px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
 	                        </div>
-	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading...</span> : null}
+	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Loading...</span> : null}
 	                      </div>
 	                      {selectedCartJourney.length === 0 && !selectedCartJourneyLoading ? (
-	                        <p className="text-sm text-gray-500 m-0">No journey timeline has been captured for this cart yet.</p>
+	                        <p className="text-sm text-gray-500 dark:text-slate-400 m-0">No journey timeline has been captured for this cart yet.</p>
 	                      ) : (
 	                        <div className="grid gap-2">
 	                          {selectedCartJourney.map((event, index) => (
-	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 px-3 py-2">
-	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 text-[#1F8FE0] text-xs font-extrabold flex items-center justify-center">
+	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 dark:bg-[#101a24] dark:border-slate-800/80 px-3 py-2">
+	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 text-xs font-extrabold flex items-center justify-center">
 	                                {index + 1}
 	                              </div>
 	                              <div className="min-w-0 flex-1">
 	                                <div className="flex items-start justify-between gap-3 flex-wrap">
-	                                  <p className="text-sm font-semibold text-gray-900 m-0">{cartJourneyTitle(event)}</p>
-	                                  <span className="text-[11px] text-gray-400">{formatMoment(event.createdAt)}</span>
+	                                  <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 m-0">{cartJourneyTitle(event)}</p>
+	                                  <span className="text-[11px] text-gray-400 dark:text-slate-500">{formatMoment(event.createdAt)}</span>
 	                                </div>
 	                                {cartJourneyDetail(event) ? (
-	                                  <p className="text-xs text-gray-600 m-0 mt-0.5">{cartJourneyDetail(event)}</p>
+	                                  <p className="text-xs text-gray-600 dark:text-slate-300 m-0 mt-0.5">{cartJourneyDetail(event)}</p>
 	                                ) : null}
 	                              </div>
 	                            </div>
@@ -37181,11 +37347,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 
 	                  {/* Actions */}
-	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100 dark:border-slate-800/80">
 	                    {canDeleteAbandonedCarts && (
 	                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors" onClick={() => deleteCartRecord(selectedCart)}><Trash2 className="w-4 h-4" /> Delete cart</button>
 	                    )}
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-200 dark:hover:bg-[#1a2834]" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
 	                  </div>
 	                </div>

@@ -470,6 +470,7 @@ export type AbandonedCartRecord = {
   preferredDelivery?: string;
   outageCaptured?: boolean;
   outageCapturedAt?: string;
+  capturePayload?: Record<string, unknown>;
   lastActivity: string;
   createdAt: string;
 };
