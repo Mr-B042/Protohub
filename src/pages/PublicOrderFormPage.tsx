@@ -770,6 +770,8 @@ export default function PublicOrderFormPage() {
     [publicProduct]
   );
   const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
+  const chosenPackagePrice = chosenPackage?.price ?? 0;
+  const chosenPackageCurrency = chosenPackage?.currency ?? publicPackages[0]?.currency ?? "NGN";
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
 
   const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
@@ -991,7 +993,7 @@ export default function PublicOrderFormPage() {
         .filter((gift): gift is PublicProduct => Boolean(gift && freeGiftVisibleInState(publicProduct, gift, orderFormState)))
     : [];
 
-  const summaryTotal = chosenPackage.price
+  const summaryTotal = chosenPackagePrice
     + selectedCrossSellLines.reduce((sum, line) => sum + line.total, 0)
     + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
 
@@ -1312,7 +1314,7 @@ export default function PublicOrderFormPage() {
         productName: publicProduct.name,
         packageName: chosenPackage.name,
         amount: summaryTotal,
-        currency: chosenPackage.currency,
+        currency: chosenPackageCurrency,
         source: orderSourceFromUtm(publicUtmSource),
         embedLabel: publicEmbedLabel || undefined,
         preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
@@ -1391,7 +1393,7 @@ export default function PublicOrderFormPage() {
       metadata: {
         packageName: chosenPackage.name,
         quantity: chosenPackage.quantity,
-        amount: chosenPackage.price,
+        amount: chosenPackagePrice,
         source: orderSourceFromUtm(publicUtmSource)
       }
     });
@@ -1609,7 +1611,7 @@ export default function PublicOrderFormPage() {
         product_name: publicProduct.name,
         package_name: chosenPackage.name,
         amount: summaryTotal,
-        currency: chosenPackage.currency,
+        currency: chosenPackageCurrency,
         source: orderSourceFromUtm(publicUtmSource),
         embed_label: publicEmbedLabel || null,
         status: "Open abandoned",
@@ -2126,7 +2128,7 @@ export default function PublicOrderFormPage() {
           <strong style={{ fontSize: 15, color: "#0f172a" }}>Order breakdown so far</strong>
           <span style={{ fontSize: 12, color: "#64748b" }}>Each additional item appears here as soon as you add it.</span>
         </div>
-        <strong style={{ fontSize: 16, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackage.currency)}</strong>
+        <strong style={{ fontSize: 16, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
       </div>
 
       <div
@@ -2143,7 +2145,7 @@ export default function PublicOrderFormPage() {
           <strong style={{ fontSize: 13, color: "#0f172a" }}>{publicProduct.name} · {chosenPackage.name}</strong>
           <span style={{ fontSize: 12, color: "#64748b" }}>Main offer</span>
         </div>
-        <strong style={{ fontSize: 13, color: "#0f172a" }}>{formatProductMoney(chosenPackage.price, chosenPackage.currency)}</strong>
+        <strong style={{ fontSize: 13, color: "#0f172a" }}>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
       </div>
 
       {selectedCrossSellLines.map((line, index) => (
@@ -2162,7 +2164,7 @@ export default function PublicOrderFormPage() {
             <strong style={{ fontSize: 13, color: "#92400e" }}>Additional item · {line.name}</strong>
             {line.detail ? <span style={{ fontSize: 12, color: "#64748b" }}>{line.detail}</span> : null}
           </div>
-          <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackage.currency)}</strong>
+          <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackageCurrency)}</strong>
         </div>
       ))}
 
@@ -2177,7 +2179,7 @@ export default function PublicOrderFormPage() {
         }}
       >
         <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Total so far</span>
-        <strong style={{ fontSize: 18, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackage.currency)}</strong>
+        <strong style={{ fontSize: 18, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
       </div>
     </div>
   ) : null;
@@ -2187,7 +2189,7 @@ export default function PublicOrderFormPage() {
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
         <span>{publicProduct.name} · {chosenPackage.name}</span>
-        <strong>{formatProductMoney(chosenPackage.price, chosenPackage.currency)}</strong>
+        <strong>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
       </div>
       {selectedCrossSellLines.map((line, index) => (
         <div key={`xs-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#92400e" }}>
@@ -2195,7 +2197,7 @@ export default function PublicOrderFormPage() {
             <span>↳ Additional item · {line.name}</span>
             {line.detail ? <span style={{ color: "#94a3b8", fontSize: 11 }}>{line.detail}</span> : null}
           </div>
-          <span>{formatProductMoney(line.total, chosenPackage.currency)}</span>
+          <span>{formatProductMoney(line.total, chosenPackageCurrency)}</span>
         </div>
       ))}
       {autoCompanionLines.map((line, index) => (
@@ -2204,7 +2206,7 @@ export default function PublicOrderFormPage() {
             <span>+ {line.name}</span>
             {line.detail ? <span style={{ color: "#94a3b8", fontSize: 11 }}>{line.detail}</span> : null}
           </div>
-          <span>{line.total === 0 ? "FREE" : formatProductMoney(line.total, chosenPackage.currency)}</span>
+          <span>{line.total === 0 ? "FREE" : formatProductMoney(line.total, chosenPackageCurrency)}</span>
         </div>
       ))}
       {summaryGiftLines.map((gift) => (
@@ -2215,7 +2217,7 @@ export default function PublicOrderFormPage() {
       ))}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, padding: "10px 0 0", marginTop: 4, borderTop: "2px solid #1F8FE0", fontWeight: 800 }}>
         <span>Total</span>
-        <span style={{ color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackage.currency)}</span>
+        <span style={{ color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</span>
       </div>
     </div>
   ) : null;
@@ -3114,7 +3116,7 @@ export default function PublicOrderFormPage() {
                     {autoCompanionLines.map((line, index) => (
                       <div key={`bundle-${index}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#047857" }}>
                         <span>+ {line.name} × {line.qty}</span>
-                        <strong>{line.total === 0 ? "FREE" : formatProductMoney(line.total, chosenPackage.currency)}</strong>
+                        <strong>{line.total === 0 ? "FREE" : formatProductMoney(line.total, chosenPackageCurrency)}</strong>
                       </div>
                     ))}
                   </div>
