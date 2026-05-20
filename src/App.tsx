@@ -7415,6 +7415,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setAdSpendSaving(true);
     const activeProds = catalogProducts.filter((p) => p.active);
     const prevExpenses = expenses;
+    let savedEntries = 0;
+    let savedTotal = 0;
     try {
       for (const product of activeProds) {
         const productCurrency = (["NGN", "USD", "GBP"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
@@ -7439,10 +7441,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               productId: product.id
             });
             setExpenses((prev) => [...prev, newExp]);
+            savedEntries += 1;
+            savedTotal += newExp.amount;
           }
         }
       }
-      showToast("Ad spend saved.");
+      try {
+        const freshExpenses = await expensesApi.list();
+        setExpenses((freshExpenses as any[]).map((expense: any) => normalizeExpenseRecord(expense)));
+      } catch {
+        // Keep the optimistic state if the follow-up refresh fails.
+      }
+      void loadWeeklyAccountingData({ quiet: true });
+      showToast(`Ad spend saved. ${savedEntries} entr${savedEntries === 1 ? "y" : "ies"} synced (${formatMoney(savedTotal)}).`);
     } catch {
       setExpenses(prevExpenses);
       showToast("Save failed — changes rolled back. Check connection.");
