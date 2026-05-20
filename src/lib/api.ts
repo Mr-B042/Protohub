@@ -3,9 +3,8 @@
 // and auto-refreshes if the token has expired (401).
 
 import { auth } from "./auth";
+import { fetchWithApiFailover } from "./backend-origin";
 import { snakeToCamel } from "./normalize";
-
-const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 let refreshInFlight: Promise<boolean> | null = null;
 const TRANSIENT_RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const TRANSIENT_GET_RETRY_LIMIT = 2;
@@ -101,7 +100,7 @@ async function request<T>(
   const token = auth.getAccessToken();
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetchWithApiFailover(path, {
       method,
       cache: "no-store", // never read from or write to HTTP cache
       headers: {
@@ -149,7 +148,7 @@ async function tryRefresh(): Promise<boolean> {
     const refreshToken = auth.getRefreshToken();
     if (!refreshToken) return false;
     try {
-      const res = await fetch(`${BASE}/api/auth/refresh`, {
+      const res = await fetchWithApiFailover("/api/auth/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken })
@@ -159,7 +158,7 @@ async function tryRefresh(): Promise<boolean> {
       // Fetch fresh profile so role/name stay in sync
       let user = auth.getUser();
       try {
-        const meRes = await fetch(`${BASE}/api/auth/me`, {
+        const meRes = await fetchWithApiFailover("/api/auth/me", {
           headers: { Authorization: `Bearer ${data.accessToken}` }
         });
         if (meRes.ok) {
@@ -261,7 +260,7 @@ export const productsApi = {
   // Public storefront view of one product, with cross-sells + free-gifts inlined.
   // Raw fetch so embed forms never inherit stale auth headers or 401 refresh logic.
   public: async (id: string) => {
-    const res = await fetch(`${BASE}/api/public/products/${encodeURIComponent(id)}`, {
+    const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}`, {
       cache: "no-store"
     });
     if (!res.ok) {
@@ -425,7 +424,7 @@ export const embedSettingsApi = {
   patch:  (body: unknown)     => patch<any>("/api/embed-settings", body),
   // Public: read settings unauthenticated (used by the customer-facing embed form)
   public: async (orgId: string) => {
-    const res = await fetch(`${BASE}/api/public/embed-settings/${orgId}`);
+    const res = await fetchWithApiFailover(`/api/public/embed-settings/${orgId}`);
     if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => res.statusText));
     return snakeToCamel<any>(await res.json());
   }
@@ -476,7 +475,7 @@ export const cartsApi = {
   // Use this from the embed form so it works inside customer-facing iframes.
   capture: (body: unknown) => post<any>("/api/public/carts", body),
   trackPublicJourney: async (id: string, body: unknown, options?: { keepalive?: boolean }) => {
-    const res = await fetch(`${BASE}/api/public/carts/${encodeURIComponent(id)}/events`, {
+    const res = await fetchWithApiFailover(`/api/public/carts/${encodeURIComponent(id)}/events`, {
       method: "POST",
       cache: "no-store",
       keepalive: options?.keepalive === true,
@@ -521,7 +520,7 @@ export const cartsApi = {
 // embed-form customers) and don't trigger request()'s 401 → reload behavior.
 export const publicOrdersApi = {
   create: async (body: unknown) => {
-    const res = await fetch(`${BASE}/api/public/orders`, {
+    const res = await fetchWithApiFailover("/api/public/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -549,7 +548,7 @@ export const publicOrdersApi = {
     }>(await res.json());
   },
   acceptUpsell: async (orderId: string, body: { token: string }) => {
-    const res = await fetch(`${BASE}/api/public/orders/${encodeURIComponent(orderId)}/upsell`, {
+    const res = await fetchWithApiFailover(`/api/public/orders/${encodeURIComponent(orderId)}/upsell`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)

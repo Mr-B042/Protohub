@@ -119,6 +119,7 @@ Tokens expire after 1 hour. Use `POST /api/auth/refresh` with your `refreshToken
 3. Set environment variables from `.env`
 4. Railway auto-detects Node.js and runs `npm start`
 5. Set `FRONTEND_URL` to your Vercel frontend URL for CORS
+6. If you use a backup backend, keep the same production env values there and disable duplicate cron work unless that backup is actively promoted.
 
 ---
 
@@ -132,4 +133,7 @@ npx vercel
 Set environment variable in Vercel:
 ```
 VITE_API_URL=https://your-railway-app.railway.app
+VITE_API_FALLBACK_URLS=https://your-backup-backend.example.com
 ```
+
+`VITE_API_FALLBACK_URLS` is optional and can contain one or more comma-separated backup backend URLs. The frontend will automatically fail over to a backup backend when the primary API is temporarily unavailable, then naturally prefer the primary again after the short failover window expires.

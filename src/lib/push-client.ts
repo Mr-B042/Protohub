@@ -1,9 +1,8 @@
 import { App as CapacitorApp } from "@capacitor/app";
 import { PushNotifications, type PushNotificationSchema } from "@capacitor/push-notifications";
 import { auth } from "./auth";
+import { fetchWithApiFailover } from "./backend-origin";
 import { isNativeShell, nativePlatform } from "./native-shell";
-
-const BASE = (import.meta as any).env?.VITE_API_URL ?? "http://localhost:4000";
 const SERVICE_WORKER_SCOPE = "/";
 const SERVICE_WORKER_URL = "/sw.js";
 const NATIVE_PUSH_TOKEN_KEY = "protohub.nativePushToken";
@@ -128,7 +127,7 @@ export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRe
 
 async function saveWebSubscription(subscription: PushSubscription, options: SaveSubscriptionOptions = {}): Promise<void> {
   const subJson = subscription.toJSON();
-  const res = await fetch(`${BASE}/api/push/subscribe`, {
+  const res = await fetchWithApiFailover("/api/push/subscribe", {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({
@@ -149,7 +148,7 @@ async function saveWebSubscription(subscription: PushSubscription, options: Save
 
 async function saveNativePushDevice(token: string, options: SaveSubscriptionOptions = {}): Promise<void> {
   const appInfo = await CapacitorApp.getInfo().catch(() => null);
-  const res = await fetch(`${BASE}/api/push/native/subscribe`, {
+  const res = await fetchWithApiFailover("/api/push/native/subscribe", {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({
@@ -302,7 +301,7 @@ export async function initializeNativePushBridge(): Promise<void> {
  */
 export async function getVapidPublicKey(): Promise<string | null> {
   try {
-    const res = await fetch(`${BASE}/api/push/vapid-public-key`, {
+    const res = await fetchWithApiFailover("/api/push/vapid-public-key", {
       headers: getAuthHeaders()
     });
     if (!res.ok) return null;
@@ -315,7 +314,7 @@ export async function getVapidPublicKey(): Promise<string | null> {
 
 export async function getPushStatus(): Promise<PushStatusResponse> {
   try {
-    const res = await fetch(`${BASE}/api/push/status`, {
+    const res = await fetchWithApiFailover("/api/push/status", {
       headers: getAuthHeaders()
     });
     if (!res.ok) {
@@ -362,7 +361,7 @@ function getSubscriptionServerKey(subscription: PushSubscription): Uint8Array | 
 }
 
 async function removeServerSubscription(endpoint: string): Promise<void> {
-  await fetch(`${BASE}/api/push/subscribe`, {
+  await fetchWithApiFailover("/api/push/subscribe", {
     method: "DELETE",
     headers: getAuthHeaders(),
     body: JSON.stringify({ endpoint })
@@ -370,7 +369,7 @@ async function removeServerSubscription(endpoint: string): Promise<void> {
 }
 
 async function removeNativePushDevice(token: string | null): Promise<void> {
-  await fetch(`${BASE}/api/push/native/subscribe`, {
+  await fetchWithApiFailover("/api/push/native/subscribe", {
     method: "DELETE",
     headers: getAuthHeaders(),
     body: JSON.stringify(token ? { token } : {})
@@ -483,7 +482,7 @@ export async function unsubscribeFromPush(): Promise<boolean> {
 export async function sendTestPush(body?: { title?: string; body?: string }): Promise<{ message: string }> {
   const nativeToken = isNativeShell ? getStoredNativePushToken() : null;
   const endpoint = !isNativeShell ? await getCurrentPushEndpoint() : null;
-  const res = await fetch(`${BASE}/api/push/test`, {
+  const res = await fetchWithApiFailover("/api/push/test", {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({

@@ -46,6 +46,7 @@ import userRoutes          from "./routes/users.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
+const ENABLE_BACKGROUND_JOBS = !["0", "false", "no", "off"].includes((process.env.ENABLE_BACKGROUND_JOBS ?? "true").trim().toLowerCase());
 
 const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -78,9 +79,20 @@ function isLoopbackIp(ip: string | undefined) {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
+function isAllowedLocalOrigin(origin: string | undefined) {
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedFrontendOrigin(origin: string | undefined) {
   if (!origin) return true;
-  return allowedFrontendOrigins.includes(normalizeOrigin(origin));
+  return isAllowedLocalOrigin(origin) || allowedFrontendOrigins.includes(normalizeOrigin(origin));
 }
 
 function rateLimitBucketKey(req: express.Request) {
@@ -178,7 +190,11 @@ app.use((req, _res, next) => {
 
 // ── Health check ──────────────────────────────────────────
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS
+  });
 });
 
 // ── Routes ────────────────────────────────────────────────
@@ -224,10 +240,11 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 app.listen(PORT, () => {
-  logger.info("server started", { port: PORT });
+  logger.info("server started", { port: PORT, backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS });
 });
 
 // ── SMS delivery-report sync — every 10 minutes ──────────
+if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("*/10 * * * *", async () => {
   logger.info("cron: syncing sms delivery reports");
   try {
@@ -431,3 +448,6 @@ cron.schedule("0 7 * * 0", async () => {
     logger.error("cron: weekly report job crashed", { error: (e as Error).message });
   }
 });
+} else {
+  logger.info("background jobs disabled by env");
+}
