@@ -11795,12 +11795,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       };
       const hydrateExpenses = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          setExpenses((result.value as any[]).map((e: any) => ({
-            ...e,
-            createdAt: e.createdAt ?? e.created_at ?? "",
-            type: e.type ?? e.category ?? "Other",
-            productName: e.productName ?? e.productName ?? ""
-          })) as any);
+          setExpenses((result.value as any[]).map((e: any) => normalizeExpenseRecord(e)) as any);
         }
       };
       const hydrateWaybills = (result: PromiseSettledResult<any>) => {
@@ -30474,15 +30469,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-                const activeProds = catalogProducts.filter((p) => p.active);
+                const activeProdRows = catalogProducts
+                  .filter((p) => p.active)
+                  .map((product) => {
+                    const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                    const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
+                    const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
+                    return { product, weeklySpend, weeklyRevenue, weeklyOrders };
+                  })
+                  .sort((a, b) =>
+                    b.weeklyOrders - a.weeklyOrders
+                    || b.weeklyRevenue - a.weeklyRevenue
+                    || b.weeklySpend - a.weeklySpend
+                    || a.product.name.localeCompare(b.product.name)
+                  );
                 const weekLabel = `${displayDateFromKey(adSpendWeekDays[0])} – ${displayDateFromKey(adSpendWeekDays[6])}`;
                 const todayKey2 = todayKey();
 
                 // Week totals
-                const weekTotalSpend = adSpendWeekDays.reduce((s, day) =>
-                  s + activeProds.reduce((ps, p) => ps + (parseFloat(adSpendDraft[`${p.id}-${day}`] ?? "") || 0), 0), 0);
-                const weekTotalRevenue = adSpendWeekDays.reduce((s, day) =>
-                  s + activeProds.reduce((ps, p) => ps + revenueForProductDay(p.id, day), 0), 0);
+                const weekTotalSpend = activeProdRows.reduce((sum, row) => sum + row.weeklySpend, 0);
+                const weekTotalRevenue = activeProdRows.reduce((sum, row) => sum + row.weeklyRevenue, 0);
 
                 return (
                   <div className="space-y-4">
@@ -30523,21 +30529,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ))}
                     </div>
 
-                    {activeProds.length === 0 ? (
+                    {activeProdRows.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 italic">No active products. Add a product first.</div>
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {activeProds.map((product) => {
-                            const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
-                            const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }) => {
                             const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                             return (
                               <article key={product.id} className="p-4 space-y-4">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="text-sm font-semibold text-gray-800">{product.name}</div>
-                                    <div className="text-xs text-gray-400">Weekly ad spend and revenue breakdown</div>
+                                    <div className="text-xs text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders this week yet"}</div>
                                   </div>
                                   {rowRoas !== null && (
                                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
@@ -30624,9 +30628,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </tr>
                             </thead>
                             <tbody>
-                              {activeProds.map((product, pi) => {
-                                const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
-                                const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }, pi) => {
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
 
                                 return (
@@ -30635,6 +30637,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
                                       <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={3}>
                                         <div className="text-sm">{product.name}</div>
+                                        <div className="mt-1 text-[10px] font-medium text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet"}</div>
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
                                             {rowRoas.toFixed(2)}x ROAS
