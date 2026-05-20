@@ -160,7 +160,14 @@ type PendingUpsellOffer = {
 type PublicOrderSubmissionState = {
   orderId: string;
   customer: string;
-  mode: "confirmed_order" | "outage_capture";
+  mode: "confirmed_order" | "outage_capture" | "browser_queue";
+};
+
+type QueuedPublicOrderSubmission = {
+  id: string;
+  customer: string;
+  body: Record<string, unknown>;
+  createdAt: string;
 };
 
 const DEFAULT_CONFIRMATION_TEXT =
@@ -218,6 +225,7 @@ const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 8;
 const PUBLIC_PRODUCT_RETRY_DELAY_MS = 1200;
+const PUBLIC_OUTAGE_QUEUE_KEY = "protohub.publicOrderOutageQueue";
 
 type CachedSnapshot<T> = {
   cachedAt: number;
@@ -266,6 +274,31 @@ function publicProductCacheKey(productId: string) {
 
 function publicSettingsCacheKey(orgId: string) {
   return `protohub.publicEmbedSettings.${orgId}`;
+}
+
+function readQueuedPublicOrders() {
+  if (typeof window === "undefined") return [] as QueuedPublicOrderSubmission[];
+  try {
+    const raw = window.localStorage.getItem(PUBLIC_OUTAGE_QUEUE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as QueuedPublicOrderSubmission[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeQueuedPublicOrders(value: QueuedPublicOrderSubmission[]) {
+  if (typeof window === "undefined") return;
+  try {
+    if (value.length === 0) {
+      window.localStorage.removeItem(PUBLIC_OUTAGE_QUEUE_KEY);
+      return;
+    }
+    window.localStorage.setItem(PUBLIC_OUTAGE_QUEUE_KEY, JSON.stringify(value));
+  } catch {
+    // Ignore queue persistence failures.
+  }
 }
 
 const makeCartId = () => `CART-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -934,6 +967,44 @@ export default function PublicOrderFormPage() {
   }, [toast]);
 
   useEffect(() => {
+    if (publicUpsellOffer || publicOrderSubmittingRef.current) return;
+    let cancelled = false;
+    const flushQueue = async () => {
+      const queued = readQueuedPublicOrders();
+      if (!queued.length) return;
+      const nextQueue: QueuedPublicOrderSubmission[] = [];
+      for (const entry of queued) {
+        try {
+          const created = await publicOrdersApi.create(entry.body);
+          if (
+            !cancelled
+            && publicOrderSubmitted
+            && publicOrderSubmitted.mode === "browser_queue"
+            && publicOrderSubmitted.orderId === entry.id
+          ) {
+            showToast("Your saved request has now been submitted successfully.");
+            finishPublicOrderJourney(created.id, entry.customer);
+          }
+        } catch (error: any) {
+          if (shouldCapturePublicOrderOutage(error)) {
+            nextQueue.push(entry);
+          }
+        }
+      }
+      if (!cancelled) {
+        writeQueuedPublicOrders(nextQueue);
+      }
+    };
+
+    flushQueue();
+    const intervalId = window.setInterval(flushQueue, 20000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [publicOrderSubmitted, publicUpsellOffer]);
+
+  useEffect(() => {
     if (!loading || publicProduct) {
       setShowLoading(false);
       return;
@@ -1415,6 +1486,12 @@ export default function PublicOrderFormPage() {
     setPublicOrderSubmitted({ orderId, customer, mode: "outage_capture" });
   }
 
+  function finishBrowserQueuedJourney(orderId: string, customer: string) {
+    setPublicUpsellOffer(null);
+    exitTrackedRef.current = true;
+    setPublicOrderSubmitted({ orderId, customer, mode: "browser_queue" });
+  }
+
   function shouldCapturePublicOrderOutage(error: any) {
     const status = typeof error?.status === "number" ? error.status : null;
     if (status == null || status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504) {
@@ -1490,6 +1567,24 @@ export default function PublicOrderFormPage() {
       });
     if (error) throw error;
     return outageCartId;
+  }
+
+  function queueBrowserOutageSubmission(options: {
+    customerName: string;
+    body: Record<string, unknown>;
+  }) {
+    const queuedId = `LOCAL-${Date.now().toString(36)}`;
+    const nextQueue = [
+      ...readQueuedPublicOrders(),
+      {
+        id: queuedId,
+        customer: options.customerName,
+        body: options.body,
+        createdAt: new Date().toISOString()
+      }
+    ];
+    writeQueuedPublicOrders(nextQueue);
+    return queuedId;
   }
 
   async function submitPublicOrder() {
@@ -1595,38 +1690,40 @@ export default function PublicOrderFormPage() {
       }
     });
 
+    const submissionBody = {
+      cartId: publicEmbedIsPreview ? undefined : (submissionCartId || undefined),
+      customer: customerName,
+      phone: orderFormPhone.trim(),
+      whatsapp: whatsappDigits || undefined,
+      email: orderFormEmail.trim() || undefined,
+      address: orderFormAddress.trim() || undefined,
+      city: orderFormCity.trim() || undefined,
+      state: orderFormState.trim() || undefined,
+      packageId: chosenPackage.id,
+      crossSellLines: orderFormCrossSells
+        .filter((line) => line.productId && line.quantity > 0)
+        .map((line) => ({
+          companionId: line.companionId?.trim() || undefined,
+          productId: line.productId,
+          packageId: line.packageId?.trim() || undefined,
+          quantity: line.quantity
+        })),
+      utmSource: publicUtmSource || undefined,
+      utmCampaign: publicUtmCampaign || undefined,
+      utmMedium: publicUtmMedium || undefined,
+      utmContent: publicUtmContent || undefined,
+      utmTerm: publicUtmTerm || undefined,
+      embedLabel: publicEmbedLabel || undefined,
+      referrer: publicReferrer || undefined,
+      confirmationChecked: orderFormConfirmed,
+      preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+      company: publicHoneypot,
+    };
+
     setPublicOrderSubmitting(true);
     publicOrderSubmittingRef.current = true;
     try {
-      const created = await publicOrdersApi.create({
-        cartId: publicEmbedIsPreview ? undefined : (submissionCartId || undefined),
-        customer: customerName,
-        phone: orderFormPhone.trim(),
-        whatsapp: whatsappDigits || undefined,
-        email: orderFormEmail.trim() || undefined,
-        address: orderFormAddress.trim() || undefined,
-        city: orderFormCity.trim() || undefined,
-        state: orderFormState.trim() || undefined,
-        packageId: chosenPackage.id,
-        crossSellLines: orderFormCrossSells
-          .filter((line) => line.productId && line.quantity > 0)
-          .map((line) => ({
-            companionId: line.companionId?.trim() || undefined,
-            productId: line.productId,
-            packageId: line.packageId?.trim() || undefined,
-            quantity: line.quantity
-          })),
-        utmSource: publicUtmSource || undefined,
-        utmCampaign: publicUtmCampaign || undefined,
-        utmMedium: publicUtmMedium || undefined,
-        utmContent: publicUtmContent || undefined,
-        utmTerm: publicUtmTerm || undefined,
-        embedLabel: publicEmbedLabel || undefined,
-        referrer: publicReferrer || undefined,
-        confirmationChecked: orderFormConfirmed,
-        preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
-        company: publicHoneypot,
-      });
+      const created = await publicOrdersApi.create(submissionBody);
       const upsellProductId = created.upsellOffer?.productId;
       const upsellPackageId = created.upsellOffer?.packageId;
       const upsellCompanion = upsellProductId
@@ -1717,6 +1814,20 @@ export default function PublicOrderFormPage() {
         } catch {
           // Fall through to the default error path if direct capture also fails.
         }
+        const queuedId = queueBrowserOutageSubmission({
+          customerName,
+          body: submissionBody
+        });
+        resetOrderForm();
+        setPublicOrderSubmitting(false);
+        publicOrderSubmittingRef.current = false;
+        if (cartSyncTimerRef.current) {
+          window.clearTimeout(cartSyncTimerRef.current);
+          cartSyncTimerRef.current = null;
+        }
+        showToast("We saved your request in this browser and will keep retrying automatically while the system is offline.");
+        finishBrowserQueuedJourney(queuedId, customerName);
+        return;
       }
       setPublicOrderSubmitting(false);
       publicOrderSubmittingRef.current = false;
@@ -2221,12 +2332,14 @@ export default function PublicOrderFormPage() {
                   Thank you{publicOrderSubmitted.customer ? `, ${publicOrderSubmitted.customer.split(" ")[0]}` : ""}!
                 </h1>
                 <p style={{ margin: 0, fontSize: 15, color: "#374151", maxWidth: 440, lineHeight: 1.5 }}>
-                  {publicOrderSubmitted.mode === "outage_capture"
+                  {publicOrderSubmitted.mode === "browser_queue"
+                    ? "We saved your request in this browser and will keep retrying automatically while the order system is offline. Please keep this tab open if possible."
+                    : publicOrderSubmitted.mode === "outage_capture"
                     ? "We saved your request while the order system was temporarily offline. Our team will contact you shortly to confirm the details and arrange delivery."
                     : "Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery."}
                 </p>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f3f4f6", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "#374151" }}>
-                  {publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
+                  {publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
                 </div>
                 {publicRedirectUrl ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>Redirecting…</p>
