@@ -7296,6 +7296,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     qty: number;
     total: number;
   };
+  type JourneyDerivedCartSelection = {
+    productId: string;
+    packageId?: string;
+    quantity: number;
+    productName?: string;
+  };
   const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
     const payload = cart.capturePayload;
     return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
@@ -7325,13 +7331,89 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       })
       .filter(Boolean) as CapturedCartOfferLine[];
   };
-  const additionalPackageLinesForCart = (cart: AbandonedCartRecord): CapturedCartOfferLine[] => {
+  const additionalPackageSelectionsFromJourney = (events: CartJourneyEvent[]): JourneyDerivedCartSelection[] => {
+    const selections = new Map<string, JourneyDerivedCartSelection>();
+    events.forEach((event) => {
+      const key = `${event.companionProductId ?? ""}:${event.companionPackageId ?? ""}`;
+      if (!key || key === ":") return;
+      if (event.eventType === "additional_item_removed") {
+        selections.delete(key);
+        return;
+      }
+      if (event.eventType !== "additional_item_added") {
+        return;
+      }
+      const quantity = Math.max(1, Math.floor(Number(event.metadata?.quantity ?? 1) || 1));
+      selections.set(key, {
+        productId: event.companionProductId ?? "",
+        packageId: event.companionPackageId ?? undefined,
+        quantity,
+        productName: typeof event.metadata?.productName === "string" ? event.metadata.productName : undefined
+      });
+    });
+    return Array.from(selections.values()).filter((entry) => entry.productId);
+  };
+  const additionalPackageLinesFromJourney = (
+    cart: AbandonedCartRecord,
+    events: CartJourneyEvent[]
+  ): CapturedCartOfferLine[] => {
+    if (!events.length) return [];
+    const mainProduct = products.find((item) => item.id === cart.productId);
+    const mainPackage = mainProduct?.packages.find((item) => item.id === cart.packageId);
+    return additionalPackageSelectionsFromJourney(events)
+      .map((selection) => {
+        const product = products.find((item) => item.id === selection.productId);
+        if (!product && !selection.productName) return null;
+        const targetPackage = selection.packageId
+          ? product?.packages.find((item) => item.id === selection.packageId)
+          : undefined;
+        const companion = (mainPackage?.companionProducts ?? []).find((entry) =>
+          entry.productId === selection.productId
+          && ((selection.packageId ?? "") ? (entry.packageId ?? "") === (selection.packageId ?? "") : true)
+        );
+        if (companion && product) {
+          const standard = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
+          const unit = companion.pricingMode === "free"
+            ? 0
+            : companion.pricingMode === "fixed"
+              ? Number(companion.fixedPrice ?? 0)
+              : standard;
+          const qty = Math.max(1, Number(companion.quantity) || selection.quantity || 1);
+          return {
+            name: targetPackage ? `${product.name} · ${targetPackage.name}` : product.name,
+            detail: targetPackage?.description?.trim()
+              ? targetPackage.description.trim()
+              : targetPackage
+                ? `${qty} ${qty === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`
+                : `${qty} ${qty === 1 ? "pc" : "pcs"} in this add-on`,
+            qty,
+            total: Math.max(0, companion.pricingMode === "fixed" ? unit : unit * qty)
+          };
+        }
+        const fallbackQty = Math.max(1, selection.quantity || 1);
+        const unit = mainProduct && product
+          ? crossSellPriceFor(mainProduct, product)
+          : (product ? primaryPricing(product)?.sellingPrice ?? 0 : 0);
+        return {
+          name: selection.productName || product?.name || "Additional item",
+          detail: `${fallbackQty} ${fallbackQty === 1 ? "pc" : "pcs"} in this additional item`,
+          qty: fallbackQty,
+          total: Math.max(0, unit * fallbackQty)
+        };
+      })
+      .filter(Boolean) as CapturedCartOfferLine[];
+  };
+  const additionalPackageLinesForCart = (
+    cart: AbandonedCartRecord,
+    journeyEvents: CartJourneyEvent[] = []
+  ): CapturedCartOfferLine[] => {
     const payload = cartCapturePayloadFor(cart);
-    if (!payload) return [];
-    return [
+    const payloadLines = payload ? [
       ...capturedOfferLinesFrom(payload.selectedCrossSellLines),
       ...capturedOfferLinesFrom(payload.autoCompanionLines)
-    ];
+    ] : [];
+    if (payloadLines.length > 0) return payloadLines;
+    return additionalPackageLinesFromJourney(cart, journeyEvents);
   };
   const packageQuantityForCart = (cart: AbandonedCartRecord) => {
     const payload = cartCapturePayloadFor(cart);
@@ -7365,8 +7447,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       .filter(Boolean);
     return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
   };
-  const formatCartForWhatsAppDispatch = (cart: AbandonedCartRecord) => {
-    const extraPricedPackages = additionalPackageLinesForCart(cart);
+  const formatCartForWhatsAppDispatch = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
+    const extraPricedPackages = additionalPackageLinesForCart(cart, journeyEvents);
     const extraPricedTotal = extraPricedPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
     const mainOfferTotal = Math.max(0, (cart.amount || 0) - extraPricedTotal);
     const hasMultiplePricedPackages = extraPricedPackages.length > 0;
@@ -37099,7 +37181,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	            {modal === "cartDetails" && selectedCart && (() => {
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
-                const cartAdditionalPackages = additionalPackageLinesForCart(selectedCart);
+                const cartAdditionalPackages = additionalPackageLinesForCart(selectedCart, selectedCartJourney);
                 const cartAdditionalTotal = cartAdditionalPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
                 const cartMainOfferTotal = Math.max(0, (selectedCart.amount || 0) - cartAdditionalTotal);
                 const cartPackageQuantity = packageQuantityForCart(selectedCart);
@@ -37145,7 +37227,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      )}
                         <button
                           type="button"
-                          onClick={() => copyText(formatCartForWhatsAppDispatch(selectedCart), `${selectedCart.id} WhatsApp group copy`)}
+                          onClick={() => copyText(formatCartForWhatsAppDispatch(selectedCart, selectedCartJourney), `${selectedCart.id} WhatsApp group copy`)}
                           className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-200 bg-white text-emerald-700 text-xs font-bold hover:bg-emerald-50 transition-colors dark:border-emerald-500/35 dark:bg-[#16212c] dark:text-emerald-300 dark:hover:bg-emerald-500/10">
                           <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
                         </button>

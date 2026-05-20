@@ -33,6 +33,8 @@ const CartUpsertSchema = z.object({
   customer:     z.string().optional(),
   phone:        z.string().min(1),
   whatsapp:     z.string().optional(),
+  email:        z.string().email().optional().or(z.literal("")),
+  address:      z.string().optional(),
   city:         z.string().optional(),
   state:        z.string().optional(),
   productId:    z.string().uuid().optional(),
@@ -42,6 +44,8 @@ const CartUpsertSchema = z.object({
   amount:       z.number().min(0),
   currency:     z.enum(["NGN", "USD", "GBP"]),
   source:       z.string().optional(),
+  preferredDelivery: z.string().optional(),
+  capturePayload: z.record(z.string(), z.unknown()).optional(),
   status:       z.string().optional()  // accepted iff present in cart_status enum (DB will reject otherwise)
 });
 
@@ -176,6 +180,8 @@ router.post("/", async (req, res) => {
     customer:     d.customer ?? "Partial lead",
     phone:        d.phone,
     whatsapp:     d.whatsapp ?? null,
+    email:        d.email?.trim() || null,
+    address:      d.address?.trim() || null,
     city:         d.city ?? null,
     state:        d.state ?? null,
     product_id:   d.productId ?? null,
@@ -185,6 +191,11 @@ router.post("/", async (req, res) => {
     amount:       d.amount,
     currency:     d.currency,
     source:       d.source ?? "Website",
+    preferred_delivery: d.preferredDelivery?.trim() || null,
+    capture_payload:
+      d.capturePayload && typeof d.capturePayload === "object" && !Array.isArray(d.capturePayload)
+        ? d.capturePayload
+        : {},
     last_activity: new Date().toISOString()
   };
 

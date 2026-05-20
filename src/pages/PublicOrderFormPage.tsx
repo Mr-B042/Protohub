@@ -939,6 +939,62 @@ export default function PublicOrderFormPage() {
     });
   };
 
+  const companionForSelection = (selection: CrossSellSelection) =>
+    chosenPackage?.companionProducts?.find((companion) =>
+      companionSelectionKey(companion) === companionSelectionKey(selection)
+      && companionVisibleInState(companion, orderFormState)
+    );
+
+  const selectedCrossSellLines = orderFormCrossSells
+    .map((line) => {
+      const product = products.find((item) => item.id === line.productId);
+      if (!product || !chosenPackage || !publicProduct) return null;
+      const companion = companionForSelection(line);
+      if (companion) {
+        const targetPackage = targetPackageForCompanion(companion, products);
+        return {
+          name: companionDisplayName(companion, product, targetPackage),
+          detail: companionDisplayDetail(companion, targetPackage),
+          qty: companion.quantity,
+          total: companionLineTotal(companion, product, targetPackage)
+        };
+      }
+      const unit = crossSellPriceFor(publicProduct, product);
+      return {
+        name: product.name,
+        detail: `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this additional item`,
+        qty: line.quantity,
+        total: unit * line.quantity
+      };
+    })
+    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
+
+  const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
+    .filter((companion) => companion.autoInclude)
+    .filter((companion) => companionVisibleInState(companion, orderFormState))
+    .map((companion) => {
+      const product = products.find((item) => item.id === companion.productId);
+      if (!product) return null;
+      const targetPackage = targetPackageForCompanion(companion, products);
+      return {
+        name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
+        detail: companionDisplayDetail(companion, targetPackage),
+        qty: companion.quantity,
+        total: companionLineTotal(companion, product, targetPackage)
+      };
+    })
+    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
+
+  const summaryGiftLines = publicProduct
+    ? (publicProduct.freeGiftProductIds ?? [])
+        .map((giftId) => products.find((item) => item.id === giftId))
+        .filter((gift): gift is PublicProduct => Boolean(gift && freeGiftVisibleInState(publicProduct, gift, orderFormState)))
+    : [];
+
+  const summaryTotal = chosenPackage.price
+    + selectedCrossSellLines.reduce((sum, line) => sum + line.total, 0)
+    + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
+
   useEffect(() => {
     if (publicEmbedIsPreview) {
       setAbandonedDraftCartId("");
@@ -1247,16 +1303,35 @@ export default function PublicOrderFormPage() {
         customer: orderFormName.trim() || "Partial lead",
         phone: orderFormPhone.trim() || whatsappDigits || "No phone yet",
         whatsapp: whatsappDigits || undefined,
+        email: orderFormEmail.trim() || undefined,
+        address: orderFormAddress.trim() || undefined,
         city: orderFormCity.trim() || undefined,
         state: orderFormState.trim() || undefined,
         productId: publicProduct.id,
         packageId: chosenPackage.id,
         productName: publicProduct.name,
         packageName: chosenPackage.name,
-        amount: chosenPackage.price,
+        amount: summaryTotal,
         currency: chosenPackage.currency,
         source: orderSourceFromUtm(publicUtmSource),
         embedLabel: publicEmbedLabel || undefined,
+        preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+        capturePayload: {
+          customerName: orderFormName.trim() || "Partial lead",
+          phone: orderFormPhone.trim() || whatsappDigits || "No phone yet",
+          whatsapp: whatsappDigits || null,
+          email: orderFormEmail.trim() || null,
+          address: orderFormAddress.trim() || null,
+          city: orderFormCity.trim() || null,
+          state: orderFormState.trim() || null,
+          packageId: chosenPackage.id,
+          packageName: chosenPackage.name,
+          packageQuantity: chosenPackage.quantity,
+          selectedCrossSellLines,
+          autoCompanionLines,
+          preferredDelivery: orderFormDeliveryWindow.trim() || null,
+          embedLabel: publicEmbedLabel || null
+        }
       }).catch(() => {
         // Draft capture is best-effort only.
       });
@@ -1273,7 +1348,9 @@ export default function PublicOrderFormPage() {
     chosenPackage,
     orderFormAddress,
     orderFormCity,
+    orderFormDeliveryWindow,
     orderFormEmail,
+    orderFormCrossSells,
     orderFormName,
     orderFormPhone,
     orderFormState,
@@ -1283,8 +1360,8 @@ export default function PublicOrderFormPage() {
     publicPackages,
     publicProduct,
     publicUtmSource,
-    orderFormCrossSells.length,
     publicEmbedLabel,
+    summaryTotal,
   ]);
 
   useEffect(() => {
@@ -2031,60 +2108,6 @@ export default function PublicOrderFormPage() {
       </main>
     );
   }
-
-  const companionForSelection = (selection: CrossSellSelection) =>
-    chosenPackage?.companionProducts?.find((companion) =>
-      companionSelectionKey(companion) === companionSelectionKey(selection)
-      && companionVisibleInState(companion, orderFormState)
-    );
-
-  const selectedCrossSellLines = orderFormCrossSells
-    .map((line) => {
-      const product = products.find((item) => item.id === line.productId);
-      if (!product || !chosenPackage) return null;
-      const companion = companionForSelection(line);
-      if (companion) {
-        const targetPackage = targetPackageForCompanion(companion, products);
-        return {
-          name: companionDisplayName(companion, product, targetPackage),
-          detail: companionDisplayDetail(companion, targetPackage),
-          qty: companion.quantity,
-          total: companionLineTotal(companion, product, targetPackage)
-        };
-      }
-      const unit = crossSellPriceFor(publicProduct, product);
-      return {
-        name: product.name,
-        detail: `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this additional item`,
-        qty: line.quantity,
-        total: unit * line.quantity
-      };
-    })
-    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
-
-  const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
-    .filter((companion) => companion.autoInclude)
-    .filter((companion) => companionVisibleInState(companion, orderFormState))
-    .map((companion) => {
-      const product = products.find((item) => item.id === companion.productId);
-      if (!product) return null;
-      const targetPackage = targetPackageForCompanion(companion, products);
-      return {
-        name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
-        detail: companionDisplayDetail(companion, targetPackage),
-        qty: companion.quantity,
-        total: companionLineTotal(companion, product, targetPackage)
-      };
-    })
-    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
-
-  const summaryGiftLines = (publicProduct.freeGiftProductIds ?? [])
-    .map((giftId) => products.find((item) => item.id === giftId))
-    .filter((gift): gift is PublicProduct => Boolean(gift && freeGiftVisibleInState(publicProduct, gift, orderFormState)));
-
-  const summaryTotal = chosenPackage.price
-    + selectedCrossSellLines.reduce((sum, line) => sum + line.total, 0)
-    + autoCompanionLines.reduce((sum, line) => sum + line.total, 0);
 
   const inlineOrderBreakdownBlock = selectedCrossSellLines.length > 0 ? (
     <div

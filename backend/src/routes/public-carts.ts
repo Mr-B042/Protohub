@@ -22,6 +22,8 @@ const CaptureSchema = z.object({
   customer:     z.string().max(120).optional(),
   phone:        z.string().min(1).max(40),
   whatsapp:     z.string().max(40).optional(),
+  email:        z.string().email().optional().or(z.literal("")),
+  address:      z.string().max(500).optional(),
   city:         z.string().max(80).optional(),
   state:        z.string().max(80).optional(),
   productId:    z.string().uuid(),  // required — the source of truth for org_id
@@ -31,7 +33,9 @@ const CaptureSchema = z.object({
   amount:       z.number().min(0).max(1_000_000_000),
   currency:     z.enum(["NGN", "USD", "GBP"]),
   source:       z.string().max(60).optional(),
-  embedLabel:   z.string().max(120).optional()
+  embedLabel:   z.string().max(120).optional(),
+  preferredDelivery: z.string().max(160).optional(),
+  capturePayload: z.record(z.string(), z.unknown()).optional()
 });
 
 const JourneyEventSchema = z.object({
@@ -97,6 +101,8 @@ router.post("/", captureRateLimit, async (req, res) => {
     customer:     d.customer ?? "Partial lead",
     phone:        d.phone,
     whatsapp:     d.whatsapp ?? null,
+    email:        d.email?.trim() || null,
+    address:      d.address?.trim() || null,
     city:         d.city ?? null,
     state:        d.state ?? null,
     product_id:   d.productId,
@@ -107,6 +113,11 @@ router.post("/", captureRateLimit, async (req, res) => {
     currency:     d.currency,
     source:       d.source ?? "Website",
     embed_label:  (d.embedLabel ?? "").trim().slice(0, 120) || null,
+    preferred_delivery: d.preferredDelivery?.trim() || null,
+    capture_payload:
+      d.capturePayload && typeof d.capturePayload === "object" && !Array.isArray(d.capturePayload)
+        ? d.capturePayload
+        : {},
     last_activity: new Date().toISOString()
   };
 
@@ -155,9 +166,13 @@ router.post("/", captureRateLimit, async (req, res) => {
       .select()
       .single();
     let { data, error } = await updateQuery;
-    if (error?.code === "42703" || /embed_label/i.test(error?.message ?? "")) {
+    if (error?.code === "42703" || /embed_label|email|address|preferred_delivery|capture_payload/i.test(error?.message ?? "")) {
       const legacyRow = { ...row };
       delete (legacyRow as Record<string, unknown>).embed_label;
+      delete (legacyRow as Record<string, unknown>).email;
+      delete (legacyRow as Record<string, unknown>).address;
+      delete (legacyRow as Record<string, unknown>).preferred_delivery;
+      delete (legacyRow as Record<string, unknown>).capture_payload;
       updateQuery = supabase
         .from("abandoned_carts")
         .update(legacyRow)
@@ -178,9 +193,13 @@ router.post("/", captureRateLimit, async (req, res) => {
     .select()
     .single();
   let { data, error } = await insertQuery;
-  if (error?.code === "42703" || /embed_label/i.test(error?.message ?? "")) {
+  if (error?.code === "42703" || /embed_label|email|address|preferred_delivery|capture_payload/i.test(error?.message ?? "")) {
     const legacyRow = { ...row };
     delete (legacyRow as Record<string, unknown>).embed_label;
+    delete (legacyRow as Record<string, unknown>).email;
+    delete (legacyRow as Record<string, unknown>).address;
+    delete (legacyRow as Record<string, unknown>).preferred_delivery;
+    delete (legacyRow as Record<string, unknown>).capture_payload;
     insertQuery = supabase
       .from("abandoned_carts")
       .insert({ ...legacyRow, status: "Open abandoned" })
