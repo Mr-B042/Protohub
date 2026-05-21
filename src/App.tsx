@@ -4871,6 +4871,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
   const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
   const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
+  const [adTrackingLabelsLoadedScope, setAdTrackingLabelsLoadedScope] = useState<string | null>(null);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
@@ -4913,15 +4914,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreativeCardLabels(readPref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
     setEditingAdTrackingLabel(null);
     setAdTrackingLabelDraft("");
+    setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
   }, [adTrackingLabelScope]);
 
   useEffect(() => {
+    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
     writePref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, JSON.stringify(campaignCardLabels));
-  }, [adTrackingLabelScope, campaignCardLabels]);
+  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, campaignCardLabels]);
 
   useEffect(() => {
+    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
     writePref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, JSON.stringify(creativeCardLabels));
-  }, [adTrackingLabelScope, creativeCardLabels]);
+  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, creativeCardLabels]);
 
   // ── Role + access derivation (must come before any data filter that
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
