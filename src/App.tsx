@@ -5618,6 +5618,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [liveFormPulseEmbedOptions, setLiveFormPulseEmbedOptions] = useState<string[]>([]);
   const [selectedOrderJourney, setSelectedOrderJourney] = useState<CartJourneyEvent[]>([]);
   const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
+  const [whatsAppTargetPicker, setWhatsAppTargetPicker] = useState<null | {
+    customerName: string;
+    regularUrl: string;
+    businessUrl: string;
+  }>(null);
   const [repCartJourneyMap, setRepCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [repCartJourneyLoading, setRepCartJourneyLoading] = useState(false);
   const [orderFormName, setOrderFormName] = useState("");
@@ -8756,8 +8761,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`No WhatsApp number saved for ${group.agentName}.`);
       return;
     }
-    const text = encodeURIComponent(formatAgentBalanceWeekMessage(group));
-    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener,noreferrer");
+    openWhatsAppUrl(
+      digits,
+      formatAgentBalanceWeekMessage(group),
+      group.agentName
+    );
   };
   const exportWeekendStockSummaryCsv = () => {
     const rows = [
@@ -13024,6 +13032,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
   };
 
+  const buildWhatsAppBusinessUrl = (phone: string | null | undefined, message: string) => {
+    const normalized = normalizeWhatsAppPhone(phone);
+    if (!normalized) return null;
+    const encoded = encodeURIComponent(message);
+    const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent || "");
+    if (isAndroid) {
+      return `intent://send?phone=${normalized}&text=${encoded}#Intent;scheme=whatsapp;package=com.whatsapp.w4b;end`;
+    }
+    return `whatsapp-business://send?phone=${normalized}&text=${encoded}`;
+  };
+
   const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
     const quantity = quantityForOrder(order);
     const productLabel = order.packageName
@@ -13056,24 +13075,44 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ].join("\n");
   };
 
-  const openWhatsAppUrl = (url: string | null, customerName: string) => {
+  const launchWhatsAppTarget = (url: string | null, customerName: string) => {
     if (!url) {
       showToast(`No valid WhatsApp number for ${customerName}.`);
+      return;
+    }
+    if (/^(intent|whatsapp|whatsapp-business):/i.test(url)) {
+      window.location.href = url;
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  const openWhatsAppUrl = (phone: string | null | undefined, message: string, customerName: string) => {
+    const regularUrl = buildWhatsAppUrl(phone, message);
+    const businessUrl = buildWhatsAppBusinessUrl(phone, message);
+    if (!regularUrl || !businessUrl) {
+      showToast(`No valid WhatsApp number for ${customerName}.`);
+      return;
+    }
+    setWhatsAppTargetPicker({
+      customerName,
+      regularUrl,
+      businessUrl
+    });
+  };
+
   const openWhatsAppForOrder = (order: TrackedOrder) => {
     openWhatsAppUrl(
-      buildWhatsAppUrl(order.whatsapp || order.phone, buildOrderWhatsAppMessage(order)),
+      order.whatsapp || order.phone,
+      buildOrderWhatsAppMessage(order),
       order.customer
     );
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
     openWhatsAppUrl(
-      buildWhatsAppUrl(cart.whatsapp || cart.phone, buildCartWhatsAppMessage(cart)),
+      cart.whatsapp || cart.phone,
+      buildCartWhatsAppMessage(cart),
       cart.customer
     );
   };
@@ -35222,6 +35261,80 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           </div>
         </main>
       </div>
+
+      {whatsAppTargetPicker && (
+        <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
+          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-picker-title">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+              <div>
+                <h3 id="whatsapp-picker-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">
+                  Open in WhatsApp
+                </h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                  Choose the app you want to use for {whatsAppTargetPicker.customerName}.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100"
+                aria-label="Close WhatsApp app chooser"
+                onClick={() => setWhatsAppTargetPicker(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <button
+                type="button"
+                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
+                onClick={() => {
+                  const target = whatsAppTargetPicker.regularUrl;
+                  setWhatsAppTargetPicker(null);
+                  launchWhatsAppTarget(target, whatsAppTargetPicker.customerName);
+                }}
+              >
+                <span className="inline-flex items-center gap-3">
+                  <WhatsAppIcon className="h-5 w-5" />
+                  <span className="flex flex-col">
+                    <span>Normal WhatsApp</span>
+                    <span className="text-xs font-medium text-emerald-600/80 dark:text-emerald-200/80">Use your standard WhatsApp app</span>
+                  </span>
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
+
+              <button
+                type="button"
+                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
+                onClick={() => {
+                  const target = whatsAppTargetPicker.businessUrl;
+                  setWhatsAppTargetPicker(null);
+                  launchWhatsAppTarget(target, whatsAppTargetPicker.customerName);
+                }}
+              >
+                <span className="inline-flex items-center gap-3">
+                  <Smartphone className="h-5 w-5" />
+                  <span className="flex flex-col">
+                    <span>WhatsApp Business</span>
+                    <span className="text-xs font-medium text-blue-600/80 dark:text-blue-200/80">Best when your Business app is installed</span>
+                  </span>
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  className="!min-h-0 inline-flex w-full items-center justify-center rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-[#16212c]"
+                  onClick={() => setWhatsAppTargetPicker(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
 
       {managerActionDialog && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
