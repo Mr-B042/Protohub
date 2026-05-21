@@ -1136,10 +1136,44 @@ const nigeriaStates = [
   "FCT Abuja"
 ];
 
+const normalizeStateToken = (value?: string) => (value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+const titleCaseStateLabel = (value?: string) =>
+  (value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+
+const canonicalStateByToken = new Map<string, string>(
+  nigeriaStates.map((state) => [normalizeStateToken(state), state])
+);
+
+const stateTokenAliases: Record<string, string> = {
+  fct: "FCT Abuja",
+  abuja: "FCT Abuja",
+  federalcapitalterritory: "FCT Abuja",
+  federalcapitalterritoryabuja: "FCT Abuja",
+  portharcourt: "Rivers",
+  portharcourtrivers: "Rivers",
+  ph: "Rivers",
+  ibadan: "Oyo"
+};
+
 const normalizeStateName = (value?: string) => {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
-  return (value ?? "").trim();
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "";
+  const token = normalizeStateToken(trimmed);
+  if (!token) return "";
+  if (stateTokenAliases[token]) return stateTokenAliases[token];
+  const exact = canonicalStateByToken.get(token);
+  if (exact) return exact;
+  for (const [knownToken, state] of canonicalStateByToken.entries()) {
+    if (token === knownToken || token.includes(knownToken) || knownToken.includes(token)) {
+      return state;
+    }
+  }
+  return titleCaseStateLabel(trimmed);
 };
 
 const moneyValues = {
@@ -10501,11 +10535,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     : tier === "Fair" ? "bg-amber-100 text-amber-700 border border-amber-200"
     : "bg-red-100 text-red-700 border border-red-200";
 
+  const financeStateNameForOrder = (order: TrackedOrder) => {
+    const directState = normalizeStateName(order.state);
+    if (directState && (canonicalStateByToken.has(normalizeStateToken(directState)) || directState === "FCT Abuja")) {
+      return directState;
+    }
+    const locationState = normalizeStateName(order.location);
+    if (locationState && (canonicalStateByToken.has(normalizeStateToken(locationState)) || locationState === "FCT Abuja")) {
+      return locationState;
+    }
+    return directState || locationState || "Unknown";
+  };
+
   // ===== State performance — cohort view by created-week/state =====
   const stateRows = (() => {
     const map = new Map<string, { state: string; total: number; delivered: number; cancelled: number; failed: number; pending: number; revenue: number; cogs: number; logistics: number }>();
     financePeriodOrders.forEach((order) => {
-      const stateName = (order.state || order.location || "Unknown").trim() || "Unknown";
+      const stateName = financeStateNameForOrder(order);
       const status = order.status ?? "New";
       const cur = map.get(stateName) ?? { state: stateName, total: 0, delivered: 0, cancelled: 0, failed: 0, pending: 0, revenue: 0, cogs: 0, logistics: 0 };
       cur.total += 1;
