@@ -4833,6 +4833,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
   const [campaignPage, setCampaignPage] = useState(1);
+  const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
+  const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
+  const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
+  const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
@@ -4855,6 +4859,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const adTrackingLabelScope = authUser?.orgId ?? "default";
+
+  useEffect(() => {
+    const parseLabelMap = (raw: string): Record<string, string> | null => {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        const next: Record<string, string> = {};
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (typeof value === "string" && value.trim()) next[key] = value.trim();
+        });
+        return next;
+      } catch {
+        return null;
+      }
+    };
+    setCampaignCardLabels(readPref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
+    setCreativeCardLabels(readPref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
+    setEditingAdTrackingLabel(null);
+    setAdTrackingLabelDraft("");
+  }, [adTrackingLabelScope]);
+
+  useEffect(() => {
+    writePref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, JSON.stringify(campaignCardLabels));
+  }, [adTrackingLabelScope, campaignCardLabels]);
+
+  useEffect(() => {
+    writePref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, JSON.stringify(creativeCardLabels));
+  }, [adTrackingLabelScope, creativeCardLabels]);
 
   // ── Role + access derivation (must come before any data filter that
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
@@ -7588,6 +7621,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ...row,
     orderCount: row.orders.length
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
+  const campaignCardLabelFor = (id: string) => campaignCardLabels[id]?.trim() || "";
+  const creativeCardLabelFor = (id: string) => creativeCardLabels[id]?.trim() || "";
+  const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
+    setEditingAdTrackingLabel({ kind, id });
+    setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
+  };
+  const cancelAdTrackingLabelEdit = () => {
+    setEditingAdTrackingLabel(null);
+    setAdTrackingLabelDraft("");
+  };
+  const saveAdTrackingLabelEdit = () => {
+    if (!editingAdTrackingLabel) return;
+    const trimmed = adTrackingLabelDraft.trim().slice(0, 80);
+    const apply = editingAdTrackingLabel.kind === "campaign" ? setCampaignCardLabels : setCreativeCardLabels;
+    apply((current) => {
+      const next = { ...current };
+      if (trimmed) next[editingAdTrackingLabel.id] = trimmed;
+      else delete next[editingAdTrackingLabel.id];
+      return next;
+    });
+    showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
+    setEditingAdTrackingLabel(null);
+    setAdTrackingLabelDraft("");
+  };
 
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
@@ -30609,9 +30666,50 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Campaign</div>
-                              <div className="text-lg font-bold text-gray-900 break-all">{row.id}</div>
+                            <div className="min-w-0 flex-1">
+                              {editingAdTrackingLabel?.kind === "campaign" && editingAdTrackingLabel.id === row.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    value={adTrackingLabelDraft}
+                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        saveAdTrackingLabelEdit();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAdTrackingLabelEdit();
+                                      }
+                                    }}
+                                    placeholder="Add label..."
+                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
+                                    maxLength={80}
+                                  />
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700" onClick={saveAdTrackingLabelEdit} aria-label="Save campaign label">
+                                    <Check className="w-4 h-4" />
+                                  </button>
+                                  <button type="button" className="text-rose-500 hover:text-rose-600" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel campaign label edit">
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => beginAdTrackingLabelEdit("campaign", row.id)}
+                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${campaignCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
+                                  >
+                                    <span className={`truncate text-base font-semibold ${campaignCardLabelFor(row.id) ? "" : "italic"}`}>
+                                      {campaignCardLabelFor(row.id) || "Add label..."}
+                                    </span>
+                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                                      <Pencil className="w-4 h-4" />
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-purple-50 text-purple-700 px-2.5 py-1 text-xs font-semibold">Campaign</span>
                           </div>
@@ -30649,13 +30747,54 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Creative</div>
-                              <div className="text-base font-bold text-gray-900 break-all">{row.id}</div>
+                            <div className="min-w-0 flex-1">
+                              {editingAdTrackingLabel?.kind === "creative" && editingAdTrackingLabel.id === row.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    value={adTrackingLabelDraft}
+                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        saveAdTrackingLabelEdit();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAdTrackingLabelEdit();
+                                      }
+                                    }}
+                                    placeholder="Add label..."
+                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
+                                    maxLength={80}
+                                  />
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700" onClick={saveAdTrackingLabelEdit} aria-label="Save creative label">
+                                    <Check className="w-4 h-4" />
+                                  </button>
+                                  <button type="button" className="text-rose-500 hover:text-rose-600" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel creative label edit">
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => beginAdTrackingLabelEdit("creative", row.id)}
+                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${creativeCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
+                                  >
+                                    <span className={`truncate text-base font-semibold ${creativeCardLabelFor(row.id) ? "" : "italic"}`}>
+                                      {creativeCardLabelFor(row.id) || "Add label..."}
+                                    </span>
+                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                                      <Pencil className="w-4 h-4" />
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-green-50 text-green-700 px-2.5 py-1 text-xs font-semibold">Creative</span>
                           </div>
-                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{row.campaignId}</span></div>
+                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{campaignCardLabelFor(row.campaignId) || row.campaignId}</span></div>
                           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
