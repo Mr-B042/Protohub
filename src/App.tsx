@@ -700,6 +700,14 @@ type TrackedOrder = {
   bonusManuallyAdjusted?: boolean;
   bonusPaid?: boolean;
   notes?: OrderNote[];
+  originalCreatedAt?: string;
+  createdAtCorrectedAt?: string;
+  createdAtCorrectedBy?: string;
+  createdAtCorrectionReason?: string;
+  originalDeliveredDate?: string;
+  deliveredDateCorrectedAt?: string;
+  deliveredDateCorrectedBy?: string;
+  deliveredDateCorrectionReason?: string;
   date: string;
 };
 type WeeklyAccountingRemittanceTransaction = {
@@ -2914,6 +2922,69 @@ const formatOrderCreatedAt = (order: Pick<TrackedOrder, "createdAt" | "date">) =
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
+const orderHasCreatedAtCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
+  Boolean(order?.createdAtCorrectedAt && order?.originalCreatedAt);
+const orderHasDeliveredDateCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
+  Boolean(order?.deliveredDateCorrectedAt && order?.originalDeliveredDate);
+const orderDateAuditRows = (order: Partial<TrackedOrder> | null | undefined) => {
+  if (!order) return [] as Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }>;
+  const rows: Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }> = [];
+  if (orderHasCreatedAtCorrection(order)) {
+    rows.push({
+      kind: "created",
+      label: "Order date corrected",
+      from: formatMoment(order.originalCreatedAt) || displayDateFromKey(normalizeDateKey(order.originalCreatedAt ?? "")),
+      to: formatMoment(order.createdAt) || displayDateFromKey(normalizeDateKey(order.createdAt ?? order.date ?? "")),
+      reason: order.createdAtCorrectionReason ?? undefined,
+      correctedAt: order.createdAtCorrectedAt ?? undefined
+    });
+  }
+  if (orderHasDeliveredDateCorrection(order)) {
+    rows.push({
+      kind: "delivered",
+      label: "Delivered date corrected",
+      from: displayDateFromKey(normalizeDateKey(order.originalDeliveredDate ?? "")),
+      to: displayDateFromKey(orderDeliveredKey(order as TrackedOrder)),
+      reason: order.deliveredDateCorrectionReason ?? undefined,
+      correctedAt: order.deliveredDateCorrectedAt ?? undefined
+    });
+  }
+  return rows;
+};
+const renderOrderDateAuditStack = (
+  order: Partial<TrackedOrder> | null | undefined,
+  options: { compact?: boolean; className?: string } = {}
+) => {
+  const rows = orderDateAuditRows(order);
+  if (rows.length === 0) return null;
+  const compact = options.compact === true;
+  return (
+    <div className={options.className ?? `${compact ? "mt-2" : "mt-3"} space-y-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2`}>
+      {rows.map((row) => (
+        <div key={row.kind} className="space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              {row.label}
+            </span>
+            {row.correctedAt && (
+              <span className="text-[10px] text-amber-700/90">
+                logged {formatMoment(row.correctedAt)}
+              </span>
+            )}
+          </div>
+          <p className={`m-0 text-amber-900 ${compact ? "text-[11px]" : "text-xs"}`}>
+            {row.from} → {row.to}
+          </p>
+          {row.reason && (
+            <p className={`m-0 text-amber-800/90 ${compact ? "text-[10px]" : "text-[11px]"}`}>
+              Reason: {row.reason}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const timeSinceCreated = (order: TrackedOrder): string => {
   const created = new Date(order.createdAt ?? order.date);
@@ -3432,6 +3503,46 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
       ? value.deliveredDate
       : typeof value?.delivered_date === "string" && value.delivered_date
         ? value.delivered_date
+        : undefined,
+    originalCreatedAt: typeof value?.originalCreatedAt === "string" && value.originalCreatedAt
+      ? value.originalCreatedAt
+      : typeof value?.original_created_at === "string" && value.original_created_at
+        ? value.original_created_at
+        : undefined,
+    createdAtCorrectedAt: typeof value?.createdAtCorrectedAt === "string" && value.createdAtCorrectedAt
+      ? value.createdAtCorrectedAt
+      : typeof value?.created_at_corrected_at === "string" && value.created_at_corrected_at
+        ? value.created_at_corrected_at
+        : undefined,
+    createdAtCorrectedBy: typeof value?.createdAtCorrectedBy === "string" && value.createdAtCorrectedBy
+      ? value.createdAtCorrectedBy
+      : typeof value?.created_at_corrected_by === "string" && value.created_at_corrected_by
+        ? value.created_at_corrected_by
+        : undefined,
+    createdAtCorrectionReason: typeof value?.createdAtCorrectionReason === "string" && value.createdAtCorrectionReason
+      ? value.createdAtCorrectionReason
+      : typeof value?.created_at_correction_reason === "string" && value.created_at_correction_reason
+        ? value.created_at_correction_reason
+        : undefined,
+    originalDeliveredDate: typeof value?.originalDeliveredDate === "string" && value.originalDeliveredDate
+      ? value.originalDeliveredDate
+      : typeof value?.original_delivered_date === "string" && value.original_delivered_date
+        ? value.original_delivered_date
+        : undefined,
+    deliveredDateCorrectedAt: typeof value?.deliveredDateCorrectedAt === "string" && value.deliveredDateCorrectedAt
+      ? value.deliveredDateCorrectedAt
+      : typeof value?.delivered_date_corrected_at === "string" && value.delivered_date_corrected_at
+        ? value.delivered_date_corrected_at
+        : undefined,
+    deliveredDateCorrectedBy: typeof value?.deliveredDateCorrectedBy === "string" && value.deliveredDateCorrectedBy
+      ? value.deliveredDateCorrectedBy
+      : typeof value?.delivered_date_corrected_by === "string" && value.delivered_date_corrected_by
+        ? value.delivered_date_corrected_by
+        : undefined,
+    deliveredDateCorrectionReason: typeof value?.deliveredDateCorrectionReason === "string" && value.deliveredDateCorrectionReason
+      ? value.deliveredDateCorrectionReason
+      : typeof value?.delivered_date_correction_reason === "string" && value.delivered_date_correction_reason
+        ? value.delivered_date_correction_reason
         : undefined,
     scheduledAt,
     scheduledDate,
@@ -9233,6 +9344,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeGeneralExpenses = financeExpenseTotal - financeProductLinkedExpenses;
   const financeDeliveredRows = financeDeliveredSource.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeCreatedDateCorrectionCount = financePeriodOrders.filter((order) => orderHasCreatedAtCorrection(order)).length;
+  const financeDeliveredDateCorrectionCount = financeDeliveredRows.filter((order) => orderHasDeliveredDateCorrection(order)).length;
   const financeProfitSummary = summarizeRecognizedProfit(financeDeliveredRows, financeExpenses);
   const financeRevenue = financeProfitSummary.revenue;
   const financeCogs = financeProfitSummary.cogs;
@@ -29352,6 +29465,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 const cohortStillPending = cohort.filter((o) => !["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
                 const cashReceivedThisWeek = weeklyRemittanceTransactions.reduce((sum, row) => sum + Number(row.deltaAmount ?? 0), 0);
                 const cashReceivedOrderCount = new Set(weeklyRemittanceTransactions.map((row) => row.orderId).filter(Boolean)).size;
+                const cohortCreatedDateCorrectionCount = cohort.filter((order) => orderHasCreatedAtCorrection(order)).length;
+                const deliveredDateCorrectionCount = deliveredCash.filter((order) => orderHasDeliveredDateCorrection(order)).length;
                 const deliveriesBySourceRows = [
                   {
                     label: "From this week's orders",
@@ -29451,6 +29566,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {weeklyAccountingError
                           ? `Weekly accounting is using the current workspace data because the server summary could not load: ${weeklyAccountingError}`
                           : "Refreshing weekly accounting from the server..."}
+                      </div>
+                    )}
+
+                    {(cohortCreatedDateCorrectionCount > 0 || deliveredDateCorrectionCount > 0) && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        <p className="m-0 font-bold">Date correction audit is active for this week</p>
+                        <p className="m-0 mt-1 text-xs text-amber-800">
+                          {cohortCreatedDateCorrectionCount > 0 ? `${cohortCreatedDateCorrectionCount} order${cohortCreatedDateCorrectionCount === 1 ? "" : "s"} in this cohort use corrected order dates.` : "No corrected order dates in this cohort."}{" "}
+                          {deliveredDateCorrectionCount > 0 ? `${deliveredDateCorrectionCount} delivered order${deliveredDateCorrectionCount === 1 ? "" : "s"} in this week use corrected delivered dates.` : "No corrected delivered dates in this delivered week."}{" "}
+                          Remittance cash stays frozen to the receipt-time snapshot, so later date edits should no longer rewrite old cashflow.
+                        </p>
                       </div>
                     )}
 
@@ -29965,6 +30091,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           : `Receipt-dated remittance cash updated ${formatMoment(financeRemittanceGeneratedAt)}.`}
                     </div>
                   )}
+                  {(financeCreatedDateCorrectionCount > 0 || financeDeliveredDateCorrectionCount > 0) && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      <p className="m-0 font-bold">Finance date-correction protection is on</p>
+                      <p className="m-0 mt-1 text-xs text-amber-800">
+                        {financeCreatedDateCorrectionCount > 0 ? `${financeCreatedDateCorrectionCount} order${financeCreatedDateCorrectionCount === 1 ? "" : "s"} in this finance period use corrected order dates.` : "No corrected order dates in this finance period."}{" "}
+                        {financeDeliveredDateCorrectionCount > 0 ? `${financeDeliveredDateCorrectionCount} delivered order${financeDeliveredDateCorrectionCount === 1 ? "" : "s"} use corrected delivered dates.` : "No corrected delivered dates in this delivered period."}{" "}
+                        Receipt-dated cash entries now keep their own snapshots, so later date edits should not rewrite older remittance history.
+                      </p>
+                    </div>
+                  )}
                   {(currentRole === "Owner" || currentRole === "Admin") && (
                     <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-1">
@@ -30222,6 +30358,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           {pagedOutstanding.map((order) => {
                             const status = orderRemittanceStatus(order);
                             const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                            const auditStack = renderOrderDateAuditStack(order, { compact: true });
                             return (
                               <article key={order.id} className="px-5 py-4 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -30229,6 +30366,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <div className="font-bold text-[#1F8FE0]">{order.id}</div>
                                     <div className="text-sm font-medium text-gray-900">{order.customer}</div>
                                     <div className="text-xs text-gray-400">{order.phone}</div>
+                                    {auditStack}
                                   </div>
                                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${statusTone}`}>{status}</span>
                                 </div>
@@ -30281,10 +30419,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             return pagedOutstanding.map((order) => {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                              const auditStack = renderOrderDateAuditStack(order, { compact: true });
                               return (
                                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-3 font-bold text-[#1F8FE0]">{order.id}</td>
-                                  <td className="px-4 py-3"><div className="font-medium text-gray-900">{order.customer}</div><div className="text-xs text-gray-400">{order.phone}</div></td>
+                                  <td className="px-4 py-3">
+                                    <div className="font-medium text-gray-900">{order.customer}</div>
+                                    <div className="text-xs text-gray-400">{order.phone}</div>
+                                    {auditStack}
+                                  </td>
                                   <td className="px-4 py-3 text-gray-700">{agents.find((a) => a.id === order.agentId)?.name ?? "Unassigned"}</td>
                                   <td className="px-4 py-3 text-gray-700">{formatProductMoney(order.amount, order.currency)}</td>
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
@@ -40696,6 +40839,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
                 </div>
+                {renderOrderDateAuditStack(remittanceTargetOrder)}
                 <label>
                   <span>Logistics Cost (paid to partner)</span>
                   <input value={remittanceLogisticsCost} onChange={(e) => setRemittanceLogisticsCost(e.target.value)} inputMode="decimal" placeholder="e.g. 4000" />

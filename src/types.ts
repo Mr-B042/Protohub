@@ -401,6 +401,14 @@ export type TrackedOrder = {
   manualBonusReason?: string;
   bonusManuallyAdjusted?: boolean;
   notes?: OrderNote[];
+  originalCreatedAt?: string;
+  createdAtCorrectedAt?: string;
+  createdAtCorrectedBy?: string;
+  createdAtCorrectionReason?: string;
+  originalDeliveredDate?: string;
+  deliveredDateCorrectedAt?: string;
+  deliveredDateCorrectedBy?: string;
+  deliveredDateCorrectionReason?: string;
   date: string;
 };
 
