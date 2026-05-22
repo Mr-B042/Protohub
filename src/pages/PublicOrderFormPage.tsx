@@ -397,6 +397,28 @@ function companionDisplayDetail(companion: PublicCompanion, targetPackage?: Publ
   return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
 }
 
+function companionOfferUnits(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  const qty = Math.max(1, Number(targetPackage?.quantity ?? companion.quantity) || 1);
+  return `${qty}${qty === 1 ? "pc" : "pcs"}`;
+}
+
+function companionOfferPriceLabel(
+  companion: PublicCompanion,
+  total: number,
+  currency: ProductCurrencyCode,
+  targetPackage?: PublicPackage | null
+) {
+  const units = companionOfferUnits(companion, targetPackage);
+  return companion.pricingMode === "free"
+    ? `${units} FREE`
+    : `${units} for ${formatProductMoney(total, currency)}`;
+}
+
+function companionDiscountPercent(standardTotal: number, offerTotal: number) {
+  if (standardTotal <= 0 || offerTotal >= standardTotal) return 0;
+  return Math.max(0, Math.round(((standardTotal - offerTotal) / standardTotal) * 100));
+}
+
 function formatRelativeActivity(value: string | null | undefined) {
   if (!value) return "";
   const timestamp = Date.parse(value);
@@ -2853,21 +2875,24 @@ export default function PublicOrderFormPage() {
                         const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
                         const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
                         const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-	                        const standardTotal = standard * displayCompanion.quantity;
-	                        const savings = Math.max(0, standardTotal - total);
-	                        const media = renderCompanionMedia(displayCompanion, product.name);
+                        const standardTotal = standard * displayCompanion.quantity;
+                        const savings = Math.max(0, standardTotal - total);
+                        const discountPercent = companionDiscountPercent(standardTotal, total);
+                        const teaserOfferLabel = companionOfferPriceLabel(previewCompanion, teaserTotal, currency, previewTargetPackage);
+                        const displayOfferLabel = companionOfferPriceLabel(displayCompanion, total, currency, displayTargetPackage);
+                        const media = renderCompanionMedia(displayCompanion, product.name);
                         const socialProofUi = companionSocialProofUi(displayCompanion);
-	                        const teaserCtaLabel = selectedVariant
-	                          ? "Already added"
-	                          : isExpanded
-	                            ? "Tap to close preview"
-	                            : hasVariantChoices
-	                              ? `Add this from just ${previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}`
-	                              : `Add this for just ${previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}`;
-	                        const detailCtaLabel = displayCompanion.pricingMode === "free"
-	                          ? "Add this for FREE"
-	                          : `Add this for just ${formatProductMoney(total, currency)}`;
-	                        return (
+                        const teaserCtaLabel = selectedVariant
+                          ? "Already added"
+                          : isExpanded
+                            ? "Tap to close preview"
+                            : hasVariantChoices
+                              ? `Add from ${teaserOfferLabel}`
+                              : `Add ${teaserOfferLabel}`;
+                        const detailCtaLabel = displayCompanion.pricingMode === "free"
+                          ? `Add ${companionOfferUnits(displayCompanion, displayTargetPackage)} FREE`
+                          : `Add ${displayOfferLabel}`;
+                        return (
                           <div key={`${product.id}-${index}`} style={{ display: "grid", gap: 10 }}>
                             <button
                               type="button"
@@ -2951,7 +2976,7 @@ export default function PublicOrderFormPage() {
                                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                                     <div style={{ display: "grid", gap: 4 }}>
                                       <strong style={{ fontSize: 18, color: "#111827" }}>
-                                        {previewCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(teaserTotal, currency)}
+                                        {teaserOfferLabel}
                                       </strong>
                                       {savings > 0 && (
                                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -2959,7 +2984,7 @@ export default function PublicOrderFormPage() {
                                             {formatProductMoney(standardTotal, currency)}
                                           </span>
                                           <span style={{ fontSize: 11, fontWeight: 800, color: "#047857" }}>
-                                            Save {formatProductMoney(savings, currency)}
+                                            Save {formatProductMoney(savings, currency)}{discountPercent > 0 ? ` · ${discountPercent}% off` : ""}
                                           </span>
                                         </div>
                                       )}
@@ -3161,6 +3186,9 @@ export default function PublicOrderFormPage() {
                                                 <span style={{ display: "block", fontWeight: 800, fontSize: 16, color: "#111827" }}>
                                                   {companionDisplayName(variant, product, variantTargetPackage)}
                                                 </span>
+                                                <span style={{ display: "block", fontSize: 15, fontWeight: 800, color: "#1d4ed8", marginTop: 4 }}>
+                                                  {companionOfferPriceLabel(variant, variantPrice, currency, variantTargetPackage)}
+                                                </span>
                                                 <span style={{ display: "block", fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.45 }}>
                                                   {companionDisplayDetail(variant, variantTargetPackage)}
                                                   {variant.pitch?.trim() ? ` · ${variant.pitch.trim()}` : ""}
@@ -3178,7 +3206,7 @@ export default function PublicOrderFormPage() {
                                   {(!hasVariantChoices || selectedVariant) && (
                                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                                       <strong style={{ fontSize: 24, color: "#1F8FE0" }}>
-                                        {displayCompanion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
+                                        {displayOfferLabel}
                                       </strong>
                                       {savings > 0 && (
                                         <>
@@ -3186,7 +3214,7 @@ export default function PublicOrderFormPage() {
                                             {formatProductMoney(standardTotal, currency)}
                                           </span>
                                           <span style={{ fontSize: 12, fontWeight: 700, color: "#047857" }}>
-                                            Save {formatProductMoney(savings, currency)}
+                                            Save {formatProductMoney(savings, currency)}{discountPercent > 0 ? ` · ${discountPercent}% off` : ""}
                                           </span>
                                         </>
                                       )}
