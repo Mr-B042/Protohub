@@ -24,7 +24,7 @@ alter table public.remittance_transactions
 update public.remittance_transactions as rt
 set
   order_created_at_snapshot = coalesce(rt.order_created_at_snapshot, o.created_at),
-  order_delivered_date_snapshot = coalesce(rt.order_delivered_date_snapshot, o.delivered_date),
+  order_delivered_date_snapshot = coalesce(rt.order_delivered_date_snapshot, o.delivered_date::text),
   product_id_snapshot = coalesce(rt.product_id_snapshot, o.product_id),
   product_name_snapshot = coalesce(rt.product_name_snapshot, o.product_name),
   package_name_snapshot = coalesce(rt.package_name_snapshot, o.package_name),
