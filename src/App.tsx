@@ -11269,7 +11269,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
   const packagePerformanceRows = (() => {
     const search = financeProductSearch.trim().toLowerCase();
-    const totalDeliveredRevenue = financeCohortDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+    const totalDeliveredRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
     return products
       .filter((product) => !selectedProductId || product.id === selectedProductId)
       .flatMap((product) => {
@@ -11289,7 +11289,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         };
         const packageMap = new Map<string, PackageAccumulator>();
         const productOrders = financePeriodOrders.filter((order) => order.productId === product.id);
-        const productDelivered = financeCohortDeliveredRows.filter((order) => order.productId === product.id);
+        const productDelivered = financeDeliveredRows.filter((order) => order.productId === product.id);
         const productRevenue = productDelivered.reduce((sum, order) => sum + order.amount, 0);
         const productDirectExpenses = financeOpexExpenses
           .filter((expense) => expense.productId === product.id)
@@ -11376,7 +11376,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         });
 
         return Array.from(packageMap.entries()).map(([packageKey, row]) => {
-          const deliveryRate = row.totalOrders === 0 ? 0 : Math.round((row.deliveredCount / row.totalOrders) * 100);
+          const hasOrderCohort = row.totalOrders > 0;
+          const deliveryRate = hasOrderCohort ? Math.round((row.deliveredCount / row.totalOrders) * 100) : 0;
           const allocatedProductOpex = productRevenue === 0
             ? 0
             : (row.deliveredRevenue / productRevenue) * (productDirectExpenses + productAllocatedSharedOpex);
@@ -11390,6 +11391,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             packageName: row.packageName,
             packageQuantity: row.packageQuantity,
             isFallback: row.isFallback,
+            hasOrderCohort,
             totalOrders: row.totalOrders,
             deliveredCount: row.deliveredCount,
             deliveryRate,
@@ -31385,9 +31387,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       )}
                     </div>
                   </div>
-                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600">
-                      <span className="font-semibold text-gray-800">Tracked package</span> rows are tied to a real saved package. <span className="font-semibold text-gray-800">Manual / legacy</span> rows come from older orders or fallback package text where the original package link was missing.
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600">
+                      <span className="font-semibold text-gray-800">Tracked package</span> rows are tied to a real saved package. <span className="font-semibold text-gray-800">Manual / legacy</span> rows come from older orders or fallback package text where the original package link was missing. <span className="font-semibold text-gray-800">Ordered</span> uses the selected created-date period, while <span className="font-semibold text-gray-800">Delivered</span> and delivered profit use the selected delivered-date period.
                     </div>
                     <div className="sm:hidden divide-y divide-gray-100">
                       {packagePerformanceRows.length === 0 ? (
@@ -31401,7 +31403,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="text-sm font-semibold text-[#1F8FE0]">{row.packageName} · {formatBundleUnitLabel(row.packageQuantity)}</div>
                               </div>
                               <div className="flex flex-col items-end gap-1 shrink-0">
-                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${performanceTone(row.tier)}`}>{row.tier}</span>
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? row.tier : "Carry-over only"}</span>
                                 <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
                               </div>
                             </div>
@@ -31424,7 +31426,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </div>
                               <div>
                                 <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span>
-                                <div className="font-bold text-gray-900">{row.deliveryRate}%</div>
+                                <div className="font-bold text-gray-900">{row.hasOrderCohort ? `${row.deliveryRate}%` : "—"}</div>
                               </div>
                               <div>
                                 <span className="text-[10px] uppercase tracking-wider text-gray-400">Share of Product</span>
@@ -31472,7 +31474,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-4 text-gray-700">{row.totalOrders}</td>
                                 <td className="px-4 py-4 text-green-700 font-semibold">{row.deliveredCount}</td>
                                 <td className="px-4 py-4">
-                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${performanceTone(row.tier)}`}>{row.deliveryRate}%</span>
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? `${row.deliveryRate}%` : "Carry-over only"}</span>
                                 </td>
                                 <td className="px-4 py-4 text-gray-700">{row.orderedUnits}</td>
                                 <td className="px-4 py-4 text-gray-700">{row.deliveredUnits}</td>
