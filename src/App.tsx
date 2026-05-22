@@ -7844,7 +7844,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setEditingAdTrackingLabel(null);
       setAdTrackingLabelDraft("");
     } catch (err: any) {
-      showToast(`Failed to save ${editingAdTrackingLabel.kind} label: ${err?.message ?? "please retry"}.`);
+      setCampaignCardLabels(nextCampaignLabels);
+      setCreativeCardLabels(nextCreativeLabels);
+      setEditingAdTrackingLabel(null);
+      setAdTrackingLabelDraft("");
+      if ((err?.message ?? "").toLowerCase().includes("migration 076")) {
+        showToast("Shared labels are not active in the database yet. Saved on this device for now.");
+      } else {
+        showToast(`Could not sync this ${editingAdTrackingLabel.kind} label right now. Saved on this device for now.`);
+      }
     } finally {
       setAdTrackingLabelSaving(false);
     }
