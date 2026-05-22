@@ -197,7 +197,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
+type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
 type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
@@ -1230,7 +1230,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1279,6 +1279,12 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Performance", "Accounting"],
     summary: "Use this to compare products by cohort delivery performance, delivered revenue so far, landed costs, allocated opex, margin, ROI, and ROAS.",
     caution: "This is still a cohort-performance board first. Profit is more consistent now, but it is not a closed product ledger."
+  },
+  "Package Performance": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting"],
+    summary: "Use this to compare which package sizes or pcs are getting ordered most, delivered most, and generating the strongest delivered revenue inside each product.",
+    caution: "This is the package layer under product performance. Ordered counts come from the selected period cohort, while delivered cash and profit use only delivered orders in that same cohort."
   },
   "State Performance": {
     primaryLens: "Performance",
@@ -11261,6 +11267,161 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
   }).filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
+  const packagePerformanceRows = (() => {
+    const search = financeProductSearch.trim().toLowerCase();
+    const totalDeliveredRevenue = financeCohortDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+    return products
+      .filter((product) => !selectedProductId || product.id === selectedProductId)
+      .flatMap((product) => {
+        type PackageAccumulator = {
+          packageId?: string | null;
+          packageName: string;
+          packageQuantity: number;
+          totalOrders: number;
+          deliveredCount: number;
+          orderedUnits: number;
+          deliveredUnits: number;
+          placedRevenue: number;
+          deliveredRevenue: number;
+          cogs: number;
+          logistics: number;
+        };
+        const packageMap = new Map<string, PackageAccumulator>();
+        const productOrders = financePeriodOrders.filter((order) => order.productId === product.id);
+        const productDelivered = financeCohortDeliveredRows.filter((order) => order.productId === product.id);
+        const productRevenue = productDelivered.reduce((sum, order) => sum + order.amount, 0);
+        const productDirectExpenses = financeOpexExpenses
+          .filter((expense) => expense.productId === product.id)
+          .reduce((sum, expense) => sum + expense.amount, 0);
+        const productAllocatedSharedOpex = proportionalShare(
+          productRevenue,
+          totalDeliveredRevenue,
+          financeSharedOpex,
+          productDelivered.length,
+          financeCohortDeliveredRows.length
+        );
+        const resolveOrderUnits = (order: TrackedOrder) => {
+          const packageRecord = product.packages.find((item) => item.id === order.packageId);
+          return Math.max(1, order.quantity ?? packageRecord?.quantity ?? 1);
+        };
+        const packageLabelForOrder = (order: TrackedOrder) => {
+          const packageRecord = product.packages.find((item) => item.id === order.packageId);
+          if (packageRecord) {
+            return {
+              key: packageRecord.id,
+              packageId: packageRecord.id,
+              packageName: packageRecord.name,
+              packageQuantity: packageRecord.quantity
+            };
+          }
+          const orderUnits = resolveOrderUnits(order);
+          const manualLabel = (order.packageName ?? "").trim() || `Manual ${formatBundleUnitLabel(orderUnits)}`;
+          return {
+            key: `manual:${manualLabel}:${orderUnits}`,
+            packageId: order.packageId ?? null,
+            packageName: manualLabel,
+            packageQuantity: orderUnits
+          };
+        };
+
+        productOrders.forEach((order) => {
+          const units = resolveOrderUnits(order);
+          const pkg = packageLabelForOrder(order);
+          const current = packageMap.get(pkg.key) ?? {
+            packageId: pkg.packageId,
+            packageName: pkg.packageName,
+            packageQuantity: pkg.packageQuantity,
+            totalOrders: 0,
+            deliveredCount: 0,
+            orderedUnits: 0,
+            deliveredUnits: 0,
+            placedRevenue: 0,
+            deliveredRevenue: 0,
+            cogs: 0,
+            logistics: 0
+          };
+          current.totalOrders += 1;
+          current.orderedUnits += units;
+          current.placedRevenue += order.amount || 0;
+          packageMap.set(pkg.key, current);
+        });
+
+        productDelivered.forEach((order) => {
+          const units = resolveOrderUnits(order);
+          const pkg = packageLabelForOrder(order);
+          const current = packageMap.get(pkg.key) ?? {
+            packageId: pkg.packageId,
+            packageName: pkg.packageName,
+            packageQuantity: pkg.packageQuantity,
+            totalOrders: 0,
+            deliveredCount: 0,
+            orderedUnits: 0,
+            deliveredUnits: 0,
+            placedRevenue: 0,
+            deliveredRevenue: 0,
+            cogs: 0,
+            logistics: 0
+          };
+          current.deliveredCount += 1;
+          current.deliveredUnits += units;
+          current.deliveredRevenue += order.amount || 0;
+          current.cogs += costForOrder(order);
+          current.logistics += order.logisticsCost ?? 0;
+          packageMap.set(pkg.key, current);
+        });
+
+        return Array.from(packageMap.entries()).map(([packageKey, row]) => {
+          const deliveryRate = row.totalOrders === 0 ? 0 : Math.round((row.deliveredCount / row.totalOrders) * 100);
+          const allocatedProductOpex = productRevenue === 0
+            ? 0
+            : (row.deliveredRevenue / productRevenue) * (productDirectExpenses + productAllocatedSharedOpex);
+          const netProfit = row.deliveredRevenue - row.cogs - row.logistics - allocatedProductOpex;
+          const shareOfProductOrders = productOrders.length === 0 ? 0 : Math.round((row.totalOrders / productOrders.length) * 100);
+          const shareOfProductDelivered = productDelivered.length === 0 ? 0 : Math.round((row.deliveredCount / productDelivered.length) * 100);
+          return {
+            packageKey,
+            product,
+            packageId: row.packageId ?? undefined,
+            packageName: row.packageName,
+            packageQuantity: row.packageQuantity,
+            totalOrders: row.totalOrders,
+            deliveredCount: row.deliveredCount,
+            deliveryRate,
+            tier: performanceTier(deliveryRate),
+            orderedUnits: row.orderedUnits,
+            deliveredUnits: row.deliveredUnits,
+            placedRevenue: row.placedRevenue,
+            deliveredRevenue: row.deliveredRevenue,
+            cogs: row.cogs,
+            logistics: row.logistics,
+            expenses: allocatedProductOpex,
+            netProfit,
+            margin: row.deliveredRevenue === 0 ? 0 : Math.round((netProfit / row.deliveredRevenue) * 100),
+            shareOfProductOrders,
+            shareOfProductDelivered
+          };
+        });
+      })
+      .filter((row) => {
+        if (!search) return true;
+        return row.product.name.toLowerCase().includes(search)
+          || row.product.sku.toLowerCase().includes(search)
+          || row.packageName.toLowerCase().includes(search)
+          || formatBundleUnitLabel(row.packageQuantity).includes(search);
+      })
+      .sort((a, b) =>
+        b.totalOrders - a.totalOrders
+        || b.deliveredCount - a.deliveredCount
+        || b.deliveredRevenue - a.deliveredRevenue
+      );
+  })();
+  const topOrderedPackageRow = packagePerformanceRows[0] ?? null;
+  const topDeliveredPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredCount - a.deliveredCount || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
+  const topDeliveredUnitsPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredUnits - a.deliveredUnits || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
+  const bestPackageDeliveryRateRow = packagePerformanceRows
+    .filter((row) => row.totalOrders > 0)
+    .slice()
+    .sort((a, b) => b.deliveryRate - a.deliveryRate || b.deliveredCount - a.deliveredCount || b.totalOrders - a.totalOrders)[0] ?? null;
   const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
@@ -31143,6 +31304,159 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}%</span></td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}%</span></td>
                                 <td className="px-4 py-4 font-semibold text-gray-900">{row.adSpend === 0 ? (row.revenue > 0 ? "Uncapped" : "N/A") : `${(row.revenue / row.adSpend).toFixed(2)}x`}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {financeTab === "Package Performance" && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                    {[
+                      {
+                        title: "Most Ordered",
+                        row: topOrderedPackageRow,
+                        helper: topOrderedPackageRow ? `${topOrderedPackageRow.totalOrders} orders · ${topOrderedPackageRow.orderedUnits} pcs ordered` : "No package orders yet",
+                        tone: "blue"
+                      },
+                      {
+                        title: "Most Delivered",
+                        row: topDeliveredPackageRow,
+                        helper: topDeliveredPackageRow ? `${topDeliveredPackageRow.deliveredCount} delivered · ${topDeliveredPackageRow.deliveredUnits} pcs delivered` : "No delivered packages yet",
+                        tone: "green"
+                      },
+                      {
+                        title: "Most Delivered PCS",
+                        row: topDeliveredUnitsPackageRow,
+                        helper: topDeliveredUnitsPackageRow ? `${topDeliveredUnitsPackageRow.deliveredUnits} pcs · ${topDeliveredUnitsPackageRow.deliveredCount} delivered orders` : "No delivered units yet",
+                        tone: "violet"
+                      },
+                      {
+                        title: "Best Delivery Rate",
+                        row: bestPackageDeliveryRateRow,
+                        helper: bestPackageDeliveryRateRow ? `${bestPackageDeliveryRateRow.deliveryRate}% · ${bestPackageDeliveryRateRow.deliveredCount}/${bestPackageDeliveryRateRow.totalOrders}` : "No package cohort yet",
+                        tone: "amber"
+                      }
+                    ].map((metric) => (
+                      <article key={metric.title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                        {metric.row ? (
+                          <>
+                            <strong className="text-lg font-bold text-gray-900 block mt-2">{metric.row.product.name}</strong>
+                            <p className="text-sm font-semibold text-[#1F8FE0] mt-1 mb-0">{metric.row.packageName} · {formatBundleUnitLabel(metric.row.packageQuantity)}</p>
+                            <p className="text-[11px] text-gray-400 font-medium mt-2">{metric.helper}</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-400 italic mt-3">No package activity in this period.</p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label className="flex flex-col gap-1 w-full sm:flex-1 sm:max-w-xs">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Product for Analysis</span>
+                      <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Package product for analysis" value={selectedProductId} onChange={(event) => { const p = products.find((pr) => pr.id === event.target.value); setSelectedProductId(event.target.value); setFinanceProductSearch(p?.name ?? ""); }}>
+                        <option value="">All products</option>
+                        {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
+                      <Search className="w-4 h-4 text-gray-400 shrink-0" />
+                      <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product, package, or pcs..." />
+                    </label>
+                    <span className="self-end text-xs text-gray-400 sm:pb-2">{packagePerformanceRows.length} package rows</span>
+                  </div>
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {packagePerformanceRows.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</div>
+                      ) : (
+                        packagePerformanceRows.map((row) => (
+                          <article key={row.packageKey} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{row.product.name}</div>
+                                <div className="text-sm font-semibold text-[#1F8FE0]">{row.packageName} · {formatBundleUnitLabel(row.packageQuantity)}</div>
+                              </div>
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${performanceTone(row.tier)}`}>{row.tier}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                <div className="text-gray-700">{row.totalOrders}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span>
+                                <div className="text-green-700 font-semibold">{row.deliveredCount}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Ordered PCS</span>
+                                <div className="text-gray-700">{row.orderedUnits}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered PCS</span>
+                                <div className="text-gray-700">{row.deliveredUnits}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span>
+                                <div className="font-bold text-gray-900">{row.deliveryRate}%</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Share of Product</span>
+                                <div className="text-gray-700">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue Delivered</span>
+                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Approx Net Profit</span>
+                                <div className="font-bold text-gray-900">{formatMoney(row.netProfit)}</div>
+                              </div>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="w-full text-sm sticky-col-first">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                            {["Product", "Package / PCS", "Orders", "Delivered", "Delivery Rate", "Ordered PCS", "Delivered PCS", "Placed Revenue", "Delivered Revenue", "Approx Net Profit", "Share of Product"].map((h) => (
+                              <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {packagePerformanceRows.length === 0 ? (
+                            <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</td></tr>
+                          ) : (
+                            packagePerformanceRows.map((row) => (
+                              <tr key={row.packageKey} className="hover:bg-gray-50 transition-colors">
+                                <td className="px-4 py-4">
+                                  <div className="font-bold text-gray-900">{row.product.name}</div>
+                                  <div className="text-xs text-gray-400 font-mono">{row.product.sku}</div>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <div className="font-semibold text-gray-900">{row.packageName}</div>
+                                  <div className="text-xs text-gray-500">{formatBundleUnitLabel(row.packageQuantity)}</div>
+                                </td>
+                                <td className="px-4 py-4 text-gray-700">{row.totalOrders}</td>
+                                <td className="px-4 py-4 text-green-700 font-semibold">{row.deliveredCount}</td>
+                                <td className="px-4 py-4">
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${performanceTone(row.tier)}`}>{row.deliveryRate}%</span>
+                                </td>
+                                <td className="px-4 py-4 text-gray-700">{row.orderedUnits}</td>
+                                <td className="px-4 py-4 text-gray-700">{row.deliveredUnits}</td>
+                                <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.placedRevenue)}</td>
+                                <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</td>
+                                <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(row.netProfit)}</td>
+                                <td className="px-4 py-4 text-gray-700 whitespace-nowrap">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</td>
                               </tr>
                             ))
                           )}
