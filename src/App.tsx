@@ -2182,6 +2182,22 @@ const formatDateOnly = (value?: string | Date | null) => {
     return d.toLocaleDateString();
   }
 };
+const formatDateWithWeekday = (value?: string | Date | null) => {
+  if (!value) return "";
+  const d = typeof value === "string" || value instanceof Date ? new Date(value as any) : null;
+  if (!d || isNaN(d.getTime())) return String(value ?? "");
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: _currentTimezone,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString();
+  }
+};
 const formatMoment = (value?: string | Date | null) => {
   if (!value) return "";
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -29519,25 +29535,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
-                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                    {periods.map((item) => (
-                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
-                    ))}
-                  </div>
-                  {/* Date range — full width on mobile */}
-                  <div className="relative w-full sm:w-auto">
-                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
-                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                    </button>
-                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
-                  </div>
+                  {financeTab !== "Weekly Accounting" && (
+                    <>
+                      {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                      <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                        {periods.map((item) => (
+                          <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
+                        ))}
+                      </div>
+                      {/* Date range — full width on mobile */}
+                      <div className="relative w-full sm:w-auto">
+                        <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
+                          <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                        </button>
+                        {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
+                      </div>
+                    </>
+                  )}
                   {/* Currency — full width on mobile */}
                   <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
+                  {financeTab === "Weekly Accounting" && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
+                      Weekly Accounting uses the week selector inside the report below.
+                    </div>
+                  )}
                   {/* Mobile-only: Export Report stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
@@ -29545,7 +29570,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
+                {financeTab !== "Weekly Accounting" && renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
@@ -29932,7 +29957,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center justify-between gap-3 flex-wrap">
                       <div>
                         <p className="text-xs font-bold uppercase tracking-wider text-gray-400 m-0">Accounting week (Sun → Sat)</p>
-                        <p className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{formatDateOnly(start)} – {formatDateOnly(end)}</p>
+                        <p className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{formatDateWithWeekday(start)} → {formatDateWithWeekday(end)}</p>
                         {weeklyAccountingData?.generatedAt && (
                           <p className="text-[11px] text-gray-500 mt-1">Server snapshot: {formatMoment(weeklyAccountingData.generatedAt)}</p>
                         )}
