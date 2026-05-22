@@ -4994,8 +4994,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
     )
   );
+  const [adTrackingSearch, setAdTrackingSearch] = useState<string>(() =>
+    readPref<string>("protohub.adTracking.search", "", (raw) => typeof raw === "string" ? raw : null)
+  );
   useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
+  useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
   const [campaignPage, setCampaignPage] = useState(1);
   const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
   const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
@@ -5026,6 +5030,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const adTrackingLabelScope = authUser?.orgId ?? "default";
+
+  useEffect(() => {
+    setCampaignPage(1);
+  }, [adTrackingSearch]);
 
   useEffect(() => {
     const parseLabelMap = (raw: string): Record<string, string> | null => {
@@ -7812,6 +7820,44 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
   const campaignCardLabelFor = (id: string) => campaignCardLabels[id]?.trim() || "";
   const creativeCardLabelFor = (id: string) => creativeCardLabels[id]?.trim() || "";
+  const adTrackingSearchNeedle = adTrackingSearch.trim().toLowerCase();
+  const matchesAdTrackingSearch = (...parts: Array<string | undefined | null>) => {
+    if (!adTrackingSearchNeedle) return true;
+    return parts.some((part) => typeof part === "string" && part.toLowerCase().includes(adTrackingSearchNeedle));
+  };
+  const filteredCampaignGroupedRows = campaignGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(
+      row.id,
+      campaignCardLabelFor(row.id),
+      row.topSource,
+      ...row.orders.map((order) => order.utmSource ?? "")
+    )
+  );
+  const filteredCreativeGroupedRows = creativeGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(
+      row.id,
+      creativeCardLabelFor(row.id),
+      row.campaignId,
+      campaignCardLabelFor(row.campaignId),
+      ...row.orders.map((order) => order.utmSource ?? "")
+    )
+  );
+  const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) => {
+    const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+    const creativeId = order.utmContent?.trim() || "";
+    return matchesAdTrackingSearch(
+      order.id,
+      order.customer,
+      order.phone,
+      order.productName,
+      order.utmCampaign,
+      order.utmSource,
+      order.utmMedium,
+      order.utmContent,
+      campaignCardLabelFor(campaignId),
+      creativeId ? creativeCardLabelFor(creativeId) : ""
+    );
+  });
   const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
     setEditingAdTrackingLabel({ kind, id });
     setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
@@ -30974,15 +31020,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                  <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={adTrackingSearch}
+                      onChange={(event) => setAdTrackingSearch(event.target.value)}
+                      placeholder="Search campaign, creative, or label..."
+                      className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    />
+                  </label>
                 </div>
                 {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
               </div>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
                 {[
-                  { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
-                  { title: "Active Campaigns", value: String(campaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
-                  { title: "Unique Creatives", value: String(creativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
-                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
+                  { title: "Tracked Orders", value: String(filteredAdTrackingOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                  { title: "Active Campaigns", value: String(filteredCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
+                  { title: "Unique Creatives", value: String(filteredCreativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
+                  { title: "Attributed Revenue", value: formatMoney(filteredAdTrackingOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -31013,11 +31068,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Campaigns</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_campaign` from tracked orders in this period.</p>
                 </div>
-                {campaignGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No campaign-tagged tracked orders in this period yet.</div>
+                {filteredCampaignGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                    {adTrackingSearchNeedle ? "No campaigns matched this search yet." : "No campaign-tagged tracked orders in this period yet."}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    {campaignGroupedRows.map((row) => (
+                    {filteredCampaignGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
@@ -31095,11 +31152,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Ad Creatives</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_content` from tracked orders in this period.</p>
                 </div>
-                {creativeGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No creative-tagged tracked orders in this period yet.</div>
+                {filteredCreativeGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                    {adTrackingSearchNeedle ? "No creatives matched this search yet." : "No creative-tagged tracked orders in this period yet."}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                    {creativeGroupedRows.map((row) => (
+                    {filteredCreativeGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
@@ -31175,17 +31234,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredCampaignOrders.length} attributed</span>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredAdTrackingOrders.length} attributed</span>
                 </div>
                 <div className="sm:hidden divide-y divide-gray-100">
-                  {filteredCampaignOrders.length === 0 ? (
-                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</div>
+                  {filteredAdTrackingOrders.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">
+                      {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                    </div>
                   ) : (
                     (() => {
                       const CAMP_PAGE = 25;
-                      const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                      const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                       const campPageClamped = Math.min(campaignPage, campTotalPages);
-                      return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                      return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
                         <article key={order.id} className="p-4 space-y-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -31230,14 +31291,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredCampaignOrders.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</td></tr>
+                      {filteredAdTrackingOrders.length === 0 ? (
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">{adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}</td></tr>
                       ) : (
                         (() => {
                           const CAMP_PAGE = 25;
-                          const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                          const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                           const campPageClamped = Math.min(campaignPage, campTotalPages);
-                          return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                          return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
                               <td className="px-4 py-4">
@@ -31260,12 +31321,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 {(() => {
                   const CAMP_PAGE = 25;
-                  const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                  const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                   if (campTotalPages <= 1) return null;
                   const campPageClamped = Math.min(campaignPage, campTotalPages);
                   return (
                     <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredCampaignOrders.length)} of {filteredCampaignOrders.length}</span>
+                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredAdTrackingOrders.length)} of {filteredAdTrackingOrders.length}</span>
                       <div className="flex items-center gap-1 flex-wrap">
                         <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
                         {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
