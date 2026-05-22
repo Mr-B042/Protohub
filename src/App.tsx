@@ -13643,7 +13643,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return (
       <div
-        className="absolute top-full left-0 z-50 mt-1 w-[640px] max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden"
+        className="absolute top-full left-0 z-50 mt-1 w-[min(640px,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[min(80vh,42rem)] overflow-y-auto bg-white border border-gray-200 rounded-2xl shadow-2xl"
         data-testid={testId}
       >
         {/* Month grids */}
@@ -13738,30 +13738,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-4">
-          <div className="flex-1 min-w-0">
+        <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex-1 min-w-0 w-full">
             {range.start || range.end ? (
-              <div className="flex items-center gap-1.5 text-sm min-w-0">
-                <span className="font-bold text-[#1F8FE0] shrink-0">{range.start || "—"}</span>
+              <div className="flex flex-wrap items-center gap-1.5 text-sm min-w-0">
+                <span className="font-bold text-[#1F8FE0] break-words">{range.start || "—"}</span>
                 {range.end && <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />}
-                {range.end && <span className="font-bold text-[#1F8FE0] shrink-0">{range.end}</span>}
+                {range.end && <span className="font-bold text-[#1F8FE0] break-words">{range.end}</span>}
               </div>
             ) : (
               <span className="text-sm text-gray-400">Select a start then end date</span>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center justify-end gap-2 w-full sm:w-auto sm:justify-start">
             <button
               type="button"
               onClick={onCancel}
-              className="!min-h-0 px-4 py-2 text-sm font-semibold text-gray-600 border border-gray-200 bg-white rounded-xl hover:bg-gray-50 transition-colors"
+              className="!min-h-0 flex-1 sm:flex-none px-4 py-2 text-sm font-semibold text-gray-600 border border-gray-200 bg-white rounded-xl hover:bg-gray-50 transition-colors"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={onApply}
-              className="!min-h-0 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-xl hover:bg-blue-700 transition-colors"
+              className="!min-h-0 flex-1 sm:flex-none px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-xl hover:bg-blue-700 transition-colors"
             >
               Apply
             </button>
