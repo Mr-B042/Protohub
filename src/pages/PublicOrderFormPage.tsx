@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
 import { browserSupabaseClient } from "../lib/realtime";
 import type { ProductCurrencyCode } from "../types";
@@ -226,6 +226,7 @@ const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 8;
 const PUBLIC_PRODUCT_RETRY_DELAY_MS = 1200;
 const PUBLIC_OUTAGE_QUEUE_KEY = "protohub.publicOrderOutageQueue";
+const RECOVERY_AUTO_SUBMIT_IDLE_MS = 12_000;
 
 type CachedSnapshot<T> = {
   cachedAt: number;
@@ -900,6 +901,29 @@ export default function PublicOrderFormPage() {
     }, 0);
   };
 
+  const attemptRecoveredAutoSubmit = useCallback(
+    (reason: "idle" | "leaving") => {
+      if (publicOrderSubmittingRef.current || publicOrderSubmitting) return false;
+      const nextErrors = buildSubmitValidationErrors();
+      setFieldErrors((current) => (fieldErrorsEqual(current, nextErrors) ? current : nextErrors));
+      if (Object.keys(nextErrors).length > 0) {
+        return false;
+      }
+      setSubmitRetryArmed(false);
+      if (reason === "idle") {
+        showToast("All required fields complete — submitting your order now...");
+      }
+      void submitPublicOrder();
+      return true;
+    },
+    [
+      buildSubmitValidationErrors,
+      fieldErrorsEqual,
+      publicOrderSubmitting,
+      submitPublicOrder
+    ]
+  );
+
   useEffect(() => {
     if (!submitRetryArmed) {
       if (autoSubmitTimerRef.current) {
@@ -923,10 +947,8 @@ export default function PublicOrderFormPage() {
     }
     autoSubmitTimerRef.current = window.setTimeout(() => {
       autoSubmitTimerRef.current = null;
-      setSubmitRetryArmed(false);
-      showToast("All required fields complete — submitting your order...");
-      void submitPublicOrder();
-    }, 220);
+      attemptRecoveredAutoSubmit("idle");
+    }, RECOVERY_AUTO_SUBMIT_IDLE_MS);
     return () => {
       if (autoSubmitTimerRef.current) {
         window.clearTimeout(autoSubmitTimerRef.current);
@@ -952,6 +974,7 @@ export default function PublicOrderFormPage() {
     settings.requireWhatsapp,
     settings.showCommitment,
     settings.showWhatsapp,
+    attemptRecoveredAutoSubmit,
     submitRetryArmed
   ]);
 
@@ -1548,6 +1571,7 @@ export default function PublicOrderFormPage() {
 
     const handlePageHide = () => {
       if (publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+      if (submitRetryArmed && attemptRecoveredAutoSubmit("leaving")) return;
       const cartId = abandonedDraftCartIdRef.current;
       if (!cartId || !publicProduct) return;
       if (exitTrackedRef.current) return;
@@ -1571,13 +1595,34 @@ export default function PublicOrderFormPage() {
       });
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") return;
+      if (publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+      if (submitRetryArmed) {
+        attemptRecoveredAutoSubmit("leaving");
+      }
+    };
+
     window.addEventListener("pagehide", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current);
       if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
       window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [chosenPackage, orderFormCrossSells.length, orderFormName, orderFormState, publicEmbedIsPreview, publicOrderSubmitted, publicProduct, publicUtmSource]);
+  }, [
+    attemptRecoveredAutoSubmit,
+    chosenPackage,
+    orderFormCrossSells.length,
+    orderFormName,
+    orderFormState,
+    publicEmbedIsPreview,
+    publicOrderSubmitted,
+    publicProduct,
+    publicUtmSource,
+    submitRetryArmed
+  ]);
 
   function showToast(message: string) {
     setToast(message);
@@ -1871,7 +1916,7 @@ export default function PublicOrderFormPage() {
           break;
       }
       setSubmitRetryArmed(true);
-      showToast(`${nextErrors[firstInvalidField] || "Please complete the highlighted fields."} Once completed, we’ll submit automatically.`);
+      showToast(`${nextErrors[firstInvalidField] || "Please complete the highlighted fields."} Once completed, we’ll submit automatically after a few seconds.`);
       triggerValidationAttention(firstInvalidField);
       focusField(firstInvalidField);
       return;
@@ -3411,7 +3456,7 @@ export default function PublicOrderFormPage() {
                   <strong style={{ fontSize: 13 }}>Please complete the highlighted fields:</strong>
                   {submitRetryArmed && (
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#b45309" }}>
-                      Once the missing fields are completed, we’ll submit the order automatically.
+                      Once the missing fields are completed, we’ll submit the order automatically after about 12 seconds if nothing else happens.
                     </div>
                   )}
                   <div style={{ display: "grid", gap: 4, fontSize: 12, lineHeight: 1.45 }}>
