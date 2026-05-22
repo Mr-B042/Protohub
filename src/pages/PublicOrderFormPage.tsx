@@ -160,7 +160,7 @@ type PendingUpsellOffer = {
 type PublicOrderSubmissionState = {
   orderId: string;
   customer: string;
-  mode: "confirmed_order" | "outage_capture" | "browser_queue";
+  mode: "confirmed_order" | "outage_capture" | "browser_queue" | "preview_only";
 };
 
 type QueuedPublicOrderSubmission = {
@@ -1571,6 +1571,12 @@ export default function PublicOrderFormPage() {
     setPublicOrderSubmitted({ orderId, customer, mode: "browser_queue" });
   }
 
+  function finishPreviewJourney(customer: string) {
+    setPublicUpsellOffer(null);
+    exitTrackedRef.current = true;
+    setPublicOrderSubmitted({ orderId: "Preview only", customer, mode: "preview_only" });
+  }
+
   function shouldCapturePublicOrderOutage(error: any) {
     const status = typeof error?.status === "number" ? error.status : null;
     if (status == null || status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504) {
@@ -1798,6 +1804,12 @@ export default function PublicOrderFormPage() {
       preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
       company: publicHoneypot,
     };
+
+    if (publicEmbedIsPreview) {
+      resetOrderForm();
+      finishPreviewJourney(customerName);
+      return;
+    }
 
     setPublicOrderSubmitting(true);
     publicOrderSubmittingRef.current = true;
@@ -2275,7 +2287,7 @@ export default function PublicOrderFormPage() {
               lineHeight: 1.45
             }}
           >
-            <strong>Preview mode</strong> · This form is open for testing only. Abandoned-cart capture is disabled here.
+            <strong>Preview mode</strong> · This form is open for testing only. Submissions here do not create real orders or abandoned-cart records.
           </div>
         ) : null}
         {publicUpsellOffer ? (
@@ -2357,14 +2369,16 @@ export default function PublicOrderFormPage() {
                   Thank you{publicOrderSubmitted.customer ? `, ${publicOrderSubmitted.customer.split(" ")[0]}` : ""}!
                 </h1>
                 <p style={{ margin: 0, fontSize: 15, color: "#374151", maxWidth: 440, lineHeight: 1.5 }}>
-                  {publicOrderSubmitted.mode === "browser_queue"
+                  {publicOrderSubmitted.mode === "preview_only"
+                    ? "This preview submission was processed as a test only. No real order was created and nothing was recorded in your live order list."
+                    : publicOrderSubmitted.mode === "browser_queue"
                     ? "We saved your request in this browser and will keep retrying automatically while the order system is offline. Please keep this tab open if possible."
                     : publicOrderSubmitted.mode === "outage_capture"
                     ? "We saved your request while the order system was temporarily offline. Our team will contact you shortly to confirm the details and arrange delivery."
                     : "Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery."}
                 </p>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f3f4f6", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "#374151" }}>
-                  {publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
+                  {publicOrderSubmitted.mode === "preview_only" ? "Mode" : publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
                 </div>
                 {publicRedirectUrl ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>Redirecting…</p>
