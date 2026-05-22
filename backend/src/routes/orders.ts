@@ -1139,6 +1139,9 @@ router.patch("/:id", async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
+  const remittanceReason = typeof (req.body.remittance_reason ?? req.body.remittanceReason) === "string"
+    ? String(req.body.remittance_reason ?? req.body.remittanceReason).trim().slice(0, 240)
+    : "";
   if (remittanceReceivedAt === null) {
     res.status(400).json({ error: "Remittance received date must be in YYYY-MM-DD format." });
     return;
@@ -1362,7 +1365,7 @@ router.patch("/:id", async (req, res) => {
     nextAmountRemitted: (data as any).amount_remitted,
     userId: req.user!.id,
     userName: req.user!.name,
-    reason: "Manual remittance update",
+    reason: remittanceReason || "Manual remittance update",
     receivedAt: remittanceReceivedAt
   });
   await syncOrderFollowUpTask({

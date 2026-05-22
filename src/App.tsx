@@ -6192,9 +6192,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
+  const [remittanceReason, setRemittanceReason] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
   const [remittanceBatchAmount, setRemittanceBatchAmount] = useState("");
   const [remittanceBatchReceivedDate, setRemittanceBatchReceivedDate] = useState(todayKey());
+  const [remittanceBatchReason, setRemittanceBatchReason] = useState("");
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
@@ -9285,14 +9287,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeAgentDeliveredCount = financeAgentRows.reduce((sum, row) => sum + row.deliveries, 0);
 
   // ===== Remittance (Pay-on-Delivery cash reconciliation) =====
-  const orderLogisticsCost = (order: TrackedOrder) => order.logisticsCost ?? 0;
-  const orderAmountToRemit = (order: TrackedOrder) => Math.max(0, order.amount - orderLogisticsCost(order));
-  const orderAmountRemitted = (order: TrackedOrder) => order.amountRemitted ?? 0;
-  const orderRemittanceOutstanding = (order: TrackedOrder) => Math.max(0, orderAmountToRemit(order) - orderAmountRemitted(order));
+  const roundCash = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+  const orderLogisticsCost = (order: TrackedOrder) => roundCash(order.logisticsCost ?? 0);
+  const orderAmountToRemit = (order: TrackedOrder) => roundCash(Math.max(0, order.amount - orderLogisticsCost(order)));
+  const orderAmountRemitted = (order: TrackedOrder) => roundCash(order.amountRemitted ?? 0);
+  const orderRemittanceOutstanding = (order: TrackedOrder) => roundCash(Math.max(0, orderAmountToRemit(order) - orderAmountRemitted(order)));
   const orderRemittanceStatus = (order: TrackedOrder): "Pending" | "Partial" | "Paid" => {
-    if (order.remittanceStatus) return order.remittanceStatus;
     const remitted = orderAmountRemitted(order);
     const expected = orderAmountToRemit(order);
+    if (expected <= 0) return "Paid";
     if (remitted <= 0) return "Pending";
     if (remitted >= expected) return "Paid";
     return "Partial";
@@ -9368,7 +9371,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       current.transactionCount += cashRow.transactionCount;
       partnerMap.set(key, current);
     });
-    return Array.from(partnerMap.values()).sort((a, b) => b.outstanding - a.outstanding);
+    return Array.from(partnerMap.values())
+      .filter((row) => row.orderCount > 0 || row.expected > 0 || row.outstanding > 0)
+      .sort((a, b) => {
+        if (b.outstanding !== a.outstanding) return b.outstanding - a.outstanding;
+        if (b.expected !== a.expected) return b.expected - a.expected;
+        return b.orderCount - a.orderCount;
+      });
   })();
   const totalRemittanceExpected = remittanceRows.reduce((s, r) => s + r.expected, 0);
   const totalRemittanceReceived = financeRemittanceTransactions.reduce((sum, row) => sum + row.deltaAmount, 0);
@@ -9409,6 +9418,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
   })();
   const remittanceBatchUnappliedAmount = Math.max(0, remittanceBatchAmountValue - remittanceBatchOutstandingTotal);
+  const remittanceBatchShortfallAmount = Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue);
 
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
@@ -9498,23 +9508,43 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!isDateValue(remittanceReceivedDate)) { showToast("Choose a valid remittance received date."); return; }
     const newLogistics = remittanceLogisticsCost.trim() === "" ? (order.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
-    const expected = Math.max(0, order.amount - newLogistics);
+    const expected = roundCash(Math.max(0, order.amount - newLogistics));
+    const overpaidExcess = roundCash(Math.max(0, newRemitted - expected));
+    const underpaidBalance = roundCash(Math.max(0, expected - newRemitted));
+    if (overpaidExcess > 0) {
+      showToast(`Cash received cannot exceed the exact expected remittance of ${formatProductMoney(expected, order.currency)}. Remove the excess ${formatProductMoney(overpaidExcess, order.currency)} or book it in the correct batch.`);
+      return;
+    }
+    if (underpaidBalance > 0 && !remittanceReason.trim()) {
+      showToast("Explain why the partner underpaid and what the balance was used for before saving.");
+      return;
+    }
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
+    const remittanceNote = underpaidBalance > 0
+      ? `Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}. Underpaid by ${formatMoney(underpaidBalance)}. Reason: ${remittanceReason.trim()}.`
+      : `Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`;
     const prevOrders = trackedOrders;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
+      notes: [orderTimelineNote(remittanceNote), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
     closeModal();
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     setRemittanceReceivedDate(todayKey());
+    setRemittanceReason("");
     showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
-    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
+    ordersApi.update(order.id, {
+      logistics_cost: newLogistics,
+      amount_remitted: newRemitted,
+      remittance_status: status,
+      remittance_received_at: remittanceReceivedDate,
+      remittance_reason: underpaidBalance > 0 ? `Underpaid by ${underpaidBalance}: ${remittanceReason.trim()}` : "Manual remittance update"
+    }).then(() => {
       void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
@@ -9529,12 +9559,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
+    setRemittanceReason("");
     openFinanceRemittanceRoute(order.id);
   };
   const openRecordBatchRemittance = (partnerKey: string) => {
     setRemittanceBatchPartnerKeyValue(partnerKey);
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
+    setRemittanceBatchReason("");
     setModal("recordBatchRemittance");
   };
   const recordBatchRemittance = async () => {
@@ -9558,6 +9590,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`The remitted amount cannot exceed ${formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))} for this batch.`);
       return;
     }
+    if (remittanceBatchShortfallAmount > 0 && !remittanceBatchReason.trim()) {
+      showToast("Explain why the logistics partner underpaid this batch and what the remaining balance was used for.");
+      return;
+    }
     const allocations = remittanceBatchAllocationPreview.filter((entry) => entry.applied > 0);
     if (allocations.length === 0) {
       showToast("There is nothing to allocate in this remittance batch.");
@@ -9576,7 +9612,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ...entry.order,
         amountRemitted: nextAmountRemitted,
         remittanceStatus: nextStatus,
-        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.`), ...orderNotesFor(entry.order)]
+        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.${remittanceBatchShortfallAmount > 0 ? ` Batch still short by ${formatMoney(remittanceBatchShortfallAmount)}. Reason: ${remittanceBatchReason.trim()}.` : ""}`), ...orderNotesFor(entry.order)]
       }];
     }));
     setTrackedOrders((prev) => prev.map((order) => optimisticMap.get(order.id) ?? order));
@@ -9584,6 +9620,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceBatchPartnerKeyValue("");
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
+    setRemittanceBatchReason("");
     showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.`);
     try {
       await Promise.all(allocations.map((entry) => {
@@ -9597,7 +9634,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         return ordersApi.update(entry.order.id, {
           amount_remitted: nextAmountRemitted,
           remittance_status: nextStatus,
-          remittance_received_at: remittanceBatchReceivedDate
+          remittance_received_at: remittanceBatchReceivedDate,
+          remittance_reason: remittanceBatchShortfallAmount > 0 ? `Batch underpaid by ${remittanceBatchShortfallAmount}: ${remittanceBatchReason.trim()}` : `Batch remittance via ${remittanceBatchTargetRow.partnerName}`
         });
       }));
       void loadFinanceSummaryData({ quiet: true });
@@ -9611,6 +9649,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const remittanceTargetOrder = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
+  const remittanceTargetExpected = remittanceTargetOrder ? roundCash(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0))) : 0;
+  const remittanceTargetAmountValue = Math.max(0, Number(remittanceAmount) || 0);
+  const remittanceTargetShortfall = Math.max(0, roundCash(remittanceTargetExpected - remittanceTargetAmountValue));
+  const remittanceTargetExcess = Math.max(0, roundCash(remittanceTargetAmountValue - remittanceTargetExpected));
 
   // ===== Customer flags =====
   const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
@@ -40666,11 +40708,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span>Cash Received Date</span>
                   <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
                 </label>
+                <label>
+                  <span>{remittanceTargetShortfall > 0 ? "Why was this underpaid? What was the balance used for?" : "Remittance note (optional)"}</span>
+                  <textarea value={remittanceReason} onChange={(e) => setRemittanceReason(e.target.value)} rows={3} placeholder={remittanceTargetShortfall > 0 ? "e.g. ₦4,000 held back for failed-delivery settlement / rider dispute / return leg..." : "Optional internal note"} />
+                </label>
                 <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <strong>Expected to receive:</strong> {formatProductMoney(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)), remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
-                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}<br />
+                  <strong>Expected exact remittance:</strong> {formatProductMoney(remittanceTargetExpected, remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
+                  <strong>Underpaid balance:</strong> {formatProductMoney(remittanceTargetShortfall, remittanceTargetOrder.currency)}<br />
+                  <strong>Overpaid excess:</strong> {formatProductMoney(remittanceTargetExcess, remittanceTargetOrder.currency)}<br />
                   <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
                 </p>
+                {remittanceTargetExcess > 0 && (
+                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    This amount is above the exact expected cash for this order. Protohub will not save overpaid remittance into this order.
+                  </p>
+                )}
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
@@ -40697,10 +40749,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span>Cash Received Date</span>
                   <input type="date" value={remittanceBatchReceivedDate} onChange={(e) => setRemittanceBatchReceivedDate(e.target.value)} />
                 </label>
+                <label>
+                  <span>{remittanceBatchShortfallAmount > 0 ? "Why was this batch underpaid? What was the balance used for?" : "Batch note (optional)"}</span>
+                  <textarea value={remittanceBatchReason} onChange={(e) => setRemittanceBatchReason(e.target.value)} rows={3} placeholder={remittanceBatchShortfallAmount > 0 ? "e.g. ₦8,500 held back for returns / damaged parcel / manual settlement..." : "Optional internal note"} />
+                </label>
                 <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                   <strong>Already received:</strong> {formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
                   <strong>Outstanding before this:</strong> {formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue), remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Underpaid balance:</strong> {formatProductMoney(remittanceBatchShortfallAmount, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Overpaid excess:</strong> {formatProductMoney(remittanceBatchUnappliedAmount, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
                   <strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.
                 </p>
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
