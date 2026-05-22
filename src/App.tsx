@@ -31231,114 +31231,159 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                 )}
               </section>
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                  <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredAdTrackingOrders.length} attributed</span>
-                </div>
-                <div className="sm:hidden divide-y divide-gray-100">
-                  {filteredAdTrackingOrders.length === 0 ? (
-                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">
-                      {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
-                    </div>
-                  ) : (
-                    (() => {
-                      const CAMP_PAGE = 25;
-                      const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
-                      const campPageClamped = Math.min(campaignPage, campTotalPages);
-                      return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
-                        <article key={order.id} className="p-4 space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-bold text-gray-900">{order.id}</div>
-                              <div className="text-sm font-semibold text-gray-900">{order.customer}</div>
-                              <div className="text-xs text-gray-400">{order.phone}</div>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <div className="font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</div>
-                              <div className="text-xs text-gray-500">{formatOrderCreatedAt(order)}</div>
-                            </div>
-                          </div>
-                          <div className="space-y-1.5 text-sm">
-                            <div className="font-medium text-gray-700">{order.productName}</div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 break-all">{order.utmCampaign}</span>
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 break-all">{order.utmSource}</span>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div>
-                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Medium</span>
-                              <div className="text-gray-600 break-words">{order.utmMedium || "—"}</div>
-                            </div>
-                            <div>
-                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Content</span>
-                              <div className="text-gray-600 break-words">{order.utmContent || "—"}</div>
-                            </div>
-                          </div>
-                        </article>
-                      ));
-                    })()
-                  )}
-                </div>
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Order", "Customer", "Product", "Campaign", "Source", "Medium", "Content", "Amount", "Date"].map((h) => (
-                          <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredAdTrackingOrders.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">{adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}</td></tr>
-                      ) : (
-                        (() => {
-                          const CAMP_PAGE = 25;
-                          const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
-                          const campPageClamped = Math.min(campaignPage, campTotalPages);
-                          return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
-                            <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
-                              <td className="px-4 py-4">
-                                <div className="font-semibold text-gray-900">{order.customer}</div>
-                                <div className="text-xs text-gray-400">{order.phone}</div>
-                              </td>
-                              <td className="px-4 py-4 text-gray-700">{order.productName}</td>
-                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
-                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
-                              <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
-                              <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
-                              <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
-                              <td className="px-4 py-4 text-gray-500">{formatOrderCreatedAt(order)}</td>
-                            </tr>
-                          ));
-                        })()
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {(() => {
-                  const CAMP_PAGE = 25;
-                  const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
-                  if (campTotalPages <= 1) return null;
-                  const campPageClamped = Math.min(campaignPage, campTotalPages);
-                  return (
-                    <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredAdTrackingOrders.length)} of {filteredAdTrackingOrders.length}</span>
-                      <div className="flex items-center gap-1 flex-wrap">
-                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
-                        {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
-                          {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
-                          <button key={p} className={`px-2 py-1 rounded border ${p === campPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setCampaignPage(p)}>{p}</button>
-                        </>))}
-                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped >= campTotalPages} onClick={() => setCampaignPage(campPageClamped + 1)}>Next</button>
+              {(() => {
+                const CAMP_PAGE = 25;
+                const campTotalPages = Math.max(1, Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE));
+                const campPageClamped = Math.min(campaignPage, campTotalPages);
+                const pagedTrackedOrders = filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE);
+
+                return (
+                  <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                    <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h2 className="text-lg font-bold text-gray-900 dark:text-slate-100">Orders</h2>
+                          <p className="text-sm text-gray-500 dark:text-slate-400">All orders placed via tracked links.</p>
+                        </div>
+                        <span className="inline-flex w-fit items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+                          {filteredAdTrackingOrders.length} attributed
+                        </span>
                       </div>
                     </div>
-                  );
-                })()}
-              </section>
+
+                    <div className="divide-y divide-gray-100 dark:divide-slate-800/80 sm:hidden">
+                      {filteredAdTrackingOrders.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-sm font-medium italic text-gray-400 dark:text-slate-500">
+                          {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                        </div>
+                      ) : (
+                        pagedTrackedOrders.map((order) => {
+                          const status = order.status ?? "New";
+                          const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+                          const creativeId = order.utmContent?.trim() || "";
+                          const campaignLabel = campaignCardLabelFor(campaignId);
+                          const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+
+                          return (
+                            <article key={order.id} className="space-y-3 px-4 py-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-bold text-gray-500 dark:text-slate-400">{order.id}</div>
+                                  <div className="truncate text-base font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
+                                  <div className="truncate text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <div className="text-base font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</div>
+                                  <div className="text-xs text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</div>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
+                                  {status}
+                                </span>
+                                <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                  {order.utmSource}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div className="min-w-0">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Campaign</div>
+                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
+                                  {campaignLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Creative</div>
+                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
+                                  {creativeLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="hidden overflow-x-auto sm:block">
+                      <table className="w-full min-w-[980px] text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50/70 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
+                            {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((heading) => (
+                              <th key={heading} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                                {heading}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
+                          {filteredAdTrackingOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="px-5 py-12 text-center text-sm font-medium italic text-gray-400 dark:text-slate-500">
+                                {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                              </td>
+                            </tr>
+                          ) : (
+                            pagedTrackedOrders.map((order) => {
+                              const status = order.status ?? "New";
+                              const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+                              const creativeId = order.utmContent?.trim() || "";
+                              const campaignLabel = campaignCardLabelFor(campaignId);
+                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+
+                              return (
+                                <tr key={order.id} className="transition-colors hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
+                                  <td className="px-5 py-4 font-semibold text-gray-500 dark:text-slate-400">{order.id}</td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
+                                    <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
+                                      {status}
+                                    </span>
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                      {order.utmSource}
+                                    </span>
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
+                                    {campaignLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
+                                    {creativeLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
+                                  </td>
+                                  <td className="px-5 py-4 text-right font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</td>
+                                  <td className="px-5 py-4 text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {campTotalPages > 1 && (
+                      <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-slate-800/80 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                        <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredAdTrackingOrders.length)} of {filteredAdTrackingOrders.length}</span>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-900/40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
+                          {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (
+                            <Fragment key={p}>
+                              {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1">…</span>}
+                              <button className={`rounded border px-2 py-1 ${p === campPageClamped ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-900/40"}`} onClick={() => setCampaignPage(p)}>{p}</button>
+                            </Fragment>
+                          ))}
+                          <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-900/40" disabled={campPageClamped >= campTotalPages} onClick={() => setCampaignPage(campPageClamped + 1)}>Next</button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })()}
               </>)}
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
