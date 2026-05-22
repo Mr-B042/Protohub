@@ -1574,6 +1574,18 @@ export default function PublicOrderFormPage() {
   function finishPreviewJourney(customer: string) {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
+    if (publicRedirectUrl) {
+      if (redirectTimerRef.current) {
+        window.clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = null;
+      }
+      try {
+        (window.top ?? window).location.href = publicRedirectUrl;
+      } catch {
+        window.location.href = publicRedirectUrl;
+      }
+      return;
+    }
     setPublicOrderSubmitted({ orderId: "Preview only", customer, mode: "preview_only" });
   }
 
