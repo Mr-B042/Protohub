@@ -818,6 +818,14 @@ type AbandonedCartRecord = {
   lastActivity: string;
   createdAt: string;
 };
+type AbandonedCartAttribution = {
+  utmSource?: string;
+  utmCampaign?: string;
+  utmMedium?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  referrer?: string;
+};
 type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
 type CartJourneyBlockedEventType =
   | "submit_blocked_missing_name"
@@ -4989,9 +4997,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [financeRemittanceError, setFinanceRemittanceError] = useState("");
   const [financeRemittanceBackfillLoading, setFinanceRemittanceBackfillLoading] = useState(false);
   const [financeRemittanceBackfillSummary, setFinanceRemittanceBackfillSummary] = useState("");
-  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
-    readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
-      raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
+  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">(() =>
+    readPref<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
+      raw === "Campaign Orders" || raw === "Abandoned Carts" || raw === "Daily Ad Spend" ? raw : null
     )
   );
   const [adTrackingSearch, setAdTrackingSearch] = useState<string>(() =>
@@ -5001,6 +5009,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
   useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
   const [campaignPage, setCampaignPage] = useState(1);
+  const [adTrackingCartPage, setAdTrackingCartPage] = useState(1);
   const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
   const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
   const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
@@ -5033,6 +5042,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     setCampaignPage(1);
+    setAdTrackingCartPage(1);
   }, [adTrackingSearch]);
 
   useEffect(() => {
@@ -7536,6 +7546,32 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const payload = cart.capturePayload;
     return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
   };
+  const cartAttributionFor = (cart: AbandonedCartRecord): AbandonedCartAttribution => {
+    const payload = cartCapturePayloadFor(cart);
+    const read = (key: keyof AbandonedCartAttribution) => {
+      const value = payload?.[key];
+      return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    };
+    return {
+      utmSource: read("utmSource"),
+      utmCampaign: read("utmCampaign"),
+      utmMedium: read("utmMedium"),
+      utmContent: read("utmContent"),
+      utmTerm: read("utmTerm"),
+      referrer: read("referrer")
+    };
+  };
+  const cartAttributionSourceFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmSource?.trim() || "";
+  const cartAttributionCampaignFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmCampaign?.trim() || "Unlabelled";
+  const cartAttributionCreativeFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmContent?.trim() || "";
+  const cartHasAdAttribution = (cart: AbandonedCartRecord) => {
+    const attribution = cartAttributionFor(cart);
+    return Boolean(
+      (attribution.utmSource && attribution.utmSource.toLowerCase() !== "direct")
+      || attribution.utmCampaign
+      || attribution.utmContent
+    );
+  };
   const capturedOfferLinesFrom = (raw: unknown): CapturedCartOfferLine[] => {
     if (!Array.isArray(raw)) return [];
     return raw
@@ -7856,6 +7892,134 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       order.utmContent,
       campaignCardLabelFor(campaignId),
       creativeId ? creativeCardLabelFor(creativeId) : ""
+    );
+  });
+  const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
+    if (order.sourceCartId && !map.has(order.sourceCartId)) {
+      map.set(order.sourceCartId, order);
+    }
+    return map;
+  }, new Map<string, TrackedOrder>());
+  const campaignBaseCarts = abandonedCarts
+    .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
+    .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
+  const filteredCampaignBaseCarts = campaignBaseCarts
+    .map((cart) => ({
+      cart,
+      attribution: cartAttributionFor(cart),
+      linkedOrder: adTrackingLinkedOrderBySourceCartId.get(cart.id)
+    }))
+    .filter(({ cart }) => cartHasAdAttribution(cart));
+  const cartCampaignGroupedRows = Object.values(
+    filteredCampaignBaseCarts.reduce<Record<string, {
+      id: string;
+      carts: typeof filteredCampaignBaseCarts;
+      recoveredCount: number;
+      deliveredCount: number;
+      value: number;
+      topSource: string;
+    }>>((acc, row) => {
+      const key = row.attribution.utmCampaign?.trim() || "Unlabelled";
+      const bucket = acc[key] ?? {
+        id: key,
+        carts: [],
+        recoveredCount: 0,
+        deliveredCount: 0,
+        value: 0,
+        topSource: ""
+      };
+      bucket.carts.push(row);
+      bucket.value += row.cart.amount;
+      if (row.linkedOrder) {
+        bucket.recoveredCount += 1;
+        if ((row.linkedOrder.status ?? "New") === "Delivered") {
+          bucket.deliveredCount += 1;
+        }
+      }
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => {
+    const sourceCounts: Record<string, number> = {};
+    row.carts.forEach(({ attribution }) => {
+      const src = attribution.utmSource?.trim() || "unknown";
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+    });
+    return {
+      ...row,
+      cartCount: row.carts.length,
+      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
+    };
+  }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
+  const cartCreativeGroupedRows = Object.values(
+    filteredCampaignBaseCarts
+      .filter(({ attribution }) => attribution.utmContent?.trim())
+      .reduce<Record<string, {
+        id: string;
+        campaignId: string;
+        carts: typeof filteredCampaignBaseCarts;
+        recoveredCount: number;
+        deliveredCount: number;
+        value: number;
+      }>>((acc, row) => {
+        const key = row.attribution.utmContent!.trim();
+        const bucket = acc[key] ?? {
+          id: key,
+          campaignId: row.attribution.utmCampaign?.trim() || "Unlabelled",
+          carts: [],
+          recoveredCount: 0,
+          deliveredCount: 0,
+          value: 0
+        };
+        bucket.carts.push(row);
+        bucket.value += row.cart.amount;
+        if (row.linkedOrder) {
+          bucket.recoveredCount += 1;
+          if ((row.linkedOrder.status ?? "New") === "Delivered") {
+            bucket.deliveredCount += 1;
+          }
+        }
+        acc[key] = bucket;
+        return acc;
+      }, {})
+  ).map((row) => ({
+    ...row,
+    cartCount: row.carts.length
+  })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
+  const filteredCartCampaignGroupedRows = cartCampaignGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(
+      row.id,
+      campaignCardLabelFor(row.id),
+      row.topSource,
+      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
+    )
+  );
+  const filteredCartCreativeGroupedRows = cartCreativeGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(
+      row.id,
+      creativeCardLabelFor(row.id),
+      row.campaignId,
+      campaignCardLabelFor(row.campaignId),
+      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
+    )
+  );
+  const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) => {
+    const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+    const creativeId = attribution.utmContent?.trim() || "";
+    return matchesAdTrackingSearch(
+      cart.id,
+      cart.customer,
+      cart.phone,
+      cart.productName,
+      cart.status,
+      attribution.utmCampaign,
+      attribution.utmSource,
+      attribution.utmMedium,
+      attribution.utmContent,
+      campaignCardLabelFor(campaignId),
+      creativeId ? creativeCardLabelFor(creativeId) : "",
+      linkedOrder?.customer ?? "",
+      linkedOrder?.id ?? ""
     );
   });
   const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
@@ -13241,23 +13405,64 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
+    const selectedCrossSellLines: CrossSellLine[] = orderFormCrossSells.map((selection) => {
+      const product = products.find((item) => item.id === selection.productId);
+      const companion = chosenPackage.companionProducts?.find((entry) =>
+        entry.productId === selection.productId
+        && companionMatchesState(entry, orderFormState.trim())
+      );
+      let quantity = selection.quantity;
+      let amount = 0;
+      if (companion && product) {
+        const standard = primaryPricing(product)?.sellingPrice ?? 0;
+        quantity = companion.quantity;
+        amount = companionConfiguredTotal(companion, standard);
+      } else if (product) {
+        amount = crossSellPriceFor(captureProduct, product) * selection.quantity;
+      }
+      return {
+        id: makeCrossSellLineId(),
+        productId: selection.productId,
+        productName: product?.name ?? "Add-on",
+        quantity,
+        amount,
+        selectionSource: "public_form"
+      };
+    });
+    const autoCompanionLines = computeAutoCompanionLines(chosenPackage, orderFormState.trim());
+    const cartAdditionalTotal = [...selectedCrossSellLines, ...autoCompanionLines].reduce((sum, line) => sum + line.amount, 0);
+    const cartCapturePayload = {
+      packageQuantity: chosenPackage.quantity,
+      utmSource: publicUtmSource || undefined,
+      utmCampaign: publicUtmCampaign || undefined,
+      utmMedium: publicUtmMedium || undefined,
+      utmContent: publicUtmContent || undefined,
+      utmTerm: publicUtmTerm || undefined,
+      referrer: publicReferrer || undefined,
+      selectedCrossSellLines: selectedCrossSellLines.length > 0 ? selectedCrossSellLines : undefined,
+      autoCompanionLines: autoCompanionLines.length > 0 ? autoCompanionLines : undefined
+    };
+
     const cartPatch: AbandonedCartRecord = {
       id: abandonedDraftCartId || makeCartId(),
       customer: orderFormName.trim() || "Partial lead",
       phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "No phone yet",
       whatsapp: sanitizePhoneDigitsInput(orderFormWhatsapp),
       email: orderFormEmail.trim(),
+      address: orderFormAddress.trim(),
       city: orderFormCity.trim(),
       state: orderFormState.trim(),
       productId: captureProduct.id,
       packageId: chosenPackage.id,
       productName: captureProduct.name,
       packageName: chosenPackage.name,
-      amount: chosenPackage.price,
+      amount: chosenPackage.price + cartAdditionalTotal,
       currency: chosenPackage.currency,
       source: publicProduct ? orderSourceFromUtm(publicUtmSource) : "Website",
       status: abandonedDraftCartId ? "In progress" : "Open abandoned",
       assignedRepId: abandonedCarts.find((cart) => cart.id === abandonedDraftCartId)?.assignedRepId,
+      preferredDelivery: orderFormDeliveryWindow.trim(),
+      capturePayload: cartCapturePayload,
       lastActivity: nowIso(),
       createdAt: nowIso()
     };
@@ -13285,6 +13490,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           customer:     cartPatch.customer,
           phone:        cartPatch.phone,
           whatsapp:     cartPatch.whatsapp,
+          email:        cartPatch.email,
+          address:      cartPatch.address,
           city:         cartPatch.city,
           state:        cartPatch.state,
           productId:    cartPatch.productId,
@@ -13293,7 +13500,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           packageName:  cartPatch.packageName,
           amount:       cartPatch.amount,
           currency:     cartPatch.currency,
-          source:       cartPatch.source
+          source:       cartPatch.source,
+          preferredDelivery: cartPatch.preferredDelivery,
+          capturePayload: cartPatch.capturePayload
         }).catch(() => { /* swallow — local state already has it */ });
       }, 1500);
     }
@@ -13306,9 +13515,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     orderFormCity,
     orderFormState,
     orderFormPackageId,
+    orderFormCrossSells,
+    orderFormDeliveryWindow,
     publicEmbedIsPreview,
     publicProduct,
     publicUtmSource,
+    publicUtmCampaign,
+    publicUtmMedium,
+    publicUtmContent,
+    publicUtmTerm,
+    publicReferrer,
+    products,
     previewProduct
   ]);
 
@@ -30976,8 +31193,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </header>
 
               {/* Tabs */}
-              <div className="grid grid-cols-2 gap-2 sm:hidden">
-                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+              <div className="grid grid-cols-3 gap-2 sm:hidden">
+                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-3 rounded-xl border text-left text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] border-[#1F8FE0] shadow-sm" : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700"}`}>
                     {tab}
@@ -30985,7 +31202,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 ))}
               </div>
               <div className="hidden sm:flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
                     {tab}
@@ -31385,6 +31602,280 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 );
               })()}
               </>)}
+
+              {adTrackingTab === "Abandoned Carts" && (() => {
+                const CART_PAGE = 25;
+                const cartTotalPages = Math.max(1, Math.ceil(filteredAdTrackingCarts.length / CART_PAGE));
+                const cartPageClamped = Math.min(adTrackingCartPage, cartTotalPages);
+                const pagedTrackedCarts = filteredAdTrackingCarts.slice((cartPageClamped - 1) * CART_PAGE, cartPageClamped * CART_PAGE);
+                return (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                        <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                          {periods.map((item) => (
+                            <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
+                          ))}
+                        </div>
+                        <div className="relative w-full sm:w-auto">
+                          <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange(v => !v)}>
+                            <CalendarDays className="w-4 h-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                          </button>
+                          {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
+                        </div>
+                        {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                        <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                          <input
+                            value={adTrackingSearch}
+                            onChange={(event) => setAdTrackingSearch(event.target.value)}
+                            placeholder="Search cart, campaign, creative, or label..."
+                            className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          />
+                        </label>
+                      </div>
+                      {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
+                    </div>
+
+                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracked abandoned cart summary">
+                      {[
+                        { title: "Tracked Carts", value: String(filteredAdTrackingCarts.length), helper: "abandoned carts with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                        { title: "Recovered", value: String(filteredAdTrackingCarts.filter((row) => row.linkedOrder).length), helper: "later converted to orders", icon: ArrowRight, tone: "purple" },
+                        { title: "Unique Campaigns", value: String(filteredCartCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "campaigns behind abandoned carts", icon: Zap, tone: "green" },
+                        { title: "Captured Value", value: formatMoney(filteredAdTrackingCarts.reduce((sum, row) => sum + row.cart.amount, 0)), helper: "value of abandoned tracked carts", icon: CircleDollarSign, tone: "orange" }
+                      ].map((metric) => {
+                        const Icon = metric.icon;
+                        return (
+                          <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm" key={metric.title}>
+                            <div className="flex items-center justify-between mb-3">
+                              <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "purple" ? "bg-purple-50 text-purple-500" : metric.tone === "green" ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500"}`}>
+                                <Icon className="w-5 h-5" />
+                              </span>
+                            </div>
+                            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                            <strong className="text-2xl font-bold text-gray-900 block my-1">{metric.value}</strong>
+                            <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
+                          </article>
+                        );
+                      })}
+                    </section>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-4 border-b border-gray-100">
+                          <h2 className="text-sm font-bold text-gray-800">Campaigns behind abandoned carts</h2>
+                          <p className="text-xs text-gray-400">Grouped by `utm_campaign` from abandoned carts in this period.</p>
+                        </div>
+                        {filteredCartCampaignGroupedRows.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                            {adTrackingSearchNeedle ? "No abandoned-cart campaigns matched this search yet." : "No campaign-tagged abandoned carts in this period yet."}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {filteredCartCampaignGroupedRows.slice(0, 8).map((row) => {
+                              const label = campaignCardLabelFor(row.id);
+                              return (
+                                <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
+                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
+                                    <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-4 border-b border-gray-100">
+                          <h2 className="text-sm font-bold text-gray-800">Creatives behind abandoned carts</h2>
+                          <p className="text-xs text-gray-400">Grouped by `utm_content` from abandoned carts in this period.</p>
+                        </div>
+                        {filteredCartCreativeGroupedRows.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                            {adTrackingSearchNeedle ? "No abandoned-cart creatives matched this search yet." : "No creative-tagged abandoned carts in this period yet."}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {filteredCartCreativeGroupedRows.slice(0, 8).map((row) => {
+                              const label = creativeCardLabelFor(row.id);
+                              const campaignLabel = campaignCardLabelFor(row.campaignId);
+                              return (
+                                <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
+                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
+                                    <p className="m-0 mt-1 text-xs text-gray-400 truncate">{campaignLabel || row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    </div>
+
+                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-sm font-bold text-gray-800">Abandoned Carts</h2>
+                          <p className="text-xs text-gray-400">All abandoned carts captured via tracked links.</p>
+                        </div>
+                        <span className="text-xs font-semibold text-gray-500">{filteredAdTrackingCarts.length} tracked</span>
+                      </div>
+
+                      {filteredAdTrackingCarts.length === 0 ? (
+                        <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                          {adTrackingSearchNeedle ? "No tracked abandoned carts matched this search." : "No abandoned carts with UTM attribution in this period yet."}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="sm:hidden divide-y divide-gray-100">
+                            {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                              const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+                              const creativeId = attribution.utmContent?.trim() || "";
+                              const campaignLabel = campaignCardLabelFor(campaignId);
+                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                              const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                              const statusTone = cart.status === "Converted"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : cart.status === "Contacted"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : cart.status === "Assigned"
+                                    ? "bg-violet-100 text-violet-700"
+                                    : "bg-amber-100 text-amber-700";
+                              return (
+                                <article
+                                  key={`tracked-cart-mobile-${cart.id}`}
+                                  className="px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 transition-colors"
+                                  onClick={() => openCartModal(cart, "cartDetails")}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-[11px] font-semibold text-gray-400">#{(cartPageClamped - 1) * CART_PAGE + index + 1} · {cart.id}</div>
+                                      <div className="text-base font-bold text-gray-900 truncate">{cart.customer || "Partial lead"}</div>
+                                      <div className="text-xs text-gray-500 truncate">{cart.phone || "No phone yet"}</div>
+                                    </div>
+                                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold shrink-0 ${statusTone}`}>{cart.status}</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
+                                      <div className="font-semibold text-gray-900">{attribution.utmSource || cart.source}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
+                                      <div className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
+                                      <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
+                                      {campaignLabel && campaignLabel !== campaignId && <div className="text-[11px] text-gray-500">{campaignId}</div>}
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
+                                      <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                      {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                                    <span>{formatMoment(cart.createdAt || cart.lastActivity)}</span>
+                                    <span>{conversionStatus || (linkedOrder ? `Linked order ${linkedOrder.status ?? "New"}` : "Tap to view cart details")}</span>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+
+                          <div className="hidden sm:block overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                                  {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((heading) => (
+                                    <th key={heading} className="px-5 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{heading}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                                  const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+                                  const creativeId = attribution.utmContent?.trim() || "";
+                                  const campaignLabel = campaignCardLabelFor(campaignId);
+                                  const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                                  const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                                  const statusTone = cart.status === "Converted"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : cart.status === "Contacted"
+                                      ? "bg-blue-100 text-blue-700"
+                                      : cart.status === "Assigned"
+                                        ? "bg-violet-100 text-violet-700"
+                                        : "bg-amber-100 text-amber-700";
+                                  return (
+                                    <tr
+                                      key={`tracked-cart-${cart.id}`}
+                                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                                      onClick={() => openCartModal(cart, "cartDetails")}
+                                    >
+                                      <td className="px-5 py-4 font-semibold text-gray-500">#{(cartPageClamped - 1) * CART_PAGE + index + 1}</td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{cart.customer || "Partial lead"}</div>
+                                        <div className="mt-0.5 text-xs text-gray-500">{cart.id}</div>
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[170px]">
+                                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${statusTone}`}>{cart.status}</span>
+                                        {conversionStatus && <div className="mt-1 text-[11px] text-gray-500">{conversionStatus}</div>}
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[150px]">
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{attribution.utmSource || cart.source}</span>
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
+                                        {campaignLabel && campaignLabel !== campaignId && <div className="mt-0.5 text-xs text-gray-500">{campaignId}</div>}
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                        {creativeLabel && creativeLabel !== creativeId && <div className="mt-0.5 text-xs text-gray-500">{creativeId}</div>}
+                                      </td>
+                                      <td className="px-5 py-4 text-right font-bold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</td>
+                                      <td className="px-5 py-4 text-gray-500 whitespace-nowrap">{formatMoment(cart.createdAt || cart.lastActivity)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {cartTotalPages > 1 && (
+                            <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                              <span>Showing {(cartPageClamped - 1) * CART_PAGE + 1}–{Math.min(cartPageClamped * CART_PAGE, filteredAdTrackingCarts.length)} of {filteredAdTrackingCarts.length}</span>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped <= 1} onClick={() => setAdTrackingCartPage(cartPageClamped - 1)}>Prev</button>
+                                {Array.from({ length: cartTotalPages }, (_, i) => i + 1).filter((page) => page === 1 || page === cartTotalPages || Math.abs(page - cartPageClamped) <= 1).map((page, idx, arr) => (
+                                  <Fragment key={`cart-page-${page}`}>
+                                    {idx > 0 && arr[idx - 1] !== page - 1 && <span className="px-1">…</span>}
+                                    <button className={`rounded border px-2 py-1 ${page === cartPageClamped ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setAdTrackingCartPage(page)}>{page}</button>
+                                  </Fragment>
+                                ))}
+                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped >= cartTotalPages} onClick={() => setAdTrackingCartPage(cartPageClamped + 1)}>Next</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </section>
+                  </>
+                );
+              })()}
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -37869,6 +38360,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
 	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
+                const selectedCartAttribution = cartAttributionFor(selectedCart);
+                const selectedCartCampaignId = selectedCartAttribution.utmCampaign?.trim() || "";
+                const selectedCartCreativeId = selectedCartAttribution.utmContent?.trim() || "";
+                const selectedCartCampaignLabel = selectedCartCampaignId ? campaignCardLabelFor(selectedCartCampaignId) : "";
+                const selectedCartCreativeLabel = selectedCartCreativeId ? creativeCardLabelFor(selectedCartCreativeId) : "";
+                const showCartAttribution = Boolean(
+                  selectedCartAttribution.utmSource
+                  || selectedCartCampaignId
+                  || selectedCartAttribution.utmMedium
+                  || selectedCartCreativeId
+                  || selectedCartAttribution.referrer
+                );
 	              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -37929,6 +38432,50 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      {selectedCart.address && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Address</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.address}</p></div>}
 	                    </div>
 	                  </section>
+
+                    {showCartAttribution && (
+	                  <section>
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Ad Attribution</h4>
+	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                          {selectedCartAttribution.utmSource && (
+                            <div>
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">UTM Source</p>
+                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartAttribution.utmSource}</p>
+                            </div>
+                          )}
+                          {(selectedCartCampaignId || selectedCartCampaignLabel) && (
+                            <div>
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Campaign</p>
+                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartCampaignLabel || selectedCartCampaignId}</p>
+                              {selectedCartCampaignLabel && selectedCartCampaignLabel !== selectedCartCampaignId && (
+                                <p className="text-[11px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">{selectedCartCampaignId}</p>
+                              )}
+                            </div>
+                          )}
+                          {selectedCartAttribution.utmMedium && (
+                            <div>
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">UTM Medium</p>
+                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartAttribution.utmMedium}</p>
+                            </div>
+                          )}
+                          {(selectedCartCreativeId || selectedCartCreativeLabel) && (
+                            <div>
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Creative</p>
+                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartCreativeLabel || selectedCartCreativeId}</p>
+                              {selectedCartCreativeLabel && selectedCartCreativeLabel !== selectedCartCreativeId && (
+                                <p className="text-[11px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">{selectedCartCreativeId}</p>
+                              )}
+                            </div>
+                          )}
+                          {selectedCartAttribution.referrer && (
+                            <div className="sm:col-span-2">
+                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Referrer</p>
+                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0 break-all">{selectedCartAttribution.referrer}</p>
+                            </div>
+                          )}
+	                    </div>
+	                  </section>
+                    )}
 
 	                  {/* Product / package */}
 	                  <section>
