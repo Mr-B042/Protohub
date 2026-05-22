@@ -3503,80 +3503,134 @@ const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | 
   return null;
 };
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
-  const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
+  const order = snakeToCamel<any>(value);
+  const legacyMetadata = parseLegacyOrderMetadata(order?.notes ?? value?.notes);
   const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
     ? value.scheduledAt
     : typeof value?.scheduled_at === "string" && value.scheduled_at
       ? value.scheduled_at
+    : typeof order?.scheduledAt === "string" && order.scheduledAt
+      ? order.scheduledAt
     : legacyMetadata.scheduledAt;
   const scheduledDate = typeof value?.scheduledDate === "string" && value.scheduledDate
     ? normalizeDateKey(value.scheduledDate)
     : typeof value?.scheduled_date === "string" && value.scheduled_date
       ? normalizeDateKey(value.scheduled_date)
+    : typeof order?.scheduledDate === "string" && order.scheduledDate
+      ? normalizeDateKey(order.scheduledDate)
     : scheduledAt
       ? normalizeDateKey(scheduledAt)
       : undefined;
+  const quantity = order?.quantity != null ? Number(order.quantity) : undefined;
+  const originalQuantity = order?.originalQuantity != null ? Number(order.originalQuantity) : undefined;
+  const amount = order?.amount != null ? Number(order.amount) : Number(value?.amount ?? 0);
+  const originalAmount = order?.originalAmount != null ? Number(order.originalAmount) : undefined;
+  const logisticsCost = order?.logisticsCost != null ? Number(order.logisticsCost) : typeof value?.logistics_cost === "number" ? value.logistics_cost : undefined;
+  const amountRemitted = order?.amountRemitted != null ? Number(order.amountRemitted) : typeof value?.amount_remitted === "number" ? value.amount_remitted : undefined;
+  const createdAt = typeof order?.createdAt === "string" && order.createdAt
+    ? order.createdAt
+    : typeof value?.created_at === "string" && value.created_at
+      ? value.created_at
+      : undefined;
   return {
-    ...value,
-    sourceCartId: sourceCartIdForOrder(value) || undefined,
-    createdAt: typeof value?.createdAt === "string" && value.createdAt
-      ? value.createdAt
-      : typeof value?.created_at === "string" && value.created_at
-        ? value.created_at
-        : undefined,
-    updatedAt: typeof value?.updatedAt === "string" && value.updatedAt
-      ? value.updatedAt
+    ...order,
+    productId: order?.productId ?? undefined,
+    packageId: order?.packageId ?? undefined,
+    customer: order?.customer ?? "",
+    phone: order?.phone ?? "",
+    whatsapp: order?.whatsapp ?? undefined,
+    email: order?.email ?? undefined,
+    address: order?.address ?? undefined,
+    city: order?.city ?? undefined,
+    state: order?.state ?? undefined,
+    productName: order?.productName ?? "",
+    packageName: order?.packageName ?? "",
+    quantity: Number.isFinite(quantity) ? quantity : undefined,
+    originalQuantity: Number.isFinite(originalQuantity) ? originalQuantity : undefined,
+    amount,
+    originalAmount: Number.isFinite(originalAmount) ? originalAmount : undefined,
+    currency: (order?.currency ?? "NGN") as ProductCurrencyCode,
+    utmSource: order?.utmSource ?? "",
+    utmCampaign: order?.utmCampaign ?? "",
+    utmMedium: order?.utmMedium ?? undefined,
+    utmContent: order?.utmContent ?? undefined,
+    utmTerm: order?.utmTerm ?? undefined,
+    referrer: order?.referrer ?? undefined,
+    preferredDelivery: order?.preferredDelivery ?? undefined,
+    source: order?.source,
+    status: order?.status,
+    response: order?.response,
+    location: order?.location,
+    deliveryWindow: order?.deliveryWindow,
+    sourceCartId: sourceCartIdForOrder(order) || sourceCartIdForOrder(value) || undefined,
+    createdAt,
+    updatedAt: typeof order?.updatedAt === "string" && order.updatedAt
+      ? order.updatedAt
       : typeof value?.updated_at === "string" && value.updated_at
         ? value.updated_at
         : undefined,
-    deliveredDate: typeof value?.deliveredDate === "string" && value.deliveredDate
-      ? value.deliveredDate
+    deliveredDate: typeof order?.deliveredDate === "string" && order.deliveredDate
+      ? order.deliveredDate
       : typeof value?.delivered_date === "string" && value.delivered_date
         ? value.delivered_date
         : undefined,
-    originalCreatedAt: typeof value?.originalCreatedAt === "string" && value.originalCreatedAt
-      ? value.originalCreatedAt
+    originalCreatedAt: typeof order?.originalCreatedAt === "string" && order.originalCreatedAt
+      ? order.originalCreatedAt
       : typeof value?.original_created_at === "string" && value.original_created_at
         ? value.original_created_at
         : undefined,
-    createdAtCorrectedAt: typeof value?.createdAtCorrectedAt === "string" && value.createdAtCorrectedAt
-      ? value.createdAtCorrectedAt
+    createdAtCorrectedAt: typeof order?.createdAtCorrectedAt === "string" && order.createdAtCorrectedAt
+      ? order.createdAtCorrectedAt
       : typeof value?.created_at_corrected_at === "string" && value.created_at_corrected_at
         ? value.created_at_corrected_at
         : undefined,
-    createdAtCorrectedBy: typeof value?.createdAtCorrectedBy === "string" && value.createdAtCorrectedBy
-      ? value.createdAtCorrectedBy
+    createdAtCorrectedBy: typeof order?.createdAtCorrectedBy === "string" && order.createdAtCorrectedBy
+      ? order.createdAtCorrectedBy
       : typeof value?.created_at_corrected_by === "string" && value.created_at_corrected_by
         ? value.created_at_corrected_by
         : undefined,
-    createdAtCorrectionReason: typeof value?.createdAtCorrectionReason === "string" && value.createdAtCorrectionReason
-      ? value.createdAtCorrectionReason
+    createdAtCorrectionReason: typeof order?.createdAtCorrectionReason === "string" && order.createdAtCorrectionReason
+      ? order.createdAtCorrectionReason
       : typeof value?.created_at_correction_reason === "string" && value.created_at_correction_reason
         ? value.created_at_correction_reason
         : undefined,
-    originalDeliveredDate: typeof value?.originalDeliveredDate === "string" && value.originalDeliveredDate
-      ? value.originalDeliveredDate
+    originalDeliveredDate: typeof order?.originalDeliveredDate === "string" && order.originalDeliveredDate
+      ? order.originalDeliveredDate
       : typeof value?.original_delivered_date === "string" && value.original_delivered_date
         ? value.original_delivered_date
         : undefined,
-    deliveredDateCorrectedAt: typeof value?.deliveredDateCorrectedAt === "string" && value.deliveredDateCorrectedAt
-      ? value.deliveredDateCorrectedAt
+    deliveredDateCorrectedAt: typeof order?.deliveredDateCorrectedAt === "string" && order.deliveredDateCorrectedAt
+      ? order.deliveredDateCorrectedAt
       : typeof value?.delivered_date_corrected_at === "string" && value.delivered_date_corrected_at
         ? value.delivered_date_corrected_at
         : undefined,
-    deliveredDateCorrectedBy: typeof value?.deliveredDateCorrectedBy === "string" && value.deliveredDateCorrectedBy
-      ? value.deliveredDateCorrectedBy
+    deliveredDateCorrectedBy: typeof order?.deliveredDateCorrectedBy === "string" && order.deliveredDateCorrectedBy
+      ? order.deliveredDateCorrectedBy
       : typeof value?.delivered_date_corrected_by === "string" && value.delivered_date_corrected_by
         ? value.delivered_date_corrected_by
         : undefined,
-    deliveredDateCorrectionReason: typeof value?.deliveredDateCorrectionReason === "string" && value.deliveredDateCorrectionReason
-      ? value.deliveredDateCorrectionReason
+    deliveredDateCorrectionReason: typeof order?.deliveredDateCorrectionReason === "string" && order.deliveredDateCorrectionReason
+      ? order.deliveredDateCorrectionReason
       : typeof value?.delivered_date_correction_reason === "string" && value.delivered_date_correction_reason
         ? value.delivered_date_correction_reason
         : undefined,
+    assignedRepId: order?.assignedRepId ?? undefined,
+    assignedByUserId: order?.assignedByUserId ?? undefined,
+    assignedByNameSnapshot: order?.assignedByNameSnapshot ?? undefined,
+    agentId: order?.agentId ?? undefined,
+    stockDeducted: typeof order?.stockDeducted === "boolean" ? order.stockDeducted : undefined,
+    logisticsCost: Number.isFinite(logisticsCost) ? logisticsCost : undefined,
+    amountRemitted: Number.isFinite(amountRemitted) ? amountRemitted : undefined,
+    remittanceStatus: order?.remittanceStatus ?? undefined,
+    callOutcome: order?.callOutcome ?? undefined,
     scheduledAt,
     scheduledDate,
-    notes: orderNotesFor(value)
+    date: typeof order?.date === "string" && order.date
+      ? normalizeDateKey(order.date)
+      : createdAt
+        ? normalizeDateKey(createdAt)
+        : todayKey(),
+    notes: orderNotesFor(order)
   };
 };
 
