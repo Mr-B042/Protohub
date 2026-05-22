@@ -30108,8 +30108,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       // - cohort-week quality (rate against this week's order cohort)
                       // The bonus shown here is the per-order estimate for this week's delivered
                       // orders using the cohort gate, not the final payroll preview total.
+                      const cashWeekRange = { start: startKey, end: endKey };
                       const repStats = users.filter((u) => u.role === "Sales Rep").map((u) => {
                         const cashOrders   = deliveredCash.filter((o) => o.assignedRepId === u.id);
+                        const carryoverOrders = cashOrders.filter((o) => !isInExplicitRange(orderCreatedKey(o), cashWeekRange));
                         const cohortOrders = cohort.filter((o) => o.assignedRepId === u.id);
                         const cohortDeliveredOrders = cohortOrders.filter((o) => (o.status ?? "New") === "Delivered");
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
@@ -30122,6 +30124,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         return {
                           user: u,
                           delivered: cashOrders.length,
+                          carryoverDelivered: carryoverOrders.length,
                           revenue,
                           bonusEstimate,
                           aov,
@@ -30138,15 +30141,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       if (repStats.length === 0) return null;
                       const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
+                      const totalCarryoverDelivered = repStats.reduce((s, r) => s + r.carryoverDelivered, 0);
 
                       return (
                         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
                               <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Bonus here is a per-order estimate, while the rate tracks this week&apos;s order cohort against the {target}% target.</p>
+                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below.</p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
+                              {totalCarryoverDelivered > 0 && (
+                                <div className="text-right">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Carry-over delivered</p>
+                                  <p className="text-base font-extrabold text-amber-700 m-0">{totalCarryoverDelivered}</p>
+                                  <p className="text-[10px] text-gray-400 mt-0.5">Placed before this week</p>
+                                </div>
+                              )}
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
                                 <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
@@ -30179,7 +30190,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                         <div className="font-bold text-gray-900">{r.user.name}</div>
                                         <div className="text-[11px] text-gray-500">{r.user.role}</div>
                                       </td>
-                                      <td className="px-3 py-2.5 text-gray-900 font-semibold">{r.delivered}</td>
+                                      <td className="px-3 py-2.5 text-gray-900 font-semibold whitespace-nowrap">
+                                        <div>{r.delivered}</div>
+                                        {r.carryoverDelivered > 0 && (
+                                          <div className="text-[10px] font-bold text-amber-700">includes {r.carryoverDelivered} carry-over</div>
+                                        )}
+                                      </td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
                                       <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonusEstimate)}</td>
