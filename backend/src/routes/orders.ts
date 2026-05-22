@@ -77,6 +77,10 @@ const serializePlannedOrderMetadata = (
 };
 const isMissingPlannedColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
   error?.code === "42703" || /scheduled_at|timeline_notes|confirmation_checked|preferred_delivery/i.test(error?.message ?? "");
+const isMissingDateAuditColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "42703" || /original_created_at|created_at_corrected_at|created_at_corrected_by|created_at_correction_reason|original_delivered_date|delivered_date_corrected_at|delivered_date_corrected_by|delivered_date_correction_reason/i.test(error?.message ?? "");
+const isMissingRemittanceSnapshotColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "42703" || /order_created_at_snapshot|order_delivered_date_snapshot|product_id_snapshot|product_name_snapshot|package_name_snapshot|customer_snapshot|assigned_rep_id_snapshot|agent_id_snapshot|order_amount_snapshot|logistics_cost_snapshot|expected_remittance_snapshot/i.test(error?.message ?? "");
 
 const numericAmount = (value: unknown) => {
   const parsed = Number(value ?? 0);
@@ -108,6 +112,61 @@ const normalizeEditableCreatedAt = (value: string) => {
   };
 };
 
+const DATE_AUDIT_UPDATE_KEYS = [
+  "original_created_at",
+  "created_at_corrected_at",
+  "created_at_corrected_by",
+  "created_at_correction_reason",
+  "original_delivered_date",
+  "delivered_date_corrected_at",
+  "delivered_date_corrected_by",
+  "delivered_date_correction_reason"
+] as const;
+
+const stripUpdateKeys = <T extends Record<string, unknown>>(source: T, keys: readonly string[]) => {
+  const clone = { ...source };
+  for (const key of keys) delete clone[key];
+  return clone;
+};
+
+const buildCreatedAtCorrectionAuditUpdates = (
+  current: Record<string, any> | null | undefined,
+  nextCreatedAtIso: string,
+  reason: string,
+  userId: string
+) => {
+  const updates: Record<string, unknown> = {
+    created_at_corrected_at: new Date().toISOString(),
+    created_at_corrected_by: userId,
+    created_at_correction_reason: reason
+  };
+  const currentCreatedAt = typeof current?.created_at === "string" ? current.created_at : null;
+  const originalCreatedAt = typeof current?.original_created_at === "string" ? current.original_created_at : null;
+  if (!originalCreatedAt && currentCreatedAt && currentCreatedAt !== nextCreatedAtIso) {
+    updates.original_created_at = currentCreatedAt;
+  }
+  return updates;
+};
+
+const buildDeliveredDateCorrectionAuditUpdates = (
+  current: Record<string, any> | null | undefined,
+  nextDeliveredDate: string,
+  reason: string | undefined,
+  userId: string
+) => {
+  const updates: Record<string, unknown> = {
+    delivered_date_corrected_at: new Date().toISOString(),
+    delivered_date_corrected_by: userId,
+    delivered_date_correction_reason: (reason ?? "Delivered date corrected").trim().slice(0, 500)
+  };
+  const currentDeliveredDate = typeof current?.delivered_date === "string" ? current.delivered_date : null;
+  const originalDeliveredDate = typeof current?.original_delivered_date === "string" ? current.original_delivered_date : null;
+  if (!originalDeliveredDate && currentDeliveredDate && currentDeliveredDate !== nextDeliveredDate) {
+    updates.original_delivered_date = currentDeliveredDate;
+  }
+  return updates;
+};
+
 const logRemittanceDelta = async (args: {
   orgId: string;
   orderId: string;
@@ -117,6 +176,18 @@ const logRemittanceDelta = async (args: {
   userName?: string | null;
   reason: string;
   receivedAt?: string;
+  snapshot?: {
+    orderCreatedAt?: unknown;
+    orderDeliveredDate?: unknown;
+    productId?: unknown;
+    productName?: unknown;
+    packageName?: unknown;
+    customer?: unknown;
+    assignedRepId?: unknown;
+    agentId?: unknown;
+    orderAmount?: unknown;
+    logisticsCost?: unknown;
+  };
 }) => {
   const previous = numericAmount(args.previousAmountRemitted);
   const next = numericAmount(args.nextAmountRemitted);
@@ -136,8 +207,40 @@ const logRemittanceDelta = async (args: {
   if (args.receivedAt) {
     payload.received_at = args.receivedAt;
   }
+  if (args.snapshot) {
+    const orderAmount = numericAmount(args.snapshot.orderAmount);
+    const logisticsCost = numericAmount(args.snapshot.logisticsCost);
+    payload.order_created_at_snapshot = typeof args.snapshot.orderCreatedAt === "string" ? args.snapshot.orderCreatedAt : null;
+    payload.order_delivered_date_snapshot = typeof args.snapshot.orderDeliveredDate === "string" ? args.snapshot.orderDeliveredDate : null;
+    payload.product_id_snapshot = args.snapshot.productId ?? null;
+    payload.product_name_snapshot = typeof args.snapshot.productName === "string" ? args.snapshot.productName : null;
+    payload.package_name_snapshot = typeof args.snapshot.packageName === "string" ? args.snapshot.packageName : null;
+    payload.customer_snapshot = typeof args.snapshot.customer === "string" ? args.snapshot.customer : null;
+    payload.assigned_rep_id_snapshot = args.snapshot.assignedRepId ?? null;
+    payload.agent_id_snapshot = args.snapshot.agentId ?? null;
+    payload.order_amount_snapshot = orderAmount;
+    payload.logistics_cost_snapshot = logisticsCost;
+    payload.expected_remittance_snapshot = Math.max(0, Math.round((orderAmount - logisticsCost) * 100) / 100);
+  }
 
-  const { error } = await supabase.from("remittance_transactions").insert(payload);
+  let { error } = await supabase.from("remittance_transactions").insert(payload);
+  if (error && isMissingRemittanceSnapshotColumnsError(error)) {
+    ({ error } = await supabase
+      .from("remittance_transactions")
+      .insert(stripUpdateKeys(payload, [
+        "order_created_at_snapshot",
+        "order_delivered_date_snapshot",
+        "product_id_snapshot",
+        "product_name_snapshot",
+        "package_name_snapshot",
+        "customer_snapshot",
+        "assigned_rep_id_snapshot",
+        "agent_id_snapshot",
+        "order_amount_snapshot",
+        "logistics_cost_snapshot",
+        "expected_remittance_snapshot"
+      ])));
+  }
 
   if (error) {
     logger.error("remittance: failed to log remittance transaction", {
@@ -598,7 +701,7 @@ router.patch("/:id/status", async (req, res) => {
   // Fetch current order for audit trail + delivery logic
   const { data: existing } = await supabase
     .from("orders")
-    .select("status, org_id, source_cart_id, package_id, package_name, agent_id, agent_location_id, product_id, product_name, quantity, customer, state, city, assigned_rep_id, stock_deducted, delivered_date, amount_remitted, remittance_status, logistics_cost, notes, agent_name_snapshot, agent_phone_snapshot, agent_base_state_snapshot, agent_coverage_state_snapshot, agent_coverage_city_snapshot, agent_location_name_snapshot, agent_location_state_snapshot, agent_location_city_snapshot, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .select("*")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -737,6 +840,17 @@ router.patch("/:id/status", async (req, res) => {
     if (!isDeliveredDateCorrection) {
       updates.stock_deducted = true;
     }
+    if (isDeliveredDateCorrection && typeof updates.delivered_date === "string") {
+      Object.assign(
+        updates,
+        buildDeliveredDateCorrectionAuditUpdates(
+          existing,
+          updates.delivered_date,
+          typeof req.body.reason === "string" ? req.body.reason : undefined,
+          req.user!.id
+        )
+      );
+    }
   } else if (existing?.status === "Delivered") {
     updates.delivered_date    = null;
     updates.stock_deducted    = false;
@@ -755,10 +869,12 @@ router.patch("/:id/status", async (req, res) => {
     .select()
     .single();
 
-  if (error && isMissingPlannedColumnsError(error)) {
-    const legacyUpdates = { ...updates };
-    delete legacyUpdates.scheduled_at;
-    delete legacyUpdates.timeline_notes;
+  if (error && (isMissingPlannedColumnsError(error) || isMissingDateAuditColumnsError(error))) {
+    const legacyUpdates = stripUpdateKeys(updates, [
+      "scheduled_at",
+      "timeline_notes",
+      ...DATE_AUDIT_UPDATE_KEYS
+    ]);
     ({ data, error } = await supabase
       .from("orders")
       .update(legacyUpdates)
@@ -782,7 +898,19 @@ router.patch("/:id/status", async (req, res) => {
       ? "Status update while delivered"
       : existing?.status === "Delivered"
         ? `Status changed from Delivered to ${status}`
-        : `Status updated to ${status}`
+        : `Status updated to ${status}`,
+    snapshot: {
+      orderCreatedAt: (data as any).created_at,
+      orderDeliveredDate: (data as any).delivered_date,
+      productId: (data as any).product_id,
+      productName: (data as any).product_name,
+      packageName: (data as any).package_name,
+      customer: (data as any).customer,
+      assignedRepId: (data as any).assigned_rep_id,
+      agentId: (data as any).agent_id,
+      orderAmount: (data as any).amount,
+      logisticsCost: (data as any).logistics_cost
+    }
   });
 
   if (["Delivered", "Cancelled", "Failed"].includes(status)) {
@@ -1066,7 +1194,7 @@ router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
 
   const { data: current, error: currentError } = await supabase
     .from("orders")
-    .select("id, status, created_at, date, source_cart_id, customer, product_id, package_id, state, product_name, package_name")
+    .select("*")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
@@ -1084,16 +1212,37 @@ router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
     return;
   }
 
-  const { data, error } = await supabase
+  const dateCorrectionUpdates = buildCreatedAtCorrectionAuditUpdates(
+    current,
+    normalizedCreatedAt.iso,
+    parsed.data.reason,
+    req.user!.id
+  );
+
+  let { data, error } = await supabase
     .from("orders")
     .update({
       created_at: normalizedCreatedAt.iso,
-      date: normalizedCreatedAt.dateKey
+      date: normalizedCreatedAt.dateKey,
+      ...dateCorrectionUpdates
     })
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .select()
     .single();
+
+  if (error && isMissingDateAuditColumnsError(error)) {
+    ({ data, error } = await supabase
+      .from("orders")
+      .update({
+        created_at: normalizedCreatedAt.iso,
+        date: normalizedCreatedAt.dateKey
+      })
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single());
+  }
 
   if (error) {
     res.status(500).json({ error: error.message });
@@ -1149,7 +1298,7 @@ router.patch("/:id", async (req, res) => {
 
   const { data: current } = await supabase
     .from("orders")
-    .select("status, notes, city, state, source_cart_id, assigned_rep_id, agent_id, agent_location_id, product_id, package_id, product_name, package_name, customer, amount_remitted, remittance_status, logistics_cost")
+    .select("*")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -1241,6 +1390,17 @@ router.patch("/:id", async (req, res) => {
       scheduledAt: updates.scheduled_at as string | null | undefined,
       timelineNotes: updates.timeline_notes as unknown[] | null | undefined
     });
+  }
+  if (typeof updates.delivered_date === "string") {
+    Object.assign(
+      updates,
+      buildDeliveredDateCorrectionAuditUpdates(
+        current,
+        updates.delivered_date,
+        typeof req.body.reason === "string" ? req.body.reason : undefined,
+        req.user!.id
+      )
+    );
   }
   if (Object.prototype.hasOwnProperty.call(updates, "assigned_rep_id")) {
     const nextAssignedRepId = updates.assigned_rep_id ? String(updates.assigned_rep_id) : null;
@@ -1342,10 +1502,12 @@ router.patch("/:id", async (req, res) => {
     .select()
     .single();
 
-  if (error && isMissingPlannedColumnsError(error)) {
-    const legacyUpdates = { ...updates };
-    delete legacyUpdates.scheduled_at;
-    delete legacyUpdates.timeline_notes;
+  if (error && (isMissingPlannedColumnsError(error) || isMissingDateAuditColumnsError(error))) {
+    const legacyUpdates = stripUpdateKeys(updates, [
+      "scheduled_at",
+      "timeline_notes",
+      ...DATE_AUDIT_UPDATE_KEYS
+    ]);
     ({ data, error } = await supabase
       .from("orders")
       .update(legacyUpdates)
@@ -1366,7 +1528,19 @@ router.patch("/:id", async (req, res) => {
     userId: req.user!.id,
     userName: req.user!.name,
     reason: remittanceReason || "Manual remittance update",
-    receivedAt: remittanceReceivedAt
+    receivedAt: remittanceReceivedAt,
+    snapshot: {
+      orderCreatedAt: (data as any).created_at,
+      orderDeliveredDate: (data as any).delivered_date,
+      productId: (data as any).product_id,
+      productName: (data as any).product_name,
+      packageName: (data as any).package_name,
+      customer: (data as any).customer,
+      assignedRepId: (data as any).assigned_rep_id,
+      agentId: (data as any).agent_id,
+      orderAmount: (data as any).amount,
+      logisticsCost: (data as any).logistics_cost
+    }
   });
   await syncOrderFollowUpTask({
     orgId: req.user!.orgId,

@@ -56,6 +56,11 @@ const isMissingRemittanceTableError = (error: any) => {
     );
 };
 
+const numericAmount = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const inferBackfillReceivedAt = (
   order: Record<string, any>,
   mode: "updated_at" | "delivered_date" | "created_at"
@@ -136,19 +141,11 @@ router.get("/", async (req, res) => {
     return;
   }
 
-  let ordersQuery = supabase
+  const ordersQuery = supabase
     .from("orders")
     .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
     .eq("org_id", req.user!.orgId)
     .in("id", orderIds);
-
-  if (req.user!.role === "Sales Rep") {
-    ordersQuery = ordersQuery.eq("assigned_rep_id", req.user!.id);
-  }
-
-  if (requestedProductIds.length > 0) {
-    ordersQuery = ordersQuery.in("product_id", requestedProductIds);
-  }
 
   const ordersResult = await ordersQuery;
   if (ordersResult.error) {
@@ -163,10 +160,14 @@ router.get("/", async (req, res) => {
   const transactions = rows
     .map((row: any) => {
       const order = orderMap.get(String(row.order_id));
-      if (!order) return null;
-      const orderAmount = Number(order.amount ?? 0);
-      const logisticsCost = Number(order.logistics_cost ?? 0);
-      const currentAmountRemitted = Number(order.amount_remitted ?? 0);
+      const productId = row.product_id_snapshot ?? order?.product_id ?? null;
+      const assignedRepId = row.assigned_rep_id_snapshot ?? order?.assigned_rep_id ?? null;
+      if (req.user!.role === "Sales Rep" && assignedRepId !== req.user!.id) return null;
+      if (requestedProductIds.length > 0 && (!productId || !requestedProductIds.includes(String(productId)))) return null;
+      if (!order && !productId && !row.customer_snapshot && !row.product_name_snapshot) return null;
+      const orderAmount = row.order_amount_snapshot != null ? numericAmount(row.order_amount_snapshot) : numericAmount(order?.amount);
+      const logisticsCost = row.logistics_cost_snapshot != null ? numericAmount(row.logistics_cost_snapshot) : numericAmount(order?.logistics_cost);
+      const currentAmountRemitted = numericAmount(order?.amount_remitted ?? row.running_amount_remitted);
       const currentExpectedRemittance = Math.max(0, orderAmount - logisticsCost);
       const currentOutstanding = Math.max(0, currentExpectedRemittance - currentAmountRemitted);
       return {
@@ -178,21 +179,21 @@ router.get("/", async (req, res) => {
         receivedAt: row.received_at,
         loggedByName: row.logged_by_name ?? null,
         reason: row.reason ?? null,
-        productId: order.product_id ?? null,
-        productName: order.product_name ?? null,
-        packageName: order.package_name ?? null,
-        customer: order.customer ?? null,
-        orderCreatedAt: order.created_at ?? null,
-        orderDeliveredDate: order.delivered_date ?? null,
-        assignedRepId: order.assigned_rep_id ?? null,
-        agentId: order.agent_id ?? null,
+        productId,
+        productName: row.product_name_snapshot ?? order?.product_name ?? null,
+        packageName: row.package_name_snapshot ?? order?.package_name ?? null,
+        customer: row.customer_snapshot ?? order?.customer ?? null,
+        orderCreatedAt: row.order_created_at_snapshot ?? order?.created_at ?? null,
+        orderDeliveredDate: row.order_delivered_date_snapshot ?? order?.delivered_date ?? null,
+        assignedRepId,
+        agentId: row.agent_id_snapshot ?? order?.agent_id ?? null,
         agentName: order.agent_name_snapshot ?? null,
         orderAmount,
         logisticsCost,
         currentAmountRemitted,
         currentExpectedRemittance,
         currentOutstanding,
-        remittanceStatus: order.remittance_status ?? null
+        remittanceStatus: order?.remittance_status ?? (currentOutstanding <= 0 ? "Paid" : currentAmountRemitted > 0 ? "Partially Paid" : "Pending")
       };
     })
     .filter(Boolean);
@@ -242,7 +243,7 @@ router.post("/backfill", async (req, res) => {
 
   const ordersResult = await supabase
     .from("orders")
-    .select("id, customer, amount_remitted, remittance_status, created_at, updated_at, delivered_date")
+    .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, amount, logistics_cost, amount_remitted, remittance_status, created_at, updated_at, delivered_date")
     .eq("org_id", req.user.orgId)
     .gt("amount_remitted", 0);
 
@@ -273,6 +274,17 @@ router.post("/backfill", async (req, res) => {
         logged_by_user_id: req.user!.id,
         logged_by_name: req.user!.name,
         reason: `Historical remittance bootstrap (${dateMode}/${inferred.source})`,
+        order_created_at_snapshot: order.created_at ?? null,
+        order_delivered_date_snapshot: order.delivered_date ?? null,
+        product_id_snapshot: order.product_id ?? null,
+        product_name_snapshot: order.product_name ?? null,
+        package_name_snapshot: order.package_name ?? null,
+        customer_snapshot: order.customer ?? null,
+        assigned_rep_id_snapshot: order.assigned_rep_id ?? null,
+        agent_id_snapshot: order.agent_id ?? null,
+        order_amount_snapshot: numericAmount(order.amount),
+        logistics_cost_snapshot: numericAmount(order.logistics_cost),
+        expected_remittance_snapshot: Math.max(0, numericAmount(order.amount) - numericAmount(order.logistics_cost)),
         customer: order.customer ?? null
       };
     })
@@ -281,7 +293,29 @@ router.post("/backfill", async (req, res) => {
   if (!dryRun) {
     for (const batch of chunk(prepared, 500)) {
       const insertRows = batch.map(({ customer: _customer, ...row }) => row);
-      const insertResult = await supabase.from("remittance_transactions").insert(insertRows);
+      let insertResult = await supabase.from("remittance_transactions").insert(insertRows);
+      if (insertResult.error && isMissingRemittanceTableError(insertResult.error)) {
+        res.status(409).json({ error: "Remittance transaction ledger is not available yet. Apply migration 061 first." });
+        return;
+      }
+      if (insertResult.error && /order_created_at_snapshot|order_delivered_date_snapshot|product_id_snapshot|product_name_snapshot|package_name_snapshot|customer_snapshot|assigned_rep_id_snapshot|agent_id_snapshot|order_amount_snapshot|logistics_cost_snapshot|expected_remittance_snapshot/i.test(insertResult.error.message ?? "")) {
+        const legacyRows = insertRows.map((row) => {
+          const clone = { ...row };
+          delete clone.order_created_at_snapshot;
+          delete clone.order_delivered_date_snapshot;
+          delete clone.product_id_snapshot;
+          delete clone.product_name_snapshot;
+          delete clone.package_name_snapshot;
+          delete clone.customer_snapshot;
+          delete clone.assigned_rep_id_snapshot;
+          delete clone.agent_id_snapshot;
+          delete clone.order_amount_snapshot;
+          delete clone.logistics_cost_snapshot;
+          delete clone.expected_remittance_snapshot;
+          return clone;
+        });
+        insertResult = await supabase.from("remittance_transactions").insert(legacyRows);
+      }
       if (insertResult.error) {
         res.status(500).json({ error: insertResult.error.message });
         return;

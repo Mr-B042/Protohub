@@ -36,6 +36,11 @@ const isMissingRemittanceTableError = (error: any) => {
     );
 };
 
+const numericAmount = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 router.get("/", async (req, res) => {
   const parsed = QuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -135,15 +140,11 @@ router.get("/", async (req, res) => {
 
   let remittanceOrderMap = new Map<string, any>();
   if (remittanceOrderIds.length > 0) {
-    let remittanceOrdersQuery = supabase
+    const remittanceOrdersQuery = supabase
       .from("orders")
       .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id")
       .eq("org_id", req.user!.orgId)
       .in("id", remittanceOrderIds);
-
-    if (req.user!.role === "Sales Rep") {
-      remittanceOrdersQuery = remittanceOrdersQuery.eq("assigned_rep_id", req.user!.id);
-    }
 
     const { data: remittanceOrders, error: remittanceOrdersError } = await remittanceOrdersQuery;
     if (remittanceOrdersError) {
@@ -158,22 +159,28 @@ router.get("/", async (req, res) => {
   const remittanceTransactions = remittanceRows
     .map((row: any) => {
       const order = remittanceOrderMap.get(String(row.order_id));
-      if (!order) return null;
+      const productId = row.product_id_snapshot ?? order?.product_id ?? null;
+      const assignedRepId = row.assigned_rep_id_snapshot ?? order?.assigned_rep_id ?? null;
+      if (req.user!.role === "Sales Rep" && assignedRepId !== req.user!.id) return null;
       if (
         requestedProductIds.length > 0
-        && (!order.product_id || !requestedProductIds.includes(String(order.product_id)))
+        && (!productId || !requestedProductIds.includes(String(productId)))
       ) {
         return null;
       }
+      if (!order && !productId && !row.customer_snapshot && !row.product_name_snapshot) return null;
       return {
         ...row,
-        product_id: order.product_id ?? null,
-        product_name: order.product_name ?? null,
-        package_name: order.package_name ?? null,
-        customer: order.customer ?? null,
-        order_created_at: order.created_at ?? null,
-        order_delivered_date: order.delivered_date ?? null,
-        assigned_rep_id: order.assigned_rep_id ?? null
+        product_id: productId,
+        product_name: row.product_name_snapshot ?? order?.product_name ?? null,
+        package_name: row.package_name_snapshot ?? order?.package_name ?? null,
+        customer: row.customer_snapshot ?? order?.customer ?? null,
+        order_created_at: row.order_created_at_snapshot ?? order?.created_at ?? null,
+        order_delivered_date: row.order_delivered_date_snapshot ?? order?.delivered_date ?? null,
+        assigned_rep_id: assignedRepId,
+        expected_remittance_snapshot: row.expected_remittance_snapshot != null
+          ? numericAmount(row.expected_remittance_snapshot)
+          : null
       };
     })
     .filter(Boolean);
