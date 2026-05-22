@@ -5010,6 +5010,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
   const [campaignPage, setCampaignPage] = useState(1);
   const [adTrackingCartPage, setAdTrackingCartPage] = useState(1);
+  const [adTrackingCartStatus, setAdTrackingCartStatus] = useState<CartStatus>(() =>
+    readPref<CartStatus>("protohub.adTracking.abandonedCartStatus", "All statuses", (raw) =>
+      cartStatuses.includes(raw as CartStatus) ? (raw as CartStatus) : null
+    )
+  );
   const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
   const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
   const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
@@ -5044,6 +5049,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCampaignPage(1);
     setAdTrackingCartPage(1);
   }, [adTrackingSearch]);
+  useEffect(() => { writePref("protohub.adTracking.abandonedCartStatus", adTrackingCartStatus); }, [adTrackingCartStatus]);
+  useEffect(() => {
+    setAdTrackingCartPage(1);
+  }, [adTrackingCartStatus]);
 
   useEffect(() => {
     const parseLabelMap = (raw: string): Record<string, string> | null => {
@@ -7937,6 +7946,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       attribution: cartAttributionFor(cart, adTrackingCartJourneyMap[cart.id] ?? []),
       linkedOrder: adTrackingLinkedOrderBySourceCartId.get(cart.id)
     }))
+    .filter(({ cart }) => adTrackingCartStatus === "All statuses" || cart.status === adTrackingCartStatus)
     .filter(({ cart, journeyEvents }) => cartHasAdAttribution(cart, journeyEvents));
   const cartCampaignGroupedRows = Object.values(
     filteredCampaignBaseCarts.reduce<Record<string, {
@@ -31701,6 +31711,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                         </div>
                         {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                        <label className="w-full sm:w-auto">
+                          <span className="sr-only">Filter tracked carts by status</span>
+                          <select
+                            value={adTrackingCartStatus}
+                            onChange={(event) => setAdTrackingCartStatus(event.target.value as CartStatus)}
+                            className="h-10 sm:h-9 w-full sm:min-w-[180px] rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          >
+                            {cartStatuses.map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
                           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                           <input
