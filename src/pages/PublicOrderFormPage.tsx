@@ -760,6 +760,27 @@ export default function PublicOrderFormPage() {
   const exitTrackedRef = useRef(false);
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
+  const publicJourneyAttributionMetadata = useMemo(
+    () => ({
+      source: orderSourceFromUtm(publicUtmSource),
+      utmSource: publicUtmSource || null,
+      utmCampaign: publicUtmCampaign || null,
+      utmMedium: publicUtmMedium || null,
+      utmContent: publicUtmContent || null,
+      utmTerm: publicUtmTerm || null,
+      referrer: publicReferrer || null,
+      embedLabel: publicEmbedLabel || null
+    }),
+    [
+      publicEmbedLabel,
+      publicReferrer,
+      publicUtmCampaign,
+      publicUtmContent,
+      publicUtmMedium,
+      publicUtmSource,
+      publicUtmTerm
+    ]
+  );
 
   const publicProduct = useMemo(
     () => products.find((product) => product.id === publicProductId),
@@ -860,11 +881,7 @@ export default function PublicOrderFormPage() {
           metadata: {
             productName: publicProduct.name,
             packageName: chosenPackage.name,
-            source: orderSourceFromUtm(publicUtmSource),
-            utmSource: publicUtmSource || null,
-            utmCampaign: publicUtmCampaign || null,
-            utmMedium: publicUtmMedium || null,
-            embedLabel: publicEmbedLabel || null
+            ...publicJourneyAttributionMetadata
           }
         }
       ).catch(() => {
@@ -904,8 +921,8 @@ export default function PublicOrderFormPage() {
         companionProductId: options?.companionProductId,
         companionPackageId: options?.companionPackageId,
         metadata: {
-          ...(options?.metadata ?? {}),
-          embedLabel: publicEmbedLabel || null
+          ...publicJourneyAttributionMetadata,
+          ...(options?.metadata ?? {})
         }
       },
       { keepalive: options?.keepalive === true }
@@ -1331,6 +1348,12 @@ export default function PublicOrderFormPage() {
           packageQuantity: chosenPackage.quantity,
           selectedCrossSellLines,
           autoCompanionLines,
+          utmSource: publicUtmSource || null,
+          utmCampaign: publicUtmCampaign || null,
+          utmMedium: publicUtmMedium || null,
+          utmContent: publicUtmContent || null,
+          utmTerm: publicUtmTerm || null,
+          referrer: publicReferrer || null,
           preferredDelivery: orderFormDeliveryWindow.trim() || null,
           embedLabel: publicEmbedLabel || null
         }
@@ -1361,7 +1384,12 @@ export default function PublicOrderFormPage() {
     publicEmbedIsPreview,
     publicPackages,
     publicProduct,
+    publicReferrer,
+    publicUtmCampaign,
+    publicUtmContent,
+    publicUtmMedium,
     publicUtmSource,
+    publicUtmTerm,
     publicEmbedLabel,
     summaryTotal,
   ]);

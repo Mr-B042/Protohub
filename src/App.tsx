@@ -5812,6 +5812,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
   const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
+  const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
   const [liveFormPulse, setLiveFormPulse] = useState<LiveFormPulseResponse | null>(null);
   const [liveFormPulseLoading, setLiveFormPulseLoading] = useState(false);
   const [liveFormPulseEmbedFilter, setLiveFormPulseEmbedFilter] = useState("");
@@ -7546,26 +7548,46 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const payload = cart.capturePayload;
     return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
   };
-  const cartAttributionFor = (cart: AbandonedCartRecord): AbandonedCartAttribution => {
+  const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
+    const next: AbandonedCartAttribution = {};
+    const assign = (key: keyof AbandonedCartAttribution, value: unknown) => {
+      if (next[key]) return;
+      if (typeof value === "string" && value.trim()) {
+        next[key] = value.trim();
+      }
+    };
+    for (const event of [...journeyEvents].reverse()) {
+      const metadata = event.metadata ?? {};
+      assign("utmSource", metadata.utmSource);
+      assign("utmCampaign", metadata.utmCampaign);
+      assign("utmMedium", metadata.utmMedium);
+      assign("utmContent", metadata.utmContent);
+      assign("utmTerm", metadata.utmTerm);
+      assign("referrer", metadata.referrer);
+    }
+    return next;
+  };
+  const cartAttributionFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
     const payload = cartCapturePayloadFor(cart);
     const read = (key: keyof AbandonedCartAttribution) => {
       const value = payload?.[key];
       return typeof value === "string" && value.trim() ? value.trim() : undefined;
     };
+    const journeyAttribution = cartJourneyAttributionFor(journeyEvents);
     return {
-      utmSource: read("utmSource"),
-      utmCampaign: read("utmCampaign"),
-      utmMedium: read("utmMedium"),
-      utmContent: read("utmContent"),
-      utmTerm: read("utmTerm"),
-      referrer: read("referrer")
+      utmSource: read("utmSource") ?? journeyAttribution.utmSource,
+      utmCampaign: read("utmCampaign") ?? journeyAttribution.utmCampaign,
+      utmMedium: read("utmMedium") ?? journeyAttribution.utmMedium,
+      utmContent: read("utmContent") ?? journeyAttribution.utmContent,
+      utmTerm: read("utmTerm") ?? journeyAttribution.utmTerm,
+      referrer: read("referrer") ?? journeyAttribution.referrer
     };
   };
-  const cartAttributionSourceFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmSource?.trim() || "";
-  const cartAttributionCampaignFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmCampaign?.trim() || "Unlabelled";
-  const cartAttributionCreativeFor = (cart: AbandonedCartRecord) => cartAttributionFor(cart).utmContent?.trim() || "";
-  const cartHasAdAttribution = (cart: AbandonedCartRecord) => {
-    const attribution = cartAttributionFor(cart);
+  const cartAttributionSourceFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmSource?.trim() || "";
+  const cartAttributionCampaignFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmCampaign?.trim() || "Unlabelled";
+  const cartAttributionCreativeFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmContent?.trim() || "";
+  const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
+    const attribution = cartAttributionFor(cart, journeyEvents);
     return Boolean(
       (attribution.utmSource && attribution.utmSource.toLowerCase() !== "direct")
       || attribution.utmCampaign
@@ -7903,13 +7925,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const campaignBaseCarts = abandonedCarts
     .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
     .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
+  const adTrackingJourneyCartIds = useMemo(
+    () => Array.from(new Set(campaignBaseCarts.map((cart) => cart.id).filter(Boolean))),
+    [campaignBaseCarts]
+  );
+  const adTrackingJourneyCartIdsKey = adTrackingJourneyCartIds.join("|");
   const filteredCampaignBaseCarts = campaignBaseCarts
     .map((cart) => ({
       cart,
-      attribution: cartAttributionFor(cart),
+      journeyEvents: adTrackingCartJourneyMap[cart.id] ?? [],
+      attribution: cartAttributionFor(cart, adTrackingCartJourneyMap[cart.id] ?? []),
       linkedOrder: adTrackingLinkedOrderBySourceCartId.get(cart.id)
     }))
-    .filter(({ cart }) => cartHasAdAttribution(cart));
+    .filter(({ cart, journeyEvents }) => cartHasAdAttribution(cart, journeyEvents));
   const cartCampaignGroupedRows = Object.values(
     filteredCampaignBaseCarts.reduce<Record<string, {
       id: string;
@@ -8022,6 +8050,55 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       linkedOrder?.id ?? ""
     );
   });
+  useEffect(() => {
+    if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
+      setAdTrackingCartJourneyLoading(false);
+      return;
+    }
+    if (adTrackingJourneyCartIds.length === 0) {
+      setAdTrackingCartJourneyMap({});
+      setAdTrackingCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setAdTrackingCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(adTrackingJourneyCartIds);
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setAdTrackingCartJourneyMap(normalized);
+      } catch {
+        if (cancelled) return;
+        if (!silent) {
+          setAdTrackingCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
+        setAdTrackingCartJourneyLoading(false);
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, adTrackingJourneyCartIdsKey, adTrackingTab]);
   const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
     setEditingAdTrackingLabel({ kind, id });
     setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
@@ -31634,6 +31711,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           />
                         </label>
                       </div>
+                      {adTrackingCartJourneyLoading && (
+                        <p className="m-0 text-xs text-gray-400">Refreshing abandoned-cart attribution…</p>
+                      )}
                       {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
                     </div>
 
@@ -38360,7 +38440,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
 	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
-                const selectedCartAttribution = cartAttributionFor(selectedCart);
+                const selectedCartAttribution = cartAttributionFor(selectedCart, selectedCartJourney);
                 const selectedCartCampaignId = selectedCartAttribution.utmCampaign?.trim() || "";
                 const selectedCartCreativeId = selectedCartAttribution.utmContent?.trim() || "";
                 const selectedCartCampaignLabel = selectedCartCampaignId ? campaignCardLabelFor(selectedCartCampaignId) : "";
