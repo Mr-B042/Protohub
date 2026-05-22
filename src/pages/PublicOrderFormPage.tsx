@@ -2838,7 +2838,7 @@ export default function PublicOrderFormPage() {
                   <div style={{ border: "2px solid #cbd5e1", borderRadius: 22, background: "#f8fafc", padding: 14, display: "grid", gap: 14 }}>
                     <div style={{ display: "grid", gap: 4, textAlign: "center" }}>
                       <strong style={{ fontSize: 22, color: "#111827", lineHeight: 1.25 }}>
-                        Would you like to add additional items while this promo offer is still on?
+                        Before you submit, add these discounted extras to your order
                       </strong>
                       <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
                         Tap any item below to preview the demo, see the bundle choices, and add it to your order.
