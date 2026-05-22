@@ -26,6 +26,20 @@ const sanitizeStoredPermissionList = (permissions: unknown) =>
     )
   );
 
+const sanitizeAdTrackingLabelMap = (value: unknown) => {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const next: Record<string, string> = {};
+  Object.entries(source).forEach(([rawKey, rawValue]) => {
+    const key = typeof rawKey === "string" ? rawKey.trim().slice(0, 160) : "";
+    const label = typeof rawValue === "string" ? rawValue.trim().slice(0, 80) : "";
+    if (!key || !label) return;
+    next[key] = label;
+  });
+  return next;
+};
+
 const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) => ({
   ...row,
   permissions: sanitizeStoredPermissionList(row.permissions),
@@ -195,11 +209,30 @@ router.post("/refresh", async (req, res) => {
 // localStorage when an Owner/Admin has bumped the version.
 router.get("/me", requireAuth, async (req, res) => {
   touchUserPresence(req.user!.id).catch(() => {});
-  const { data: org } = await supabase
+  const orgSelectBase = "cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  const orgSelectWithAdTracking = `${orgSelectBase}, ad_tracking_campaign_labels, ad_tracking_creative_labels`;
+  let org: Record<string, unknown> | null = null;
+  let orgError: { code?: string; message?: string } | null = null;
+  const initialOrgQuery = await supabase
     .from("organizations")
-    .select("cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end")
+    .select(orgSelectWithAdTracking)
     .eq("id", req.user!.orgId)
     .single();
+  org = initialOrgQuery.data as Record<string, unknown> | null;
+  orgError = initialOrgQuery.error;
+  if (orgError && (orgError.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels/i.test(orgError.message ?? ""))) {
+    const fallback = await supabase
+      .from("organizations")
+      .select(orgSelectBase)
+      .eq("id", req.user!.orgId)
+      .single();
+    org = fallback.data as Record<string, unknown> | null;
+    orgError = fallback.error;
+  }
+  if (orgError) {
+    res.status(500).json({ error: orgError.message });
+    return;
+  }
   res.json({
     user: req.user,
     cacheVersion: org?.cache_version ?? 0,
@@ -213,7 +246,11 @@ router.get("/me", requireAuth, async (req, res) => {
     workingScheduleEnabled: !!org?.working_schedule_enabled,
     workingDays: normalizeWorkingDays(org?.working_days),
     workingDayStart: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
-    workingDayEnd: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00"
+    workingDayEnd: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00",
+    adTrackingLabels: {
+      campaigns: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_campaign_labels),
+      creatives: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_creative_labels)
+    }
   });
 });
 
@@ -267,6 +304,48 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
     workingDays: normalizeWorkingDays(data?.working_days),
     workingDayStart: typeof data?.working_day_start === "string" && data.working_day_start.trim() ? data.working_day_start.trim() : "08:00",
     workingDayEnd: typeof data?.working_day_end === "string" && data.working_day_end.trim() ? data.working_day_end.trim() : "18:00"
+  });
+});
+
+const AdTrackingLabelsSchema = z.object({
+  campaigns: z.record(z.string()).optional(),
+  creatives: z.record(z.string()).optional()
+});
+
+router.patch("/ad-tracking-labels", requireAuth, async (req, res) => {
+  if (!["Owner", "Admin", "Manager"].includes(req.user!.role)) {
+    res.status(403).json({ error: "You do not have permission to edit ad tracking labels." });
+    return;
+  }
+  const parsed = AdTrackingLabelsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid ad tracking labels payload." });
+    return;
+  }
+  const updates: Record<string, unknown> = {};
+  if (parsed.data.campaigns) updates.ad_tracking_campaign_labels = sanitizeAdTrackingLabelMap(parsed.data.campaigns);
+  if (parsed.data.creatives) updates.ad_tracking_creative_labels = sanitizeAdTrackingLabelMap(parsed.data.creatives);
+  if (!Object.keys(updates).length) {
+    res.status(400).json({ error: "No ad tracking labels to update." });
+    return;
+  }
+  const { data, error } = await supabase
+    .from("organizations")
+    .update(updates)
+    .eq("id", req.user!.orgId)
+    .select("ad_tracking_campaign_labels, ad_tracking_creative_labels")
+    .single();
+  if (error) {
+    if (error.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels/i.test(error.message ?? "")) {
+      res.status(503).json({ error: "Shared ad tracking labels are not ready yet. Apply migration 076 first." });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({
+    campaigns: sanitizeAdTrackingLabelMap(data?.ad_tracking_campaign_labels),
+    creatives: sanitizeAdTrackingLabelMap(data?.ad_tracking_creative_labels)
   });
 });
 

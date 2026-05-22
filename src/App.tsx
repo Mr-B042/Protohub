@@ -5001,6 +5001,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
   const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
   const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
+  const [adTrackingLabelSaving, setAdTrackingLabelSaving] = useState(false);
   const [adTrackingLabelsLoadedScope, setAdTrackingLabelsLoadedScope] = useState<string | null>(null);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
@@ -5181,6 +5182,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       if (typeof res?.workingDayEnd === "string" && res.workingDayEnd) {
         setWorkingDayEnd(res.workingDayEnd);
+      }
+      if (res?.adTrackingLabels) {
+        setCampaignCardLabels(
+          res.adTrackingLabels.campaigns && typeof res.adTrackingLabels.campaigns === "object"
+            ? res.adTrackingLabels.campaigns
+            : {}
+        );
+        setCreativeCardLabels(
+          res.adTrackingLabels.creatives && typeof res.adTrackingLabels.creatives === "object"
+            ? res.adTrackingLabels.creatives
+            : {}
+        );
+        setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
       }
       workingScheduleSyncedRef.current = {
         enabled: !!res?.workingScheduleEnabled,
@@ -7806,19 +7820,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setEditingAdTrackingLabel(null);
     setAdTrackingLabelDraft("");
   };
-  const saveAdTrackingLabelEdit = () => {
+  const saveAdTrackingLabelEdit = async () => {
     if (!editingAdTrackingLabel) return;
     const trimmed = adTrackingLabelDraft.trim().slice(0, 80);
-    const apply = editingAdTrackingLabel.kind === "campaign" ? setCampaignCardLabels : setCreativeCardLabels;
-    apply((current) => {
-      const next = { ...current };
-      if (trimmed) next[editingAdTrackingLabel.id] = trimmed;
-      else delete next[editingAdTrackingLabel.id];
-      return next;
-    });
-    showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
-    setEditingAdTrackingLabel(null);
-    setAdTrackingLabelDraft("");
+    const nextCampaignLabels = { ...campaignCardLabels };
+    const nextCreativeLabels = { ...creativeCardLabels };
+    if (editingAdTrackingLabel.kind === "campaign") {
+      if (trimmed) nextCampaignLabels[editingAdTrackingLabel.id] = trimmed;
+      else delete nextCampaignLabels[editingAdTrackingLabel.id];
+    } else {
+      if (trimmed) nextCreativeLabels[editingAdTrackingLabel.id] = trimmed;
+      else delete nextCreativeLabels[editingAdTrackingLabel.id];
+    }
+    setAdTrackingLabelSaving(true);
+    try {
+      const saved = await authApi.saveAdTrackingLabels({
+        campaigns: nextCampaignLabels,
+        creatives: nextCreativeLabels
+      });
+      setCampaignCardLabels(saved?.campaigns && typeof saved.campaigns === "object" ? saved.campaigns : nextCampaignLabels);
+      setCreativeCardLabels(saved?.creatives && typeof saved.creatives === "object" ? saved.creatives : nextCreativeLabels);
+      showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
+      setEditingAdTrackingLabel(null);
+      setAdTrackingLabelDraft("");
+    } catch (err: any) {
+      showToast(`Failed to save ${editingAdTrackingLabel.kind} label: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setAdTrackingLabelSaving(false);
+    }
   };
 
   const revenueForProductDay = (productId: string, day: string) =>
@@ -30991,10 +31020,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     autoFocus
                                     value={adTrackingLabelDraft}
                                     onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    disabled={adTrackingLabelSaving}
                                     onKeyDown={(event) => {
                                       if (event.key === "Enter") {
                                         event.preventDefault();
-                                        saveAdTrackingLabelEdit();
+                                        void saveAdTrackingLabelEdit();
                                       } else if (event.key === "Escape") {
                                         event.preventDefault();
                                         cancelAdTrackingLabelEdit();
@@ -31004,10 +31034,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
                                     maxLength={80}
                                   />
-                                  <button type="button" className="text-emerald-600 hover:text-emerald-700" onClick={saveAdTrackingLabelEdit} aria-label="Save campaign label">
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save campaign label" disabled={adTrackingLabelSaving}>
                                     <Check className="w-4 h-4" />
                                   </button>
-                                  <button type="button" className="text-rose-500 hover:text-rose-600" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel campaign label edit">
+                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel campaign label edit" disabled={adTrackingLabelSaving}>
                                     <X className="w-4 h-4" />
                                   </button>
                                 </div>
@@ -31072,10 +31102,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     autoFocus
                                     value={adTrackingLabelDraft}
                                     onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    disabled={adTrackingLabelSaving}
                                     onKeyDown={(event) => {
                                       if (event.key === "Enter") {
                                         event.preventDefault();
-                                        saveAdTrackingLabelEdit();
+                                        void saveAdTrackingLabelEdit();
                                       } else if (event.key === "Escape") {
                                         event.preventDefault();
                                         cancelAdTrackingLabelEdit();
@@ -31085,10 +31116,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
                                     maxLength={80}
                                   />
-                                  <button type="button" className="text-emerald-600 hover:text-emerald-700" onClick={saveAdTrackingLabelEdit} aria-label="Save creative label">
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save creative label" disabled={adTrackingLabelSaving}>
                                     <Check className="w-4 h-4" />
                                   </button>
-                                  <button type="button" className="text-rose-500 hover:text-rose-600" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel creative label edit">
+                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel creative label edit" disabled={adTrackingLabelSaving}>
                                     <X className="w-4 h-4" />
                                   </button>
                                 </div>
