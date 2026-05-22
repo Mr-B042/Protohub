@@ -279,6 +279,7 @@ type WaybillRecord = {
   createdBy: string;
   createdAt: string;
 };
+type WaybillFlowFilter = "All" | "Manual Transfer" | "Customer Delivery";
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -2718,6 +2719,23 @@ const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement
   return matchingMovement?.createdAt ?? matchingMovement?.date ?? (waybill.status === "Received" && waybill.dateReceived ? waybill.createdAt : undefined);
 };
 
+const isCustomerDeliveryWaybill = (waybill: WaybillRecord) => {
+  const destination = `${waybill.receivingLocationName ?? ""} ${waybill.receivingState ?? ""}`;
+  return destination.includes("Customer:") || /auto-created on order delivery/i.test(waybill.note ?? "");
+};
+
+const matchesWaybillFlow = (waybill: WaybillRecord, filter: WaybillFlowFilter) => {
+  if (filter === "All") return true;
+  const customerDelivery = isCustomerDeliveryWaybill(waybill);
+  return filter === "Customer Delivery" ? customerDelivery : !customerDelivery;
+};
+
+const getWaybillFlowLabel = (waybill: WaybillRecord) =>
+  isCustomerDeliveryWaybill(waybill) ? "Customer Delivery" : "Manual Transfer";
+
+const getWaybillDestinationLabel = (waybill: WaybillRecord) =>
+  isCustomerDeliveryWaybill(waybill) ? "Customer" : (waybill.receivingState || "—");
+
 const scheduleDateForRange = (range: ScheduleRange, customDate?: string) => {
   if (range === "Custom" && customDate) return customDate;
   const date = new Date();
@@ -4513,6 +4531,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Selected expense for the Expense Details modal
   const [selectedExpenseId, setSelectedExpenseId] = useState<string>("");
   const [waybillStatusFilter, setWaybillStatusFilter] = useState<WaybillStatus | "All">("All");
+  const [waybillFlowFilter, setWaybillFlowFilter] = useState<WaybillFlowFilter>("All");
   const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
@@ -27707,19 +27726,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const base = waybillRecords.filter((w) =>
                   (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
+                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
                 const inTransit = base.filter((w) => w.status === "In Transit");
                 const received = base.filter((w) => w.status === "Received");
+                const customerDeliveries = base.filter((w) => isCustomerDeliveryWaybill(w));
+                const manualTransfers = base.filter((w) => !isCustomerDeliveryWaybill(w));
                 const totalFees = base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
                 const inTransitUnits = inTransit.reduce((s, w) => s + w.quantity, 0);
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
                     {[
                       { label: "In Transit", value: inTransit.length, sub: `${inTransitUnits} units`, color: "text-blue-700 bg-blue-50 border-blue-200" },
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
+                      { label: "Manual Transfers", value: manualTransfers.length, sub: "stock transfer records", color: "text-slate-700 bg-slate-50 border-slate-200" },
+                      { label: "Customer Deliveries", value: customerDeliveries.length, sub: "auto-waybills from delivered orders", color: "text-amber-700 bg-amber-50 border-amber-200" },
                       { label: "Total Waybill Fees", value: formatMoney(totalFees), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" },
-                      { label: "Total Transfers", value: base.length, sub: "filtered", color: "text-gray-700 bg-gray-50 border-gray-200" },
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -27780,6 +27803,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="Defective">Defective</option>
                     <option value="Missing">Missing</option>
                   </select>
+                  <select
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    aria-label="Waybill flow"
+                    value={waybillFlowFilter}
+                    onChange={(e) => setWaybillFlowFilter(e.target.value as WaybillFlowFilter)}
+                  >
+                    <option value="All">Flow: All</option>
+                    <option value="Manual Transfer">Manual Transfer</option>
+                    <option value="Customer Delivery">Customer Delivery</option>
+                  </select>
                   {/* Mobile-only: New Waybill stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
@@ -27792,6 +27825,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const filtered = waybillRecords.filter((w) =>
                   (waybillStatusFilter === "All" || w.status === waybillStatusFilter)
+                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
@@ -27825,13 +27859,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Waybill</div>
                             <div className="font-mono text-xs text-gray-500 break-all">{w.id}</div>
                             <div className="font-semibold text-sm text-gray-900 mt-1">{w.productName}</div>
+                            <div className="mt-1">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                                {getWaybillFlowLabel(w)}
+                              </span>
+                            </div>
                           </div>
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusColors[w.status]}`}>{w.status}</span>
                         </div>
                         <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Route</span>
-                            <span className="text-gray-700">{w.sendingState} → {w.receivingState}</span>
+                            <span className="text-gray-700">{w.sendingState} → {getWaybillDestinationLabel(w)}</span>
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Quantity</span>
@@ -27872,7 +27911,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          {["ID", "Product", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
+                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -27882,11 +27921,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{w.id}</td>
                             <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{w.productName}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                                {getWaybillFlowLabel(w)}
+                              </span>
+                            </td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.quantity} units</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className="text-gray-600">{w.sendingState}</span>
                               <span className="mx-1 text-gray-400">→</span>
-                              <span className="text-gray-900 font-medium">{w.receivingState}</span>
+                              <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</td>
