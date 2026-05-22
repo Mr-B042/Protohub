@@ -729,6 +729,7 @@ export default function PublicOrderFormPage() {
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<PublicOrderFieldKey, string>>>({});
+  const [submitRetryArmed, setSubmitRetryArmed] = useState(false);
   const [animatedInvalidField, setAnimatedInvalidField] = useState<PublicOrderFieldKey | null>(null);
   const [submitButtonAttention, setSubmitButtonAttention] = useState(false);
 
@@ -748,6 +749,7 @@ export default function PublicOrderFormPage() {
   const [orderFormDeliveryWindow, setOrderFormDeliveryWindow] = useState("");
 
   const cartSyncTimerRef = useRef<number | null>(null);
+  const autoSubmitTimerRef = useRef<number | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
   const publicOrderSubmittingRef = useRef(false);
   const abandonedDraftCartIdRef = useRef("");
@@ -809,6 +811,42 @@ export default function PublicOrderFormPage() {
     setAnimatedInvalidField((current) => (current === field ? null : current));
   };
 
+  const buildSubmitValidationErrors = (): Partial<Record<PublicOrderFieldKey, string>> => {
+    const phoneDigits = orderFormPhone.replace(/\D/g, "");
+    const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
+    const nextErrors: Partial<Record<PublicOrderFieldKey, string>> = {};
+    if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
+    if (!orderFormPhone.trim()) {
+      nextErrors.phone = "Phone number is required.";
+    } else if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      nextErrors.phone = "Please enter a valid phone number.";
+    }
+    if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
+      nextErrors.whatsapp = "WhatsApp number is required.";
+    } else if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+      nextErrors.whatsapp = "Please enter a valid WhatsApp number.";
+    }
+    if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
+    if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
+    if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
+    if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
+    if (settings.requireConfirmation && !orderFormConfirmed) nextErrors.confirmation = "Please confirm before submitting.";
+    if (settings.showCommitment && !settings.allowDisagree && !orderFormCommitmentAccepted) {
+      nextErrors.commitment = "Please acknowledge the commitment fee notice.";
+    }
+    return nextErrors;
+  };
+
+  const fieldErrorsEqual = (
+    left: Partial<Record<PublicOrderFieldKey, string>>,
+    right: Partial<Record<PublicOrderFieldKey, string>>
+  ) => {
+    const leftKeys = Object.keys(left) as PublicOrderFieldKey[];
+    const rightKeys = Object.keys(right) as PublicOrderFieldKey[];
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) => left[key] === right[key]);
+  };
+
   const focusField = (field: PublicOrderFieldKey) => {
     const target = fieldRefs.current[field];
     if (!target) return;
@@ -861,6 +899,61 @@ export default function PublicOrderFormPage() {
       setSubmitButtonAttention(true);
     }, 0);
   };
+
+  useEffect(() => {
+    if (!submitRetryArmed) {
+      if (autoSubmitTimerRef.current) {
+        window.clearTimeout(autoSubmitTimerRef.current);
+        autoSubmitTimerRef.current = null;
+      }
+      return;
+    }
+    if (publicOrderSubmitting) return;
+    const nextErrors = buildSubmitValidationErrors();
+    setFieldErrors((current) => (fieldErrorsEqual(current, nextErrors) ? current : nextErrors));
+    if (Object.keys(nextErrors).length > 0) {
+      if (autoSubmitTimerRef.current) {
+        window.clearTimeout(autoSubmitTimerRef.current);
+        autoSubmitTimerRef.current = null;
+      }
+      return;
+    }
+    if (autoSubmitTimerRef.current) {
+      window.clearTimeout(autoSubmitTimerRef.current);
+    }
+    autoSubmitTimerRef.current = window.setTimeout(() => {
+      autoSubmitTimerRef.current = null;
+      setSubmitRetryArmed(false);
+      showToast("All required fields complete — submitting your order...");
+      void submitPublicOrder();
+    }, 220);
+    return () => {
+      if (autoSubmitTimerRef.current) {
+        window.clearTimeout(autoSubmitTimerRef.current);
+        autoSubmitTimerRef.current = null;
+      }
+    };
+  }, [
+    orderFormAddress,
+    orderFormCity,
+    orderFormCommitmentAccepted,
+    orderFormConfirmed,
+    orderFormDeliveryWindow,
+    orderFormName,
+    orderFormPhone,
+    orderFormState,
+    orderFormWhatsapp,
+    publicOrderSubmitting,
+    settings.addressRequired,
+    settings.allowDisagree,
+    settings.askDelivery,
+    settings.cityRequired,
+    settings.requireConfirmation,
+    settings.requireWhatsapp,
+    settings.showCommitment,
+    settings.showWhatsapp,
+    submitRetryArmed
+  ]);
 
   const ensureDraftCartId = () => {
     if (publicEmbedIsPreview) return "";
@@ -1724,27 +1817,7 @@ export default function PublicOrderFormPage() {
     }
     const phoneDigits = orderFormPhone.replace(/\D/g, "");
     const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
-    const nextErrors: Partial<Record<PublicOrderFieldKey, string>> = {};
-    if (!orderFormName.trim()) nextErrors.name = "Customer name is required.";
-    if (!orderFormPhone.trim()) {
-      nextErrors.phone = "Phone number is required.";
-    } else if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-      nextErrors.phone = "Please enter a valid phone number.";
-    }
-    if (settings.showWhatsapp && settings.requireWhatsapp && !whatsappDigits) {
-      nextErrors.whatsapp = "WhatsApp number is required.";
-    } else if (orderFormWhatsapp.trim() && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
-      nextErrors.whatsapp = "Please enter a valid WhatsApp number.";
-    }
-    if (settings.addressRequired && !orderFormAddress.trim()) nextErrors.address = "Delivery address is required.";
-    if (settings.cityRequired && !orderFormCity.trim()) nextErrors.city = "City is required.";
-    if (!orderFormState.trim()) nextErrors.state = "Please select your state.";
-    if (settings.askDelivery && !orderFormDeliveryWindow.trim()) nextErrors.delivery = "Please select a delivery time.";
-    if (settings.requireConfirmation && !orderFormConfirmed) nextErrors.confirmation = "Please confirm before submitting.";
-    if (settings.showCommitment && !settings.allowDisagree && !orderFormCommitmentAccepted) {
-      nextErrors.commitment = "Please acknowledge the commitment fee notice.";
-    }
-
+    const nextErrors = buildSubmitValidationErrors();
     setFieldErrors(nextErrors);
 
     const validationOrder: PublicOrderFieldKey[] = [
@@ -1797,11 +1870,13 @@ export default function PublicOrderFormPage() {
         default:
           break;
       }
-      showToast(nextErrors[firstInvalidField] || "Please complete the highlighted fields.");
+      setSubmitRetryArmed(true);
+      showToast(`${nextErrors[firstInvalidField] || "Please complete the highlighted fields."} Once completed, we’ll submit automatically.`);
       triggerValidationAttention(firstInvalidField);
       focusField(firstInvalidField);
       return;
     }
+    setSubmitRetryArmed(false);
 
     const customerName = orderFormName.trim();
     const submissionCartId = abandonedDraftCartIdRef.current || ensureDraftCartId();
@@ -3334,6 +3409,11 @@ export default function PublicOrderFormPage() {
                   }}
                 >
                   <strong style={{ fontSize: 13 }}>Please complete the highlighted fields:</strong>
+                  {submitRetryArmed && (
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#b45309" }}>
+                      Once the missing fields are completed, we’ll submit the order automatically.
+                    </div>
+                  )}
                   <div style={{ display: "grid", gap: 4, fontSize: 12, lineHeight: 1.45 }}>
                     {fieldErrorEntries.map(([field, message]) => (
                       <span key={field}>• {message}</span>
