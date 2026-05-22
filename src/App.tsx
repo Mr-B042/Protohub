@@ -11277,6 +11277,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           packageId?: string | null;
           packageName: string;
           packageQuantity: number;
+          isFallback: boolean;
           totalOrders: number;
           deliveredCount: number;
           orderedUnits: number;
@@ -11311,7 +11312,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               key: packageRecord.id,
               packageId: packageRecord.id,
               packageName: packageRecord.name,
-              packageQuantity: packageRecord.quantity
+              packageQuantity: packageRecord.quantity,
+              isFallback: false
             };
           }
           const orderUnits = resolveOrderUnits(order);
@@ -11320,7 +11322,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             key: `manual:${manualLabel}:${orderUnits}`,
             packageId: order.packageId ?? null,
             packageName: manualLabel,
-            packageQuantity: orderUnits
+            packageQuantity: orderUnits,
+            isFallback: true
           };
         };
 
@@ -11331,6 +11334,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             packageId: pkg.packageId,
             packageName: pkg.packageName,
             packageQuantity: pkg.packageQuantity,
+            isFallback: pkg.isFallback,
             totalOrders: 0,
             deliveredCount: 0,
             orderedUnits: 0,
@@ -11353,6 +11357,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             packageId: pkg.packageId,
             packageName: pkg.packageName,
             packageQuantity: pkg.packageQuantity,
+            isFallback: pkg.isFallback,
             totalOrders: 0,
             deliveredCount: 0,
             orderedUnits: 0,
@@ -11384,6 +11389,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             packageId: row.packageId ?? undefined,
             packageName: row.packageName,
             packageQuantity: row.packageQuantity,
+            isFallback: row.isFallback,
             totalOrders: row.totalOrders,
             deliveredCount: row.deliveredCount,
             deliveryRate,
@@ -11422,6 +11428,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     .filter((row) => row.totalOrders > 0)
     .slice()
     .sort((a, b) => b.deliveryRate - a.deliveryRate || b.deliveredCount - a.deliveredCount || b.totalOrders - a.totalOrders)[0] ?? null;
+  const trackedPackageRowsCount = packagePerformanceRows.filter((row) => !row.isFallback).length;
+  const legacyPackageRowsCount = packagePerformanceRows.filter((row) => row.isFallback).length;
   const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
@@ -31369,9 +31377,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <Search className="w-4 h-4 text-gray-400 shrink-0" />
                       <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product, package, or pcs..." />
                     </label>
-                    <span className="self-end text-xs text-gray-400 sm:pb-2">{packagePerformanceRows.length} package rows</span>
+                    <div className="self-end flex flex-wrap items-center gap-2 sm:pb-2">
+                      <span className="text-xs text-gray-400">{packagePerformanceRows.length} package rows</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">Tracked {trackedPackageRowsCount}</span>
+                      {legacyPackageRowsCount > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-700">Manual / legacy {legacyPackageRowsCount}</span>
+                      )}
+                    </div>
                   </div>
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600">
+                      <span className="font-semibold text-gray-800">Tracked package</span> rows are tied to a real saved package. <span className="font-semibold text-gray-800">Manual / legacy</span> rows come from older orders or fallback package text where the original package link was missing.
+                    </div>
                     <div className="sm:hidden divide-y divide-gray-100">
                       {packagePerformanceRows.length === 0 ? (
                         <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</div>
@@ -31383,7 +31400,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="font-bold text-gray-900">{row.product.name}</div>
                                 <div className="text-sm font-semibold text-[#1F8FE0]">{row.packageName} · {formatBundleUnitLabel(row.packageQuantity)}</div>
                               </div>
-                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${performanceTone(row.tier)}`}>{row.tier}</span>
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${performanceTone(row.tier)}`}>{row.tier}</span>
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
+                              </div>
                             </div>
                             <div className="grid grid-cols-2 gap-3 text-sm">
                               <div>
@@ -31444,7 +31464,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 </td>
                                 <td className="px-4 py-4">
                                   <div className="font-semibold text-gray-900">{row.packageName}</div>
-                                  <div className="text-xs text-gray-500">{formatBundleUnitLabel(row.packageQuantity)}</div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-xs text-gray-500">{formatBundleUnitLabel(row.packageQuantity)}</span>
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
+                                  </div>
                                 </td>
                                 <td className="px-4 py-4 text-gray-700">{row.totalOrders}</td>
                                 <td className="px-4 py-4 text-green-700 font-semibold">{row.deliveredCount}</td>
