@@ -2028,6 +2028,8 @@ const orderInputClass =
   "border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-100 dark:placeholder:text-slate-500";
 const followUpNoteBubbleClass =
   "mt-2 flex max-w-full items-start gap-2 rounded-[26px] border border-amber-200 bg-amber-50/95 px-3 py-2.5 text-[13px] font-semibold leading-6 text-amber-900 whitespace-pre-wrap break-words dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-100";
+const followUpNoteBubbleCompactClass =
+  "mt-2 flex max-w-full items-start gap-2 rounded-[22px] border border-amber-200 bg-amber-50/95 px-3 py-2 text-[12px] font-semibold leading-5 text-amber-900 whitespace-pre-wrap break-words dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-100";
 const followUpNoteBubbleDotClass =
   "mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-300 dark:bg-amber-300/80";
 const orderNoteCardClass =
@@ -20839,10 +20841,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <td className="px-4 py-4">
                     <div className={`font-bold ${orderTitleTextClass}`}>{order.customer}</div>
                     <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
-                    <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
-                      <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span>{" "}
-                      {latestNote ? noteSnippet(latestNote.text, 76) : "No saved note yet"}
-                    </div>
+                    {latestNote ? (
+                      <div className={followUpNoteBubbleCompactClass}>
+                        <span className={followUpNoteBubbleDotClass} />
+                        <span className="min-w-0 flex-1">{latestNote.text}</span>
+                      </div>
+                    ) : (
+                      <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
+                        <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span> No saved note yet
+                      </div>
+                    )}
                   </td>
                   <td className={`px-4 py-4 text-center text-xs font-medium ${orderMutedTextClass}`}>
                     {order.source ?? orderSourceFromUtm(order.utmSource)}
@@ -20858,6 +20866,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
+                    {nextFollowUp?.noteText ? (
+                      <div className={`${followUpNoteBubbleCompactClass} mx-auto max-w-[260px] text-left`}>
+                        <span className={followUpNoteBubbleDotClass} />
+                        <span className="min-w-0 flex-1">{nextFollowUp.noteText}</span>
+                      </div>
+                    ) : null}
                   </td>
                   <td className={`px-4 py-4 text-xs ${orderMutedTextClass}`}>
                     {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}
@@ -21360,9 +21374,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <article className={`${orderPanelMutedClass} rounded-[20px] p-4`}>
                     <p className={`text-[10px] font-bold uppercase tracking-[0.18em] m-0 ${orderFaintTextClass}`}>Latest Feedback</p>
-                    <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>
-                      {latestNote ? noteSnippet(latestNote.text, 120) : "No saved note yet."}
-                    </p>
+                    {latestNote ? (
+                      <div className={followUpNoteBubbleClass}>
+                        <span className={followUpNoteBubbleDotClass} />
+                        <span className="min-w-0 flex-1">{latestNote.text}</span>
+                      </div>
+                    ) : (
+                      <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>No saved note yet.</p>
+                    )}
                     <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
                       {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Add a note after every customer call so the next rep sees the context."}
                     </p>
@@ -21374,11 +21393,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
-                    <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
-                      {nextFollowUp?.noteText
-                        ? noteSnippet(nextFollowUp.noteText, 120)
-                        : "Set a follow-up date and time on any note that needs a callback reminder."}
-                    </p>
+                    {nextFollowUp?.noteText ? (
+                      <div className={followUpNoteBubbleCompactClass}>
+                        <span className={followUpNoteBubbleDotClass} />
+                        <span className="min-w-0 flex-1">{nextFollowUp.noteText}</span>
+                      </div>
+                    ) : (
+                      <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>Set a follow-up date and time on any note that needs a callback reminder.</p>
+                    )}
                   </article>
                 </div>
               );
