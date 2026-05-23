@@ -8628,3 +8628,73 @@ article.public-order-card.public-form-clean .package-picker-clean > label {
 }
 article.public-order-card.public-form-clean .package-picker-clean > label > div { flex: 1; min-width: 0; }
 article.public-order-card.public-form-clean .package-picker-clean > label > strong { white-space: nowrap; flex-shrink: 0; }
+
+/* =============================================================
+   Admin app dark-mode rescue overrides
+   ----
+   The main workspace uses `data-theme="dark"` on `.app-shell`, not the
+   `.dark` root class used by other surfaces. Keep the admin shell in
+   lockstep so white utility classes and focus states do not leak light
+   backgrounds or invisible text across desktop/mobile pages.
+   ============================================================= */
+.app-shell[data-theme="dark"] :is(section, article, div, label, button, select, input, textarea).bg-white {
+  background:
+    linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card))) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] :is(.bg-gray-50, .bg-gray-50\/60, .bg-gray-50\/50, .bg-slate-50) {
+  background: hsl(var(--surface-muted)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-gray-100, .bg-slate-100) {
+  background: hsl(var(--surface-hover)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(input, select, textarea) {
+  background: hsl(var(--surface-card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(input, textarea)::placeholder {
+  color: hsl(var(--text-faint)) !important;
+  -webkit-text-fill-color: hsl(var(--text-faint)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.focus\:bg-white:focus, .focus-within\:bg-white:focus-within) {
+  background: hsl(var(--surface-card)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.overflow-x-auto, .overflow-y-auto, .overflow-auto) {
+  background: transparent;
+}
+
+.app-shell[data-theme="dark"] table,
+.app-shell[data-theme="dark"] thead,
+.app-shell[data-theme="dark"] tbody,
+.app-shell[data-theme="dark"] tr,
+.app-shell[data-theme="dark"] th,
+.app-shell[data-theme="dark"] td {
+  color: inherit;
+  background-color: transparent;
+}
+
+.app-shell[data-theme="dark"] thead {
+  background: hsl(var(--surface-muted));
+}
+
+.app-shell[data-theme="dark"] tbody tr:hover {
+  background: hsl(222 18% 14% / 0.8);
+}
+
+.app-shell[data-theme="dark"] .sticky-col-first tbody tr:hover td:first-child {
+  background: hsl(var(--surface-muted));
+}
+
+.app-shell[data-theme="dark"] .sticky-col-first td:first-child::after,
+.app-shell[data-theme="dark"] .sticky-col-first th:first-child::after {
+  background: linear-gradient(to right, rgba(255, 255, 255, 0.05), transparent);
+}
