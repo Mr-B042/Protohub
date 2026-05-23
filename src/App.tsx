@@ -2027,15 +2027,29 @@ const orderDangerButtonClass =
 const orderInputClass =
   "border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-100 dark:placeholder:text-slate-500";
 const followUpNoteBubbleClass =
-  "mt-2 flex max-w-full items-start gap-2 rounded-[26px] border border-amber-200 bg-amber-50/95 px-3 py-2.5 text-[13px] font-semibold leading-6 text-amber-900 whitespace-pre-wrap break-words dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-100";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-300/50 bg-amber-100/90 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-400/30 dark:bg-[#4a2d0a]/88 dark:text-amber-50";
 const followUpNoteBubbleCompactClass =
-  "mt-2 flex max-w-full items-start gap-2 rounded-[22px] border border-amber-200 bg-amber-50/95 px-3 py-2 text-[12px] font-semibold leading-5 text-amber-900 whitespace-pre-wrap break-words dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-100";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-300/50 bg-amber-100/90 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-400/30 dark:bg-[#4a2d0a]/88 dark:text-amber-50";
 const followUpNoteBubbleDotClass =
-  "mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-300 dark:bg-amber-300/80";
+  "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500/80 dark:bg-amber-200/85";
 const orderNoteCardClass =
   "rounded-[22px] border border-gray-200 bg-white px-4 py-4 sm:px-5 sm:py-5 shadow-sm dark:bg-[#0b141d] dark:border-slate-800/90 dark:shadow-[0_18px_40px_rgba(2,6,23,0.3)]";
 const orderNoteMetaClass = "text-[12px] sm:text-[13px] font-semibold tracking-[0.01em] text-gray-500 dark:text-slate-400";
 const orderNoteBodyClass = "mt-3 text-[16px] sm:text-[18px] leading-7 sm:leading-8 font-medium text-gray-900 dark:text-slate-100 whitespace-pre-wrap break-words";
+
+const renderOrderNoteBubble = (
+  text: string,
+  options?: { compact?: boolean; className?: string; textClassName?: string }
+) => {
+  const compact = options?.compact ?? false;
+  const baseClass = compact ? followUpNoteBubbleCompactClass : followUpNoteBubbleClass;
+  return (
+    <div className={`${baseClass}${options?.className ? ` ${options.className}` : ""}`}>
+      <span className={followUpNoteBubbleDotClass} />
+      <span className={`min-w-0 flex-1 ${options?.textClassName ?? ""}`}>{text}</span>
+    </div>
+  );
+};
 
 const renderOrderNoteCard = (note: OrderNote, options?: { compact?: boolean }) => {
   const compact = options?.compact ?? false;
@@ -20632,7 +20646,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {humanizeFollowUpTaskType(activeTask.taskType)} · {activeTask.effectiveStatus ?? activeTask.status}
                 </span>
                 <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(activeTask.dueAt)}</p>
-                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{activeTask.note || "No task note saved yet."}</p>
+                {activeTask.note ? (
+                  renderOrderNoteBubble(activeTask.note, {
+                    compact: true,
+                    className: "mt-1.5",
+                    textClassName: "text-[12px] leading-5"
+                  })
+                ) : (
+                  <p className={`m-0 text-xs ${orderMutedTextClass}`}>No task note saved yet.</p>
+                )}
               </div>
             ) : (
               <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No active follow-up task.</p>
@@ -20655,10 +20677,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(latestAttempt.attemptedAt)}</p>
                 {latestAttempt.outcomeNote ? (
-                  <div className={followUpNoteBubbleClass}>
-                    <span className={followUpNoteBubbleDotClass} />
-                    <span className="min-w-0 flex-1">{latestAttempt.outcomeNote}</span>
-                  </div>
+                  renderOrderNoteBubble(latestAttempt.outcomeNote, {
+                    compact: true,
+                    className: "mt-1.5",
+                    textClassName: "text-[12px] leading-5"
+                  })
                 ) : (
                   <p className={`m-0 text-xs ${orderMutedTextClass}`}>{`${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
                 )}
@@ -20707,12 +20730,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                     <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
                   </div>
-                  {attempt.outcomeNote ? (
-                    <div className={followUpNoteBubbleClass}>
-                      <span className={followUpNoteBubbleDotClass} />
-                      <span className="min-w-0 flex-1">{attempt.outcomeNote}</span>
-                    </div>
-                  ) : null}
+                  {attempt.outcomeNote &&
+                    renderOrderNoteBubble(attempt.outcomeNote, {
+                      compact: true,
+                      className: "mt-2",
+                      textClassName: "text-[12px] leading-5"
+                    })}
                   {attempt.nextActionAt && (
                     <p className={`m-0 mt-2 text-[11px] ${orderMutedTextClass}`}>Next {humanizeFollowUpTaskType(attempt.nextActionType)} · {formatMoment(attempt.nextActionAt)}</p>
                   )}
@@ -20768,16 +20791,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="col-span-2">
                     <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Latest Feedback</p>
                     {latestNote ? (
-                      <div className={followUpNoteBubbleClass}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{latestNote.text}</span>
-                      </div>
+                      renderOrderNoteBubble(noteSnippet(latestNote.text), {
+                        compact: true,
+                        className: "mt-1.5",
+                        textClassName: "text-[13px] leading-6"
+                      })
                     ) : (
                       <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>No saved note yet</p>
                     )}
-                    {latestNote && (
+                    {latestNote ? (
                       <p className={`mt-1 text-[11px] ${orderMutedTextClass}`}>{latestNote.by} · {formatMoment(latestNote.date)}</p>
-                    )}
+                    ) : null}
                   </div>
                   <div className="col-span-2">
                     <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Next Follow-up</p>
@@ -20786,12 +20810,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
-                    {nextFollowUp?.noteText ? (
-                      <div className={followUpNoteBubbleClass}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{nextFollowUp.noteText}</span>
-                      </div>
-                    ) : null}
+                    {nextFollowUp?.noteText
+                      ? renderOrderNoteBubble(noteSnippet(nextFollowUp.noteText, 120), {
+                          compact: true,
+                          className: "mt-2",
+                          textClassName: "text-[12px] leading-5"
+                        })
+                      : null}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -20841,16 +20866,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <td className="px-4 py-4">
                     <div className={`font-bold ${orderTitleTextClass}`}>{order.customer}</div>
                     <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
-                    {latestNote ? (
-                      <div className={followUpNoteBubbleCompactClass}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{latestNote.text}</span>
-                      </div>
-                    ) : (
-                      <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
-                        <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span> No saved note yet
-                      </div>
-                    )}
+                    <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
+                      <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span>{" "}
+                      {latestNote ? (
+                        <div className="mt-1">
+                          {renderOrderNoteBubble(noteSnippet(latestNote.text, 120), {
+                            compact: true,
+                            textClassName: "text-[12px] leading-5"
+                          })}
+                        </div>
+                      ) : (
+                        "No saved note yet"
+                      )}
+                    </div>
                   </td>
                   <td className={`px-4 py-4 text-center text-xs font-medium ${orderMutedTextClass}`}>
                     {order.source ?? orderSourceFromUtm(order.utmSource)}
@@ -21375,10 +21403,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <article className={`${orderPanelMutedClass} rounded-[20px] p-4`}>
                     <p className={`text-[10px] font-bold uppercase tracking-[0.18em] m-0 ${orderFaintTextClass}`}>Latest Feedback</p>
                     {latestNote ? (
-                      <div className={followUpNoteBubbleClass}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{latestNote.text}</span>
-                      </div>
+                      renderOrderNoteBubble(noteSnippet(latestNote.text, 180), {
+                        className: "mt-2",
+                        textClassName: "text-[14px] sm:text-[15px] leading-6"
+                      })
                     ) : (
                       <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>No saved note yet.</p>
                     )}
@@ -21394,12 +21422,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </span>
                     </div>
                     {nextFollowUp?.noteText ? (
-                      <div className={followUpNoteBubbleCompactClass}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{nextFollowUp.noteText}</span>
-                      </div>
+                      renderOrderNoteBubble(noteSnippet(nextFollowUp.noteText, 160), {
+                        compact: true,
+                        className: "mt-2",
+                        textClassName: "text-[12px] leading-5"
+                      })
                     ) : (
-                      <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>Set a follow-up date and time on any note that needs a callback reminder.</p>
+                      <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
+                        Set a follow-up date and time on any note that needs a callback reminder.
+                      </p>
                     )}
                   </article>
                 </div>
@@ -21899,10 +21930,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
                             </div>
                             {latestNote ? (
-                              <div className={followUpNoteBubbleClass}>
-                                <span className={followUpNoteBubbleDotClass} />
-                                <span className="min-w-0 flex-1">{latestNote.text}</span>
-                              </div>
+                              renderOrderNoteBubble(noteSnippet(latestNote.text, 160), {
+                                compact: true,
+                                className: "mt-2 max-w-[26rem]",
+                                textClassName: "text-[12px] leading-5"
+                              })
                             ) : (
                               <p className="mt-1 text-sm text-gray-600 m-0">No saved feedback note yet.</p>
                             )}
@@ -21914,12 +21946,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(followUp ?? null)}`}>
                               {followUpHeadline(followUp ?? null)}
                             </span>
-                            {followUp?.noteText ? (
-                              <div className={followUpNoteBubbleClass}>
-                                <span className={followUpNoteBubbleDotClass} />
-                                <span className="min-w-0 flex-1">{followUp.noteText}</span>
-                              </div>
-                            ) : null}
+                            {followUp?.noteText
+                              ? renderOrderNoteBubble(noteSnippet(followUp.noteText, 96), {
+                                  compact: true,
+                                  className: "mt-1.5 max-w-[18rem]",
+                                  textClassName: "text-[11px] leading-5"
+                                })
+                              : null}
                           </div>
                         </div>
                       </button>
