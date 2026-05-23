@@ -8653,6 +8653,176 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   background: hsl(var(--surface-hover)) !important;
 }
 
+.app-shell[data-theme="dark"] .bg-gray-200 {
+  background: hsl(208 28% 16%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-gray-300 {
+  background: hsl(208 28% 21%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-black\/5 {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-black\/10 {
+  background: rgba(255, 255, 255, 0.10) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-black\/\[0\.02\] {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Tinted surface utilities */
+.app-shell[data-theme="dark"] .bg-blue-50 {
+  background: hsl(217 80% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-blue-100 {
+  background: hsl(217 70% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-emerald-50, .bg-green-50) {
+  background: hsl(150 60% 14%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-emerald-100, .bg-green-100) {
+  background: hsl(150 50% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-amber-50, .bg-yellow-50, .bg-orange-50) {
+  background: hsl(35 70% 16%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-amber-100, .bg-orange-100) {
+  background: hsl(35 60% 20%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-rose-50, .bg-red-50) {
+  background: hsl(0 60% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-rose-100, .bg-red-100) {
+  background: hsl(0 50% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-violet-50, .bg-purple-50, .bg-indigo-50) {
+  background: hsl(260 60% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-violet-100, .bg-purple-100, .bg-indigo-100) {
+  background: hsl(260 50% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-teal-50 {
+  background: hsl(180 60% 14%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-teal-100 {
+  background: hsl(180 50% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-pink-50 {
+  background: hsl(330 60% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-sky-50 {
+  background: hsl(200 70% 18%) !important;
+}
+
+/* Text utilities */
+.app-shell[data-theme="dark"] :is(.text-gray-900, .text-slate-900, .text-black) {
+  color: hsl(0 0% 98%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-800, .text-slate-800) {
+  color: hsl(0 0% 96%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-700, .text-slate-700) {
+  color: hsl(214 16% 88%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-600, .text-slate-600) {
+  color: hsl(214 14% 76%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-500, .text-slate-500, .text-muted-foreground) {
+  color: hsl(214 12% 67%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-400, .text-slate-400) {
+  color: hsl(214 10% 56%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-gray-300, .text-slate-300) {
+  color: hsl(214 10% 50%) !important;
+}
+
+.app-shell[data-theme="dark"] .text-gray-200 {
+  color: hsl(214 10% 44%) !important;
+}
+
+/* Tinted text utilities */
+.app-shell[data-theme="dark"] .text-blue-900 { color: hsl(217 95% 88%) !important; }
+.app-shell[data-theme="dark"] .text-blue-800 { color: hsl(217 92% 84%) !important; }
+.app-shell[data-theme="dark"] .text-blue-700 { color: hsl(217 90% 80%) !important; }
+.app-shell[data-theme="dark"] :is(.text-blue-600, .text-blue-500) { color: hsl(217 90% 72%) !important; }
+
+.app-shell[data-theme="dark"] :is(.text-emerald-900, .text-green-900) { color: hsl(150 72% 86%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-800, .text-green-800) { color: hsl(150 68% 80%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-700, .text-green-700) { color: hsl(150 65% 72%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-600, .text-emerald-500, .text-green-600, .text-green-500) { color: hsl(150 65% 65%) !important; }
+
+.app-shell[data-theme="dark"] :is(.text-amber-900, .text-orange-900) { color: hsl(35 95% 86%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-800, .text-orange-800) { color: hsl(35 92% 80%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-700, .text-orange-700) { color: hsl(35 90% 75%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-600, .text-amber-500, .text-orange-600, .text-orange-500) { color: hsl(35 90% 68%) !important; }
+
+.app-shell[data-theme="dark"] :is(.text-rose-900, .text-red-900) { color: hsl(0 90% 86%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-800, .text-red-800) { color: hsl(0 86% 82%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-700, .text-red-700) { color: hsl(0 80% 78%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-600, .text-rose-500, .text-red-600, .text-red-500) { color: hsl(0 80% 72%) !important; }
+
+.app-shell[data-theme="dark"] :is(.text-violet-900, .text-purple-900, .text-indigo-900) { color: hsl(260 84% 88%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-800, .text-purple-800, .text-indigo-800) { color: hsl(260 80% 84%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-700, .text-purple-700, .text-indigo-700) { color: hsl(260 75% 80%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-600, .text-violet-500, .text-purple-600, .text-purple-500, .text-indigo-600, .text-indigo-500) { color: hsl(260 75% 73%) !important; }
+
+.app-shell[data-theme="dark"] .text-teal-700 { color: hsl(180 65% 72%) !important; }
+.app-shell[data-theme="dark"] :is(.text-teal-600, .text-teal-500) { color: hsl(180 65% 65%) !important; }
+
+/* Border utilities */
+.app-shell[data-theme="dark"] :is(.border-gray-100, .border-slate-100) {
+  border-color: hsl(var(--border-subtle)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.border-gray-200, .border-slate-200) {
+  border-color: hsl(var(--border)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.border-gray-300, .border-slate-300) {
+  border-color: hsl(205 38% 24%) !important;
+}
+
+.app-shell[data-theme="dark"] .border-black\/5 {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+.app-shell[data-theme="dark"] .border-black\/10 {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.app-shell[data-theme="dark"] .border-blue-100 { border-color: hsl(217 70% 28%) !important; }
+.app-shell[data-theme="dark"] .border-blue-200 { border-color: hsl(217 70% 34%) !important; }
+.app-shell[data-theme="dark"] :is(.border-emerald-100, .border-green-100) { border-color: hsl(150 50% 22%) !important; }
+.app-shell[data-theme="dark"] :is(.border-emerald-200, .border-green-200) { border-color: hsl(150 50% 28%) !important; }
+.app-shell[data-theme="dark"] :is(.border-amber-100, .border-orange-100) { border-color: hsl(35 50% 24%) !important; }
+.app-shell[data-theme="dark"] :is(.border-amber-200, .border-orange-200) { border-color: hsl(35 50% 30%) !important; }
+.app-shell[data-theme="dark"] :is(.border-rose-100, .border-red-100) { border-color: hsl(0 50% 26%) !important; }
+.app-shell[data-theme="dark"] :is(.border-rose-200, .border-red-200) { border-color: hsl(0 50% 32%) !important; }
+.app-shell[data-theme="dark"] :is(.border-violet-100, .border-purple-100) { border-color: hsl(260 50% 26%) !important; }
+
 .app-shell[data-theme="dark"] :is(input, select, textarea) {
   background: hsl(var(--surface-card)) !important;
   border-color: hsl(var(--border)) !important;
