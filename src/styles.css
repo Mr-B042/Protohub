@@ -7887,6 +7887,13 @@ html.dark,
 .dark .hover\:text-gray-700:hover { color: hsl(214 16% 88%); }
 .dark .hover\:text-gray-600:hover { color: hsl(214 14% 74%); }
 
+/* Focus-only light utilities can still punch white holes into dark inputs.
+   Catch them explicitly so focused search bars stay legible on mobile/desktop. */
+.dark .focus\:bg-white:focus,
+.dark .focus-within\:bg-white:focus-within {
+  background-color: hsl(var(--surface-card));
+}
+
 /* Form controls — inputs, selects, textareas */
 .dark input,
 .dark select,
@@ -7894,15 +7901,33 @@ html.dark,
   background-color: hsl(var(--surface-card));
   border-color: hsl(var(--border));
   color: hsl(var(--foreground));
+  -webkit-text-fill-color: hsl(var(--foreground));
 }
 .dark input::placeholder,
 .dark textarea::placeholder { color: hsl(215 12% 48%); }
+.dark select option {
+  background-color: hsl(var(--surface-card));
+  color: hsl(var(--foreground));
+}
 .dark input[type="checkbox"],
 .dark input[type="radio"] { accent-color: hsl(var(--primary)); }
 
 /* Tables */
 .dark table thead { background-color: hsl(var(--surface-muted)); }
+.dark table tbody,
+.dark table tbody tr,
+.dark table tbody td {
+  background-color: transparent;
+}
 .dark table tbody tr:hover { background-color: hsl(222 18% 14% / 0.8); }
+
+/* Shared admin table shells still carry many light utility combinations.
+   Normalize them once here so titles/cells stay readable across pages. */
+.dark :is(section[aria-label$="table"], div[aria-label$="table"], article[aria-label$="table"]) {
+  background:
+    linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card)));
+  border-color: hsl(var(--border));
+}
 
 /* Shadows are too dark on top of dark surfaces — soften them */
 .dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4); }
@@ -8002,6 +8027,15 @@ html.dark,
 
 .dark .search-box input::placeholder {
   color: hsl(var(--text-faint));
+}
+
+.dark .sticky-col-first tbody tr:hover td:first-child {
+  background: hsl(var(--surface-muted));
+}
+
+.dark .sticky-col-first td:first-child::after,
+.dark .sticky-col-first th:first-child::after {
+  background: linear-gradient(to right, rgba(255, 255, 255, 0.05), transparent);
 }
 
 .dark .orders-pagination,
