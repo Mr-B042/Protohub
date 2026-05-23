@@ -8953,3 +8953,84 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   border-color: hsl(276 62% 62%) !important;
   color: hsl(276 78% 48%) !important;
 }
+
+.app-shell[data-theme="dark"] .admin-tone-panel {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--cool {
+  background: linear-gradient(135deg, hsl(216 24% 19%) 0%, hsl(214 28% 16%) 55%, hsl(154 28% 18%) 100%) !important;
+  border-color: hsl(211 40% 31%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--cyan {
+  background: linear-gradient(135deg, hsl(202 32% 19%) 0%, hsl(197 28% 17%) 100%) !important;
+  border-color: hsl(197 45% 34%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--blue {
+  background: linear-gradient(135deg, hsl(217 28% 19%) 0%, hsl(213 25% 17%) 100%) !important;
+  border-color: hsl(214 48% 35%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--green {
+  background: linear-gradient(135deg, hsl(152 28% 18%) 0%, hsl(154 24% 16%) 100%) !important;
+  border-color: hsl(151 40% 30%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--amber {
+  background: linear-gradient(135deg, hsl(34 58% 20%) 0%, hsl(32 54% 18%) 100%) !important;
+  border-color: hsl(34 56% 34%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel .admin-tone-kicker {
+  color: hsl(211 82% 74%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel .admin-tone-title {
+  color: hsl(0 0% 98%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel .admin-tone-body {
+  color: hsl(214 22% 84%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel .admin-tone-meta {
+  color: hsl(214 14% 74%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--cyan .admin-tone-kicker {
+  color: hsl(193 92% 74%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--amber .admin-tone-kicker {
+  color: hsl(37 96% 76%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--amber .admin-tone-body {
+  color: hsl(37 90% 84%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--green .admin-tone-kicker {
+  color: hsl(151 75% 74%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-panel--green .admin-tone-body {
+  color: hsl(150 62% 84%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-chip--amber {
+  background: hsl(34 44% 27%) !important;
+  color: hsl(38 100% 90%) !important;
+  border: 1px solid hsl(34 44% 34%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-textarea {
+  background: hsl(214 34% 11%) !important;
+  color: hsl(0 0% 98%) !important;
+  border-color: hsl(210 32% 26%) !important;
+}
+
+.app-shell[data-theme="dark"] .admin-tone-textarea::placeholder {
+  color: hsl(214 14% 68%) !important;
+}

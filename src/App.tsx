@@ -24445,10 +24445,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1F8FE0] m-0">{orderWorkspaceInsight.title}</p>
-                      <strong className="text-2xl font-bold text-gray-900 block mt-2">{orderWorkspaceInsight.body}</strong>
-                      <p className="text-xs text-gray-500 mt-2 mb-0">
+                    <div className="admin-tone-panel admin-tone-panel--cool rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
+                      <p className="admin-tone-kicker text-[11px] font-semibold uppercase tracking-wider text-[#1F8FE0] m-0">{orderWorkspaceInsight.title}</p>
+                      <strong className="admin-tone-title text-2xl font-bold text-gray-900 block mt-2">{orderWorkspaceInsight.body}</strong>
+                      <p className="admin-tone-body text-xs text-gray-500 mt-2 mb-0">
                         {orderWorkspacePage === "Follow-up Queue"
                           ? "Use this page to keep callbacks and pending customer actions from getting buried inside the full order list."
                           : "Use this archive to review closed outcomes without active pipeline noise from open orders."}
@@ -24973,10 +24973,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 via-white to-emerald-50 px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                  <div className="admin-tone-panel admin-tone-panel--cool rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 via-white to-emerald-50 px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">Current health</p>
-                      <p className="text-sm text-gray-700 mt-2 mb-0">
+                      <p className="admin-tone-kicker text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">Current health</p>
+                      <p className="admin-tone-body text-sm text-gray-700 mt-2 mb-0">
                         {liveFormPulse?.health?.message ?? "Once fresh traffic hits the form, Protohub will show the live health signal here."}
                       </p>
                     </div>
@@ -24997,20 +24997,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="admin-tone-panel admin-tone-panel--cyan rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
                     <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-700 m-0">Last seen live</p>
-                      <p className="text-lg font-bold text-slate-900 mt-1 mb-0">
+                      <p className="admin-tone-kicker text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-700 m-0">Last seen live</p>
+                      <p className="admin-tone-title text-lg font-bold text-slate-900 mt-1 mb-0">
                         {relativeMinutesLabel(liveFormPulseLastSeenAt(liveFormPulse))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[11px] text-slate-500 mt-0 mb-0">
+                      <p className="admin-tone-body text-[11px] text-slate-500 mt-0 mb-0">
                         {liveFormPulseLastSeenAt(liveFormPulse)
                           ? `Freshest pulse at ${formatMoment(liveFormPulseLastSeenAt(liveFormPulse))}`
                           : "No live signal has been captured yet"}
                       </p>
-                      <p className="text-[11px] text-slate-400 mt-1 mb-0">
+                      <p className="admin-tone-meta text-[11px] text-slate-400 mt-1 mb-0">
                         Combines views, interactions, submit attempts, orders, and redirects.
                       </p>
                     </div>
@@ -33245,11 +33245,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {/* Extra offers & free gifts moved to per-package offer setup.
                       One source of truth, with state restrictions and pricing modes per package. */}
                   {previewProduct && (
-                    <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
+                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
                       <ShoppingBag className="w-5 h-5 text-[#1F8FE0] mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
-                        <p className="text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
+                        <p className="admin-tone-title text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
+                        <p className="admin-tone-body text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
                         <button
                           className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#1F8FE0] rounded-md hover:opacity-90"
                           onClick={() => { openPackagesView(previewProduct); }}
@@ -33258,12 +33258,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                   )}
                   {previewProduct && (
-                    <div className="border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
+                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
                       <div>
-                        <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
+                        <p className="admin-tone-title text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
+                        <p className="admin-tone-body text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
+                      <textarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -36483,15 +36483,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </article>
                 </section>
 
-                <div className={`flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
+                <div className={`admin-tone-panel ${lowStockProducts.length === 0 ? "admin-tone-panel--green" : "admin-tone-panel--amber"} flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
                   <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${lowStockProducts.length === 0 ? "bg-green-100 text-green-600" : "bg-amber-100 text-amber-600"}`}><AlertTriangle className="w-4 h-4" /></span>
                   <div className="flex-1 min-w-0">
-                    <h2 className={`text-sm font-bold ${lowStockProducts.length === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
-                    <p className={`text-xs mt-0.5 ${lowStockProducts.length === 0 ? "text-green-600" : "text-amber-600"}`}>{lowStockProducts.length === 0 ? "All products are currently above reorder point." : `${lowStockProducts.length} product${lowStockProducts.length === 1 ? "" : "s"} at or below reorder point.`}</p>
+                    <h2 className={`admin-tone-title text-sm font-bold ${lowStockProducts.length === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
+                    <p className={`admin-tone-body text-xs mt-0.5 ${lowStockProducts.length === 0 ? "text-green-600" : "text-amber-600"}`}>{lowStockProducts.length === 0 ? "All products are currently above reorder point." : `${lowStockProducts.length} product${lowStockProducts.length === 1 ? "" : "s"} at or below reorder point.`}</p>
                     {lowStockProducts.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {lowStockProducts.map((product) => (
-                          <span key={product.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">{product.name}: {product.warehouseStock}/{product.reorderPoint}</span>
+                          <span key={product.id} className="admin-tone-chip admin-tone-chip--amber inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">{product.name}: {product.warehouseStock}/{product.reorderPoint}</span>
                         ))}
                       </div>
                     )}
