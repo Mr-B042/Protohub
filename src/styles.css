@@ -8682,6 +8682,10 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   background: hsl(217 70% 22%) !important;
 }
 
+.app-shell[data-theme="dark"] :is(.bg-blue-50\/30, .bg-blue-50\/40, .bg-blue-50\/50, .bg-blue-50\/60, .bg-blue-50\/70, .bg-blue-50\/95) {
+  background: hsl(217 80% 18% / 0.92) !important;
+}
+
 .app-shell[data-theme="dark"] :is(.bg-emerald-50, .bg-green-50) {
   background: hsl(150 60% 14%) !important;
 }
@@ -8690,12 +8694,20 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   background: hsl(150 50% 18%) !important;
 }
 
+.app-shell[data-theme="dark"] :is(.bg-emerald-50\/40, .bg-emerald-50\/50, .bg-emerald-50\/60, .bg-emerald-50\/70, .bg-emerald-50\/95, .bg-green-50\/40, .bg-green-50\/50, .bg-green-50\/60) {
+  background: hsl(150 60% 14% / 0.92) !important;
+}
+
 .app-shell[data-theme="dark"] :is(.bg-amber-50, .bg-yellow-50, .bg-orange-50) {
   background: hsl(35 70% 16%) !important;
 }
 
-.app-shell[data-theme="dark"] :is(.bg-amber-100, .bg-orange-100) {
+.app-shell[data-theme="dark"] :is(.bg-amber-100, .bg-yellow-100, .bg-orange-100) {
   background: hsl(35 60% 20%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-amber-50\/30, .bg-amber-50\/40, .bg-amber-50\/50, .bg-amber-50\/60, .bg-amber-50\/80, .bg-amber-50\/95, .bg-yellow-50\/30, .bg-yellow-50\/40, .bg-yellow-50\/60, .bg-orange-50\/30, .bg-orange-50\/40, .bg-orange-50\/60) {
+  background: hsl(35 70% 16% / 0.92) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-rose-50, .bg-red-50) {
@@ -8706,12 +8718,20 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   background: hsl(0 50% 22%) !important;
 }
 
+.app-shell[data-theme="dark"] :is(.bg-rose-50\/30, .bg-rose-50\/40, .bg-rose-50\/50, .bg-rose-50\/60, .bg-rose-50\/95, .bg-red-50\/30, .bg-red-50\/40, .bg-red-50\/50, .bg-red-50\/60) {
+  background: hsl(0 60% 18% / 0.92) !important;
+}
+
 .app-shell[data-theme="dark"] :is(.bg-violet-50, .bg-purple-50, .bg-indigo-50) {
   background: hsl(260 60% 18%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-violet-100, .bg-purple-100, .bg-indigo-100) {
   background: hsl(260 50% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-violet-50\/30, .bg-violet-50\/40, .bg-violet-50\/50, .bg-violet-50\/60, .bg-violet-50\/95, .bg-purple-50\/30, .bg-purple-50\/40, .bg-purple-50\/60, .bg-indigo-50\/30, .bg-indigo-50\/40, .bg-indigo-50\/60) {
+  background: hsl(260 60% 18% / 0.92) !important;
 }
 
 .app-shell[data-theme="dark"] .bg-teal-50 {
@@ -8722,12 +8742,53 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
   background: hsl(180 50% 18%) !important;
 }
 
+.app-shell[data-theme="dark"] :is(.bg-teal-50\/30, .bg-teal-50\/40, .bg-teal-50\/50, .bg-teal-50\/60, .bg-teal-50\/70) {
+  background: hsl(180 60% 14% / 0.92) !important;
+}
+
 .app-shell[data-theme="dark"] .bg-pink-50 {
   background: hsl(330 60% 18%) !important;
 }
 
-.app-shell[data-theme="dark"] .bg-sky-50 {
+.app-shell[data-theme="dark"] :is(.bg-sky-50, .bg-cyan-50) {
   background: hsl(200 70% 18%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-sky-100, .bg-cyan-100) {
+  background: hsl(200 65% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-sky-50\/30, .bg-sky-50\/40, .bg-sky-50\/50, .bg-sky-50\/60, .bg-sky-50\/70, .bg-sky-50\/95, .bg-cyan-50\/30, .bg-cyan-50\/40, .bg-cyan-50\/50, .bg-cyan-50\/60, .bg-cyan-50\/70, .bg-cyan-50\/95) {
+  background: hsl(200 70% 18% / 0.92) !important;
+}
+
+/* Gradient utility tokens used by summary panels and dashboard shells */
+.app-shell[data-theme="dark"] .from-white {
+  --tw-gradient-from: hsl(var(--surface-card-elevated)) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: hsl(var(--surface-card-elevated) / 0) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] .via-white {
+  --tw-gradient-to: hsl(var(--surface-card) / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), hsl(var(--surface-card)) var(--tw-gradient-via-position), var(--tw-gradient-to) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.from-slate-50, .from-gray-50) {
+  --tw-gradient-from: hsl(var(--surface-muted)) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: hsl(var(--surface-muted) / 0) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.to-slate-50, .to-gray-50) {
+  --tw-gradient-to: hsl(var(--surface-muted)) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.to-emerald-50, .to-green-50) {
+  --tw-gradient-to: hsl(150 60% 14%) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-gradient-to-r.from-slate-50.via-white.to-emerald-50,
+.app-shell[data-theme="dark"] .bg-gradient-to-br.from-white.to-slate-50 {
+  border-color: hsl(var(--border)) !important;
 }
 
 /* Text utilities */
@@ -8769,6 +8830,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 .app-shell[data-theme="dark"] .text-blue-700 { color: hsl(217 90% 80%) !important; }
 .app-shell[data-theme="dark"] :is(.text-blue-600, .text-blue-500) { color: hsl(217 90% 72%) !important; }
 
+.app-shell[data-theme="dark"] :is(.text-cyan-900, .text-sky-900) { color: hsl(200 94% 88%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-800, .text-sky-800) { color: hsl(200 90% 84%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-700, .text-sky-700) { color: hsl(200 86% 79%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-600, .text-cyan-500, .text-sky-600, .text-sky-500) { color: hsl(200 82% 72%) !important; }
+
 .app-shell[data-theme="dark"] :is(.text-emerald-900, .text-green-900) { color: hsl(150 72% 86%) !important; }
 .app-shell[data-theme="dark"] :is(.text-emerald-800, .text-green-800) { color: hsl(150 68% 80%) !important; }
 .app-shell[data-theme="dark"] :is(.text-emerald-700, .text-green-700) { color: hsl(150 65% 72%) !important; }
@@ -8778,6 +8844,8 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 .app-shell[data-theme="dark"] :is(.text-amber-800, .text-orange-800) { color: hsl(35 92% 80%) !important; }
 .app-shell[data-theme="dark"] :is(.text-amber-700, .text-orange-700) { color: hsl(35 90% 75%) !important; }
 .app-shell[data-theme="dark"] :is(.text-amber-600, .text-amber-500, .text-orange-600, .text-orange-500) { color: hsl(35 90% 68%) !important; }
+.app-shell[data-theme="dark"] :is(.text-yellow-900, .text-yellow-800) { color: hsl(48 92% 82%) !important; }
+.app-shell[data-theme="dark"] :is(.text-yellow-700, .text-yellow-600, .text-yellow-500) { color: hsl(48 88% 72%) !important; }
 
 .app-shell[data-theme="dark"] :is(.text-rose-900, .text-red-900) { color: hsl(0 90% 86%) !important; }
 .app-shell[data-theme="dark"] :is(.text-rose-800, .text-red-800) { color: hsl(0 86% 82%) !important; }
@@ -8815,10 +8883,14 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 
 .app-shell[data-theme="dark"] .border-blue-100 { border-color: hsl(217 70% 28%) !important; }
 .app-shell[data-theme="dark"] .border-blue-200 { border-color: hsl(217 70% 34%) !important; }
+.app-shell[data-theme="dark"] .border-cyan-100 { border-color: hsl(200 60% 28%) !important; }
+.app-shell[data-theme="dark"] .border-cyan-200 { border-color: hsl(200 60% 34%) !important; }
+.app-shell[data-theme="dark"] .border-sky-100 { border-color: hsl(200 60% 28%) !important; }
+.app-shell[data-theme="dark"] .border-sky-200 { border-color: hsl(200 60% 34%) !important; }
 .app-shell[data-theme="dark"] :is(.border-emerald-100, .border-green-100) { border-color: hsl(150 50% 22%) !important; }
 .app-shell[data-theme="dark"] :is(.border-emerald-200, .border-green-200) { border-color: hsl(150 50% 28%) !important; }
-.app-shell[data-theme="dark"] :is(.border-amber-100, .border-orange-100) { border-color: hsl(35 50% 24%) !important; }
-.app-shell[data-theme="dark"] :is(.border-amber-200, .border-orange-200) { border-color: hsl(35 50% 30%) !important; }
+.app-shell[data-theme="dark"] :is(.border-amber-100, .border-yellow-100, .border-orange-100) { border-color: hsl(35 50% 24%) !important; }
+.app-shell[data-theme="dark"] :is(.border-amber-200, .border-yellow-200, .border-orange-200) { border-color: hsl(35 50% 30%) !important; }
 .app-shell[data-theme="dark"] :is(.border-rose-100, .border-red-100) { border-color: hsl(0 50% 26%) !important; }
 .app-shell[data-theme="dark"] :is(.border-rose-200, .border-red-200) { border-color: hsl(0 50% 32%) !important; }
 .app-shell[data-theme="dark"] :is(.border-violet-100, .border-purple-100) { border-color: hsl(260 50% 26%) !important; }
