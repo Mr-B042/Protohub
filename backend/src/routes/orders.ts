@@ -1158,6 +1158,7 @@ const POST_TERMINAL_FIELDS = new Set([
   "amount_remitted", "amountRemitted",
   "remittance_status", "remittanceStatus",
   "remittance_received_at", "remittanceReceivedAt",
+  "remittance_reason", "remittanceReason",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
@@ -1307,7 +1308,6 @@ router.patch("/:id", async (req, res) => {
   const isTerminal = current.status === "Delivered";
   const requestedKeys = Object.keys(req.body);
   const touchesManualBonus = requestedKeys.some((k) => MANUAL_BONUS_FIELDS.has(k));
-  const hasNonTerminalField = requestedKeys.some((k) => !POST_TERMINAL_FIELDS.has(k));
 
   if (req.user!.role === "Sales Rep" && touchesManualBonus) {
     res.status(403).json({ error: "Sales reps cannot manually adjust bonuses." });
@@ -1328,11 +1328,6 @@ router.patch("/:id", async (req, res) => {
       res.status(400).json({ error: "Delivered date must be in YYYY-MM-DD format." });
       return;
     }
-  }
-
-  if (isTerminal && hasNonTerminalField) {
-    res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
-    return;
   }
 
   // DB column → list of accepted input keys (snake + common camel aliases).
@@ -1384,6 +1379,15 @@ router.patch("/:id", async (req, res) => {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
     }
+  }
+  const requestedTerminalSafeKeys = new Set(Object.keys(updates));
+  if (req.body.remittance_reason !== undefined || req.body.remittanceReason !== undefined) {
+    requestedTerminalSafeKeys.add("remittance_reason");
+  }
+  const hasNonTerminalField = Array.from(requestedTerminalSafeKeys).some((key) => !POST_TERMINAL_FIELDS.has(key));
+  if (isTerminal && hasNonTerminalField) {
+    res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
+    return;
   }
   if (updates.scheduled_at !== undefined || updates.timeline_notes !== undefined) {
     updates.notes = serializePlannedOrderMetadata(current.notes, {
