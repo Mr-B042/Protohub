@@ -8687,11 +8687,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] :is(.bg-emerald-50, .bg-green-50) {
-  background: hsl(150 60% 14%) !important;
+  background: hsl(150 58% 12%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-emerald-100, .bg-green-100) {
-  background: hsl(150 50% 18%) !important;
+  background: hsl(150 52% 20%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-emerald-50\/40, .bg-emerald-50\/50, .bg-emerald-50\/60, .bg-emerald-50\/70, .bg-emerald-50\/95, .bg-green-50\/40, .bg-green-50\/50, .bg-green-50\/60) {
@@ -8699,11 +8699,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] :is(.bg-amber-50, .bg-yellow-50, .bg-orange-50) {
-  background: hsl(35 70% 16%) !important;
+  background: hsl(35 78% 14%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-amber-100, .bg-yellow-100, .bg-orange-100) {
-  background: hsl(35 60% 20%) !important;
+  background: hsl(35 64% 24%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-amber-50\/30, .bg-amber-50\/40, .bg-amber-50\/50, .bg-amber-50\/60, .bg-amber-50\/80, .bg-amber-50\/95, .bg-yellow-50\/30, .bg-yellow-50\/40, .bg-yellow-50\/60, .bg-orange-50\/30, .bg-orange-50\/40, .bg-orange-50\/60) {
@@ -8711,11 +8711,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] :is(.bg-rose-50, .bg-red-50) {
-  background: hsl(0 60% 18%) !important;
+  background: hsl(0 62% 15%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-rose-100, .bg-red-100) {
-  background: hsl(0 50% 22%) !important;
+  background: hsl(0 54% 24%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-rose-50\/30, .bg-rose-50\/40, .bg-rose-50\/50, .bg-rose-50\/60, .bg-rose-50\/95, .bg-red-50\/30, .bg-red-50\/40, .bg-red-50\/50, .bg-red-50\/60) {
@@ -8723,11 +8723,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] :is(.bg-violet-50, .bg-purple-50, .bg-indigo-50) {
-  background: hsl(260 60% 18%) !important;
+  background: hsl(260 58% 16%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-violet-100, .bg-purple-100, .bg-indigo-100) {
-  background: hsl(260 50% 22%) !important;
+  background: hsl(260 54% 24%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-violet-50\/30, .bg-violet-50\/40, .bg-violet-50\/50, .bg-violet-50\/60, .bg-violet-50\/95, .bg-purple-50\/30, .bg-purple-50\/40, .bg-purple-50\/60, .bg-indigo-50\/30, .bg-indigo-50\/40, .bg-indigo-50\/60) {
@@ -8735,11 +8735,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] .bg-teal-50 {
-  background: hsl(180 60% 14%) !important;
+  background: hsl(180 58% 12%) !important;
 }
 
 .app-shell[data-theme="dark"] .bg-teal-100 {
-  background: hsl(180 50% 18%) !important;
+  background: hsl(180 52% 20%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-teal-50\/30, .bg-teal-50\/40, .bg-teal-50\/50, .bg-teal-50\/60, .bg-teal-50\/70) {
@@ -8751,11 +8751,11 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 .app-shell[data-theme="dark"] :is(.bg-sky-50, .bg-cyan-50) {
-  background: hsl(200 70% 18%) !important;
+  background: hsl(200 72% 16%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-sky-100, .bg-cyan-100) {
-  background: hsl(200 65% 22%) !important;
+  background: hsl(200 68% 24%) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-sky-50\/30, .bg-sky-50\/40, .bg-sky-50\/50, .bg-sky-50\/60, .bg-sky-50\/70, .bg-sky-50\/95, .bg-cyan-50\/30, .bg-cyan-50\/40, .bg-cyan-50\/50, .bg-cyan-50\/60, .bg-cyan-50\/70, .bg-cyan-50\/95) {
@@ -8825,40 +8825,40 @@ article.public-order-card.public-form-clean .package-picker-clean > label > stro
 }
 
 /* Tinted text utilities */
-.app-shell[data-theme="dark"] .text-blue-900 { color: hsl(217 95% 88%) !important; }
-.app-shell[data-theme="dark"] .text-blue-800 { color: hsl(217 92% 84%) !important; }
-.app-shell[data-theme="dark"] .text-blue-700 { color: hsl(217 90% 80%) !important; }
-.app-shell[data-theme="dark"] :is(.text-blue-600, .text-blue-500) { color: hsl(217 90% 72%) !important; }
+.app-shell[data-theme="dark"] .text-blue-900 { color: hsl(217 98% 91%) !important; }
+.app-shell[data-theme="dark"] .text-blue-800 { color: hsl(217 95% 88%) !important; }
+.app-shell[data-theme="dark"] .text-blue-700 { color: hsl(217 94% 84%) !important; }
+.app-shell[data-theme="dark"] :is(.text-blue-600, .text-blue-500) { color: hsl(217 92% 79%) !important; }
 
-.app-shell[data-theme="dark"] :is(.text-cyan-900, .text-sky-900) { color: hsl(200 94% 88%) !important; }
-.app-shell[data-theme="dark"] :is(.text-cyan-800, .text-sky-800) { color: hsl(200 90% 84%) !important; }
-.app-shell[data-theme="dark"] :is(.text-cyan-700, .text-sky-700) { color: hsl(200 86% 79%) !important; }
-.app-shell[data-theme="dark"] :is(.text-cyan-600, .text-cyan-500, .text-sky-600, .text-sky-500) { color: hsl(200 82% 72%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-900, .text-sky-900) { color: hsl(200 98% 91%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-800, .text-sky-800) { color: hsl(200 94% 87%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-700, .text-sky-700) { color: hsl(200 90% 83%) !important; }
+.app-shell[data-theme="dark"] :is(.text-cyan-600, .text-cyan-500, .text-sky-600, .text-sky-500) { color: hsl(200 86% 78%) !important; }
 
-.app-shell[data-theme="dark"] :is(.text-emerald-900, .text-green-900) { color: hsl(150 72% 86%) !important; }
-.app-shell[data-theme="dark"] :is(.text-emerald-800, .text-green-800) { color: hsl(150 68% 80%) !important; }
-.app-shell[data-theme="dark"] :is(.text-emerald-700, .text-green-700) { color: hsl(150 65% 72%) !important; }
-.app-shell[data-theme="dark"] :is(.text-emerald-600, .text-emerald-500, .text-green-600, .text-green-500) { color: hsl(150 65% 65%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-900, .text-green-900) { color: hsl(150 84% 90%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-800, .text-green-800) { color: hsl(150 80% 86%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-700, .text-green-700) { color: hsl(150 76% 81%) !important; }
+.app-shell[data-theme="dark"] :is(.text-emerald-600, .text-emerald-500, .text-green-600, .text-green-500) { color: hsl(150 72% 75%) !important; }
 
-.app-shell[data-theme="dark"] :is(.text-amber-900, .text-orange-900) { color: hsl(35 95% 86%) !important; }
-.app-shell[data-theme="dark"] :is(.text-amber-800, .text-orange-800) { color: hsl(35 92% 80%) !important; }
-.app-shell[data-theme="dark"] :is(.text-amber-700, .text-orange-700) { color: hsl(35 90% 75%) !important; }
-.app-shell[data-theme="dark"] :is(.text-amber-600, .text-amber-500, .text-orange-600, .text-orange-500) { color: hsl(35 90% 68%) !important; }
-.app-shell[data-theme="dark"] :is(.text-yellow-900, .text-yellow-800) { color: hsl(48 92% 82%) !important; }
-.app-shell[data-theme="dark"] :is(.text-yellow-700, .text-yellow-600, .text-yellow-500) { color: hsl(48 88% 72%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-900, .text-orange-900) { color: hsl(38 100% 91%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-800, .text-orange-800) { color: hsl(38 98% 88%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-700, .text-orange-700) { color: hsl(38 96% 84%) !important; }
+.app-shell[data-theme="dark"] :is(.text-amber-600, .text-amber-500, .text-orange-600, .text-orange-500) { color: hsl(38 94% 79%) !important; }
+.app-shell[data-theme="dark"] :is(.text-yellow-900, .text-yellow-800) { color: hsl(48 98% 89%) !important; }
+.app-shell[data-theme="dark"] :is(.text-yellow-700, .text-yellow-600, .text-yellow-500) { color: hsl(48 94% 82%) !important; }
 
-.app-shell[data-theme="dark"] :is(.text-rose-900, .text-red-900) { color: hsl(0 90% 86%) !important; }
-.app-shell[data-theme="dark"] :is(.text-rose-800, .text-red-800) { color: hsl(0 86% 82%) !important; }
-.app-shell[data-theme="dark"] :is(.text-rose-700, .text-red-700) { color: hsl(0 80% 78%) !important; }
-.app-shell[data-theme="dark"] :is(.text-rose-600, .text-rose-500, .text-red-600, .text-red-500) { color: hsl(0 80% 72%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-900, .text-red-900) { color: hsl(0 100% 92%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-800, .text-red-800) { color: hsl(0 96% 88%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-700, .text-red-700) { color: hsl(0 92% 83%) !important; }
+.app-shell[data-theme="dark"] :is(.text-rose-600, .text-rose-500, .text-red-600, .text-red-500) { color: hsl(0 88% 77%) !important; }
 
-.app-shell[data-theme="dark"] :is(.text-violet-900, .text-purple-900, .text-indigo-900) { color: hsl(260 84% 88%) !important; }
-.app-shell[data-theme="dark"] :is(.text-violet-800, .text-purple-800, .text-indigo-800) { color: hsl(260 80% 84%) !important; }
-.app-shell[data-theme="dark"] :is(.text-violet-700, .text-purple-700, .text-indigo-700) { color: hsl(260 75% 80%) !important; }
-.app-shell[data-theme="dark"] :is(.text-violet-600, .text-violet-500, .text-purple-600, .text-purple-500, .text-indigo-600, .text-indigo-500) { color: hsl(260 75% 73%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-900, .text-purple-900, .text-indigo-900) { color: hsl(260 96% 91%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-800, .text-purple-800, .text-indigo-800) { color: hsl(260 92% 87%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-700, .text-purple-700, .text-indigo-700) { color: hsl(260 88% 82%) !important; }
+.app-shell[data-theme="dark"] :is(.text-violet-600, .text-violet-500, .text-purple-600, .text-purple-500, .text-indigo-600, .text-indigo-500) { color: hsl(260 84% 77%) !important; }
 
-.app-shell[data-theme="dark"] .text-teal-700 { color: hsl(180 65% 72%) !important; }
-.app-shell[data-theme="dark"] :is(.text-teal-600, .text-teal-500) { color: hsl(180 65% 65%) !important; }
+.app-shell[data-theme="dark"] .text-teal-700 { color: hsl(180 84% 81%) !important; }
+.app-shell[data-theme="dark"] :is(.text-teal-600, .text-teal-500) { color: hsl(180 80% 75%) !important; }
 
 /* Border utilities */
 .app-shell[data-theme="dark"] :is(.border-gray-100, .border-slate-100) {
