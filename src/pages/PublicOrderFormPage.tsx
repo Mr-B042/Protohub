@@ -79,6 +79,7 @@ type PublicProduct = {
 
 type PublicEmbedSettings = {
   stateFieldMode: "freetext" | "dropdown";
+  publicFormMode: "classic" | "guided_checkout";
   showEmail: boolean;
   showWhatsapp: boolean;
   requireWhatsapp: boolean;
@@ -199,6 +200,7 @@ function normalizeStateName(value: string | undefined) {
 
 const DEFAULT_SETTINGS: PublicEmbedSettings = {
   stateFieldMode: "freetext",
+  publicFormMode: "classic",
   showEmail: false,
   showWhatsapp: true,
   requireWhatsapp: true,
@@ -819,6 +821,22 @@ export default function PublicOrderFormPage() {
   const chosenPackagePrice = chosenPackage?.price ?? 0;
   const chosenPackageCurrency = chosenPackage?.currency ?? publicPackages[0]?.currency ?? "NGN";
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
+  const guidedCheckout = settings.publicFormMode === "guided_checkout";
+  const phoneDigits = orderFormPhone.replace(/\D/g, "");
+  const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
+  const phoneValid = phoneDigits.length >= 7 && phoneDigits.length <= 15;
+  const whatsappValid = !orderFormWhatsapp.trim() || (whatsappDigits.length >= 7 && whatsappDigits.length <= 15);
+  const contactStepComplete = !!orderFormName.trim()
+    && phoneValid
+    && (!settings.showWhatsapp || !settings.requireWhatsapp || !!whatsappDigits)
+    && whatsappValid;
+  const deliveryStepComplete = !!orderFormState.trim()
+    && (!settings.addressRequired || !!orderFormAddress.trim())
+    && (!settings.cityRequired || !!orderFormCity.trim())
+    && (!settings.askDelivery || !!orderFormDeliveryWindow.trim())
+    && (!settings.requireConfirmation || orderFormConfirmed)
+    && (!settings.showCommitment || settings.allowDisagree || orderFormCommitmentAccepted);
+  const reviewStepReady = !!chosenPackage && contactStepComplete && deliveryStepComplete;
 
   const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
     fieldRefs.current[field] = element;
@@ -2415,6 +2433,100 @@ export default function PublicOrderFormPage() {
       </div>
     </div>
   ) : null;
+  const guidedSteps = guidedCheckout ? [
+    {
+      key: "contact",
+      label: "Contact",
+      helper: "Name, phone, WhatsApp",
+      done: contactStepComplete,
+      active: !contactStepComplete
+    },
+    {
+      key: "delivery",
+      label: "Delivery",
+      helper: "Address, state, timing",
+      done: deliveryStepComplete,
+      active: contactStepComplete && !deliveryStepComplete
+    },
+    {
+      key: "review",
+      label: "Review & place",
+      helper: "Check total, then place",
+      done: reviewStepReady,
+      active: contactStepComplete && deliveryStepComplete
+    }
+  ] : [];
+  const guidedReviewPrompt = reviewStepReady
+    ? "Your order is ready. Tap Place My Order to confirm it now."
+    : contactStepComplete && deliveryStepComplete
+      ? "Review the details below, then tap Place My Order to finish."
+      : "Complete the steps above and we’ll guide you to the final order button.";
+  const guidedReviewBlock = guidedCheckout ? (
+    <div
+      style={{
+        marginTop: 18,
+        padding: 16,
+        border: reviewStepReady ? "1px solid #86efac" : "1px solid #bfdbfe",
+        background: reviewStepReady ? "#ecfdf5" : "#f8fbff",
+        borderRadius: 18,
+        display: "grid",
+        gap: 12
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <strong style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: reviewStepReady ? "#047857" : "#1d4ed8" }}>
+            Step 3 of 3 · Review and place your order
+          </strong>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: reviewStepReady ? "#166534" : "#334155" }}>
+            {guidedReviewPrompt}
+          </p>
+        </div>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "7px 11px",
+            borderRadius: 999,
+            background: reviewStepReady ? "#dcfce7" : "#dbeafe",
+            color: reviewStepReady ? "#166534" : "#1d4ed8",
+            fontSize: 12,
+            fontWeight: 800,
+            whiteSpace: "nowrap"
+          }}
+        >
+          {reviewStepReady ? "Ready to submit" : "Almost there"}
+        </span>
+      </div>
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, paddingBottom: 10, borderBottom: "1px solid #dbeafe" }}>
+          <div style={{ display: "grid", gap: 2 }}>
+            <strong style={{ fontSize: 14, color: "#0f172a" }}>{publicProduct.name} · {chosenPackage.name}</strong>
+            <span style={{ fontSize: 12, color: "#64748b" }}>Main package</span>
+          </div>
+          <strong style={{ fontSize: 14, color: "#0f172a" }}>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
+        </div>
+        {selectedCrossSellLines.map((line, index) => (
+          <div key={`guided-xs-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ display: "grid", gap: 2 }}>
+              <strong style={{ fontSize: 13, color: "#92400e" }}>Additional item · {line.name}</strong>
+              {line.detail ? <span style={{ fontSize: 12, color: "#64748b" }}>{line.detail}</span> : null}
+            </div>
+            <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackageCurrency)}</strong>
+          </div>
+        ))}
+        <div style={{ display: "grid", gap: 4, paddingTop: 10, borderTop: "1px solid #dbeafe", fontSize: 13, color: "#334155" }}>
+          <div><strong>Contact:</strong> {orderFormName.trim() || "Your name"} · +234 {orderFormPhone.trim() || "phone number"}</div>
+          <div><strong>Delivery:</strong> {orderFormCity.trim() || "City"}, {orderFormState.trim() || "State"}{orderFormDeliveryWindow.trim() ? ` · ${orderFormDeliveryWindow.trim()}` : ""}</div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, borderTop: "2px solid #bfdbfe" }}>
+          <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Total to place now</span>
+          <strong style={{ fontSize: 20, color: "#1F8FE0" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <main className="public-order-page">
@@ -2582,6 +2694,46 @@ export default function PublicOrderFormPage() {
               {publicProduct.formCustomText?.trim() && (
                 <div style={{ padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12, fontSize: 13, color: "#075985", whiteSpace: "pre-line", marginBottom: 12 }}>
                   {publicProduct.formCustomText}
+                </div>
+              )}
+
+              {guidedCheckout && (
+                <div
+                  style={{
+                    marginBottom: 14,
+                    padding: 14,
+                    border: "1px solid #dbeafe",
+                    background: "#f8fbff",
+                    borderRadius: 18,
+                    display: "grid",
+                    gap: 10
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: 14, color: "#0f172a" }}>Guided checkout</strong>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Finish the 3 steps, then place your order</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+                    {guidedSteps.map((step, index) => (
+                      <div
+                        key={step.key}
+                        style={{
+                          padding: "12px 12px 10px",
+                          borderRadius: 16,
+                          border: step.done ? "1px solid #86efac" : step.active ? "1px solid #60a5fa" : "1px solid #e2e8f0",
+                          background: step.done ? "#ecfdf5" : step.active ? "#eff6ff" : "#ffffff",
+                          display: "grid",
+                          gap: 4
+                        }}
+                      >
+                        <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: step.done ? "#047857" : step.active ? "#1d4ed8" : "#94a3b8" }}>
+                          Step {index + 1}
+                        </span>
+                        <strong style={{ fontSize: 14, color: "#0f172a" }}>{step.label}</strong>
+                        <span style={{ fontSize: 12, lineHeight: 1.4, color: "#64748b" }}>{step.helper}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -3494,26 +3646,65 @@ export default function PublicOrderFormPage() {
                   </div>
                 </div>
               )}
+              {guidedReviewBlock}
 
-              <button
-                className="primary-button public-order-submit-button"
-                onClick={submitPublicOrder}
-                disabled={publicOrderSubmitting}
-                style={{
-                  opacity: publicOrderSubmitting ? 0.78 : 1,
-                  cursor: publicOrderSubmitting ? "not-allowed" : "pointer",
-                  ...(submitButtonAttention ? { animation: "publicSubmitButtonAlert 0.55s ease" } : {})
-                }}
+              <div
+                style={guidedCheckout ? {
+                  position: "sticky",
+                  bottom: 12,
+                  zIndex: 8,
+                  display: "grid",
+                  gap: 8,
+                  marginTop: 18,
+                  paddingTop: 12,
+                  background: "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.92) 28%, rgba(255,255,255,1) 100%)"
+                } : { marginTop: 18 }}
               >
-                <span className="public-order-submit-button__label">
-                  {publicOrderSubmitting ? "Submitting..." : "Order Now"}
-                </span>
-                {!publicOrderSubmitting && (
-                  <span className="public-order-submit-button__icon" aria-hidden="true">
-                    →
-                  </span>
+                {guidedCheckout && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "10px 14px",
+                      borderRadius: 14,
+                      background: "#f8fbff",
+                      border: "1px solid #dbeafe"
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 2 }}>
+                      <strong style={{ fontSize: 13, color: "#0f172a" }}>Final action</strong>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>Tap Place My Order once you’re happy with the review above.</span>
+                    </div>
+                    <strong style={{ fontSize: 18, color: "#1F8FE0", whiteSpace: "nowrap" }}>{formatProductMoney(summaryTotal, chosenPackageCurrency)}</strong>
+                  </div>
                 )}
-              </button>
+                <button
+                  className="primary-button public-order-submit-button"
+                  onClick={submitPublicOrder}
+                  disabled={publicOrderSubmitting}
+                  style={{
+                    opacity: publicOrderSubmitting ? 0.78 : 1,
+                    cursor: publicOrderSubmitting ? "not-allowed" : "pointer",
+                    ...(submitButtonAttention ? { animation: "publicSubmitButtonAlert 0.55s ease" } : {})
+                  }}
+                >
+                  <span className="public-order-submit-button__label">
+                    {publicOrderSubmitting ? "Submitting..." : guidedCheckout ? "Place My Order" : "Order Now"}
+                  </span>
+                  {!publicOrderSubmitting && (
+                    <span className="public-order-submit-button__icon" aria-hidden="true">
+                      →
+                    </span>
+                  )}
+                </button>
+                {guidedCheckout && (
+                  <div style={{ fontSize: 12, lineHeight: 1.45, textAlign: "center", color: reviewStepReady ? "#166534" : "#64748b", fontWeight: reviewStepReady ? 700 : 500 }}>
+                    {reviewStepReady ? "Your order is ready. Place it now to lock in this offer." : "Still completing details? We’ll keep guiding you until the final submit step."}
+                  </div>
+                )}
+              </div>
             </article>
             {orderSummaryBlock}
           </div>

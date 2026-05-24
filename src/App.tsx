@@ -5238,6 +5238,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedTab, setEmbedTab] = useState<EmbedTab>("Create Order Form");
   const [embedStateField, setEmbedStateField] = useState("Free-text input");
   const [publicOrderAssignmentMode, setPublicOrderAssignmentMode] = useState<"auto_assign" | "manual_review">("auto_assign");
+  const [publicFormMode, setPublicFormMode] = useState<"classic" | "guided_checkout">("classic");
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
   const [showEmailField, setShowEmailField] = useState(false);
@@ -5431,6 +5432,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (!s) return;
       if (typeof s.stateFieldMode      === "string")  setEmbedStateField(s.stateFieldMode === "dropdown" ? "Dropdown" : "Free-text input");
       if (typeof s.publicOrderAssignmentMode === "string") setPublicOrderAssignmentMode(s.publicOrderAssignmentMode === "manual_review" ? "manual_review" : "auto_assign");
+      if (typeof s.publicFormMode === "string") setPublicFormMode(s.publicFormMode === "guided_checkout" ? "guided_checkout" : "classic");
       if (typeof s.showEmail           === "boolean") setShowEmailField(s.showEmail);
       if (typeof s.showWhatsapp        === "boolean") setShowWhatsappField(s.showWhatsapp);
       if (typeof s.requireWhatsapp     === "boolean") setRequireWhatsapp(s.requireWhatsapp);
@@ -5872,6 +5874,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       await embedSettingsApi.patch({
         state_field_mode:             embedStateField === "Dropdown" ? "dropdown" : "freetext",
         public_order_assignment_mode: publicOrderAssignmentMode,
+        public_form_mode:             publicFormMode,
         show_email:                   showEmailField,
         show_whatsapp:                showWhatsappField,
         require_whatsapp:             requireWhatsapp,
@@ -33427,6 +33430,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </label>
                         </div>
                       )}
+                    </div>
+
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 pt-3.5 pb-1.5">
+                        <p className="text-sm font-semibold text-gray-800">Checkout experience</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Choose whether customers see the current classic layout or a guided checkout with clearer final-step prompts.</p>
+                      </div>
+                      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "classic" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-form-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicFormMode === "classic"}
+                            onChange={() => setPublicFormMode("classic")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Classic form</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">Keep the familiar long-form checkout with the standard submit flow.</span>
+                          </span>
+                        </label>
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "guided_checkout" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-form-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicFormMode === "guided_checkout"}
+                            onChange={() => setPublicFormMode("guided_checkout")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Guided checkout</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">Adds a step indicator, review-and-place section, and a stronger Place My Order handoff for mobile buyers.</span>
+                          </span>
+                        </label>
+                      </div>
                     </div>
 
                     {/* Required fields group */}
