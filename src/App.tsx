@@ -4746,7 +4746,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Selected expense for the Expense Details modal
   const [selectedExpenseId, setSelectedExpenseId] = useState<string>("");
   const [waybillStatusFilter, setWaybillStatusFilter] = useState<WaybillStatus | "All">("All");
-  const [waybillFlowFilter, setWaybillFlowFilter] = useState<WaybillFlowFilter>("All");
+  const [waybillFlowFilter, setWaybillFlowFilter] = useState<WaybillFlowFilter>("Manual Transfer");
   const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
