@@ -2719,36 +2719,76 @@ export default function PublicOrderFormPage() {
                 <div
                   style={{
                     marginBottom: 14,
-                    padding: 14,
+                    padding: isCompactUpsellViewport ? 16 : 14,
                     border: "1px solid #dbeafe",
                     background: "#f8fbff",
                     borderRadius: 18,
                     display: "grid",
-                    gap: 10
+                    gap: isCompactUpsellViewport ? 12 : 10
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: 14, color: "#0f172a" }}>Guided checkout</strong>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Finish the 3 steps, then place your order</span>
+                  <div
+                    style={
+                      isCompactUpsellViewport
+                        ? { display: "grid", gap: 6 }
+                        : { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }
+                    }
+                  >
+                    <strong style={{ fontSize: isCompactUpsellViewport ? 18 : 14, color: "#0f172a", lineHeight: 1.2 }}>Guided checkout</strong>
+                    <span style={{ fontSize: isCompactUpsellViewport ? 14 : 12, fontWeight: 700, color: "#64748b", lineHeight: 1.45 }}>
+                      Finish the 3 steps, then place your order
+                    </span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+                  <div
+                    style={
+                      isCompactUpsellViewport
+                        ? { display: "grid", gridTemplateColumns: "1fr", gap: 10 }
+                        : { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }
+                    }
+                  >
                     {guidedSteps.map((step, index) => (
                       <div
                         key={step.key}
                         style={{
-                          padding: "12px 12px 10px",
+                          padding: isCompactUpsellViewport ? "12px 14px" : "12px 12px 10px",
                           borderRadius: 16,
                           border: step.done ? "1px solid #86efac" : step.active ? "1px solid #60a5fa" : "1px solid #e2e8f0",
                           background: step.done ? "#ecfdf5" : step.active ? "#eff6ff" : "#ffffff",
-                          display: "grid",
-                          gap: 4
+                          display: isCompactUpsellViewport ? "flex" : "grid",
+                          gap: isCompactUpsellViewport ? 12 : 4,
+                          alignItems: isCompactUpsellViewport ? "center" : undefined
                         }}
                       >
-                        <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: step.done ? "#047857" : step.active ? "#1d4ed8" : "#94a3b8" }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 800,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: step.done ? "#047857" : step.active ? "#1d4ed8" : "#94a3b8",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            minWidth: isCompactUpsellViewport ? 58 : undefined,
+                            minHeight: isCompactUpsellViewport ? 58 : undefined,
+                            padding: isCompactUpsellViewport ? "0 10px" : undefined,
+                            borderRadius: isCompactUpsellViewport ? 14 : undefined,
+                            background: isCompactUpsellViewport
+                              ? (step.done ? "#dcfce7" : step.active ? "#dbeafe" : "#f8fafc")
+                              : undefined,
+                            flexShrink: 0
+                          }}
+                        >
                           Step {index + 1}
                         </span>
-                        <strong style={{ fontSize: 14, color: "#0f172a" }}>{step.label}</strong>
-                        <span style={{ fontSize: 12, lineHeight: 1.4, color: "#64748b" }}>{step.helper}</span>
+                        <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                          <strong style={{ fontSize: isCompactUpsellViewport ? 18 : 14, color: "#0f172a", lineHeight: 1.2 }}>
+                            {step.label}
+                          </strong>
+                          <span style={{ fontSize: isCompactUpsellViewport ? 13 : 12, lineHeight: 1.45, color: "#64748b" }}>
+                            {step.helper}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
