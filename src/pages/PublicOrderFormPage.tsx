@@ -753,6 +753,9 @@ export default function PublicOrderFormPage() {
   const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
+  const [isCompactUpsellViewport, setIsCompactUpsellViewport] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 680px)").matches : false
+  );
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<PublicOrderFieldKey, string>>>({});
   const [submitRetryArmed, setSubmitRetryArmed] = useState(false);
   const [animatedInvalidField, setAnimatedInvalidField] = useState<PublicOrderFieldKey | null>(null);
@@ -837,6 +840,21 @@ export default function PublicOrderFormPage() {
     && (!settings.requireConfirmation || orderFormConfirmed)
     && (!settings.showCommitment || settings.allowDisagree || orderFormCommitmentAccepted);
   const reviewStepReady = !!chosenPackage && contactStepComplete && deliveryStepComplete;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 680px)");
+    const syncViewport = () => setIsCompactUpsellViewport(mediaQuery.matches);
+    syncViewport();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncViewport);
+      return () => mediaQuery.removeEventListener("change", syncViewport);
+    }
+    mediaQuery.onchange = syncViewport;
+    return () => {
+      mediaQuery.onchange = null;
+    };
+  }, []);
 
   const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
     fieldRefs.current[field] = element;
@@ -3041,6 +3059,13 @@ export default function PublicOrderFormPage() {
                             : hasVariantChoices
                               ? `Add from ${teaserOfferLabel}`
                               : `Add ${teaserOfferLabel}`;
+                        const mobileTeaserCtaLabel = selectedVariant
+                          ? "Already added"
+                          : isExpanded
+                            ? "Close preview"
+                            : hasVariantChoices
+                              ? "Choose your bundle"
+                              : "Add this now";
                         const detailCtaLabel = displayCompanion.pricingMode === "free"
                           ? `Add ${companionOfferUnits(displayCompanion, displayTargetPackage)} FREE`
                           : `Add ${displayOfferLabel}`;
@@ -3062,72 +3087,79 @@ export default function PublicOrderFormPage() {
                                 boxShadow: isExpanded ? "0 12px 28px rgba(31, 143, 224, 0.12)" : "0 8px 24px rgba(15, 23, 42, 0.06)"
                               }}
                             >
-                              <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 14, alignItems: "center" }}>
-                                <div style={{ width: 120 }}>
-                                  {renderCompanionTeaserVisual(previewCompanion, product.name)}
-                                </div>
-                                <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-                                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                                    <strong style={{ fontSize: 19, lineHeight: 1.15, color: "#111827", maxWidth: 220 }}>
-                                      {product.name}
-                                    </strong>
-                                    <span
-                                      style={{
-                                        flexShrink: 0,
-                                        padding: "6px 10px",
-                                        borderRadius: 999,
-                                        background: "#fef3c7",
-                                        color: "#b45309",
-                                        fontSize: 11,
-                                        fontWeight: 900,
-                                        letterSpacing: "0.04em",
-                                        textTransform: "uppercase"
-                                      }}
-                                    >
-                                      {(previewCompanion.badgeText?.trim() || "Promo").slice(0, 24)}
-                                    </span>
-                                  </div>
-                                  <span style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, maxWidth: 360 }}>
-                                    {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
-                                  </span>
-                                  {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
-                                    <div style={{ display: "grid", gap: 6 }}>
-                                      {socialProofUi.badgeText && (
-                                        <span
-                                          style={{
-                                            display: "inline-flex",
-                                            alignItems: "center",
-                                            padding: "5px 9px",
-                                            borderRadius: 999,
-                                            background: "#ecfdf3",
-                                            border: "1px solid #86efac",
-                                            color: "#15803d",
-                                            fontSize: 11,
-                                            fontWeight: 800,
-                                            animation: "publicProofBadgeFloat 2.8s ease-in-out infinite"
-                                          }}
-                                        >
-                                          {socialProofUi.badgeText}
-                                        </span>
-                                      )}
-                                      {socialProofUi.stats.length > 0 && (
-                                        <span
-                                          style={{
-                                            display: "block",
-                                            fontSize: 11,
-                                            fontWeight: 700,
-                                            lineHeight: 1.45,
-                                            color: "#475569"
-                                          }}
-                                        >
-                                          {socialProofUi.stats.join(" · ")}
-                                        </span>
-                                      )}
+                              <div
+                                style={
+                                  isCompactUpsellViewport
+                                    ? { display: "grid", gap: 14 }
+                                    : { display: "grid", gridTemplateColumns: "120px 1fr", gap: 14, alignItems: "center" }
+                                }
+                              >
+                                {isCompactUpsellViewport ? (
+                                  <>
+                                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                                      <strong style={{ fontSize: 22, lineHeight: 1.08, color: "#111827", flex: 1, minWidth: 0 }}>
+                                        {product.name}
+                                      </strong>
+                                      <span
+                                        style={{
+                                          flexShrink: 0,
+                                          padding: "7px 11px",
+                                          borderRadius: 999,
+                                          background: "#fef3c7",
+                                          color: "#b45309",
+                                          fontSize: 11,
+                                          fontWeight: 900,
+                                          letterSpacing: "0.04em",
+                                          textTransform: "uppercase"
+                                        }}
+                                      >
+                                        {(previewCompanion.badgeText?.trim() || "Promo").slice(0, 24)}
+                                      </span>
                                     </div>
-                                  )}
-                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                                    <div style={{ display: "grid", gap: 4 }}>
-                                      <strong style={{ fontSize: 18, color: "#111827" }}>
+                                    <span style={{ fontSize: 15, color: "#64748b", lineHeight: 1.55 }}>
+                                      {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
+                                    </span>
+                                    <div style={{ width: "100%", maxWidth: 240, justifySelf: "center" }}>
+                                      {renderCompanionTeaserVisual(previewCompanion, product.name)}
+                                    </div>
+                                    {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
+                                      <div style={{ display: "grid", gap: 6 }}>
+                                        {socialProofUi.badgeText && (
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              justifySelf: "start",
+                                              padding: "7px 12px",
+                                              borderRadius: 999,
+                                              background: "#ecfdf3",
+                                              border: "1px solid #86efac",
+                                              color: "#15803d",
+                                              fontSize: 11,
+                                              fontWeight: 800,
+                                              animation: "publicProofBadgeFloat 2.8s ease-in-out infinite"
+                                            }}
+                                          >
+                                            {socialProofUi.badgeText}
+                                          </span>
+                                        )}
+                                        {socialProofUi.stats.length > 0 && (
+                                          <span
+                                            style={{
+                                              display: "block",
+                                              fontSize: 11,
+                                              fontWeight: 700,
+                                              lineHeight: 1.5,
+                                              color: "#475569"
+                                            }}
+                                          >
+                                            {socialProofUi.stats.join(" · ")}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      <strong style={{ fontSize: 19, color: "#111827", lineHeight: 1.2 }}>
                                         {teaserOfferLabel}
                                       </strong>
                                       {savings > 0 && (
@@ -3140,23 +3172,24 @@ export default function PublicOrderFormPage() {
                                           </span>
                                         </div>
                                       )}
-                                      <span style={{ fontSize: 10, fontWeight: 700, color: "#b45309", lineHeight: 1.45 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309", lineHeight: 1.5 }}>
                                         {(displayCompanion.urgencyMode ?? "standard") === "price_loss" && savings > 0
                                           ? `If you skip this, it'll cost you ${formatProductMoney(standardTotal, currency)} later. This ${formatProductMoney(teaserTotal, currency)} price disappears the moment you submit.`
                                           : "Special price only when added with the main offer"}
                                       </span>
                                       {group.companions.length > 1 && (
-                                        <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                        <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                                           {group.companions.length} bundle choices inside
                                         </span>
                                       )}
                                     </div>
-                                    <span style={{ display: "grid", justifyItems: "center", gap: 4 }}>
+                                    <span style={{ display: "grid", gap: 6, justifyItems: "stretch" }}>
                                       {!selectedVariant && (
                                         <span
                                           aria-hidden="true"
                                           style={{
                                             display: "inline-flex",
+                                            justifySelf: "center",
                                             fontSize: 22,
                                             lineHeight: 1,
                                             color: "#f97316",
@@ -3172,20 +3205,149 @@ export default function PublicOrderFormPage() {
                                           display: "inline-flex",
                                           alignItems: "center",
                                           justifyContent: "center",
-                                          padding: "11px 18px",
+                                          padding: "14px 18px",
                                           borderRadius: 999,
                                           background: selectedVariant ? "#16a34a" : "#2563eb",
                                           color: "#ffffff",
-                                          fontSize: 13,
+                                          fontSize: 15,
                                           fontWeight: 800,
-	                                          minWidth: 170
-	                                        }}
-	                                      >
-	                                        {teaserCtaLabel}
-	                                      </span>
-	                                    </span>
-	                                  </div>
-                                </div>
+                                          minHeight: 58,
+                                          width: "100%",
+                                          lineHeight: 1.3,
+                                          textAlign: "center"
+                                        }}
+                                      >
+                                        {mobileTeaserCtaLabel}
+                                      </span>
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div style={{ width: 120 }}>
+                                      {renderCompanionTeaserVisual(previewCompanion, product.name)}
+                                    </div>
+                                    <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+                                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                                        <strong style={{ fontSize: 19, lineHeight: 1.15, color: "#111827", maxWidth: 220 }}>
+                                          {product.name}
+                                        </strong>
+                                        <span
+                                          style={{
+                                            flexShrink: 0,
+                                            padding: "6px 10px",
+                                            borderRadius: 999,
+                                            background: "#fef3c7",
+                                            color: "#b45309",
+                                            fontSize: 11,
+                                            fontWeight: 900,
+                                            letterSpacing: "0.04em",
+                                            textTransform: "uppercase"
+                                          }}
+                                        >
+                                          {(previewCompanion.badgeText?.trim() || "Promo").slice(0, 24)}
+                                        </span>
+                                      </div>
+                                      <span style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, maxWidth: 360 }}>
+                                        {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
+                                      </span>
+                                      {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
+                                        <div style={{ display: "grid", gap: 6 }}>
+                                          {socialProofUi.badgeText && (
+                                            <span
+                                              style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                padding: "5px 9px",
+                                                borderRadius: 999,
+                                                background: "#ecfdf3",
+                                                border: "1px solid #86efac",
+                                                color: "#15803d",
+                                                fontSize: 11,
+                                                fontWeight: 800,
+                                                animation: "publicProofBadgeFloat 2.8s ease-in-out infinite"
+                                              }}
+                                            >
+                                              {socialProofUi.badgeText}
+                                            </span>
+                                          )}
+                                          {socialProofUi.stats.length > 0 && (
+                                            <span
+                                              style={{
+                                                display: "block",
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                lineHeight: 1.45,
+                                                color: "#475569"
+                                              }}
+                                            >
+                                              {socialProofUi.stats.join(" · ")}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                        <div style={{ display: "grid", gap: 4 }}>
+                                          <strong style={{ fontSize: 18, color: "#111827" }}>
+                                            {teaserOfferLabel}
+                                          </strong>
+                                          {savings > 0 && (
+                                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                              <span style={{ fontSize: 12, color: "#94a3b8", textDecoration: "line-through" }}>
+                                                {formatProductMoney(standardTotal, currency)}
+                                              </span>
+                                              <span style={{ fontSize: 11, fontWeight: 800, color: "#047857" }}>
+                                                Save {formatProductMoney(savings, currency)}{discountPercent > 0 ? ` · ${discountPercent}% off` : ""}
+                                              </span>
+                                            </div>
+                                          )}
+                                          <span style={{ fontSize: 10, fontWeight: 700, color: "#b45309", lineHeight: 1.45 }}>
+                                            {(displayCompanion.urgencyMode ?? "standard") === "price_loss" && savings > 0
+                                              ? `If you skip this, it'll cost you ${formatProductMoney(standardTotal, currency)} later. This ${formatProductMoney(teaserTotal, currency)} price disappears the moment you submit.`
+                                              : "Special price only when added with the main offer"}
+                                          </span>
+                                          {group.companions.length > 1 && (
+                                            <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                              {group.companions.length} bundle choices inside
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span style={{ display: "grid", justifyItems: "center", gap: 4 }}>
+                                          {!selectedVariant && (
+                                            <span
+                                              aria-hidden="true"
+                                              style={{
+                                                display: "inline-flex",
+                                                fontSize: 22,
+                                                lineHeight: 1,
+                                                color: "#f97316",
+                                                textShadow: "0 4px 14px rgba(249, 115, 22, 0.28)",
+                                                animation: "publicCtaArrowBounce 1.1s ease-in-out infinite"
+                                              }}
+                                            >
+                                              ↓
+                                            </span>
+                                          )}
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              padding: "11px 18px",
+                                              borderRadius: 999,
+                                              background: selectedVariant ? "#16a34a" : "#2563eb",
+                                              color: "#ffffff",
+                                              fontSize: 13,
+                                              fontWeight: 800,
+                                              minWidth: 170
+                                            }}
+                                          >
+                                            {teaserCtaLabel}
+                                          </span>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             </button>
                             {isExpanded && (
