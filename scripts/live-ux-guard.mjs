@@ -96,14 +96,13 @@ const checks = [
   },
   {
     name: "Sales rep motivator bonus coach",
-    why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach with the owner/admin bonus challenge, named opportunities, and the best-order jump.",
+    why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach; owner/admin bonus challenge settings belong in the original Payroll controls.",
     required: [
       "repBonusOpportunityByOrderId",
       "Bonus Coach",
-      "Weekly top-performer challenge",
-      "Set an extra winner bonus outside product/order bonus rules.",
-      "setTopPerformerBonusEnabled(!topPerformerBonusEnabled)",
-      "topPerformerBonusAmount",
+      "Manage bonus settings",
+      "Monthly Top Performer Bonus",
+      "Performance Bonus",
       "Bonus earned",
       "Open pipeline",
       "Delivery rate",
@@ -118,6 +117,9 @@ const checks = [
       "const repBonusPipelineProgressPercent",
       "Tier progress",
       "Delivery-rate gate",
+      "Bonus challenge",
+      "Weekly top-performer challenge",
+      "Set an extra winner bonus outside product/order bonus rules.",
       "No live bonus opportunity is open yet.",
       "First successful delivery starts your rate progress.",
       "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
