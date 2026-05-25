@@ -3914,6 +3914,35 @@ type SmartStockDemandSignal = {
   className: string;
 };
 
+type SmartStockPlainGuideProps = {
+  audience?: "admin" | "rep";
+};
+
+const SmartStockPlainGuide = ({ audience = "admin" }: SmartStockPlainGuideProps) => (
+  <div className="mt-3 rounded-xl border border-orange-200 bg-white/80 p-3 text-xs text-orange-950 shadow-sm dark:border-orange-500/25 dark:bg-slate-950/35 dark:text-orange-50" aria-label="Simple smart stock explanation">
+    <p className="font-extrabold">Simple rule: the system asks, "Are customers buying this product right now?"</p>
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 dark:border-orange-500/20 dark:bg-orange-500/10">
+        <span className="font-black uppercase tracking-wide text-orange-700 dark:text-orange-200">Urgent</span>
+        <p className="mt-1 leading-5 text-orange-900 dark:text-orange-50">
+          Low stock + customers ordering = restock soon or confirm carefully.
+        </p>
+      </div>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/70">
+        <span className="font-black uppercase tracking-wide text-slate-600 dark:text-slate-200">Not urgent</span>
+        <p className="mt-1 leading-5 text-slate-700 dark:text-slate-300">
+          Low stock + no recent orders = watch it, but do not panic.
+        </p>
+      </div>
+    </div>
+    <p className="mt-2 leading-5 text-orange-800 dark:text-orange-100/80">
+      {audience === "rep"
+        ? "If it shows here, customers want it now. Handle serious buyers first and do not promise delivery if stock is too tight."
+        : "This helps the team focus on products that can block sales, not every item with a low number."}
+    </p>
+  </div>
+);
+
 // ── stateStockStatusMeta ────────────────────
 const stateStockStatusMeta = (quantity: number) =>
   quantity <= 0
@@ -21733,12 +21762,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Hot stock signals</h2>
-                    <p className="text-xs text-orange-800 mt-0.5 dark:text-orange-100/80">Products moving in your active states where stock is tight. Confirm fast, but do not over-promise delivery.</p>
+                    <p className="text-xs text-orange-800 mt-0.5 dark:text-orange-100/80">These are products customers are asking for now, but stock is tight in your active states.</p>
                   </div>
                   <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
                     Demand-aware
                   </span>
                 </div>
+                <SmartStockPlainGuide audience="rep" />
                 <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
                   {repSmartStockSignals.map((signal) => (
                     <article key={`rep-hot-stock-${signal.productId}-${signal.state}`} className="rounded-xl border border-orange-200 bg-white px-4 py-3 dark:border-orange-500/25 dark:bg-slate-950/40">
@@ -36001,13 +36031,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div>
                       <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Demand-aware state stock signals</h2>
                       <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-100/80">
-                        This separates fast-moving low stock from dormant low stock using orders created in the last {SMART_STOCK_LOOKBACK_DAYS} days.
+                        This shows states where customers are ordering a product and local stock may run out soon.
                       </p>
                     </div>
                     <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
                       {filteredSmartStockDemandSignals.length} filtered risk{filteredSmartStockDemandSignals.length === 1 ? "" : "s"}
                     </span>
                   </div>
+                  <SmartStockPlainGuide />
                   {filteredSmartStockDemandSignals.length === 0 ? (
                     <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
                       No active demand-risk row matches these filters.
@@ -36504,7 +36535,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div>
                         <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Fast-moving stock risk</h2>
                         <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-100/80">
-                          Demand-aware alerts: low hub/state stock only becomes urgent when the product is receiving recent orders.
+                          Low stock only becomes urgent when customers are ordering that product right now.
                         </p>
                       </div>
                     </div>
@@ -36512,6 +36543,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       {smartStockDemandSignals.length} active signal{smartStockDemandSignals.length === 1 ? "" : "s"}
                     </span>
                   </div>
+                  <SmartStockPlainGuide />
                   {smartStockDemandSignals.length === 0 ? (
                     <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
                       No fast-moving stockout risk right now. Low-stock items without recent orders stay out of the urgent queue.
@@ -36565,7 +36597,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-300">Dormant low stock</h3>
-                          <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Low quantity, but no orders in {SMART_STOCK_DORMANT_DAYS} days, so these are not urgent selling risks.</p>
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">These items are low, but customers have not ordered them recently. Watch them, but do not treat them like an emergency.</p>
                         </div>
                         <span className="text-xs font-bold text-gray-700 dark:text-slate-200">{dormantLowStockSignals.length} item-state row{dormantLowStockSignals.length === 1 ? "" : "s"}</span>
                       </div>

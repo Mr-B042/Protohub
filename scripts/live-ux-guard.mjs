@@ -138,7 +138,10 @@ const checks = [
       "repSmartStockSignals",
       "smartStockNotificationPayload",
       "createStockRiskAlerts",
-      "salesRepRecipientIds"
+      "salesRepRecipientIds",
+      "Simple rule: the system asks",
+      "Low stock + customers ordering = restock soon or confirm carefully.",
+      "Low stock + no recent orders = watch it, but do not panic."
     ]
   },
   {
