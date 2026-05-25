@@ -230,6 +230,19 @@ function greetingForTimezone(timezone: string): string {
   }
 }
 
+// Re-evaluate the greeting prefix at actual send time. Used by the deferred /
+// retry queue (processQueuedSms): a body queued at 9am with "Good morning"
+// but only actually sent at 2pm should reach the customer as "Good afternoon".
+// Only the four known greeting strings are swapped; bodies that start with
+// anything else (e.g. the staff-facing "Follow up: ...") are left untouched.
+function applyFreshGreeting(body: string, timezone: string): string {
+  const match = body.match(/^(Good morning|Good afternoon|Good evening|Hi)\b/);
+  if (!match) return body;
+  const fresh = greetingForTimezone(timezone);
+  if (fresh === match[1]) return body;
+  return fresh + body.slice(match[1].length);
+}
+
 // Format a numeric string with locale thousands separators. Leaves non-numeric
 // strings (or empty) untouched so we never break interpolation for unusual
 // callers like tests.
@@ -1891,7 +1904,13 @@ export async function processQueuedSms(limit = 150) {
         error_message: null,
         error_code: null
       });
-      await deliverLoggedSms(row.org_id, settings, row.id, row.normalized_phone, row.body, null);
+      // Refresh the time-of-day greeting in case the message has been sitting
+      // in the queue across a greeting boundary (e.g. queued at 9am with
+      // "Good morning", finally sent at 2pm). The stored body in sms_messages
+      // stays as it was — only the wire bytes we hand to the provider change,
+      // so the audit trail of "what we tried at 9am" is preserved.
+      const freshBody = applyFreshGreeting(row.body, settings.timezone ?? "Africa/Lagos");
+      await deliverLoggedSms(row.org_id, settings, row.id, row.normalized_phone, freshBody, null);
     } catch (error) {
       const normalized = normalizeSmsError(error);
       const retryable = settings.auto_retry_enabled && isRetryableSmsError(normalized) && nextRetryCount <= settings.max_retry_attempts;
