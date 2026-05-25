@@ -9505,10 +9505,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setCrossSellQuantity("1");
     setCrossSellAmount("");
     setModal("addCrossSell");
-    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-cross-sell`));
-    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-cross-sell`);
+    if (isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
+    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
     }
   };
   const openFreeGiftModal = (order: TrackedOrder) => {
@@ -9517,10 +9517,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setFreeGiftProductId("");
     setFreeGiftQuantity("1");
     setModal("addFreeGift");
-    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-free-gift`));
-    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-free-gift`);
+    if (isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-free-gift`));
+    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-free-gift`));
     }
   };
   const openManualBonusModal = (order: TrackedOrder) => {
@@ -9529,8 +9529,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
     setManualBonusReasonText(order.manualBonusReason ?? "");
     setModal("manualBonus");
-    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(`#/dashboard/admin/orders/${order.id}/manual-bonus`);
+    if (isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/manual-bonus`));
     }
   };
   const openAddPenalty = (repId?: string, orderId?: string) => {
@@ -15843,7 +15843,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openRepOrderDetail = (order: TrackedOrder) => {
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
-    setRepConsoleTab("Orders");
+    if (!isOrderWorkspacePage(activePage)) {
+      setRepConsoleTab("Orders");
+    }
     setCreateOrderAgentId(order.agentId ?? "");
     const plannedParts = splitMomentForInput(order.scheduledAt);
     setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
@@ -15854,14 +15856,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepDeliveryFee(order.logisticsCost != null ? String(order.logisticsCost) : "");
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
-    const nextHash = repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
+    const nextHash = isOrderWorkspacePage(activePage)
+      ? repOrderWorkspaceHash(`/${order.id}`, activeRepOrderWorkspacePage)
+      : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
-    const nextHash = hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders");
+    const nextHash = isAdminOrderWorkspaceHash(hashRoute)
+      ? activeOrderWorkspaceBaseHash
+      : isRepOrderWorkspaceHash(hashRoute)
+        ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
+        : repRouteWithScope("#/dashboard/sales-rep/orders");
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
@@ -16116,9 +16124,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
-    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+    if (isAdminOrderWorkspaceHash(hashRoute)) {
       setSelectedOrderId("");
-      syncHashRoute("#/dashboard/admin/orders");
+      syncHashRoute(activeOrderWorkspaceBaseHash);
+    } else if (isRepOrderWorkspaceHash(hashRoute)) {
+      setSelectedOrderId("");
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
@@ -21464,20 +21475,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
-    if (modalBeforeClose === "orderDetails" && hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute("#/dashboard/admin/orders");
+    if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(activeOrderWorkspaceBaseHash);
     }
-    if (modalBeforeClose === "createOrder" && hashRoute === "#/dashboard/admin/orders/new") {
-      syncHashRoute("#/dashboard/admin/orders");
+    if (modalBeforeClose === "orderDetails" && isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
-    if (modalBeforeClose === "createOrder" && hashRoute.startsWith("#/dashboard/sales-rep/orders/new")) {
-      syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders"));
+    if (modalBeforeClose === "createOrder" && hashRoute === adminOrderWorkspaceHash("/new")) {
+      syncHashRoute(activeOrderWorkspaceBaseHash);
     }
-    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/orders/")) {
-      syncHashRoute(selectedOrderId ? `#/dashboard/admin/orders/${selectedOrderId}` : "#/dashboard/admin/orders");
+    if (modalBeforeClose === "createOrder" && isRepOrderWorkspaceHash(hashRoute) && hashRoute.endsWith("/new")) {
+      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
-    if (modalBeforeClose && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
-      syncHashRoute(selectedOrderId ? repRouteWithScope(`#/dashboard/sales-rep/orders/${selectedOrderId}`) : repRouteWithScope("#/dashboard/sales-rep/orders"));
+    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
+    }
+    if (modalBeforeClose && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(selectedOrderId ? repOrderWorkspaceHash(`/${selectedOrderId}`, activeRepOrderWorkspacePage) : repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
     if (modalBeforeClose && ["cartDetails", "assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/abandoned-carts/")) {
       syncHashRoute(modalBeforeClose === "cartDetails" ? "#/dashboard/admin/abandoned-carts" : (selectedCartId ? `#/dashboard/admin/abandoned-carts/${selectedCartId}` : "#/dashboard/admin/abandoned-carts"));
