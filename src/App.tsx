@@ -11987,6 +11987,57 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
   };
 
+  const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
+    const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+    const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+    const extraPricedPackages = order.crossSellLines ?? [];
+    const hasMultiplePricedPackages = extraPricedPackages.length > 0;
+    const deliveryParts = [order.address, order.city, order.state]
+      .map((value) => (value ?? "").trim())
+      .filter(Boolean);
+    const fullDeliveryLabel = deliveryParts.length > 0 ? deliveryParts.join(", ") : "No delivery address provided";
+    const buildPreferredPackageLine = (productName: string, packageName: string | null | undefined, quantity: number) => {
+      const qty = Math.max(1, quantity || 1);
+      const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
+      const cleanPackageName = (packageName ?? "").trim();
+      const cleanProductName = (productName ?? "").trim();
+      if (cleanPackageName) {
+        if (cleanProductName && cleanPackageName.toLowerCase().includes(cleanProductName.toLowerCase())) {
+          return `${qtyLabel} Of ${cleanPackageName}`;
+        }
+        return `${qtyLabel} Of ${cleanPackageName}${cleanProductName ? ` of ${cleanProductName}` : ""}`;
+      }
+      return `${qtyLabel} Of ${cleanProductName || "item"}`;
+    };
+    const lines = [
+      `Full Name:  ${order.customer || "—"}`,
+      `Active Phone Number:  ${order.phone || "—"}`,
+      `Whatsapp Number:  ${order.whatsapp || order.phone || "—"}`,
+      `State: ${order.state || "—"}`,
+      `City:  ${order.city || "—"}`,
+      `Full Delivery: ${fullDeliveryLabel}`,
+      hasMultiplePricedPackages
+        ? `Preferred Package 1: ${buildPreferredPackageLine(order.productName, order.packageName, quantityForOrder(order))} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+        : `Preferred Package: ${buildPreferredPackageLine(order.productName, order.packageName, quantityForOrder(order))} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+    ];
+    extraPricedPackages.forEach((line, index) => {
+      lines.push(
+        `Preferred Package ${index + 2}: ${buildPreferredPackageLine(
+          line.productName,
+          line.packageName,
+          Math.max(1, Number(line.quantity ?? 1) || 1) * Math.max(1, Number(line.packageQuantity ?? 1) || 1)
+        )} = ${formatProductMoney(line.amount, order.currency)}`
+      );
+    });
+    (order.freeGiftLines ?? []).forEach((line, index) => {
+      lines.push(`Free Gift ${index + 1}: ${line.quantity}pc${line.quantity === 1 ? "" : "s"} of ${line.productName}`);
+    });
+    if (hasMultiplePricedPackages) {
+      lines.push(`Total = ${formatProductMoney(order.amount, order.currency)}`);
+    }
+    return lines.join("\n\n");
+  };
+
   const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
     const quantity = quantityForOrder(order);
     const productLabel = order.packageName
@@ -34380,9 +34431,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <button
                             type="button"
                             className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
-                            onClick={() => copyText(buildOrderWhatsAppMessage(selectedOrder), `${selectedOrder.customer} WhatsApp message`)}
+                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp order copy`)}
                           >
-                            <Copy className="w-3.5 h-3.5" /> Copy WhatsApp text
+                            <Copy className="w-3.5 h-3.5" /> Copy Your Order To WhatsApp
                           </button>
                         </div>
                       )}
