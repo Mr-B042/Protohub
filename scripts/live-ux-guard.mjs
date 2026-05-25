@@ -124,6 +124,19 @@ const checks = [
       "First successful delivery starts your rate progress.",
       "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
     ]
+  },
+  {
+    name: "Demand-aware stock intelligence",
+    why: "Inventory must distinguish fast-moving low stock from dormant low stock for admins and reps.",
+    required: [
+      "Fast-moving stock risk",
+      "Demand-aware state stock signals",
+      "Hot stock signals",
+      "Dormant low stock",
+      "SMART_STOCK_LOOKBACK_DAYS",
+      "smartStockDemandSignals",
+      "repSmartStockSignals"
+    ]
   }
 ];
 

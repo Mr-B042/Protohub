@@ -3855,6 +3855,31 @@ const orderAssignmentScopeLabel = (scope: OrderAssignmentScope) =>
 
 // ── STATE_STOCK_LOW_THRESHOLD ────────────────────
 const STATE_STOCK_LOW_THRESHOLD = 5;
+const SMART_STOCK_LOOKBACK_DAYS = 7;
+const SMART_STOCK_DORMANT_DAYS = 21;
+const SMART_STOCK_CRITICAL_DAYS_COVER = 2;
+const SMART_STOCK_WATCH_DAYS_COVER = 5;
+
+type SmartStockDemandSignal = {
+  productId: string;
+  productName: string;
+  sku: string;
+  state: string;
+  stock: number;
+  hubCount: number;
+  topHubName: string;
+  topHubQty: number;
+  recentUnits: number;
+  recentOrders: number;
+  openOrders: number;
+  deliveredUnits: number;
+  longWindowUnits: number;
+  velocity: number;
+  daysCover: number;
+  severity: "stockout" | "critical" | "watch";
+  label: string;
+  className: string;
+};
 
 // ── stateStockStatusMeta ────────────────────
 const stateStockStatusMeta = (quantity: number) =>
@@ -7598,6 +7623,192 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const pricing = matchPricing ?? primaryPricing(product);
     return quantityForOrder(order) * (pricing?.unitCost ?? 0);
   };
+  const stockDemandDateKeyDaysAgo = (daysAgo: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() - daysAgo);
+    return formatDateKey(date);
+  };
+  const smartStockRecentStartKey = stockDemandDateKeyDaysAgo(SMART_STOCK_LOOKBACK_DAYS - 1);
+  const smartStockDormantStartKey = stockDemandDateKeyDaysAgo(SMART_STOCK_DORMANT_DAYS - 1);
+  const smartStockTodayKey = todayKey();
+  const smartStockProductIds = new Set(catalogProducts.map((product) => product.id));
+  const smartStockProductById = new Map(catalogProducts.map((product) => [product.id, product]));
+  const demandLinesForOrder = (order: TrackedOrder) => {
+    const lines = new Map<string, number>();
+    const addLine = (productId: string | undefined | null, quantity: number | undefined | null) => {
+      if (!productId || !smartStockProductIds.has(productId)) return;
+      const qty = Math.max(0, Number(quantity ?? 0));
+      if (qty <= 0) return;
+      lines.set(productId, (lines.get(productId) ?? 0) + qty);
+    };
+
+    if (order.packageComponentsSnapshot?.length) {
+      order.packageComponentsSnapshot.forEach((component) => addLine(component.productId, component.quantity));
+    } else {
+      addLine(order.productId, quantityForOrder(order));
+    }
+    order.crossSellLines?.forEach((line) => addLine(line.productId, line.quantity));
+    order.freeGiftLines?.forEach((line) => addLine(line.productId, line.quantity));
+    return Array.from(lines, ([productId, quantity]) => ({ productId, quantity }));
+  };
+  const smartStockDemandByKey = new Map<string, {
+    recentUnits: number;
+    recentOrderIds: Set<string>;
+    openOrders: number;
+    deliveredUnits: number;
+    longWindowUnits: number;
+  }>();
+  const smartStockKey = (productId: string, state: string) => `${productId}::${normalizeStateToken(state)}`;
+  const smartStockStateByKey = new Map<string, string>();
+  trackedOrders.forEach((order) => {
+    const state = normalizeAgentState(order.state);
+    if (!state || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
+    const createdKey = orderCreatedKey(order);
+    const isRecent = createdKey >= smartStockRecentStartKey && createdKey <= smartStockTodayKey;
+    const isLongWindow = createdKey >= smartStockDormantStartKey && createdKey <= smartStockTodayKey;
+    if (!isRecent && !isLongWindow) return;
+
+    demandLinesForOrder(order).forEach((line) => {
+      const key = smartStockKey(line.productId, state);
+      smartStockStateByKey.set(key, state);
+      const bucket = smartStockDemandByKey.get(key) ?? {
+        recentUnits: 0,
+        recentOrderIds: new Set<string>(),
+        openOrders: 0,
+        deliveredUnits: 0,
+        longWindowUnits: 0
+      };
+      if (isRecent) {
+        bucket.recentUnits += line.quantity;
+        bucket.recentOrderIds.add(order.id);
+        if ((order.status ?? "New") === "Delivered") {
+          bucket.deliveredUnits += line.quantity;
+        } else {
+          bucket.openOrders += 1;
+        }
+      }
+      if (isLongWindow) {
+        bucket.longWindowUnits += line.quantity;
+      }
+      smartStockDemandByKey.set(key, bucket);
+    });
+  });
+  const smartStockHubCountByState = new Map<string, number>();
+  inventoryStateHubRows.forEach(({ location }) => {
+    const state = normalizeAgentState(location.state);
+    if (!state) return;
+    smartStockHubCountByState.set(state, (smartStockHubCountByState.get(state) ?? 0) + 1);
+  });
+  const smartStockSupplyByKey = new Map<string, {
+    stock: number;
+    hubCount: number;
+    topHubName: string;
+    topHubQty: number;
+  }>();
+  inventoryStateHubRows.forEach(({ location }) => {
+    const state = normalizeAgentState(location.state);
+    if (!state) return;
+    location.stock.forEach((stock) => {
+      if (!smartStockProductIds.has(stock.productId)) return;
+      const key = smartStockKey(stock.productId, state);
+      smartStockStateByKey.set(key, state);
+      const quantity = Math.max(0, Number(stock.quantity ?? 0));
+      const bucket = smartStockSupplyByKey.get(key) ?? {
+        stock: 0,
+        hubCount: smartStockHubCountByState.get(state) ?? 0,
+        topHubName: "",
+        topHubQty: 0
+      };
+      bucket.stock += quantity;
+      if (quantity > bucket.topHubQty) {
+        bucket.topHubName = agentLocationLabel(location);
+        bucket.topHubQty = quantity;
+      }
+      smartStockSupplyByKey.set(key, bucket);
+    });
+  });
+  const smartStockSignalKeys = new Set([...smartStockDemandByKey.keys(), ...smartStockSupplyByKey.keys()]);
+  const smartStockDemandSignals = Array.from(smartStockSignalKeys)
+    .map((key): SmartStockDemandSignal | null => {
+      const [productId] = key.split("::");
+      const product = smartStockProductById.get(productId);
+      const state = smartStockStateByKey.get(key) ?? "";
+      if (!product || !state) return null;
+      const demand = smartStockDemandByKey.get(key);
+      const supply = smartStockSupplyByKey.get(key);
+      const recentUnits = demand?.recentUnits ?? 0;
+      const velocity = recentUnits / SMART_STOCK_LOOKBACK_DAYS;
+      const stock = supply?.stock ?? 0;
+      const daysCover = velocity > 0 ? stock / velocity : Number.POSITIVE_INFINITY;
+      const hasActiveDemand = recentUnits > 0 && (demand?.recentOrderIds.size ?? 0) > 0;
+      const isLowSupply = stock <= Math.max(product.reorderPoint || 0, STATE_STOCK_LOW_THRESHOLD);
+      const isProjectedTight = hasActiveDemand && daysCover <= SMART_STOCK_WATCH_DAYS_COVER;
+      if (!hasActiveDemand || (!isLowSupply && !isProjectedTight)) return null;
+
+      const severity: SmartStockDemandSignal["severity"] = stock <= 0
+        ? "stockout"
+        : daysCover <= SMART_STOCK_CRITICAL_DAYS_COVER || stock <= 2
+          ? "critical"
+          : "watch";
+      return {
+        productId,
+        productName: product.name,
+        sku: product.sku,
+        state,
+        stock,
+        hubCount: supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0,
+        topHubName: supply?.topHubName || `${state} hub`,
+        topHubQty: supply?.topHubQty ?? 0,
+        recentUnits,
+        recentOrders: demand?.recentOrderIds.size ?? 0,
+        openOrders: demand?.openOrders ?? 0,
+        deliveredUnits: demand?.deliveredUnits ?? 0,
+        longWindowUnits: demand?.longWindowUnits ?? 0,
+        velocity,
+        daysCover,
+        severity,
+        label: severity === "stockout" ? "Stockout risk" : severity === "critical" ? "Critical fast mover" : "Watch fast mover",
+        className: severity === "stockout"
+          ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
+          : severity === "critical"
+            ? "border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100"
+            : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
+      };
+    })
+    .filter((signal): signal is SmartStockDemandSignal => signal !== null)
+    .sort((a, b) => {
+      const severityScore = { stockout: 0, critical: 1, watch: 2 };
+      return severityScore[a.severity] - severityScore[b.severity]
+        || a.daysCover - b.daysCover
+        || b.recentUnits - a.recentUnits
+        || a.productName.localeCompare(b.productName);
+    });
+  const dormantLowStockSignals = Array.from(smartStockSupplyByKey.entries())
+    .map(([key, supply]) => {
+      const [productId] = key.split("::");
+      const product = smartStockProductById.get(productId);
+      const state = smartStockStateByKey.get(key) ?? "";
+      const demand = smartStockDemandByKey.get(key);
+      if (!product || !state) return null;
+      if (supply.stock <= 0 || supply.stock > Math.max(product.reorderPoint || 0, STATE_STOCK_LOW_THRESHOLD)) return null;
+      if ((demand?.longWindowUnits ?? 0) > 0) return null;
+      return {
+        productId,
+        productName: product.name,
+        state,
+        stock: supply.stock,
+        hubCount: supply.hubCount,
+        topHubName: supply.topHubName || `${state} hub`
+      };
+    })
+    .filter((signal): signal is NonNullable<typeof signal> => signal !== null)
+    .sort((a, b) => a.stock - b.stock || a.productName.localeCompare(b.productName));
+  const filteredSmartStockDemandSignals = smartStockDemandSignals.filter((signal) => {
+    if (stateStockProductId && signal.productId !== stateStockProductId) return false;
+    if (stateStockStateFilter && signal.state !== stateStockStateFilter) return false;
+    if (!stateStockSearchTerm) return true;
+    return `${signal.productName} ${signal.sku} ${signal.state} ${signal.topHubName}`.toLowerCase().includes(stateStockSearchTerm);
+  });
 
   // ── Ad Spend weekly grid helpers ─────────────────────────
   const adSpendWeekDays = Array.from({ length: 7 }, (_, i) => {
@@ -11371,6 +11582,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   )
     .filter((order) => isInPeriod(orderCreatedKey(order), repWorkspacePeriod, repWorkspaceDateRange))
     .filter((order) => matchesProductFilter(order.productId, order.productName, repWorkspaceProductIds));
+  const repSmartStockStates = new Set(repOrders.map((order) => normalizeAgentState(order.state)).filter(Boolean));
+  const repSmartStockSignals = smartStockDemandSignals
+    .filter((signal) => repSmartStockStates.size === 0 || repSmartStockStates.has(signal.state))
+    .slice(0, 3);
   const repDeliveredOrders = repOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const repRevenue = repDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const repPendingCount = repOrders.filter((order) => (order.status ?? "New") === "New").length;
@@ -21318,6 +21533,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 );
               })}
             </section>
+
+            {repSmartStockSignals.length > 0 && (
+              <section className="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm dark:border-orange-500/30 dark:bg-orange-500/10" aria-label="Hot stock signals">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Hot stock signals</h2>
+                    <p className="text-xs text-orange-800 mt-0.5 dark:text-orange-100/80">Products moving in your active states where stock is tight. Confirm fast, but do not over-promise delivery.</p>
+                  </div>
+                  <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
+                    Demand-aware
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {repSmartStockSignals.map((signal) => (
+                    <article key={`rep-hot-stock-${signal.productId}-${signal.state}`} className="rounded-xl border border-orange-200 bg-white px-4 py-3 dark:border-orange-500/25 dark:bg-slate-950/40">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600 dark:text-orange-200">{signal.label}</span>
+                          <h3 className="mt-1 text-sm font-extrabold text-gray-900 dark:text-white">{signal.productName}</h3>
+                          <p className="text-xs text-gray-500 dark:text-slate-300">{signal.state} · {signal.stock} left</p>
+                        </div>
+                        <Flame className="h-4 w-4 shrink-0 text-orange-500" />
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
+                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {SMART_STOCK_LOOKBACK_DAYS} days. {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -35496,6 +35742,45 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                 </section>
 
+                <section className="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm dark:border-orange-500/30 dark:bg-orange-500/10" aria-label="Demand-aware state stock signals">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Demand-aware state stock signals</h2>
+                      <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-100/80">
+                        This separates fast-moving low stock from dormant low stock using orders created in the last {SMART_STOCK_LOOKBACK_DAYS} days.
+                      </p>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
+                      {filteredSmartStockDemandSignals.length} filtered risk{filteredSmartStockDemandSignals.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {filteredSmartStockDemandSignals.length === 0 ? (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+                      No active demand-risk row matches these filters.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {filteredSmartStockDemandSignals.slice(0, 6).map((signal) => (
+                        <article key={`state-risk-${signal.productId}-${signal.state}`} className={`rounded-xl border p-3 ${signal.className}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">{signal.label}</span>
+                              <h3 className="mt-1 text-sm font-extrabold text-gray-950 dark:text-white">{signal.productName}</h3>
+                              <p className="text-xs font-semibold text-gray-700 dark:text-slate-300">{signal.state} · {signal.topHubName}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-[11px] font-extrabold text-gray-900 dark:bg-white/10 dark:text-white">
+                              {signal.stock} left
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-gray-700 dark:text-slate-300">
+                            {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {SMART_STOCK_LOOKBACK_DAYS} days · {signal.daysCover === 0 ? "0" : Math.max(1, Math.ceil(signal.daysCover))} day{Math.ceil(signal.daysCover) === 1 ? "" : "s"} cover.
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
                 {dataLoading ? (
                   <TableSkeleton cols={4} rows={5} />
                 ) : inventoryStateStockGroups.length === 0 ? (
@@ -35954,6 +36239,91 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <strong className="text-2xl font-bold text-gray-900 block my-1">{distributionRate}%</strong>
                     <p className="text-[10px] text-gray-400 font-medium">Of inventory with agents</p>
                   </article>
+                </section>
+
+                <section className="rounded-xl border border-orange-200 bg-orange-50/70 p-4 shadow-sm dark:border-orange-500/30 dark:bg-orange-500/10" aria-label="Fast-moving stock risk">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-200">
+                        <Flame className="h-5 w-5" />
+                      </span>
+                      <div>
+                        <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Fast-moving stock risk</h2>
+                        <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-100/80">
+                          Demand-aware alerts: low hub/state stock only becomes urgent when the product is receiving recent orders.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
+                      {smartStockDemandSignals.length} active signal{smartStockDemandSignals.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {smartStockDemandSignals.length === 0 ? (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
+                      No fast-moving stockout risk right now. Low-stock items without recent orders stay out of the urgent queue.
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {smartStockDemandSignals.slice(0, 6).map((signal) => (
+                        <article key={`${signal.productId}-${signal.state}`} className={`rounded-xl border bg-white p-4 ${signal.className}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">{signal.label}</span>
+                              <h3 className="mt-1 text-sm font-extrabold text-gray-950 dark:text-white">{signal.productName}</h3>
+                              <p className="mt-0.5 text-xs font-semibold text-gray-700 dark:text-slate-300">{signal.state} · {signal.topHubName}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="!min-h-0 shrink-0 rounded-lg border border-white/80 bg-white/80 px-2.5 py-1 text-[11px] font-bold text-gray-800 shadow-sm transition-colors hover:bg-white dark:border-white/10 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
+                              onClick={() => {
+                                setStateStockProductId(signal.productId);
+                                setStateStockStateFilter(signal.state);
+                                openInventoryStateStockRoute();
+                              }}
+                            >
+                              View stock
+                            </button>
+                          </div>
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                            <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Left</span>
+                              <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
+                            </div>
+                            <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">7d demand</span>
+                              <strong className="text-gray-950 dark:text-white">{signal.recentUnits}</strong>
+                            </div>
+                            <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Cover</span>
+                              <strong className="text-gray-950 dark:text-white">{signal.daysCover === 0 ? "0d" : `${Math.max(1, Math.ceil(signal.daysCover))}d`}</strong>
+                            </div>
+                          </div>
+                          <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
+                            {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need stock. ` : ""}
+                            {signal.hubCount} hub{signal.hubCount === 1 ? "" : "s"} tracked in {signal.state}; top hub has {signal.topHubQty}.
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  {dormantLowStockSignals.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-950/40">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-300">Dormant low stock</h3>
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Low quantity, but no orders in {SMART_STOCK_DORMANT_DAYS} days, so these are not urgent selling risks.</p>
+                        </div>
+                        <span className="text-xs font-bold text-gray-700 dark:text-slate-200">{dormantLowStockSignals.length} item-state row{dormantLowStockSignals.length === 1 ? "" : "s"}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {dormantLowStockSignals.slice(0, 6).map((signal) => (
+                          <span key={`${signal.productId}-${signal.state}`} className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700 dark:bg-white/10 dark:text-slate-200">
+                            {signal.productName} · {signal.state}: {signal.stock}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </section>
 
                 <div className={`flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
