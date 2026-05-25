@@ -93,6 +93,24 @@ const checks = [
       "max-h-[min(80vh,42rem)]",
       "overflow-y-auto"
     ]
+  },
+  {
+    name: "Sales rep motivator bonus coach",
+    why: "The first Sales Rep Motivator Bonus UX must keep active progress rails, named opportunities, and the best-order jump.",
+    required: [
+      "repBonusOpportunityByOrderId",
+      "Bonus Coach On This Order",
+      "Open best order",
+      "Named opportunity",
+      "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.",
+      "Math.max(8, repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent)"
+    ],
+    forbidden: [
+      "const repBonusZeroState",
+      "No live bonus opportunity is open yet.",
+      "First successful delivery starts your rate progress.",
+      "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
+    ]
   }
 ];
 
@@ -100,8 +118,9 @@ const failures = [];
 
 for (const check of checks) {
   const missing = check.required.filter((needle) => !app.includes(needle));
-  if (missing.length > 0) {
-    failures.push({ ...check, missing });
+  const presentForbidden = (check.forbidden ?? []).filter((needle) => app.includes(needle));
+  if (missing.length > 0 || presentForbidden.length > 0) {
+    failures.push({ ...check, missing, presentForbidden });
   }
 }
 
@@ -112,6 +131,9 @@ if (failures.length > 0) {
     console.error(`  Why: ${failure.why}`);
     for (const missing of failure.missing) {
       console.error(`  Missing marker: ${missing}`);
+    }
+    for (const forbidden of failure.presentForbidden ?? []) {
+      console.error(`  Forbidden marker still present: ${forbidden}`);
     }
   }
   console.error("\nThis usually means a localhost feature branch was based on an older App.tsx and dropped restored live UX.");

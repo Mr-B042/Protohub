@@ -11587,13 +11587,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? Math.max(0, repBonusCoach.snapshot.projectedBonusOpenPipeline - repBonusCoach.snapshot.currentBonusEarned)
     : 0;
   const repBonusDeliveredCount = repBonusCoach?.snapshot.deliveredCount ?? 0;
-  const repBonusHasEarned = (repBonusCoach?.snapshot.currentBonusEarned ?? 0) > 0;
-  const repBonusHasOpenUpside = repBonusProjectedExtra > 0 || (repBonusCoach?.orderOpportunities.length ?? 0) > 0;
-  const repBonusZeroState = !!repBonusCoach && repBonusDeliveredCount === 0 && !repBonusHasEarned && !repBonusHasOpenUpside;
   const repBonusTierProgressPercent = !repBonusCoach
     ? 0
-    : repBonusZeroState
-      ? 0
     : repBonusCoach.snapshot.nextTierTarget && repBonusCoach.snapshot.ordersNeededForNextTier
       ? Math.max(
           0,
@@ -11602,69 +11597,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             ((repBonusCoach.snapshot.nextTierTarget - repBonusCoach.snapshot.ordersNeededForNextTier) / repBonusCoach.snapshot.nextTierTarget) * 100
           )
         )
-      : repBonusDeliveredCount > 0
-        ? 100
-        : 0;
+      : 100;
   const repBonusRateProgressPercent = !repBonusCoach
     ? 0
-    : repBonusZeroState
-      ? 0
     : repBonusCoach.snapshot.nextDeliveryRateTarget
       ? Math.max(0, Math.min(100, (repBonusCoach.snapshot.deliveryRate / repBonusCoach.snapshot.nextDeliveryRateTarget) * 100))
-      : repBonusCoach.snapshot.deliveryRate > 0
-        ? 100
-        : 0;
+      : 100;
   const repBonusEarnedProgressPercent = !repBonusCoach
     ? 0
-    : repBonusDeliveredCount > 0
-      ? Math.max(6, Math.min(100, repBonusDeliveredCount * 8))
-      : 0;
+    : Math.max(6, Math.min(100, repBonusCoach.snapshot.deliveredCount * 8));
   const repBonusPipelineProgressPercent = !repBonusCoach
     ? 0
-    : repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
-      ? Math.max(
-          repBonusHasEarned ? 8 : 0,
-          Math.min(
-            100,
-            (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
-          )
+    : Math.max(
+        8,
+        Math.min(
+          100,
+          repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
+            ? (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
+            : 0
         )
-      : 0;
+      );
   const repBonusNextUnlockValue = !repBonusCoach
-    ? "Not started yet"
+    ? "On track"
     : repBonusCoach.snapshot.ordersNeededForNextTier
       ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more`
-      : repBonusCoach.snapshot.topPerformerGap
-        ? `${repBonusCoach.snapshot.topPerformerGap} behind`
-        : repBonusDeliveredCount > 0
-          ? "Fully unlocked"
-          : "Not started yet";
+      : repBonusCoach.snapshot.topPerformerRank
+        ? `#${repBonusCoach.snapshot.topPerformerRank}`
+        : "On track";
   const repBonusNextUnlockCopy = !repBonusCoach
     ? ""
     : repBonusCoach.snapshot.nextTierTarget
       ? `${repBonusCoach.snapshot.nextTierTarget} delivered orders unlock the next tier.`
       : repBonusCoach.snapshot.topPerformerGap
-        ? `${repBonusCoach.snapshot.topPerformerGap} deliver${repBonusCoach.snapshot.topPerformerGap === 1 ? "y" : "ies"} behind the weekly leader.`
-        : repBonusZeroState
-          ? "Deliver your first qualifying order to start bonus progress this week."
-          : "No higher tier is waiting right now.";
+        ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
+        : "No higher tier is waiting right now.";
   const repBonusTierProgressCopy = !repBonusCoach
     ? ""
     : repBonusCoach.snapshot.nextTierTarget
       ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries toward the next bonus tier`
-      : repBonusZeroState
-        ? "Deliver your first qualifying order to start bonus progress this week."
-        : "No higher weekly bonus tier is waiting right now.";
+      : "You are already on the highest available tier for this week.";
   const repBonusRateGateCopy = !repBonusCoach
     ? ""
     : repBonusCoach.snapshot.nextDeliveryRateTarget
       ? `${repBonusCoach.snapshot.deliveryRate}% now. Push to ${repBonusCoach.snapshot.nextDeliveryRateTarget}% to unlock the next gate.`
-      : repBonusZeroState
-        ? "Your first successful delivery will start delivery-rate progress for this week."
-        : "No delivery-rate gate is blocking extra bonus right now.";
-  const repBonusEmptyActionCopy = repBonusZeroState
-    ? "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
-    : "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.";
+      : "No delivery-rate gate is blocking extra bonus right now.";
+  const repBonusEmptyActionCopy = "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.";
 
   useEffect(() => {
     if (activePage !== "Sales Rep Workspace" || repConsoleTab !== "Dashboard") {
@@ -20389,18 +20366,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Weekly target tracker</span>
             <strong className="block mt-2 text-lg font-bold text-violet-900">
-              {repBonusZeroState
-                ? "Not started yet"
-                : repBonusCoach?.snapshot.nextTierTarget
+              {repBonusCoach?.snapshot.nextTierTarget
                 ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries`
                 : repBonusCoach?.snapshot.nextDeliveryRateTarget
                   ? `${repBonusCoach.snapshot.deliveryRate}% of ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
-                  : "Current tier is clear"}
+                  : "You are on track"}
             </strong>
             <p className="mt-2 text-sm text-violet-800 leading-6">
-              {repBonusZeroState
-                ? "Deliver your first qualifying order this week to start bonus progress."
-                : repBonusCoach?.snapshot.ordersNeededForNextTier
+              {repBonusCoach?.snapshot.ordersNeededForNextTier
                 ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more delivery${repBonusCoach.snapshot.ordersNeededForNextTier === 1 ? "" : "ies"} unlock the next bonus tier this week.`
                 : repBonusCoach?.snapshot.deliveriesNeededForRateTarget
                   ? `${repBonusCoach.snapshot.deliveriesNeededForRateTarget} more successful delivery${repBonusCoach.snapshot.deliveriesNeededForRateTarget === 1 ? "" : "ies"} push you to the next delivery-rate gate.`
@@ -20409,7 +20382,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all"
-                style={{ width: `${repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent}%` }}
+                style={{ width: `${Math.max(8, repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent)}%` }}
               />
             </div>
           </article>
@@ -21224,11 +21197,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <article className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Bonus earned</span>
                       <strong className="block mt-2 text-2xl font-bold text-emerald-900">{formatProductMoney(repBonusCoach.snapshot.currentBonusEarned, "NGN")}</strong>
-                      <p className="mt-1 text-xs text-emerald-800">
-                        {repBonusDeliveredCount > 0
-                          ? `From ${repBonusDeliveredCount} delivered orders this week.`
-                          : "No bonus earned yet this week."}
-                      </p>
+                      <p className="mt-1 text-xs text-emerald-800">From {repBonusDeliveredCount} delivered orders this week.</p>
                       <div className="mt-3 h-2 rounded-full bg-emerald-100 overflow-hidden">
                         <div
                           className="h-full rounded-full bg-emerald-500 transition-all"
@@ -21242,9 +21211,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <p className="mt-1 text-xs text-blue-800">
                         {repBonusProjectedExtra > 0
                           ? `${formatProductMoney(repBonusProjectedExtra, "NGN")} more is still sitting in open orders.`
-                          : repBonusZeroState
-                            ? "No live bonus opportunity is open yet."
-                            : "Projected if your open bonus opportunities close."}
+                          : "Projected if your open bonus opportunities close."}
                       </p>
                       <div className="mt-3 h-2 rounded-full bg-blue-100 overflow-hidden">
                         <div
@@ -21259,9 +21226,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <p className="mt-1 text-xs text-amber-800">
                         {repBonusCoach.snapshot.nextDeliveryRateTarget
                           ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
-                          : repBonusZeroState
-                            ? "First successful delivery starts your rate progress."
-                            : "No higher delivery-rate gate blocking bonus right now."}
+                          : "No higher delivery-rate gate blocking bonus right now."}
                       </p>
                       <div className="mt-3 h-2 rounded-full bg-amber-100 overflow-hidden">
                         <div
