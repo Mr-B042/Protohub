@@ -38437,29 +38437,42 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                    </div>
 	                  </section>
 
-                      <section>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer Journey</h4>
+                      <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800/90 dark:bg-[#0d1823]">
+                        <div className="mb-4 flex items-center justify-between gap-3 border-b border-gray-100 pb-3 dark:border-slate-800/90">
+                          <h4 className="m-0 text-xs font-extrabold uppercase tracking-[0.22em] text-gray-500 dark:text-slate-400">Customer Journey</h4>
+                          {selectedCartJourneyEvents.length > 0 && (
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-bold text-gray-500 dark:border-slate-700 dark:bg-[#121f2b] dark:text-slate-400">
+                              {selectedCartJourneyEvents.length} event{selectedCartJourneyEvents.length === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </div>
                         {selectedCartJourneyLoading ? (
-                          <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500">Loading customer journey…</div>
+                          <div className="rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-5 text-sm font-semibold text-gray-500 dark:border-[#1d3a50] dark:bg-[#101d28] dark:text-slate-400">
+                            Loading customer journey...
+                          </div>
                         ) : selectedCartJourneyEvents.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500">No customer-journey events have been captured for this cart yet.</div>
+                          <div className="rounded-[22px] border border-dashed border-gray-200 bg-gray-50 px-5 py-5 text-sm font-semibold text-gray-500 dark:border-[#1d3a50] dark:bg-[#101d28] dark:text-slate-400">
+                            No customer-journey events have been captured for this cart yet.
+                          </div>
                         ) : (
-                          <div className="space-y-2">
+                          <div className="space-y-4">
                             {[...selectedCartJourneyEvents]
                               .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                               .slice(0, 8)
                               .map((event) => {
                                 const meta = cartJourneyEventMeta(event);
                                 return (
-                                  <div key={event.id} className="rounded-xl border border-gray-200 bg-white px-3 py-3">
-                                    <div className="flex items-start justify-between gap-3">
+                                  <article key={event.id} className="rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4 shadow-sm dark:border-[#1d3a50] dark:bg-[#101d28] dark:shadow-none">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                                       <div className="min-w-0">
-                                        <p className="m-0 text-sm font-semibold text-gray-900">{cartJourneyEventLabel(event.eventType)}</p>
-                                        {meta ? <p className="m-0 mt-1 text-xs text-gray-500">{meta}</p> : null}
+                                        <p className="m-0 text-base font-extrabold text-gray-950 dark:text-slate-50 sm:text-lg">{cartJourneyEventLabel(event.eventType)}</p>
+                                        {meta ? <p className="m-0 mt-2 text-sm font-medium leading-6 text-gray-500 dark:text-slate-400 sm:text-base">{meta}</p> : null}
                                       </div>
-                                      <span className="shrink-0 text-[11px] font-medium text-gray-400">{formatMoment(event.createdAt)}</span>
+                                      <time className="shrink-0 text-left text-sm font-semibold text-gray-400 dark:text-slate-500 sm:text-right sm:text-base" dateTime={event.createdAt}>
+                                        {formatMoment(event.createdAt)}
+                                      </time>
                                     </div>
-                                  </div>
+                                  </article>
                                 );
                               })}
                           </div>
