@@ -33,42 +33,53 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
   cart_follow_up: false
 };
 
+// All customer-facing templates use a {{greeting}} variable that resolves to
+// "Good morning" / "Good afternoon" / "Good evening" based on the org's
+// timezone at send time (see greetingForTimezone in dispatchSms). The
+// {{store_name}} variable resolves to the organisation's display name.
+// {{amount}} arrives pre-formatted with thousands separators (e.g. "15,000").
+//
+// Voice policy: transactional events sign off as {{store_name}} (team voice).
+// The two cart templates use {{rep_name}} (named-rep voice) because abandoned
+// carts close materially better when the message reads like a real person.
 export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   order_new: {
-    body: "Hello {{customer}}, your Protohub order {{order_id}} has been received for {{product_name}}. Order value: {{currency}} {{amount}}. Our team will contact you shortly to confirm the next step."
+    body: "{{greeting}} {{customer}}, got your order {{order_id}} for {{product_name}} ({{currency}} {{amount}}). We'll call you shortly to confirm delivery. — {{store_name}}"
   },
   order_status_change: {
-    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} is now {{status}}. Current order value: {{currency}} {{amount}}. Thank you for choosing Protohub."
+    body: "{{greeting}} {{customer}}, quick update on order {{order_id}}: status is now {{status}}. We'll keep you posted. — {{store_name}}"
   },
   order_delivered: {
-    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been delivered successfully. Total paid: {{currency}} {{amount}}. Thank you for choosing Protohub."
+    body: "{{greeting}} {{customer}}, glad your {{product_name}} arrived. Hope you love it — if anything's off, give us a call. Would also mean a lot if you tell a friend. — {{store_name}}"
   },
   order_failed: {
-    body: "Hello {{customer}}, we could not complete delivery for order {{order_id}} ({{product_name}}, {{currency}} {{amount}}). Our team will follow up with you shortly."
+    body: "{{greeting}} {{customer}}, sorry we couldn't get your {{product_name}} delivered today. We'll call shortly to set a new time. — {{store_name}}"
   },
   order_cancelled: {
-    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been cancelled. Order value: {{currency}} {{amount}}. If this was unexpected, please contact Protohub."
+    body: "{{greeting}} {{customer}}, your order for {{product_name}} has been cancelled. If you change your mind any time, just give us a call and we'll set it up again. — {{store_name}}"
   },
   order_rescheduled: {
-    body: "Hello {{customer}}, your order {{order_id}} for {{product_name}} has been rescheduled to {{scheduled_date}}. Order value: {{currency}} {{amount}}. We will follow up again as scheduled."
+    body: "{{greeting}} {{customer}}, your {{product_name}} delivery is now set for {{scheduled_date}}. We'll call before we head out. — {{store_name}}"
   },
   order_not_picking: {
-    body: "Hello {{customer}}, we tried reaching you regarding order {{order_id}} for {{product_name}} ({{currency}} {{amount}}) but could not get through. Please expect another follow-up from Protohub."
+    body: "{{greeting}} {{customer}}, tried calling about your {{product_name}} order but couldn't reach you. Please call us back when you're free. — {{store_name}}"
   },
   order_not_ready: {
-    body: "Hello {{customer}}, we understand you are not ready yet for order {{order_id}} ({{product_name}}, {{currency}} {{amount}}). We will follow up again on {{scheduled_date}}."
+    body: "{{greeting}} {{customer}}, no rush — we'll hold your {{product_name}} order and check back on {{scheduled_date}}. If anything changes, give us a call. — {{store_name}}"
   },
   order_follow_up: {
-    body: "Hello {{customer}}, this is a follow-up on your order {{order_id}} for {{product_name}} valued at {{currency}} {{amount}}. Next follow-up: {{scheduled_date}}. {{note_text}}"
+    body: "{{greeting}} {{customer}}, just checking in on your {{product_name}} order. We'll touch base on {{scheduled_date}}. — {{store_name}}"
   },
+  // Staff-facing — terse, scannable on a lock-screen notification preview.
+  // Action verb up front so the rep sees what to do without unlocking.
   order_follow_up_rep: {
-    body: "Protohub reminder: follow up on order {{order_id}} for {{customer}} ({{phone}}) about {{product_name}} worth {{currency}} {{amount}}. Due: {{scheduled_date}}. Outcome: {{call_outcome}}. {{note_text}}"
+    body: "Follow up: {{customer}} ({{phone}}) — {{product_name}}, {{currency}} {{amount}}. Due {{scheduled_date}}. Last: {{call_outcome}}. {{order_id}} {{note_text}}"
   },
   cart_assigned: {
-    body: "Hello {{customer}}, your Protohub request for {{product_name}} is now with our team. Estimated order value: {{currency}} {{amount}}. {{rep_contact}}"
+    body: "{{greeting}} {{customer}}, this is {{rep_name}} from {{store_name}}. Saw you were looking at {{product_name}} — happy to help whenever you're ready. {{rep_contact}}"
   },
   cart_follow_up: {
-    body: "Hello {{customer}}, we're still holding your interest in {{product_name}} for you. Estimated order value: {{currency}} {{amount}}. {{rep_contact}}"
+    body: "{{greeting}} {{customer}}, just checking — still want me to set up the {{product_name}} for you? No pressure either way. {{rep_contact}}"
   }
 };
 
@@ -195,6 +206,56 @@ function applyEnvFallbacks(settings: SmsSettings): SmsSettings {
 
 function interpolate(template: string, vars: Record<string, string>) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
+}
+
+// Returns "Good morning" / "Good afternoon" / "Good evening" based on the org's
+// timezone and current hour. Falls back to a friendly "Hi" outside reasonable
+// hours so we don't greet a customer with "Good morning" at 2am.
+function greetingForTimezone(timezone: string): string {
+  try {
+    const hour = Number(
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone || "Africa/Lagos",
+        hour: "2-digit",
+        hour12: false
+      }).format(new Date())
+    );
+    if (!Number.isFinite(hour)) return "Hi";
+    if (hour >= 5 && hour < 12) return "Good morning";
+    if (hour >= 12 && hour < 17) return "Good afternoon";
+    if (hour >= 17 && hour < 22) return "Good evening";
+    return "Hi";
+  } catch {
+    return "Hi";
+  }
+}
+
+// Format a numeric string with locale thousands separators. Leaves non-numeric
+// strings (or empty) untouched so we never break interpolation for unusual
+// callers like tests.
+function formatAmountForLocale(value: string | undefined): string {
+  if (!value) return value ?? "";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  return n.toLocaleString("en-NG");
+}
+
+// Single lookup of organisation display name (used for {{store_name}}). Cached
+// per process so we don't re-query Supabase on every SMS dispatch in a tight
+// follow-up cron loop.
+const storeNameCache = new Map<string, { name: string; cachedAt: number }>();
+const STORE_NAME_TTL_MS = 5 * 60 * 1000;
+async function loadStoreName(orgId: string): Promise<string> {
+  const cached = storeNameCache.get(orgId);
+  if (cached && Date.now() - cached.cachedAt < STORE_NAME_TTL_MS) return cached.name;
+  const { data } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", orgId)
+    .maybeSingle();
+  const name = typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "Protohub";
+  storeNameCache.set(orgId, { name, cachedAt: Date.now() });
+  return name;
 }
 
 function safeJsonParse<T>(text: string): T | null {
@@ -681,10 +742,22 @@ async function dispatchSms(
   const template = settings.templates?.[trigger];
   if (!template?.body) return null;
 
+  // Enrich vars with values every template now expects: a time-of-day greeting
+  // based on the org's timezone, the org's display name for {{store_name}},
+  // and a locale-formatted amount with thousands separators. Existing callers
+  // don't need to know about any of this — they just keep passing the same
+  // shape they always did and the new placeholders resolve automatically.
+  const enrichedVars: Record<string, string> = {
+    ...vars,
+    greeting: vars.greeting ?? greetingForTimezone(settings.timezone ?? "Africa/Lagos"),
+    store_name: vars.store_name ?? (await loadStoreName(orgId)),
+    amount: vars.amount ? formatAmountForLocale(vars.amount) : (vars.amount ?? "")
+  };
+
   const hasRepContactPlaceholder =
     /\{\{rep_contact\}\}/.test(template.body)
     || (/\{\{rep_name\}\}/.test(template.body) && /\{\{rep_phone\}\}/.test(template.body));
-  let messageBody = interpolate(template.body, vars).trim();
+  let messageBody = interpolate(template.body, enrichedVars).trim();
   if (options.repContactLine && !hasRepContactPlaceholder && !messageBody.includes(options.repContactLine)) {
     messageBody = `${messageBody} ${options.repContactLine}`.trim();
   }
