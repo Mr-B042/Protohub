@@ -5081,6 +5081,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
   useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
+  useEffect(() => {
+    if (activePage === "Closed Orders" && !closedOrderStatuses.includes(orderStatus)) {
+      setOrderStatus("All Orders");
+      return;
+    }
+    if (activePage === "Follow-up Queue" && !followUpQueueStatuses.includes(orderStatus)) {
+      setOrderStatus("All Orders");
+    }
+  }, [activePage, orderStatus]);
   // Abandoned Carts filters — declared further down. We can't reference
   // cartsPeriod / cartProductIds here without TDZ errors; mirror happens via
   // setter wrappers further below in the carts state block.
@@ -5195,6 +5204,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
+  const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
   const [selectedCartJourneyEvents, setSelectedCartJourneyEvents] = useState<CartJourneyEvent[]>([]);
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
@@ -8051,7 +8062,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return Array.from(acc.values()).sort((a, b) => b.revenue - a.revenue);
   })();
   const projectedRevenue = formatMoney(dashboardProjectedRevenue);
-  const orderWorkspacePage: OrderWorkspacePage = activePage === "Follow-up Queue" || activePage === "Closed Orders" ? activePage : "Orders";
+  const orderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
   const matchesFollowUpQueuePage = (order: TrackedOrder) => {
     const status = statusForOrder(order);
     if (CLOSED_ORDER_STATUSES.has(status)) return false;
@@ -8090,10 +8101,66 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
   });
+  const prioritizedOrderRows = orderWorkspacePage === "Follow-up Queue"
+    ? filteredOrderRows.slice().sort((left, right) => {
+        const leftTasks = orderFollowUpTasksByOrder[left.id] ?? [];
+        const rightTasks = orderFollowUpTasksByOrder[right.id] ?? [];
+        const leftAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[left.id] ?? []);
+        const rightAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[right.id] ?? []);
+        const leftTask = activeFollowUpTaskForOrder(leftTasks);
+        const rightTask = activeFollowUpTaskForOrder(rightTasks);
+        const leftInsight = nextFollowUpForOrder(left);
+        const rightInsight = nextFollowUpForOrder(right);
+        const leftDueAt = leftTask?.dueAt ?? leftInsight?.dueAt ?? left.nextFollowUpAt ?? left.scheduledAt ?? "";
+        const rightDueAt = rightTask?.dueAt ?? rightInsight?.dueAt ?? right.nextFollowUpAt ?? right.scheduledAt ?? "";
+        const leftDueMs = leftDueAt ? new Date(leftDueAt).getTime() : Number.POSITIVE_INFINITY;
+        const rightDueMs = rightDueAt ? new Date(rightDueAt).getTime() : Number.POSITIVE_INFINITY;
+        const leftTimingRank = leftTask?.effectiveStatus === "overdue" || leftInsight?.overdue ? 0 : leftTask?.effectiveStatus === "due" ? 1 : leftInsight?.dueSoon ? 2 : leftDueAt ? 3 : 4;
+        const rightTimingRank = rightTask?.effectiveStatus === "overdue" || rightInsight?.overdue ? 0 : rightTask?.effectiveStatus === "due" ? 1 : rightInsight?.dueSoon ? 2 : rightDueAt ? 3 : 4;
+        const leftOutcome = classifyFrontendFollowUpOutcome({
+          outcomeCode: leftAttempt?.outcomeCode,
+          outcomeGroup: leftAttempt?.outcomeGroup,
+          recoveryBucket: leftAttempt?.recoveryBucket
+        });
+        const rightOutcome = classifyFrontendFollowUpOutcome({
+          outcomeCode: rightAttempt?.outcomeCode,
+          outcomeGroup: rightAttempt?.outcomeGroup,
+          recoveryBucket: rightAttempt?.recoveryBucket
+        });
+        const groupRank = (group?: string | null) => {
+          switch (group) {
+            case "recoverable": return 0;
+            case "unreachable": return 1;
+            case "progress": return 2;
+            case "closed_loss": return 3;
+            default: return 4;
+          }
+        };
+        const bucketRank = (bucket?: string | null) => {
+          switch (bucket) {
+            case "call_tomorrow": return 0;
+            case "call_in_2_3_days": return 1;
+            case "salary_wait":
+            case "spouse_approval":
+            case "wants_discount": return 2;
+            case "asked_for_whatsapp": return 3;
+            case "no_answer":
+            case "line_busy":
+            case "switched_off": return 4;
+            default: return 5;
+          }
+        };
+        return leftTimingRank - rightTimingRank
+          || leftDueMs - rightDueMs
+          || groupRank(leftOutcome?.group) - groupRank(rightOutcome?.group)
+          || bucketRank(leftOutcome?.bucket) - bucketRank(rightOutcome?.bucket)
+          || new Date(right.createdAt ?? right.date).getTime() - new Date(left.createdAt ?? left.date).getTime();
+      })
+    : filteredOrderRows;
   const ORDERS_PAGE_SIZE = 25;
-  const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
+  const ordersTotalPages = Math.max(1, Math.ceil(prioritizedOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
-  const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
+  const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
@@ -8112,14 +8179,28 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
-  const pfFollowUpRows = pfOrders.filter(matchesFollowUpQueuePage);
-  const pfFollowUpDueNow = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.overdue).length;
-  const pfFollowUpDueSoon = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.dueSoon).length;
-  const pfFollowUpPostponed = pfFollowUpRows.filter((order) => statusForOrder(order) === "Postponed").length;
-  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((order) => {
-    const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
-    return latestAttempt ? ageInHours(latestAttempt.attemptedAt) <= 24 : false;
-  }).length;
+  const pfFollowUpRows = pfOrders
+    .map((order) => ({
+      order,
+      followUp: nextFollowUpForOrder(order),
+      activeTask: activeFollowUpTaskForOrder(orderFollowUpTasksByOrder[order.id] ?? []),
+      latestAttempt: latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? [])
+    }))
+    .filter((entry) => matchesFollowUpQueuePage(entry.order));
+  const pfFollowUpDueNow = pfFollowUpRows.filter((entry) => entry.followUp?.overdue || (entry.activeTask?.effectiveStatus ?? entry.activeTask?.status) === "overdue").length;
+  const pfFollowUpRecoverable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
+    outcomeCode: entry.latestAttempt?.outcomeCode,
+    outcomeGroup: entry.latestAttempt?.outcomeGroup,
+    recoveryBucket: entry.latestAttempt?.recoveryBucket
+  })?.group === "recoverable").length;
+  const pfFollowUpUnreachable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
+    outcomeCode: entry.latestAttempt?.outcomeCode,
+    outcomeGroup: entry.latestAttempt?.outcomeGroup,
+    recoveryBucket: entry.latestAttempt?.recoveryBucket
+  })?.group === "unreachable").length;
+  const pfFollowUpTomorrow = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_tomorrow").length;
+  const pfFollowUpTwoThreeDays = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_in_2_3_days" || entry.latestAttempt?.recoveryBucket === "salary_wait" || entry.latestAttempt?.recoveryBucket === "spouse_approval").length;
+  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((entry) => Boolean(entry.latestAttempt?.attemptedAt || entry.order.lastContactAttemptAt)).length;
   const pfClosedDelivered = pfOrders.filter((order) => statusForOrder(order) === "Delivered").length;
   const pfClosedCancelled = pfOrders.filter((order) => statusForOrder(order) === "Cancelled").length;
   const pfClosedFailed = pfOrders.filter((order) => statusForOrder(order) === "Failed").length;
@@ -8137,10 +8218,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   );
   const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
     ? [
-        { label: "Queue Total", value: pfOrders.length, sub: "non-terminal orders needing action", icon: Headphones, color: "bg-amber-50 text-amber-500" },
-        { label: "Due Now", value: pfFollowUpDueNow, sub: "follow-ups overdue right now", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
-        { label: "Due Soon", value: pfFollowUpDueSoon, sub: "follow-ups due within 2 hours", icon: Clock, color: "bg-blue-50 text-blue-500" },
-        { label: "Postponed", value: pfFollowUpPostponed, sub: "customers waiting on a later callback", icon: CalendarDays, color: "bg-purple-50 text-purple-500" }
+        { label: "Queue Total", value: pfOrders.length, sub: "orders needing follow-up", icon: Headphones, color: "bg-orange-50 text-orange-500" },
+        { label: "Due Now", value: pfFollowUpDueNow, sub: "overdue callbacks or actions", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
+        { label: "Recoverable", value: pfFollowUpRecoverable, sub: "buyers who asked for another try", icon: CalendarClock, color: "bg-sky-50 text-sky-500" },
+        { label: "Unreachable", value: pfFollowUpUnreachable, sub: "need another contact attempt", icon: PhoneOff, color: "bg-amber-50 text-amber-500" }
       ]
     : orderWorkspacePage === "Closed Orders"
       ? [
@@ -8160,8 +8241,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         icon: Headphones,
         iconClassName: "bg-amber-50 text-amber-500",
         title: "Queue Pressure",
-        helper: "Track the most urgent orders needing calls, confirmations, or callbacks.",
-        body: `${pfFollowUpDueNow} due now · ${pfFollowUpDueSoon} due soon · ${pfFollowUpRecentlyTouched} touched in the last 24 hours`
+        helper: "Track which callbacks need action now, and how many buyers are waiting for tomorrow or 2-3 day follow-ups.",
+        body: `${pfFollowUpRecentlyTouched}/${pfOrders.length || 0} touched recently · ${pfFollowUpTomorrow} tomorrow · ${pfFollowUpTwoThreeDays} in 2-3 days`
       }
     : orderWorkspacePage === "Closed Orders"
       ? {
@@ -8232,6 +8313,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer;
   });
+  const abandonedJourneyCartIds = useMemo(
+    () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
+    [filteredAbandonedCarts]
+  );
+  const abandonedJourneyCartIdsKey = abandonedJourneyCartIds.join("|");
   const CARTS_PAGE_SIZE = 25;
   const cartsTotalPages = Math.max(1, Math.ceil(filteredAbandonedCarts.length / CARTS_PAGE_SIZE));
   const cartsPageClamped = Math.min(cartsPage, cartsTotalPages);
@@ -8240,30 +8326,96 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange));
   // Carts filtered by both period and active product selection — drives stat cards
   const pfCarts = cartProductIds.size === 0 ? periodCarts : periodCarts.filter(c => matchesProductFilter(c.productId, c.productName, cartProductIds));
+  const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds).sort(), [cartProductIds]);
+  const cartProductIdFilterKey = cartProductIdFilterList.join("|");
   const assignedCartCount = pfCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
   const contactedCartCount = pfCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
   const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
+  const abandonedCartJourneyAnalytics = useMemo(
+    () => summarizeCartJourneyAnalytics(abandonedCartJourneyMap),
+    [abandonedCartJourneyMap]
+  );
+  const abandonedCartRecoveryById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(abandonedCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
+      ),
+    [abandonedCartJourneyMap]
+  );
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
-  const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds), [cartProductIds]);
-  const cartProductIdFilterKey = useMemo(() => cartProductIdFilterList.slice().sort().join(","), [cartProductIdFilterList]);
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") {
+      setAbandonedCartJourneyLoading(false);
+      return;
+    }
+    if (abandonedJourneyCartIds.length === 0) {
+      setAbandonedCartJourneyMap({});
+      setAbandonedCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setAbandonedCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(abandonedJourneyCartIds);
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setAbandonedCartJourneyMap(normalized);
+      } catch {
+        if (cancelled) return;
+        if (!silent) {
+          setAbandonedCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
+        setAbandonedCartJourneyLoading(false);
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, abandonedJourneyCartIdsKey]);
   const liveFormPulseBounds = useMemo(() => periodBoundsForQuery(cartsPeriod, cartsDateRange), [cartsPeriod, cartsDateRange]);
   const liveFormPulseScope = useMemo(() => liveFormPulseScopeLabel(cartsPeriod, liveFormPulseBounds), [cartsPeriod, liveFormPulseBounds]);
 
   useEffect(() => {
-    if (activePage !== "Abandoned Carts" || !["Owner", "Admin"].includes(realRole)) {
+    const canViewLiveFormPulse = realRole === "Owner" || realRole === "Admin";
+    if (activePage !== "Abandoned Carts" || !canViewLiveFormPulse) {
       setLiveFormPulse(null);
       setLiveFormPulseLoading(false);
       setLiveFormPulseEmbedOptions([]);
       return;
     }
+
     let cancelled = false;
-    const load = async () => {
-      try {
+    let pollingHandle: number | undefined;
+    const loadPulse = async (silent = false) => {
+      if (!silent) {
         setLiveFormPulseLoading(true);
+      }
+      try {
         const pulse = await cartsApi.livePulse({
-          productIds: cartProductIdFilterList.length > 0 ? cartProductIdFilterList : undefined,
+          productIds: cartProductIdFilterList,
           embedLabels: liveFormPulseEmbedFilter ? [liveFormPulseEmbedFilter] : undefined,
+          activeWindowMinutes: 10,
           dateFrom: liveFormPulseBounds?.dateFrom,
           dateTo: liveFormPulseBounds?.dateTo
         });
@@ -8271,20 +8423,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         setLiveFormPulse(pulse as LiveFormPulseResponse);
         setLiveFormPulseEmbedOptions(
           Array.from(
-            new Set(((pulse as LiveFormPulseResponse | null)?.embeds ?? []).map((entry) => entry.embedLabel).filter(Boolean))
-          ).sort()
+            new Set(((pulse as LiveFormPulseResponse).embeds ?? []).map((embed) => embed.embedLabel).filter(Boolean))
+          ).sort((a, b) => a.localeCompare(b))
         );
       } catch {
-        if (cancelled) return;
+        if (cancelled || silent) return;
         setLiveFormPulse(null);
         setLiveFormPulseEmbedOptions([]);
       } finally {
-        if (!cancelled) setLiveFormPulseLoading(false);
+        if (cancelled || silent) return;
+        setLiveFormPulseLoading(false);
       }
     };
-    void load();
+
+    void loadPulse();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadPulse(true);
+    }, FORM_PULSE_POLL_MS);
+
     return () => {
       cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
     };
   }, [activePage, cartProductIdFilterKey, cartProductIdFilterList, cartsDateRange, cartsPeriod, liveFormPulseBounds, liveFormPulseEmbedFilter, realRole]);
 
@@ -11159,6 +11321,49 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? `${ordersDateRange.start} to ${ordersDateRange.end}`
       : ordersPeriod;
 
+  const orderWorkspaceMeta: Record<OrderWorkspacePage, {
+    title: string;
+    subtitle: string;
+    exportTitle: string;
+    exportFilePrefix: string;
+    tableLabel: string;
+    statusOptions: OrderStatus[];
+    productHeading: string;
+    productHelper: string;
+  }> = {
+    Orders: {
+      title: "Orders Management",
+      subtitle: "Track and manage all customer orders in real-time",
+      exportTitle: "Orders Report",
+      exportFilePrefix: "orders-report",
+      tableLabel: "Orders table",
+      statusOptions: orderStatuses,
+      productHeading: "New Orders by Product",
+      productHelper: "All orders (any status) created in the selected period"
+    },
+    "Follow-up Queue": {
+      title: "Follow-up Queue",
+      subtitle: "Focus on non-terminal orders that still need customer action, callback, or confirmation.",
+      exportTitle: "Follow-up Queue Report",
+      exportFilePrefix: "follow-up-queue-report",
+      tableLabel: "Follow-up queue table",
+      statusOptions: followUpQueueStatuses,
+      productHeading: "Follow-up Queue by Product",
+      productHelper: "Products currently driving open customer follow-up work"
+    },
+    "Closed Orders": {
+      title: "Closed Orders",
+      subtitle: "Review delivered, cancelled, and failed orders without active pipeline noise.",
+      exportTitle: "Closed Orders Report",
+      exportFilePrefix: "closed-orders-report",
+      tableLabel: "Closed orders table",
+      statusOptions: closedOrderStatuses,
+      productHeading: "Closed Orders by Product",
+      productHelper: "Terminal orders closed in the selected period"
+    }
+  };
+  const activeOrderWorkspaceMeta = orderWorkspaceMeta[orderWorkspacePage];
+
   const selectedDeliveriesPeriodLabel =
     deliveriesPeriod === "Custom" && deliveriesDateRange.start && deliveriesDateRange.end
       ? `${deliveriesDateRange.start} to ${deliveriesDateRange.end}`
@@ -13705,7 +13910,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? 0
       : Math.round((exportDelivered.length / filteredOrderRows.length) * 100);
     const rows = [
-      ["Orders Report"],
+      [activeOrderWorkspaceMeta.exportTitle],
       ["Period", selectedOrdersPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
@@ -13742,12 +13947,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `orders-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `${activeOrderWorkspaceMeta.exportFilePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    showToast("Orders CSV exported.");
+    showToast(`${activeOrderWorkspaceMeta.title} CSV exported.`);
   };
 
   const exportRepOrdersCsv = () => {
@@ -23139,13 +23344,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               </div>
             </>
-          ) : (activePage === "Orders" || activePage === "Follow-up Queue" || activePage === "Closed Orders") ? (
+          ) : isOrderWorkspacePage(activePage) ? (
             <div className="space-y-6">
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <h1 className="text-2xl font-bold text-[#1F8FE0]">{orderWorkspaceTitle}</h1>
-                  <p className="text-sm font-medium text-gray-500">{orderWorkspaceSubtitle}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-2xl font-bold text-[#1F8FE0]">{activeOrderWorkspaceMeta.title}</h1>
+                    {orderWorkspacePage !== "Orders" && (
+                      <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700">
+                        Order workspace
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-gray-500">{activeOrderWorkspaceMeta.subtitle}</p>
                 </div>
                 {/* Desktop-only action buttons — on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -23238,12 +23450,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
                     <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><BookOpen className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">{orderWorkspaceProductHeading}</h2>
-                      <p className="text-xs text-gray-400">{orderWorkspaceProductHelper}</p>
+                      <h2 className="text-sm font-bold text-gray-900">{activeOrderWorkspaceMeta.productHeading}</h2>
+                      <p className="text-xs text-gray-400">{activeOrderWorkspaceMeta.productHelper}</p>
                     </div>
                   </div>
                   {ordersByProduct.length === 0 ? (
-                    <div className="px-5 py-10 text-center text-sm text-gray-400">No orders in this period.</div>
+                    <div className="px-5 py-10 text-center text-sm text-gray-400">
+                      {orderWorkspacePage === "Follow-up Queue"
+                        ? "No follow-up queue orders in this period."
+                        : orderWorkspacePage === "Closed Orders"
+                          ? "No closed orders in this period."
+                          : "No orders in this period."}
+                    </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
                       {ordersByProduct.map(([productName, item], idx) => (
@@ -23321,7 +23539,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
 
               {/* Orders table */}
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Orders table">
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                 {/* Toolbar */}
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
                   <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[180px]">
@@ -23335,7 +23553,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     />
                   </label>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
-                    {orderStatuses.map((s) => <option key={s}>{s}</option>)}
+                    {activeOrderWorkspaceMeta.statusOptions.map((s) => <option key={s}>{s}</option>)}
                   </select>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order schedule marker" value={orderScheduleFilter} onChange={(e) => setOrderScheduleFilter(e.target.value as OrderScheduleFilter)}>
                     {orderScheduleFilters.map((s) => <option key={s}>{s}</option>)}
@@ -23418,14 +23636,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 {/* Mobile card list (sm and below) */}
                 <div className="block sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
                   {filteredOrderRows.length === 0 ? (
-                    <div className="px-5 py-12 text-center text-sm text-gray-400">No orders found</div>
+                    <div className="px-5 py-12 text-center text-sm text-gray-400">
+                      {orderWorkspacePage === "Follow-up Queue"
+                        ? "No follow-up orders match this filter."
+                        : orderWorkspacePage === "Closed Orders"
+                          ? "No closed orders match this filter."
+                          : "No orders found"}
+                    </div>
                   ) : (
                     pagedOrderRows.map((order) => {
                       const source = order.source ?? orderSourceFromUtm(order.utmSource);
                       const status = order.status ?? "New";
-                      const isTerminal = status === "Delivered" || status === "Cancelled";
+                      const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                       const scheduleMarker = orderScheduleMarkerForOrder(order);
+                      const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
                         <article key={order.id} className="p-4 flex flex-col gap-3 bg-white dark:bg-[#101a24]">
@@ -23454,6 +23679,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className="inline-flex items-center gap-1"><CalendarDays className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{formatOrderCreatedAt(order)}</span>
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
                           </div>
+                          {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
+                                {followUpReasonBadgeText(latestAttempt)}
+                              </span>
+                              {followUpReasonGroupLabel(latestAttempt) && (
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                                  {followUpReasonGroupLabel(latestAttempt)}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <div className="grid grid-cols-2 gap-2 pt-1">
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe57] transition-colors"
@@ -23463,11 +23700,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </button>
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
-                              onClick={() => openAdminOrderDetailPage(order)}
+                              onClick={() => openScopedOrderDetail(order)}
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
-                            {!isTerminal && (
+                            {!isTerminal && currentRole !== "Sales Rep" && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
@@ -23475,12 +23712,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
-                            <button
-                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
-                              onClick={() => openAdminOrderDeleteRoute(order.id)}
-                            >
-                              <Trash2 className="w-4 h-4" /> Delete
-                            </button>
+                            {currentRole !== "Sales Rep" && (
+                              <button
+                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
+                                onClick={() => openAdminOrderDeleteRoute(order.id)}
+                              >
+                                <Trash2 className="w-4 h-4" /> Delete
+                              </button>
+                            )}
                           </div>
                         </article>
                       );
@@ -23490,27 +23729,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                 {/* Table (sm and above) */}
                 <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm sticky-col-first">
+                  <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
-                        <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
-                          <input
-                            type="checkbox"
-                            className="rounded border-gray-300"
-                            checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
-                              } else {
-                                setSelectedOrderIds((prev) => {
-                                  const next = new Set(prev);
-                                  pagedOrderRows.forEach((o) => next.delete(o.id));
-                                  return next;
-                                });
-                              }
-                            }}
-                          />
-                        </th>
+                        {currentRole !== "Sales Rep" && (
+                          <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
+                            <input
+                              type="checkbox"
+                              className="rounded border-gray-300"
+                              checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
+                                } else {
+                                  setSelectedOrderIds((prev) => {
+                                    const next = new Set(prev);
+                                    pagedOrderRows.forEach((o) => next.delete(o.id));
+                                    return next;
+                                  });
+                                }
+                              }}
+                            />
+                          </th>
+                        )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
@@ -23523,30 +23764,33 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspaceTableEmpty}</td></tr>
+                        <tr><td colSpan={currentRole === "Sales Rep" ? 8 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
                           const status = order.status ?? "New";
-                          const isTerminal = status === "Delivered" || status === "Cancelled";
+                          const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           const scheduleMarker = orderScheduleMarkerForOrder(order);
+                          const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
-                              <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
-                                <input
-                                  type="checkbox"
-                                  className="rounded border-gray-300"
-                                  checked={selectedOrderIds.has(order.id)}
-                                  onChange={(e) => {
-                                    setSelectedOrderIds((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) next.add(order.id); else next.delete(order.id);
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              </td>
+                              {currentRole !== "Sales Rep" && (
+                                <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-gray-300"
+                                    checked={selectedOrderIds.has(order.id)}
+                                    onChange={(e) => {
+                                      setSelectedOrderIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </td>
+                              )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
                               <td className="px-4 py-3.5">
@@ -23568,6 +23812,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
                                   </div>
                                 ) : null}
+                                {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
+                                      {followUpReasonBadgeText(latestAttempt)}
+                                    </span>
+                                    {followUpReasonGroupLabel(latestAttempt) && (
+                                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                                        {followUpReasonGroupLabel(latestAttempt)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 {(() => {
@@ -23591,11 +23847,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   </button>
                                   <button
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
-                                    onClick={() => openAdminOrderDetailPage(order)}
+                                    onClick={() => openScopedOrderDetail(order)}
                                   >
                                     <Eye className="w-3.5 h-3.5" /> Details
                                   </button>
-                                  {!isTerminal && (
+                                  {!isTerminal && currentRole !== "Sales Rep" && (
                                     <button
                                       className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
@@ -23604,13 +23860,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                   )}
-                                  <button
-                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
-                                    title="Delete"
-                                    onClick={() => openAdminOrderDeleteRoute(order.id)}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {currentRole !== "Sales Rep" && (
+                                    <button
+                                      className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
+                                      title="Delete"
+                                      onClick={() => openAdminOrderDeleteRoute(order.id)}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -23893,6 +24151,82 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </section>
               )}
 
+              <section className="grid grid-cols-1 xl:grid-cols-[1.25fr,0.9fr,1fr] gap-4" aria-label="Journey analytics">
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Journey Funnel</h2>
+                      <p className="text-xs text-gray-500 mt-1">Based on the currently visible carts in this filter.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    {[
+                      { label: "Opened", value: abandonedCartJourneyAnalytics.funnel.opened },
+                      { label: "Reached state", value: abandonedCartJourneyAnalytics.funnel.stateSelected },
+                      { label: "Tried submit", value: abandonedCartJourneyAnalytics.funnel.submitAttempted },
+                      { label: "Submitted", value: abandonedCartJourneyAnalytics.funnel.submitted }
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                        <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Top Submit Blocks</h2>
+                      <p className="text-xs text-gray-500 mt-1">What most often stopped customers from submitting.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  {abandonedCartJourneyAnalytics.blocked.length === 0 && !abandonedCartJourneyLoading ? (
+                    <p className="mt-4 text-sm text-gray-500">No blocked-submit reasons captured in this filter yet.</p>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      {abandonedCartJourneyAnalytics.blocked.slice(0, 4).map((item) => (
+                        <div key={item.eventType} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <span className="text-sm font-medium text-gray-700">{item.label}</span>
+                          <span className="text-sm font-bold text-gray-900">{item.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900 m-0">Additional Item Interest</h2>
+                      <p className="text-xs text-gray-500 mt-1">What customers previewed, added, removed, and carried into submit.</p>
+                    </div>
+                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
+                  </div>
+                  {abandonedCartJourneyAnalytics.additionalItems.length === 0 && !abandonedCartJourneyLoading ? (
+                    <p className="mt-4 text-sm text-gray-500">No additional-item journey activity captured in this filter yet.</p>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {abandonedCartJourneyAnalytics.additionalItems.slice(0, 4).map((item) => (
+                        <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-gray-900 m-0">{item.name}</p>
+                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-1">
+                              {item.submittedWithItem} submitted
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2 mb-0">
+                            {item.previewed} viewed · {item.added} added · {item.removed} removed
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              </section>
+
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-200">
                   <h2 className="text-base font-bold text-gray-900 m-0">Captured abandoned carts</h2>
@@ -23953,6 +24287,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   ) : (
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
+                      const recovery = abandonedCartRecoveryById[cart.id];
                       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                       const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                       return (
@@ -23979,6 +24314,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Product</span>
                               <span className="text-gray-700">{cart.productName}</span>
                               <span className="text-gray-500">{cart.packageName}</span>
+                              {recovery ? (
+                                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+                                  <span className="text-[11px] text-gray-500">{recovery.summary}</span>
+                                </div>
+                              ) : null}
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Rep</span>
@@ -24092,6 +24433,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.productName}</div>
                               <div className="text-xs text-gray-400">{cart.packageName} · {formatProductMoney(cart.amount, cart.currency)}</div>
+                              {abandonedCartRecoveryById[cart.id] ? (
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(abandonedCartRecoveryById[cart.id].band)}`}>{abandonedCartRecoveryById[cart.id].band} · {abandonedCartRecoveryById[cart.id].score}</span>
+                                  <span className="text-[11px] text-gray-500">{abandonedCartRecoveryById[cart.id].summary}</span>
+                                </div>
+                              ) : null}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
