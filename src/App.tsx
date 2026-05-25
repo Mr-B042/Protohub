@@ -2714,7 +2714,7 @@ const cartJourneyEventLabel = (eventType: CartJourneyEvent["eventType"]) => {
     case "submit_blocked_missing_commitment":
       return "Blocked: missing commitment";
     default:
-      return eventType.replace(/_/g, " ");
+      return String(eventType).replace(/_/g, " ");
   }
 };
 const cartJourneyEventMeta = (event: CartJourneyEvent) => {
