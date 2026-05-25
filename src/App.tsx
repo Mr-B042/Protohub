@@ -18397,11 +18397,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       tab === "Dashboard" ? "#/dashboard/sales-rep" : `#/dashboard/sales-rep/${slugify(tab)}`,
       repIdOverride
     );
+  const repWorkspaceDetailHash = (orderId: string, tab: RepConsoleTab = repConsoleTab, repIdOverride = repConsoleRepId) => {
+    const baseHash = repTabRoute(tab, repIdOverride);
+    const [path, rawQuery = ""] = baseHash.split("?");
+    const params = new URLSearchParams(rawQuery);
+    params.set("order", orderId);
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
+  };
 
   const syncHashRoute = (nextHash: string) => {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
+
+  const activeRepOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
+  const repOrderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
+    Orders: "#/dashboard/sales-rep/orders",
+    "Follow-up Queue": "#/dashboard/sales-rep/follow-up-queue",
+    "Closed Orders": "#/dashboard/sales-rep/closed-orders"
+  };
+  const repOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeRepOrderWorkspacePage) =>
+    repRouteWithScope(`${repOrderWorkspaceHashByPage[page]}${suffix}`);
+  const isRepOrderWorkspaceHash = (value: string) =>
+    value.startsWith("#/dashboard/sales-rep/orders")
+    || value.startsWith("#/dashboard/sales-rep/follow-up-queue")
+    || value.startsWith("#/dashboard/sales-rep/closed-orders");
+
+  const activeOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
+  const activeOrderWorkspaceBaseHash = orderWorkspaceHashByPage[activeOrderWorkspacePage];
+  const adminOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeOrderWorkspacePage) =>
+    `${orderWorkspaceHashByPage[page]}${suffix}`;
+  const isAdminOrderWorkspaceHash = (value: string) =>
+    value.startsWith("#/dashboard/admin/orders")
+    || value.startsWith("#/dashboard/admin/follow-up-queue")
+    || value.startsWith("#/dashboard/admin/closed-orders");
 
   const openRepTab = (tab: RepConsoleTab) => {
     setRepConsoleTab(tab);
@@ -18439,33 +18469,61 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminOrderDetail = (orderId: string) => {
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      setModal("orderDetails");
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}`));
+      return;
+    }
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("orderDetails");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}`));
   };
 
   const openAdminCreateOrderRoute = () => {
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      openRepCreateOrderModal();
+      syncHashRoute(repOrderWorkspaceHash("/new"));
+      return;
+    }
+    setActivePage(activeOrderWorkspacePage);
     openCreateOrderModal();
-    syncHashRoute("#/dashboard/admin/orders/new");
+    syncHashRoute(adminOrderWorkspaceHash("/new"));
   };
 
   const openAdminOrderEditRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      if (order) {
+        openOrderModal(order, "editOrderItems");
+      } else {
+        setModal("editOrderItems");
+      }
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/edit`));
+      return;
+    }
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     if (order) {
       openOrderModal(order, "editOrderItems");
     } else {
       setModal("editOrderItems");
     }
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit`));
   };
 
   const openAdminOrderEditCustomerRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+    } else {
+      setActivePage(activeOrderWorkspacePage);
+    }
     setSelectedOrderId(orderId);
     if (order) {
       setCreateOrderCustomer(order.customer);
@@ -18479,34 +18537,61 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setCreateOrderAmount(String(order.amount ?? ""));
     }
     setModal("editOrderCustomer");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit-customer`);
+    syncHashRoute(
+      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${orderId}/edit-customer`)
+        : adminOrderWorkspaceHash(`/${orderId}/edit-customer`)
+    );
   };
 
   const openAdminOrderReassignRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setReassignRepId(order?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
     setHandoverReason("");
     setModal("reassignOrder");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/reassign`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/reassign`));
   };
 
   const openAdminOrderSendToAgentRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setCreateOrderAgentId(order?.agentId ?? "");
     setSendToAgentShowAllStates(false);
     setModal("sendToAgent");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/send-to-agent`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/send-to-agent`));
   };
 
   const openAdminOrderDeleteRoute = (orderId: string) => {
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+      setSelectedOrderId(orderId);
+      setModal("deleteOrder");
+      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/delete`));
+      return;
+    }
+    setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setModal("deleteOrder");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/delete`);
+    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/delete`));
+  };
+
+  const openScopedOrderDetail = (order: TrackedOrder) => {
+    if (currentRole === "Sales Rep") {
+      openRepOrderDetail(order);
+      return;
+    }
+    openAdminOrderDetailPage(order);
+  };
+
+  const openScopedOrderEdit = (order: TrackedOrder) => {
+    if (currentRole === "Sales Rep") {
+      openRepEditOrderCustomer(order);
+      return;
+    }
+    openAdminOrderEditRoute(order.id);
   };
 
   const openAdminOrderStatusRoute = (
@@ -18515,13 +18600,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage("Orders");
+    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
+      setActivePage(activeRepOrderWorkspacePage);
+    } else {
+      setActivePage(activeOrderWorkspacePage);
+    }
     setSelectedOrderId(orderId);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
+    syncHashRoute(
+      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
+        ? repOrderWorkspaceHash(`/${orderId}/change-status`)
+        : adminOrderWorkspaceHash(`/${orderId}/change-status`)
+    );
   };
 
   const openAdminOrderRescheduleRoute = (orderId: string, reason = "", callOutcome?: string) => {
