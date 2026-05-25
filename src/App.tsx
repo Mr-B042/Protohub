@@ -9113,8 +9113,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const repBonusProjectedExtra = repBonusCoach
     ? Math.max(0, repBonusCoach.snapshot.projectedBonusOpenPipeline - repBonusCoach.snapshot.currentBonusEarned)
     : 0;
+  const repBonusDeliveredCount = repBonusCoach?.snapshot.deliveredCount ?? 0;
+  const repBonusHasEarned = (repBonusCoach?.snapshot.currentBonusEarned ?? 0) > 0;
+  const repBonusHasOpenUpside = repBonusProjectedExtra > 0 || (repBonusCoach?.orderOpportunities.length ?? 0) > 0;
+  const repBonusZeroState = !!repBonusCoach && repBonusDeliveredCount === 0 && !repBonusHasEarned && !repBonusHasOpenUpside;
   const repBonusTierProgressPercent = !repBonusCoach
     ? 0
+    : repBonusZeroState
+      ? 0
     : repBonusCoach.snapshot.nextTierTarget && repBonusCoach.snapshot.ordersNeededForNextTier
       ? Math.max(
           0,
@@ -9123,12 +9129,69 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             ((repBonusCoach.snapshot.nextTierTarget - repBonusCoach.snapshot.ordersNeededForNextTier) / repBonusCoach.snapshot.nextTierTarget) * 100
           )
         )
-      : 100;
+      : repBonusDeliveredCount > 0
+        ? 100
+        : 0;
   const repBonusRateProgressPercent = !repBonusCoach
     ? 0
+    : repBonusZeroState
+      ? 0
     : repBonusCoach.snapshot.nextDeliveryRateTarget
       ? Math.max(0, Math.min(100, (repBonusCoach.snapshot.deliveryRate / repBonusCoach.snapshot.nextDeliveryRateTarget) * 100))
-      : 100;
+      : repBonusCoach.snapshot.deliveryRate > 0
+        ? 100
+        : 0;
+  const repBonusEarnedProgressPercent = !repBonusCoach
+    ? 0
+    : repBonusDeliveredCount > 0
+      ? Math.max(6, Math.min(100, repBonusDeliveredCount * 8))
+      : 0;
+  const repBonusPipelineProgressPercent = !repBonusCoach
+    ? 0
+    : repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
+      ? Math.max(
+          repBonusHasEarned ? 8 : 0,
+          Math.min(
+            100,
+            (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
+          )
+        )
+      : 0;
+  const repBonusNextUnlockValue = !repBonusCoach
+    ? "Not started yet"
+    : repBonusCoach.snapshot.ordersNeededForNextTier
+      ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more`
+      : repBonusCoach.snapshot.topPerformerGap
+        ? `${repBonusCoach.snapshot.topPerformerGap} behind`
+        : repBonusDeliveredCount > 0
+          ? "Fully unlocked"
+          : "Not started yet";
+  const repBonusNextUnlockCopy = !repBonusCoach
+    ? ""
+    : repBonusCoach.snapshot.nextTierTarget
+      ? `${repBonusCoach.snapshot.nextTierTarget} delivered orders unlock the next tier.`
+      : repBonusCoach.snapshot.topPerformerGap
+        ? `${repBonusCoach.snapshot.topPerformerGap} deliver${repBonusCoach.snapshot.topPerformerGap === 1 ? "y" : "ies"} behind the weekly leader.`
+        : repBonusZeroState
+          ? "Deliver your first qualifying order to start bonus progress this week."
+          : "No higher tier is waiting right now.";
+  const repBonusTierProgressCopy = !repBonusCoach
+    ? ""
+    : repBonusCoach.snapshot.nextTierTarget
+      ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries toward the next bonus tier`
+      : repBonusZeroState
+        ? "Deliver your first qualifying order to start bonus progress this week."
+        : "No higher weekly bonus tier is waiting right now.";
+  const repBonusRateGateCopy = !repBonusCoach
+    ? ""
+    : repBonusCoach.snapshot.nextDeliveryRateTarget
+      ? `${repBonusCoach.snapshot.deliveryRate}% now. Push to ${repBonusCoach.snapshot.nextDeliveryRateTarget}% to unlock the next gate.`
+      : repBonusZeroState
+        ? "Your first successful delivery will start delivery-rate progress for this week."
+        : "No delivery-rate gate is blocking extra bonus right now.";
+  const repBonusEmptyActionCopy = repBonusZeroState
+    ? "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
+    : "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.";
 
   useEffect(() => {
     if (activePage !== "Sales Rep Workspace" || repConsoleTab !== "Dashboard") {
@@ -17581,14 +17644,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Weekly target tracker</span>
             <strong className="block mt-2 text-lg font-bold text-violet-900">
-              {repBonusCoach?.snapshot.nextTierTarget
+              {repBonusZeroState
+                ? "Not started yet"
+                : repBonusCoach?.snapshot.nextTierTarget
                 ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries`
                 : repBonusCoach?.snapshot.nextDeliveryRateTarget
                   ? `${repBonusCoach.snapshot.deliveryRate}% of ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
-                  : "You are on track"}
+                  : "Current tier is clear"}
             </strong>
             <p className="mt-2 text-sm text-violet-800 leading-6">
-              {repBonusCoach?.snapshot.ordersNeededForNextTier
+              {repBonusZeroState
+                ? "Deliver your first qualifying order this week to start bonus progress."
+                : repBonusCoach?.snapshot.ordersNeededForNextTier
                 ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more delivery${repBonusCoach.snapshot.ordersNeededForNextTier === 1 ? "" : "ies"} unlock the next bonus tier this week.`
                 : repBonusCoach?.snapshot.deliveriesNeededForRateTarget
                   ? `${repBonusCoach.snapshot.deliveriesNeededForRateTarget} more successful delivery${repBonusCoach.snapshot.deliveriesNeededForRateTarget === 1 ? "" : "ies"} push you to the next delivery-rate gate.`
@@ -17597,7 +17664,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
               <div
                 className="h-full rounded-full bg-violet-500 transition-all"
-                style={{ width: `${Math.max(8, repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent)}%` }}
+                style={{ width: `${repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent}%` }}
               />
             </div>
           </article>
@@ -18405,11 +18472,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <article className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Bonus earned</span>
                       <strong className="block mt-2 text-2xl font-bold text-emerald-900">{formatProductMoney(repBonusCoach.snapshot.currentBonusEarned, "NGN")}</strong>
-                      <p className="mt-1 text-xs text-emerald-800">From {repBonusCoach.snapshot.deliveredCount} delivered orders this week.</p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        {repBonusDeliveredCount > 0
+                          ? `From ${repBonusDeliveredCount} delivered orders this week.`
+                          : "No bonus earned yet this week."}
+                      </p>
                       <div className="mt-3 h-2 rounded-full bg-emerald-100 overflow-hidden">
                         <div
                           className="h-full rounded-full bg-emerald-500 transition-all"
-                          style={{ width: `${Math.max(6, Math.min(100, repBonusCoach.snapshot.deliveredCount * 8))}%` }}
+                          style={{ width: `${repBonusEarnedProgressPercent}%` }}
                         />
                       </div>
                     </article>
@@ -18419,22 +18490,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <p className="mt-1 text-xs text-blue-800">
                         {repBonusProjectedExtra > 0
                           ? `${formatProductMoney(repBonusProjectedExtra, "NGN")} more is still sitting in open orders.`
-                          : "Projected if your open bonus opportunities close."}
+                          : repBonusZeroState
+                            ? "No live bonus opportunity is open yet."
+                            : "Projected if your open bonus opportunities close."}
                       </p>
                       <div className="mt-3 h-2 rounded-full bg-blue-100 overflow-hidden">
                         <div
                           className="h-full rounded-full bg-blue-500 transition-all"
-                          style={{
-                            width: `${Math.max(
-                              8,
-                              Math.min(
-                                100,
-                                repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
-                                  ? (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
-                                  : 0
-                              )
-                            )}%`
-                          }}
+                          style={{ width: `${repBonusPipelineProgressPercent}%` }}
                         />
                       </div>
                     </article>
@@ -18444,35 +18507,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <p className="mt-1 text-xs text-amber-800">
                         {repBonusCoach.snapshot.nextDeliveryRateTarget
                           ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
-                          : "No higher delivery-rate gate blocking bonus right now."}
+                          : repBonusZeroState
+                            ? "First successful delivery starts your rate progress."
+                            : "No higher delivery-rate gate blocking bonus right now."}
                       </p>
                       <div className="mt-3 h-2 rounded-full bg-amber-100 overflow-hidden">
                         <div
                           className="h-full rounded-full bg-amber-500 transition-all"
-                          style={{ width: `${Math.max(8, repBonusRateProgressPercent)}%` }}
+                          style={{ width: `${repBonusRateProgressPercent}%` }}
                         />
                       </div>
                     </article>
                     <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Next unlock</span>
-                      <strong className="block mt-2 text-xl font-bold text-violet-900">
-                        {repBonusCoach.snapshot.ordersNeededForNextTier
-                          ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more`
-                          : repBonusCoach.snapshot.topPerformerRank
-                            ? `#${repBonusCoach.snapshot.topPerformerRank}`
-                            : "On track"}
-                      </strong>
-                      <p className="mt-1 text-xs text-violet-800">
-                        {repBonusCoach.snapshot.nextTierTarget
-                          ? `${repBonusCoach.snapshot.nextTierTarget} delivered orders unlock the next tier.`
-                          : repBonusCoach.snapshot.topPerformerGap
-                            ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
-                            : "No higher tier is waiting right now."}
-                      </p>
+                      <strong className="block mt-2 text-xl font-bold text-violet-900">{repBonusNextUnlockValue}</strong>
+                      <p className="mt-1 text-xs text-violet-800">{repBonusNextUnlockCopy}</p>
                       <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
                         <div
                           className="h-full rounded-full bg-violet-500 transition-all"
-                          style={{ width: `${Math.max(8, repBonusTierProgressPercent)}%` }}
+                          style={{ width: `${repBonusTierProgressPercent}%` }}
                         />
                       </div>
                     </article>
@@ -18483,11 +18536,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tier progress</span>
-                          <p className="mt-1 text-sm font-bold text-gray-900">
-                            {repBonusCoach.snapshot.nextTierTarget
-                              ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries toward the next bonus tier`
-                              : "You are already on the highest available tier for this week."}
-                          </p>
+                          <p className="mt-1 text-sm font-bold text-gray-900">{repBonusTierProgressCopy}</p>
                         </div>
                         {repBonusCoach.snapshot.ordersNeededForNextTier && (
                           <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
@@ -18496,7 +18545,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         )}
                       </div>
                       <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                        <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${Math.max(8, repBonusTierProgressPercent)}%` }} />
+                        <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${repBonusTierProgressPercent}%` }} />
                       </div>
                     </article>
 
@@ -18504,11 +18553,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Delivery-rate gate</span>
-                          <p className="mt-1 text-sm font-bold text-gray-900">
-                            {repBonusCoach.snapshot.nextDeliveryRateTarget
-                              ? `${repBonusCoach.snapshot.deliveryRate}% now. Push to ${repBonusCoach.snapshot.nextDeliveryRateTarget}% to unlock the next gate.`
-                              : "No delivery-rate gate is blocking extra bonus right now."}
-                          </p>
+                          <p className="mt-1 text-sm font-bold text-gray-900">{repBonusRateGateCopy}</p>
                         </div>
                         {repBonusCoach.snapshot.deliveriesNeededForRateTarget && (
                           <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
@@ -18517,7 +18562,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         )}
                       </div>
                       <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                        <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${Math.max(8, repBonusRateProgressPercent)}%` }} />
+                        <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${repBonusRateProgressPercent}%` }} />
                       </div>
                     </article>
                   </div>
@@ -18547,7 +18592,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                     {repBonusCoach.motivators.length === 0 ? (
                       <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-500">
-                        No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.
+                        {repBonusEmptyActionCopy}
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
