@@ -2651,6 +2651,84 @@ const liveFormPulseEventLabel = (eventType: string) => {
       return eventType.replace(/_/g, " ");
   }
 };
+const cartJourneyEventLabel = (eventType: CartJourneyEvent["eventType"]) => {
+  switch (eventType) {
+    case "form_opened":
+      return "Opened form";
+    case "first_interaction":
+      return "Started filling form";
+    case "package_selected":
+      return "Selected package";
+    case "state_selected":
+      return "Selected state";
+    case "additional_item_preview_opened":
+      return "Opened extra offers";
+    case "additional_item_added":
+      return "Added extra item";
+    case "additional_item_removed":
+      return "Removed extra item";
+    case "submit_attempted":
+      return "Tried to submit";
+    case "order_submitted":
+      return "Submitted order";
+    case "redirect_triggered":
+      return "Redirected for contact";
+    case "cart_date_changed":
+      return "Changed cart date";
+    case "order_date_changed":
+      return "Changed order date";
+    case "order_assigned":
+      return "Assigned to rep";
+    case "order_reassigned":
+      return "Reassigned order";
+    case "delivery_agent_assigned":
+      return "Assigned delivery agent";
+    case "delivery_agent_reassigned":
+      return "Reassigned delivery agent";
+    case "order_status_changed":
+      return "Order status changed";
+    case "contact_attempt_logged":
+      return "Logged contact attempt";
+    case "form_exited":
+      return "Left the form";
+    case "submit_blocked_missing_name":
+      return "Blocked: missing name";
+    case "submit_blocked_missing_phone":
+      return "Blocked: missing phone";
+    case "submit_blocked_invalid_phone":
+      return "Blocked: invalid phone";
+    case "submit_blocked_missing_whatsapp":
+      return "Blocked: missing WhatsApp";
+    case "submit_blocked_invalid_whatsapp":
+      return "Blocked: invalid WhatsApp";
+    case "submit_blocked_missing_address":
+      return "Blocked: missing address";
+    case "submit_blocked_missing_city":
+      return "Blocked: missing city";
+    case "submit_blocked_missing_state":
+      return "Blocked: missing state";
+    case "submit_blocked_missing_delivery":
+      return "Blocked: missing delivery timing";
+    case "submit_blocked_missing_confirmation":
+      return "Blocked: missing confirmation";
+    case "submit_blocked_missing_commitment":
+      return "Blocked: missing commitment";
+    default:
+      return eventType.replace(/_/g, " ");
+  }
+};
+const cartJourneyEventMeta = (event: CartJourneyEvent) => {
+  const entries = [
+    event.state ? `State: ${event.state}` : null,
+    typeof event.metadata?.field === "string" ? `Field: ${event.metadata.field}` : null,
+    typeof event.metadata?.packageName === "string" ? `Package: ${event.metadata.packageName}` : null,
+    typeof event.metadata?.companionProductName === "string" ? `Extra: ${event.metadata.companionProductName}` : null,
+    typeof event.metadata?.status === "string" ? `Status: ${event.metadata.status}` : null,
+    typeof event.metadata?.agentName === "string" ? `Agent: ${event.metadata.agentName}` : null,
+    typeof event.metadata?.repName === "string" ? `Rep: ${event.metadata.repName}` : null
+  ].filter(Boolean) as string[];
+  return entries.length > 0 ? entries.join(" · ") : null;
+};
 const liveFormPulseLastSeenAt = (pulse?: LiveFormPulseResponse | null) => {
   if (!pulse) return null;
   return [
@@ -4363,6 +4441,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
+  const [selectedCartJourneyEvents, setSelectedCartJourneyEvents] = useState<CartJourneyEvent[]>([]);
+  const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
@@ -5619,6 +5699,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
+  useEffect(() => {
+    if (modal !== "cartDetails" || !selectedCartId) {
+      setSelectedCartJourneyEvents([]);
+      setSelectedCartJourneyLoading(false);
+      return;
+    }
+
+    const cached = adTrackingCartJourneyMap[selectedCartId];
+    if (cached) {
+      setSelectedCartJourneyEvents(cached);
+    }
+
+    let cancelled = false;
+    const loadJourney = async () => {
+      setSelectedCartJourneyLoading(true);
+      try {
+        const grouped = await cartsApi.journeyBulk([selectedCartId]);
+        if (cancelled) return;
+        const normalized = Array.isArray(grouped?.[selectedCartId])
+          ? grouped[selectedCartId].map((event) => normalizeCartJourneyEvent(event))
+          : [];
+        setSelectedCartJourneyEvents(normalized);
+        setAdTrackingCartJourneyMap((value) => ({ ...value, [selectedCartId]: normalized }));
+      } catch {
+        if (!cancelled && !cached) {
+          setSelectedCartJourneyEvents([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedCartJourneyLoading(false);
+        }
+      }
+    };
+
+    void loadJourney();
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, selectedCartId]);
   useEffect(() => {
     if (!selectedOrderId) {
       return;
@@ -12919,6 +13038,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminHashByLabel: Record<string, string> = {
       Dashboard: "#/dashboard/admin",
       Orders: "#/dashboard/admin/orders",
+      "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
+      "Closed Orders": "#/dashboard/admin/closed-orders",
       "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
       "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
       Deliveries: "#/dashboard/admin/deliveries",
@@ -12955,9 +13076,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
-    if (label === "Orders") {
+    if (label === "Orders" || label === "Follow-up Queue" || label === "Closed Orders") {
       syncAdminHash(label);
-      setActivePage("Orders");
+      setActivePage(label as ActivePage);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -34247,6 +34368,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.whatsapp}</p>
 	                      </div>
 	                    )}
+                      {(selectedOrder.whatsapp || selectedOrder.phone) && (
+                        <div className="col-span-2 flex flex-wrap gap-2 pt-1">
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90"
+                            onClick={() => openWhatsAppForOrder(selectedOrder)}
+                          >
+                            <WhatsAppIcon className="w-3.5 h-3.5" /> Open WhatsApp
+                          </button>
+                          <button
+                            type="button"
+                            className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
+                            onClick={() => copyText(buildOrderWhatsAppMessage(selectedOrder), `${selectedOrder.customer} WhatsApp message`)}
+                          >
+                            <Copy className="w-3.5 h-3.5" /> Copy WhatsApp text
+                          </button>
+                        </div>
+                      )}
 	                  </div>
 	                </section>
 	
@@ -35263,6 +35402,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
 	                        </button>
 	                      )}
+                        {(selectedCart.whatsapp || selectedCart.phone) && (
+                          <button
+                            type="button"
+                            onClick={() => copyText(buildCartWhatsAppMessage(selectedCart), `${selectedCart.customer || "Customer"} WhatsApp message`)}
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
+                            <Copy className="w-3.5 h-3.5" /> Copy WhatsApp text
+                          </button>
+                        )}
 	                      {phoneClean && (
 	                        <a href={`tel:${phoneClean}`}
 	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
@@ -35319,6 +35466,35 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         )}
 	                    </div>
 	                  </section>
+
+                      <section>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer Journey</h4>
+                        {selectedCartJourneyLoading ? (
+                          <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500">Loading customer journey…</div>
+                        ) : selectedCartJourneyEvents.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500">No customer-journey events have been captured for this cart yet.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {[...selectedCartJourneyEvents]
+                              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                              .slice(0, 8)
+                              .map((event) => {
+                                const meta = cartJourneyEventMeta(event);
+                                return (
+                                  <div key={event.id} className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="m-0 text-sm font-semibold text-gray-900">{cartJourneyEventLabel(event.eventType)}</p>
+                                        {meta ? <p className="m-0 mt-1 text-xs text-gray-500">{meta}</p> : null}
+                                      </div>
+                                      <span className="shrink-0 text-[11px] font-medium text-gray-400">{formatMoment(event.createdAt)}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </section>
 
 	                  {/* Actions */}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
