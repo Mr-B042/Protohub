@@ -8484,6 +8484,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     (sum, order) => sum + computeOrderBonus(order, pfDeliveryRateExact, pfRevenuePerDelivered, pfOrders.length).total,
     0
   ) : 0;
+  const orderWorkspaceFinancialMetric = canViewOrderBonusEstimate
+    ? { label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" }
+    : { label: "Revenue", value: formatMoney(pfRevenue), sub: "from delivered orders", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" };
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
@@ -8541,9 +8544,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       : [
           { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
           { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-          ...(canViewOrderBonusEstimate
-            ? [{ label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" }]
-            : []),
+          orderWorkspaceFinancialMetric,
           { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
         ];
   const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
