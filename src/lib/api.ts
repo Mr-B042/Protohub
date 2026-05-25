@@ -211,6 +211,13 @@ export const authApi = {
     workingDays?: string[];
     workingDayStart?: string;
     workingDayEnd?: string;
+    smartStockRules?: {
+      demandLookbackDays: number;
+      dormantDays: number;
+      criticalDaysCover: number;
+      watchDaysCover: number;
+      lowStockThreshold: number;
+    };
     adTrackingLabels?: {
       campaigns: Record<string, string>;
       creatives: Record<string, string>;
@@ -228,6 +235,13 @@ export const authApi = {
     workingDays?: string[];
     workingDayStart?: string;
     workingDayEnd?: string;
+    smartStockRules?: {
+      demandLookbackDays: number;
+      dormantDays: number;
+      criticalDaysCover: number;
+      watchDaysCover: number;
+      lowStockThreshold: number;
+    };
   }) =>
     patch<{
       name: string;
@@ -240,6 +254,13 @@ export const authApi = {
       workingDays: string[];
       workingDayStart: string;
       workingDayEnd: string;
+      smartStockRules?: {
+        demandLookbackDays: number;
+        dormantDays: number;
+        criticalDaysCover: number;
+        watchDaysCover: number;
+        lowStockThreshold: number;
+      };
     }>("/api/auth/org-branding", body),
   saveAdTrackingLabels: (body: {
     campaigns?: Record<string, string>;
@@ -428,6 +449,7 @@ export const notificationsApi = {
       recentUnits: number;
       openOrders: number;
       daysCover?: number;
+      lookbackDays?: number;
       severity: "stockout" | "critical" | "watch";
       salesRepRecipientIds?: string[];
     }>;

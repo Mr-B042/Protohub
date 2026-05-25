@@ -141,7 +141,10 @@ const checks = [
       "salesRepRecipientIds",
       "Simple rule: the system asks",
       "Low stock + customers ordering = restock soon or confirm carefully.",
-      "Low stock + no recent orders = watch it, but do not panic."
+      "Low stock + no recent orders = watch it, but do not panic.",
+      "Smart Stock Rules",
+      "It is a rolling window, not a fixed calendar week/month.",
+      "smartStockRules"
     ]
   },
   {

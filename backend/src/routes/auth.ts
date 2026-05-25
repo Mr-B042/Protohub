@@ -40,6 +40,63 @@ const sanitizeAdTrackingLabelMap = (value: unknown) => {
   return next;
 };
 
+const DEFAULT_SMART_STOCK_RULES = {
+  demandLookbackDays: 7,
+  dormantDays: 21,
+  criticalDaysCover: 2,
+  watchDaysCover: 5,
+  lowStockThreshold: 5
+};
+
+const clampSmartStockNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+};
+
+const sanitizeSmartStockRules = (value: unknown) => {
+  const row = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const demandLookbackDays = clampSmartStockNumber(
+    row.demandLookbackDays ?? row.smart_stock_lookback_days,
+    DEFAULT_SMART_STOCK_RULES.demandLookbackDays,
+    1,
+    60
+  );
+  const dormantDays = Math.max(
+    demandLookbackDays,
+    clampSmartStockNumber(
+      row.dormantDays ?? row.smart_stock_dormant_days,
+      DEFAULT_SMART_STOCK_RULES.dormantDays,
+      1,
+      120
+    )
+  );
+  const criticalDaysCover = clampSmartStockNumber(
+    row.criticalDaysCover ?? row.smart_stock_critical_days_cover,
+    DEFAULT_SMART_STOCK_RULES.criticalDaysCover,
+    1,
+    30
+  );
+  const watchDaysCover = Math.max(
+    criticalDaysCover,
+    clampSmartStockNumber(
+      row.watchDaysCover ?? row.smart_stock_watch_days_cover,
+      DEFAULT_SMART_STOCK_RULES.watchDaysCover,
+      1,
+      60
+    )
+  );
+  const lowStockThreshold = clampSmartStockNumber(
+    row.lowStockThreshold ?? row.smart_stock_low_threshold,
+    DEFAULT_SMART_STOCK_RULES.lowStockThreshold,
+    0,
+    1000
+  );
+  return { demandLookbackDays, dormantDays, criticalDaysCover, watchDaysCover, lowStockThreshold };
+};
+
 const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) => ({
   ...row,
   permissions: sanitizeStoredPermissionList(row.permissions),
@@ -209,7 +266,8 @@ router.post("/refresh", async (req, res) => {
 // localStorage when an Owner/Admin has bumped the version.
 router.get("/me", requireAuth, async (req, res) => {
   touchUserPresence(req.user!.id).catch(() => {});
-  const orgSelectBase = "cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  const orgSelectLegacy = "cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  const orgSelectBase = `${orgSelectLegacy}, smart_stock_lookback_days, smart_stock_dormant_days, smart_stock_critical_days_cover, smart_stock_watch_days_cover, smart_stock_low_threshold`;
   const orgSelectWithAdTracking = `${orgSelectBase}, ad_tracking_campaign_labels, ad_tracking_creative_labels`;
   let org: Record<string, unknown> | null = null;
   let orgError: { code?: string; message?: string } | null = null;
@@ -220,7 +278,7 @@ router.get("/me", requireAuth, async (req, res) => {
     .single();
   org = initialOrgQuery.data as Record<string, unknown> | null;
   orgError = initialOrgQuery.error;
-  if (orgError && (orgError.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels/i.test(orgError.message ?? ""))) {
+  if (orgError && (orgError.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels|smart_stock_/i.test(orgError.message ?? ""))) {
     const fallback = await supabase
       .from("organizations")
       .select(orgSelectBase)
@@ -228,12 +286,21 @@ router.get("/me", requireAuth, async (req, res) => {
       .single();
     org = fallback.data as Record<string, unknown> | null;
     orgError = fallback.error;
+    if (orgError && (orgError.code === "42703" || /smart_stock_/i.test(orgError.message ?? ""))) {
+      const legacyFallback = await supabase
+        .from("organizations")
+        .select(orgSelectLegacy)
+        .eq("id", req.user!.orgId)
+        .single();
+      org = legacyFallback.data as Record<string, unknown> | null;
+      orgError = legacyFallback.error;
+    }
   }
   if (orgError) {
     res.status(500).json({ error: orgError.message });
     return;
   }
-  res.json({
+  const response: Record<string, unknown> = {
     user: req.user,
     cacheVersion: org?.cache_version ?? 0,
     branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" },
@@ -251,7 +318,11 @@ router.get("/me", requireAuth, async (req, res) => {
       campaigns: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_campaign_labels),
       creatives: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_creative_labels)
     }
-  });
+  };
+  if (org && Object.prototype.hasOwnProperty.call(org, "smart_stock_lookback_days")) {
+    response.smartStockRules = sanitizeSmartStockRules(org);
+  }
+  res.json(response);
 });
 
 // ── POST /api/auth/presence ───────────────────────────────
@@ -281,19 +352,49 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
   if (typeof req.body.timezone === "string" && req.body.timezone.trim()) updates.timezone = req.body.timezone.trim();
   if (typeof req.body.adminCartNotifications === "boolean") updates.admin_cart_notifications = req.body.adminCartNotifications;
+  let requestedSmartStockRules: ReturnType<typeof sanitizeSmartStockRules> | null = null;
+  if (req.body.smartStockRules && typeof req.body.smartStockRules === "object" && !Array.isArray(req.body.smartStockRules)) {
+    const smartStockRules = sanitizeSmartStockRules(req.body.smartStockRules);
+    requestedSmartStockRules = smartStockRules;
+    updates.smart_stock_lookback_days = smartStockRules.demandLookbackDays;
+    updates.smart_stock_dormant_days = smartStockRules.dormantDays;
+    updates.smart_stock_critical_days_cover = smartStockRules.criticalDaysCover;
+    updates.smart_stock_watch_days_cover = smartStockRules.watchDaysCover;
+    updates.smart_stock_low_threshold = smartStockRules.lowStockThreshold;
+  }
   if (typeof req.body.workingScheduleEnabled === "boolean") updates.working_schedule_enabled = req.body.workingScheduleEnabled;
   if (Array.isArray(req.body.workingDays)) updates.working_days = normalizeWorkingDays(req.body.workingDays);
   if (typeof req.body.workingDayStart === "string" && req.body.workingDayStart.trim()) updates.working_day_start = req.body.workingDayStart.trim();
   if (typeof req.body.workingDayEnd === "string" && req.body.workingDayEnd.trim()) updates.working_day_end = req.body.workingDayEnd.trim();
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
-  const { data, error } = await supabase
+  const orgSettingsSelect = "name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  let { data, error } = await supabase
     .from("organizations")
     .update(updates)
     .eq("id", req.user!.orgId)
-    .select("name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end")
+    .select(orgSettingsSelect)
     .single();
+  if (error && requestedSmartStockRules && (error.code === "42703" || /smart_stock_/i.test(error.message ?? ""))) {
+    const fallbackUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([key]) => !key.startsWith("smart_stock_"))
+    );
+    const retry = Object.keys(fallbackUpdates).length > 0
+      ? await supabase
+        .from("organizations")
+        .update(fallbackUpdates)
+        .eq("id", req.user!.orgId)
+        .select(orgSettingsSelect)
+        .single()
+      : await supabase
+        .from("organizations")
+        .select(orgSettingsSelect)
+        .eq("id", req.user!.orgId)
+        .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({
+  const response: Record<string, unknown> = {
     name: data?.name ?? "",
     logoUrl: data?.logo_url ?? "",
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
@@ -304,7 +405,11 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
     workingDays: normalizeWorkingDays(data?.working_days),
     workingDayStart: typeof data?.working_day_start === "string" && data.working_day_start.trim() ? data.working_day_start.trim() : "08:00",
     workingDayEnd: typeof data?.working_day_end === "string" && data.working_day_end.trim() ? data.working_day_end.trim() : "18:00"
-  });
+  };
+  if (requestedSmartStockRules) {
+    response.smartStockRules = requestedSmartStockRules;
+  }
+  res.json(response);
 });
 
 const AdTrackingLabelsSchema = z.object({

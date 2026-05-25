@@ -247,6 +247,13 @@ type SettingsPanel = "workspace" | "email" | "sms";
 type DisplayDensity = "compact" | "comfortable";
 type RevenueCompareMode = "periods" | "statuses";
 type WorkingDayName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
+type SmartStockRules = {
+  demandLookbackDays: number;
+  dormantDays: number;
+  criticalDaysCover: number;
+  watchDaysCover: number;
+  lowStockThreshold: number;
+};
 type EmailTemplateConfig = { subject: string; body: string };
 type EmailSettingsState = {
   enabled: boolean;
@@ -3788,7 +3795,8 @@ const storageKeys = {
   formOrderSummaryEnabled: "protohub.formOrderSummaryEnabled",
   customerFlags:           "protohub.customerFlags",
   companyLogo:             "protohub.companyLogo",
-  companyName:             "protohub.companyName"
+  companyName:             "protohub.companyName",
+  smartStockRules:         "protohub.smartStockRules"
 };
 
 const defaultUsers: ManagedUser[] = [];
@@ -3893,6 +3901,53 @@ const SMART_STOCK_CRITICAL_DAYS_COVER = 2;
 const SMART_STOCK_WATCH_DAYS_COVER = 5;
 const SMART_STOCK_NOTIFICATION_LIMIT = 6;
 
+const DEFAULT_SMART_STOCK_RULES: SmartStockRules = {
+  demandLookbackDays: SMART_STOCK_LOOKBACK_DAYS,
+  dormantDays: SMART_STOCK_DORMANT_DAYS,
+  criticalDaysCover: SMART_STOCK_CRITICAL_DAYS_COVER,
+  watchDaysCover: SMART_STOCK_WATCH_DAYS_COVER,
+  lowStockThreshold: STATE_STOCK_LOW_THRESHOLD
+};
+
+const clampSmartStockNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+};
+
+const sanitizeSmartStockRules = (value?: Partial<SmartStockRules> | null): SmartStockRules => {
+  const demandLookbackDays = clampSmartStockNumber(value?.demandLookbackDays, DEFAULT_SMART_STOCK_RULES.demandLookbackDays, 1, 60);
+  const dormantDays = Math.max(
+    demandLookbackDays,
+    clampSmartStockNumber(value?.dormantDays, DEFAULT_SMART_STOCK_RULES.dormantDays, 1, 120)
+  );
+  const criticalDaysCover = clampSmartStockNumber(value?.criticalDaysCover, DEFAULT_SMART_STOCK_RULES.criticalDaysCover, 1, 30);
+  const watchDaysCover = Math.max(
+    criticalDaysCover,
+    clampSmartStockNumber(value?.watchDaysCover, DEFAULT_SMART_STOCK_RULES.watchDaysCover, 1, 60)
+  );
+  const lowStockThreshold = clampSmartStockNumber(value?.lowStockThreshold, DEFAULT_SMART_STOCK_RULES.lowStockThreshold, 0, 1000);
+  return { demandLookbackDays, dormantDays, criticalDaysCover, watchDaysCover, lowStockThreshold };
+};
+
+const smartStockPresetRules: Array<{ label: string; helper: string; value: SmartStockRules }> = [
+  {
+    label: "Daily",
+    helper: "Very fast market. Looks at today's movement.",
+    value: sanitizeSmartStockRules({ demandLookbackDays: 1, dormantDays: 7, criticalDaysCover: 1, watchDaysCover: 2, lowStockThreshold: 5 })
+  },
+  {
+    label: "Weekly",
+    helper: "Recommended. Looks at the last 7 rolling days.",
+    value: DEFAULT_SMART_STOCK_RULES
+  },
+  {
+    label: "Monthly",
+    helper: "Slower market. Looks at the last 30 rolling days.",
+    value: sanitizeSmartStockRules({ demandLookbackDays: 30, dormantDays: 60, criticalDaysCover: 5, watchDaysCover: 10, lowStockThreshold: 5 })
+  }
+];
+
 type SmartStockDemandSignal = {
   productId: string;
   productName: string;
@@ -3944,13 +3999,13 @@ const SmartStockPlainGuide = ({ audience = "admin" }: SmartStockPlainGuideProps)
 );
 
 // ── stateStockStatusMeta ────────────────────
-const stateStockStatusMeta = (quantity: number) =>
+const stateStockStatusMeta = (quantity: number, lowThreshold = STATE_STOCK_LOW_THRESHOLD) =>
   quantity <= 0
     ? {
         label: "No stock",
         className: "border-rose-200 bg-rose-50 text-rose-700"
       }
-    : quantity <= STATE_STOCK_LOW_THRESHOLD
+    : quantity <= lowThreshold
       ? {
           label: "Low stock",
           className: "border-amber-200 bg-amber-50 text-amber-700"
@@ -4970,6 +5025,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [companyLogo, setCompanyLogo] = useState<string>(() => readStored<string>(storageKeys.companyLogo, ""));
   const [companyName, setCompanyName] = useState<string>(() => readStored<string>(storageKeys.companyName, "Protohub"));
   const [adminCartNotifications, setAdminCartNotifications] = useState(false);
+  const [smartStockRules, setSmartStockRules] = useState<SmartStockRules>(() =>
+    sanitizeSmartStockRules(readStored<Partial<SmartStockRules>>(storageKeys.smartStockRules, DEFAULT_SMART_STOCK_RULES))
+  );
   const [emailSettings, setEmailSettings] = useState<EmailSettingsState | null>(null);
   const [emailSettingsLoading, setEmailSettingsLoading] = useState(false);
   const [emailSettingsSaving, setEmailSettingsSaving] = useState(false);
@@ -5008,6 +5066,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const payrollSyncedRef = useRef({ enabled: false, amount: 0 });
   const timezoneSyncedRef = useRef("");
   const adminCartSyncedRef = useRef(false);
+  const smartStockRulesSyncedRef = useRef<SmartStockRules>(DEFAULT_SMART_STOCK_RULES);
   const workingScheduleSyncedRef = useRef({
     enabled: false,
     days: [...DEFAULT_WORKING_DAYS] as WorkingDayName[],
@@ -5023,8 +5082,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const orderUpsellSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveTimerRef = useRef<Record<string, number>>({});
+  const smartStockLookbackDays = smartStockRules.demandLookbackDays;
+  const smartStockDormantDays = smartStockRules.dormantDays;
+  const smartStockCriticalDaysCover = smartStockRules.criticalDaysCover;
+  const smartStockWatchDaysCover = smartStockRules.watchDaysCover;
+  const smartStockLowStockThreshold = smartStockRules.lowStockThreshold;
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
+  useEffect(() => { writeStored(storageKeys.smartStockRules, smartStockRules); }, [smartStockRules]);
   useEffect(() => {
     if (!emailTestRecipient && authUser?.email) setEmailTestRecipient(authUser.email);
   }, [authUser?.email, emailTestRecipient]);
@@ -5490,6 +5555,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setAdminCartNotifications(res.adminCartNotifications);
         adminCartSyncedRef.current = res.adminCartNotifications;
       }
+      if (res?.smartStockRules) {
+        const nextSmartStockRules = sanitizeSmartStockRules(res.smartStockRules);
+        setSmartStockRules(nextSmartStockRules);
+        smartStockRulesSyncedRef.current = nextSmartStockRules;
+      } else {
+        smartStockRulesSyncedRef.current = sanitizeSmartStockRules(smartStockRules);
+      }
       if (typeof res?.workingScheduleEnabled === "boolean") {
         setWorkingScheduleEnabled(res.workingScheduleEnabled);
       }
@@ -5577,17 +5649,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const timezoneChanged =
       !!timezoneSetting && timezoneSyncedRef.current !== timezoneSetting;
     const cartNotifChanged = adminCartSyncedRef.current !== adminCartNotifications;
+    const nextSmartStockRules = sanitizeSmartStockRules(smartStockRules);
+    const smartStockRulesChanged = JSON.stringify(smartStockRulesSyncedRef.current) !== JSON.stringify(nextSmartStockRules);
     const workingScheduleChanged =
       workingScheduleSyncedRef.current.enabled !== workingScheduleEnabled ||
       workingScheduleSyncedRef.current.start !== workingDayStart ||
       workingScheduleSyncedRef.current.end !== workingDayEnd ||
       JSON.stringify(workingScheduleSyncedRef.current.days) !== JSON.stringify(workingDaysSetting);
-    if (!brandingChanged && !payrollChanged && !timezoneChanged && !cartNotifChanged && !workingScheduleChanged) return;
+    if (!brandingChanged && !payrollChanged && !timezoneChanged && !cartNotifChanged && !smartStockRulesChanged && !workingScheduleChanged) return;
     const body: Record<string, unknown> = {};
     if (brandingChanged) { body.name = companyName; body.logoUrl = companyLogo; }
     if (payrollChanged)  { body.topPerformerBonusEnabled = topPerformerBonusEnabled; body.topPerformerBonusAmount = bonusAmtNum; }
     if (timezoneChanged) { body.timezone = timezoneSetting; }
     if (cartNotifChanged) { body.adminCartNotifications = adminCartNotifications; }
+    if (smartStockRulesChanged) { body.smartStockRules = nextSmartStockRules; }
     if (workingScheduleChanged) {
       body.workingScheduleEnabled = workingScheduleEnabled;
       body.workingDays = workingDaysSetting;
@@ -5607,6 +5682,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           };
           timezoneSyncedRef.current = saved?.timezone ?? timezoneSetting;
           adminCartSyncedRef.current = saved?.adminCartNotifications ?? adminCartNotifications;
+          smartStockRulesSyncedRef.current = sanitizeSmartStockRules(saved?.smartStockRules ?? nextSmartStockRules);
           workingScheduleSyncedRef.current = {
             enabled: !!saved?.workingScheduleEnabled,
             days: Array.isArray(saved?.workingDays) && saved.workingDays.length
@@ -5619,7 +5695,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         .catch((err: any) => { showToast(`Settings sync failed: ${err.message}`); });
     }, 600);
     return () => clearTimeout(handle);
-  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
+  }, [companyName, companyLogo, topPerformerBonusEnabled, topPerformerBonusAmount, timezoneSetting, adminCartNotifications, smartStockRules, workingScheduleEnabled, workingDaysSetting, workingDayStart, workingDayEnd]);
 
   // Hydrate embed settings from API once on mount.
   useEffect(() => {
@@ -7441,7 +7517,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             state,
             quantity,
             hubCount: stateHubs.length,
-            status: stateStockStatusMeta(quantity)
+            status: stateStockStatusMeta(quantity, smartStockLowStockThreshold)
           };
         })
         .filter((row) => {
@@ -7691,8 +7767,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     date.setDate(date.getDate() - daysAgo);
     return formatDateKey(date);
   };
-  const smartStockRecentStartKey = stockDemandDateKeyDaysAgo(SMART_STOCK_LOOKBACK_DAYS - 1);
-  const smartStockDormantStartKey = stockDemandDateKeyDaysAgo(SMART_STOCK_DORMANT_DAYS - 1);
+  const smartStockRecentStartKey = stockDemandDateKeyDaysAgo(smartStockLookbackDays - 1);
+  const smartStockDormantStartKey = stockDemandDateKeyDaysAgo(smartStockDormantDays - 1);
   const smartStockTodayKey = todayKey();
   const smartStockProductIds = new Set(catalogProducts.map((product) => product.id));
   const smartStockProductById = new Map(catalogProducts.map((product) => [product.id, product]));
@@ -7800,17 +7876,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       const demand = smartStockDemandByKey.get(key);
       const supply = smartStockSupplyByKey.get(key);
       const recentUnits = demand?.recentUnits ?? 0;
-      const velocity = recentUnits / SMART_STOCK_LOOKBACK_DAYS;
+      const velocity = recentUnits / smartStockLookbackDays;
       const stock = supply?.stock ?? 0;
       const daysCover = velocity > 0 ? stock / velocity : Number.POSITIVE_INFINITY;
       const hasActiveDemand = recentUnits > 0 && (demand?.recentOrderIds.size ?? 0) > 0;
-      const isLowSupply = stock <= Math.max(product.reorderPoint || 0, STATE_STOCK_LOW_THRESHOLD);
-      const isProjectedTight = hasActiveDemand && daysCover <= SMART_STOCK_WATCH_DAYS_COVER;
+      const isLowSupply = stock <= Math.max(product.reorderPoint || 0, smartStockLowStockThreshold);
+      const isProjectedTight = hasActiveDemand && daysCover <= smartStockWatchDaysCover;
       if (!hasActiveDemand || (!isLowSupply && !isProjectedTight)) return null;
 
       const severity: SmartStockDemandSignal["severity"] = stock <= 0
         ? "stockout"
-        : daysCover <= SMART_STOCK_CRITICAL_DAYS_COVER || stock <= 2
+        : daysCover <= smartStockCriticalDaysCover || stock <= 2
           ? "critical"
           : "watch";
       return {
@@ -7853,7 +7929,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       const state = smartStockStateByKey.get(key) ?? "";
       const demand = smartStockDemandByKey.get(key);
       if (!product || !state) return null;
-      if (supply.stock <= 0 || supply.stock > Math.max(product.reorderPoint || 0, STATE_STOCK_LOW_THRESHOLD)) return null;
+      if (supply.stock <= 0 || supply.stock > Math.max(product.reorderPoint || 0, smartStockLowStockThreshold)) return null;
       if ((demand?.longWindowUnits ?? 0) > 0) return null;
       return {
         productId,
@@ -11738,12 +11814,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       recentUnits: signal.recentUnits,
       openOrders: signal.openOrders,
       daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
+      lookbackDays: smartStockLookbackDays,
       severity: signal.severity,
       salesRepRecipientIds: Array.from(relatedRepIds)
     };
   }).filter((signal) => canTriggerTeamStockRiskNotifications || (authUser?.id ? signal.salesRepRecipientIds.includes(authUser.id) : false));
   const smartStockNotificationKey = smartStockNotificationPayload
-    .map((signal) => `${smartStockTodayKey}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
+    .map((signal) => `${smartStockTodayKey}:${signal.lookbackDays}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
     .join("|");
   useEffect(() => {
     if (!auth.isLoggedIn() || !hasCompletedInitialDataLoad || !smartStockNotificationKey || smartStockNotificationPayload.length === 0) {
@@ -21781,7 +21858,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <Flame className="h-4 w-4 shrink-0 text-orange-500" />
                       </div>
                       <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
-                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {SMART_STOCK_LOOKBACK_DAYS} days. {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
+                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days. {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
                       </p>
                     </article>
                   ))}
@@ -35428,6 +35505,95 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
               <section className="space-y-3">
+                <h2 className="text-base font-bold text-gray-800">Smart Stock Rules</h2>
+                <p className="text-sm text-gray-500">Control how the app decides whether low stock is urgent, normal, or dormant.</p>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
+                  <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4">
+                    <p className="text-sm font-extrabold text-orange-950">How it works today</p>
+                    <p className="mt-1 text-sm leading-6 text-orange-900">
+                      It is a rolling window, not a fixed calendar week/month. Right now the app looks back <strong>{smartStockLookbackDays} day{smartStockLookbackDays === 1 ? "" : "s"}</strong> from today to see what customers are ordering.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-xl bg-white/80 px-3 py-2">
+                        <span className="font-black uppercase tracking-wide text-orange-700">Fast-moving</span>
+                        <p className="mt-1 text-orange-900">Orders in last {smartStockLookbackDays} day{smartStockLookbackDays === 1 ? "" : "s"} + low stock.</p>
+                      </div>
+                      <div className="rounded-xl bg-white/80 px-3 py-2">
+                        <span className="font-black uppercase tracking-wide text-orange-700">Dormant</span>
+                        <p className="mt-1 text-orange-900">Low stock, but no orders in {smartStockDormantDays} day{smartStockDormantDays === 1 ? "" : "s"}.</p>
+                      </div>
+                      <div className="rounded-xl bg-white/80 px-3 py-2">
+                        <span className="font-black uppercase tracking-wide text-orange-700">Stock cover</span>
+                        <p className="mt-1 text-orange-900">Critical at {smartStockCriticalDaysCover} day{smartStockCriticalDaysCover === 1 ? "" : "s"} cover, watch at {smartStockWatchDaysCover}.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {smartStockPresetRules.map((preset) => {
+                      const active = JSON.stringify(sanitizeSmartStockRules(preset.value)) === JSON.stringify(smartStockRules);
+                      return (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          className={`w-full rounded-2xl border p-4 text-left transition-colors ${active ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
+                          onClick={() => {
+                            setSmartStockRules(sanitizeSmartStockRules(preset.value));
+                            showToast(`Smart stock set to ${preset.label}.`);
+                          }}
+                        >
+                          <span className="block text-sm font-black">{preset.label}</span>
+                          <span className="mt-1 block text-xs leading-5 text-gray-500">{preset.helper}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                    {([
+                      { key: "demandLookbackDays", label: "Demand window", helper: "How many recent days count as selling now.", min: 1, max: 60 },
+                      { key: "dormantDays", label: "Dormant window", helper: "No orders for this many days means not urgent.", min: 1, max: 120 },
+                      { key: "criticalDaysCover", label: "Critical cover", helper: "Red/orange when stock may not last this many days.", min: 1, max: 30 },
+                      { key: "watchDaysCover", label: "Watch cover", helper: "Warn when stock may not last this many days.", min: 1, max: 60 },
+                      { key: "lowStockThreshold", label: "Low stock qty", helper: "State/hub quantity that counts as low.", min: 0, max: 1000 }
+                    ] as const).map((field) => (
+                      <label key={field.key} className="flex flex-col gap-1.5">
+                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{field.label}</span>
+                        <input
+                          type="number"
+                          min={field.min}
+                          max={field.max}
+                          value={smartStockRules[field.key]}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            setSmartStockRules((current) => sanitizeSmartStockRules({ ...current, [field.key]: value }));
+                          }}
+                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-[#1F8FE0]"
+                        />
+                        <span className="text-[11px] leading-4 text-gray-400">{field.helper}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                    <span>Saved automatically for the organization. Sales reps see the same smart stock rule after refresh.</span>
+                    <button
+                      type="button"
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                      onClick={() => {
+                        setSmartStockRules(DEFAULT_SMART_STOCK_RULES);
+                        showToast("Smart stock rules reset to recommended weekly defaults.");
+                      }}
+                    >
+                      Reset to weekly default
+                    </button>
+                  </div>
+                </div>
+              </section>
+              )}
+
+              {settingsPanel === "workspace" && (currentRole === "Owner" || currentRole === "Admin") && (
+              <section className="space-y-3">
                 <h2 className="text-base font-bold text-gray-800">Branding</h2>
                 <p className="text-sm text-gray-500">Your logo and company name appear in the sidebar, login screen, and on customer-facing pages.</p>
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-5">
@@ -35963,7 +36129,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                   <strong className="block">Simple stock guide</strong>
-                  <span className="text-xs leading-5 text-blue-900">No stock = <strong>0</strong> unit. Low stock = <strong>1 to {STATE_STOCK_LOW_THRESHOLD}</strong> units. Enough = <strong>{STATE_STOCK_LOW_THRESHOLD + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</span>
+                  <span className="text-xs leading-5 text-blue-900">No stock = <strong>0</strong> unit. Low stock = <strong>1 to {smartStockLowStockThreshold}</strong> units. Enough = <strong>{smartStockLowStockThreshold + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</span>
                 </div>
 
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
@@ -36058,7 +36224,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </span>
                           </div>
                           <p className="mt-2 text-xs leading-5 text-gray-700 dark:text-slate-300">
-                            {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {SMART_STOCK_LOOKBACK_DAYS} days · {signal.daysCover === 0 ? "0" : Math.max(1, Math.ceil(signal.daysCover))} day{Math.ceil(signal.daysCover) === 1 ? "" : "s"} cover.
+                            {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days · {signal.daysCover === 0 ? "0" : Math.max(1, Math.ceil(signal.daysCover))} day{Math.ceil(signal.daysCover) === 1 ? "" : "s"} cover.
                           </p>
                         </article>
                       ))}

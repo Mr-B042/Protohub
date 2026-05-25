@@ -29,15 +29,17 @@ const smartStockMessage = (signal: {
   recentUnits: number;
   openOrders: number;
   daysCover?: number;
+  lookbackDays?: number;
   state: string;
 }) => {
+  const lookbackDays = Number.isFinite(signal.lookbackDays) ? Math.max(1, Math.round(Number(signal.lookbackDays))) : 7;
   const cover = Number.isFinite(signal.daysCover)
     ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))} day${Math.ceil(Number(signal.daysCover)) === 1 ? "" : "s"} cover`
     : "cover unknown";
   const open = signal.openOrders > 0
     ? ` ${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need stock.`
     : "";
-  return `${signal.state} has ${signal.stock} left after ${signal.recentUnits} unit${signal.recentUnits === 1 ? "" : "s"} ordered in the last 7 days (${cover}).${open}`;
+  return `${signal.state} has ${signal.stock} left after ${signal.recentUnits} unit${signal.recentUnits === 1 ? "" : "s"} ordered in the last ${lookbackDays} day${lookbackDays === 1 ? "" : "s"} (${cover}).${open}`;
 };
 
 router.get("/", async (req, res) => {
@@ -97,6 +99,7 @@ router.post("/stock-risk", async (req, res) => {
     recentUnits: z.number().int().min(0),
     openOrders: z.number().int().min(0),
     daysCover: z.number().min(0).optional(),
+    lookbackDays: z.number().int().min(1).max(60).optional(),
     severity: z.enum(["stockout", "critical", "watch"]),
     salesRepRecipientIds: z.array(z.string().uuid()).optional()
   });
