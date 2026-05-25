@@ -53,7 +53,7 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
     body: "{{greeting}} {{customer}}, glad your {{product_name}} arrived. Hope you love it — if anything's off, give us a call. Would also mean a lot if you tell a friend. — {{store_name}}"
   },
   order_failed: {
-    body: "{{greeting}} {{customer}}, sorry we couldn't get your {{product_name}} delivered today. We'll call shortly to set a new time. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, your {{product_name}} delivery wasn't completed today. Call us back if you'd still like to receive it. — {{store_name}}"
   },
   order_cancelled: {
     body: "{{greeting}} {{customer}}, your order for {{product_name}} has been cancelled. If you change your mind any time, just give us a call and we'll set it up again. — {{store_name}}"
