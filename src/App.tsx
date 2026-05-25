@@ -6363,6 +6363,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderAuditLog, setOrderAuditLog] = useState<{ id: string; from_status: string | null; to_status: string; note: string | null; created_at: string; changed_by: string | null }[]>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
+  const [cartWhatsAppPicker, setCartWhatsAppPicker] = useState<null | {
+    customerName: string;
+    normalUrl: string;
+    businessUrl: string;
+  }>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentView, setAgentView] = useState<"list" | "detail">("list");
   const [agentsPeriod, setAgentsPeriod] = useState<Period>("This Month");
@@ -13547,6 +13552,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
   };
 
+  const buildWhatsAppBusinessUrl = (phone: string | null | undefined, message: string) => {
+    const normalized = normalizeWhatsAppPhone(phone);
+    if (!normalized) return null;
+    return `whatsapp-business://send?phone=${normalized}&text=${encodeURIComponent(message)}`;
+  };
+
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
     const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
     const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
@@ -13635,7 +13646,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`No valid WhatsApp number for ${customerName}.`);
       return;
     }
-    window.open(url, "_blank", "noopener,noreferrer");
+    if (/^whatsapp(?:-business)?:\/\//.test(url)) {
+      window.location.href = url;
+      return;
+    }
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      window.location.href = url;
+    }
   };
 
   const openWhatsAppForOrder = (order: TrackedOrder) => {
@@ -13650,6 +13668,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       buildWhatsAppUrl(cart.whatsapp || cart.phone, buildCartWhatsAppMessage(cart)),
       cart.customer
     );
+  };
+
+  const openCartWhatsAppPicker = (cart: AbandonedCartRecord) => {
+    const message = buildCartWhatsAppMessage(cart);
+    const normalUrl = buildWhatsAppUrl(cart.whatsapp || cart.phone, message);
+    const businessUrl = buildWhatsAppBusinessUrl(cart.whatsapp || cart.phone, message);
+    const customerName = cart.customer || "this customer";
+    if (!normalUrl || !businessUrl) {
+      showToast(`No valid WhatsApp number for ${customerName}.`);
+      return;
+    }
+    setCartWhatsAppPicker({ customerName, normalUrl, businessUrl });
   };
 
   useEffect(() => {
@@ -36289,6 +36319,76 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </div>
       )}
 
+      {cartWhatsAppPicker && (
+        <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
+          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="cart-whatsapp-picker-title">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+              <div>
+                <h3 id="cart-whatsapp-picker-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">
+                  Open WhatsApp
+                </h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                  Choose which WhatsApp app to use for {cartWhatsAppPicker.customerName}.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100"
+                aria-label="Close WhatsApp picker"
+                onClick={() => setCartWhatsAppPicker(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <button
+                type="button"
+                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
+                onClick={() => {
+                  const target = cartWhatsAppPicker.normalUrl;
+                  const customerName = cartWhatsAppPicker.customerName;
+                  setCartWhatsAppPicker(null);
+                  openWhatsAppUrl(target, customerName);
+                }}
+              >
+                <span className="inline-flex items-center gap-3">
+                  <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
+                  <span>
+                    <span className="block">Normal WhatsApp</span>
+                    <span className="block text-xs font-medium text-emerald-600/80 dark:text-emerald-200/75">Open with the standard WhatsApp app.</span>
+                  </span>
+                </span>
+                <ExternalLink className="h-4 w-4 shrink-0" />
+              </button>
+              <button
+                type="button"
+                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
+                onClick={() => {
+                  const target = cartWhatsAppPicker.businessUrl;
+                  const customerName = cartWhatsAppPicker.customerName;
+                  setCartWhatsAppPicker(null);
+                  openWhatsAppUrl(target, customerName);
+                }}
+              >
+                <span className="inline-flex items-center gap-3">
+                  <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
+                  <span>
+                    <span className="block">WhatsApp Business</span>
+                    <span className="block text-xs font-medium text-blue-600/80 dark:text-blue-200/75">Open with the WhatsApp Business app if installed.</span>
+                  </span>
+                </span>
+                <ExternalLink className="h-4 w-4 shrink-0" />
+              </button>
+            </div>
+            <div className="border-t border-gray-100 px-5 py-3 dark:border-slate-800/80">
+              <p className="m-0 text-xs text-gray-500 dark:text-slate-400">
+                If WhatsApp Business is not installed on this device, choose normal WhatsApp instead.
+              </p>
+            </div>
+          </section>
+        </div>
+      )}
+
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -38267,7 +38367,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      {whatsappClean && (
 	                        <button
 	                          type="button"
-	                          onClick={() => openWhatsAppForCart(selectedCart)}
+	                          onClick={() => openCartWhatsAppPicker(selectedCart)}
 	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90">
 	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
 	                        </button>
