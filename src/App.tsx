@@ -13612,8 +13612,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const productLabel = order.packageName
       ? `${order.productName} - ${order.packageName}`
       : order.productName;
+    const brandName = companyName || "Protohub";
+    const assignedUser = users.find((user) => user.id === order.assignedRepId);
+    const assignedSenderName = assignedUser && assignedUser.role !== "Owner" ? assignedUser.name.trim() : "";
+    const greeting = assignedSenderName
+      ? `Hi ${order.customer}, this is ${assignedSenderName} from ${brandName}.`
+      : `Hi ${order.customer}, ${brandName} here.`;
     return [
-      `Hi ${order.customer}, this is ${ownerName} from ${companyName || "Protohub"}.`,
+      greeting,
       "",
       `I'm reaching out about your order ${order.id}.`,
       `Product: ${productLabel}`,
