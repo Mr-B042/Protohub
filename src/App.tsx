@@ -7576,9 +7576,77 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setAdSpendSaving(false);
   };
 
+  // Bonus accrual + recognized profit (used by Dashboard + Finance)
+  const weekStartSundayForDateKey = (value?: string | null) => {
+    const key = normalizeDateKey(value ?? "");
+    if (!key) return null;
+    const d = new Date(`${key}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() - d.getDay());
+    return formatDateKey(d);
+  };
+  const repWeeklyBonusStats = useMemo(() => {
+    const map = new Map<string, { placed: number; delivered: number }>();
+    trackedOrders.forEach((order) => {
+      const createdKey = orderCreatedKey(order);
+      const weekKey = weekStartSundayForDateKey(createdKey);
+      if (!weekKey) return;
+      const key = `${order.assignedRepId ?? "__none__"}::${weekKey}`;
+      const current = map.get(key) ?? { placed: 0, delivered: 0 };
+      current.placed += 1;
+      if ((order.status ?? "New") === "Delivered") current.delivered += 1;
+      map.set(key, current);
+    });
+    return map;
+  }, [trackedOrders]);
+  const repWeeklyBonusContextForOrder = (order: TrackedOrder) => {
+    const weekKey = weekStartSundayForDateKey(orderCreatedKey(order));
+    const stats = weekKey ? repWeeklyBonusStats.get(`${order.assignedRepId ?? "__none__"}::${weekKey}`) : undefined;
+    if (!stats || stats.placed === 0) {
+      return { rate: 100, count: 0 };
+    }
+    return {
+      rate: Math.round((stats.delivered / stats.placed) * 100),
+      count: stats.placed
+    };
+  };
+  const recognizedBonusTotalForRows = (rows: TrackedOrder[]) =>
+    rows.reduce((sum, order) => {
+      const stats = repWeeklyBonusContextForOrder(order);
+      return sum + (computeOrderBonus(order, stats.rate, 0, stats.count).total ?? 0);
+    }, 0);
+  const summarizeRecognizedProfit = (deliveredRows: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
+    const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
+    const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
+    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const recordedDeliveryExpense = periodExpenses
+      .filter((expense) => expense.type === "Delivery")
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const recognizedLogistics = logisticsFromOrders > 0 ? logisticsFromOrders : recordedDeliveryExpense;
+    const expenseRowsExDelivery = periodExpenses.filter((expense) => expense.type !== "Delivery");
+    const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
+    const bonusEstimate = recognizedBonusTotalForRows(deliveredRows);
+    const operatingExpense = recordedOperatingExpense + bonusEstimate;
+    const grossProfit = revenue - cogs - recognizedLogistics;
+    const netProfit = grossProfit - operatingExpense;
+    return {
+      revenue,
+      cogs,
+      recognizedLogistics,
+      recordedDeliveryExpense,
+      recordedOperatingExpense,
+      bonusEstimate,
+      operatingExpense,
+      grossProfit,
+      netProfit,
+      totalRecognizedExpense: recognizedLogistics + operatingExpense
+    };
+  };
   const periodOrders = trackedOrders
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
+  const dashboardExpenseMatchesProductFilter = (expense: ExpenseRecord) =>
+    dashboardProductIds.size === 0 || !expense.productId || matchesProductFilter(expense.productId, expense.productName, dashboardProductIds);
   const dashboardOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
@@ -7586,17 +7654,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const ordersRevenue = periodDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
-  const dashboardDeliveredOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
-  const dashboardRevenue = dashboardDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
-  const dashboardCogs = dashboardDeliveredOrders.reduce((sum, order) => sum + costForOrder(order), 0);
-  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && (matchesProductFilter(expense.productId, expense.productName, dashboardProductIds)));
-  const dashboardExpenseTotal = dashboardExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const dashboardGrossProfit = dashboardRevenue - dashboardCogs;
-  const dashboardNetProfit = dashboardGrossProfit - dashboardExpenseTotal;
+  const dashboardDeliveredCohortOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
+  const dashboardDeliveredOrders = deliveredOrderRows
+    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
+    .filter((order) => isInPeriod(orderDeliveredKey(order), period, dateRange));
+  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && dashboardExpenseMatchesProductFilter(expense));
+  const dashboardProfitSummary = summarizeRecognizedProfit(dashboardDeliveredOrders, dashboardExpenses);
+  const dashboardRevenue = dashboardProfitSummary.revenue;
+  const dashboardCogs = dashboardProfitSummary.cogs;
+  const dashboardLogistics = dashboardProfitSummary.recognizedLogistics;
+  const dashboardOperatingExpense = dashboardProfitSummary.operatingExpense;
+  const dashboardRecordedExpenseTotal = dashboardExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const dashboardBonusEstimate = dashboardProfitSummary.bonusEstimate;
+  const dashboardGrossProfit = dashboardProfitSummary.grossProfit;
+  const dashboardNetProfit = dashboardProfitSummary.netProfit;
   const dashboardCancelledCount = dashboardOrders.filter((order) => (order.status ?? "New") === "Cancelled").length;
   const dashboardCancelledRate = dashboardOrders.length === 0 ? 0 : Math.round((dashboardCancelledCount / dashboardOrders.length) * 100);
   const dashboardCogsRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardCogs / dashboardRevenue) * 100);
-  const dashboardExpenseRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardExpenseTotal / dashboardRevenue) * 100);
+  const dashboardExpenseRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardOperatingExpense / dashboardRevenue) * 100);
   const dashboardNetMargin = dashboardRevenue === 0 ? 0 : Math.round((dashboardNetProfit / dashboardRevenue) * 100);
   const dashboardCarts = abandonedCarts
     .filter(c => matchesProductFilter(c.productId, c.productName, dashboardProductIds))
@@ -7606,14 +7681,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const dashboardPreviousOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter((order) => isInExplicitRange(orderCreatedKey(order), dashboardPreviousRange));
-  const dashboardPreviousDelivered = dashboardPreviousOrders.filter((order) => (order.status ?? "New") === "Delivered");
-  const dashboardPreviousRevenue = dashboardPreviousDelivered.reduce((sum, order) => sum + order.amount, 0);
-  const dashboardPreviousCogs = dashboardPreviousDelivered.reduce((sum, order) => sum + costForOrder(order), 0);
+  const dashboardPreviousDelivered = deliveredOrderRows
+    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
+    .filter((order) => isInExplicitRange(orderDeliveredKey(order), dashboardPreviousRange));
   const dashboardPreviousExpenses = expenses
-    .filter(e => matchesProductFilter(e.productId, e.productName, dashboardProductIds))
-    .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange)).reduce((sum, expense) => sum + expense.amount, 0);
-  const dashboardPreviousGrossProfit = dashboardPreviousRevenue - dashboardPreviousCogs;
-  const dashboardPreviousNetProfit = dashboardPreviousRevenue - dashboardPreviousCogs - dashboardPreviousExpenses;
+    .filter((expense) => dashboardExpenseMatchesProductFilter(expense))
+    .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange));
+  const dashboardPreviousProfitSummary = summarizeRecognizedProfit(dashboardPreviousDelivered, dashboardPreviousExpenses);
+  const dashboardPreviousRevenue = dashboardPreviousProfitSummary.revenue;
+  const dashboardPreviousGrossProfit = dashboardPreviousProfitSummary.grossProfit;
+  const dashboardPreviousNetProfit = dashboardPreviousProfitSummary.netProfit;
   const deliveredHourForOrder = (order: TrackedOrder) => {
     const rawDate = order.deliveredDate ?? order.createdAt ?? order.date;
     const parsed = rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(rawDate) : undefined;
@@ -8777,76 +8854,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const generalExpenses = totalExpenses - productLinkedExpenses;
   const dailyBurnRate = filteredExpenses.length === 0 ? 0 : Math.round(totalExpenses / Math.max(1, new Set(filteredExpenses.map((expense) => expense.date)).size));
   const expenseDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), expensePeriod, expenseDateRange));
-  const expenseRevenue = expenseDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
-  const expenseCogs = expenseDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-  const expenseNetProfit = expenseRevenue - expenseCogs - totalExpenses;
+  const expenseProfitSummary = summarizeRecognizedProfit(expenseDeliveredRows, filteredExpenses);
+  const expenseRevenue = expenseProfitSummary.revenue;
+  const expenseCogs = expenseProfitSummary.cogs;
+  const expenseLogistics = expenseProfitSummary.recognizedLogistics;
+  const expenseOperatingExpense = expenseProfitSummary.operatingExpense;
+  const expenseBonusEstimate = expenseProfitSummary.bonusEstimate;
+  const expenseNetProfit = expenseProfitSummary.netProfit;
   const expenseMargin = expenseRevenue === 0 ? 0 : Math.round((expenseNetProfit / expenseRevenue) * 1000) / 10;
-  // Bonus accrual + recognized profit (used by Dashboard + Finance)
-  const weekStartSundayForDateKey = (value?: string | null) => {
-    const key = normalizeDateKey(value ?? "");
-    if (!key) return null;
-    const d = new Date(`${key}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return null;
-    d.setDate(d.getDate() - d.getDay());
-    return formatDateKey(d);
-  };
-  const repWeeklyBonusStats = useMemo(() => {
-    const map = new Map<string, { placed: number; delivered: number }>();
-    trackedOrders.forEach((order) => {
-      const createdKey = orderCreatedKey(order);
-      const weekKey = weekStartSundayForDateKey(createdKey);
-      if (!weekKey) return;
-      const key = `${order.assignedRepId ?? "__none__"}::${weekKey}`;
-      const current = map.get(key) ?? { placed: 0, delivered: 0 };
-      current.placed += 1;
-      if ((order.status ?? "New") === "Delivered") current.delivered += 1;
-      map.set(key, current);
-    });
-    return map;
-  }, [trackedOrders]);
-  const repWeeklyBonusContextForOrder = (order: TrackedOrder) => {
-    const weekKey = weekStartSundayForDateKey(orderCreatedKey(order));
-    const stats = weekKey ? repWeeklyBonusStats.get(`${order.assignedRepId ?? "__none__"}::${weekKey}`) : undefined;
-    if (!stats || stats.placed === 0) {
-      return { rate: 100, count: 0 };
-    }
-    return {
-      rate: Math.round((stats.delivered / stats.placed) * 100),
-      count: stats.placed
-    };
-  };
-  const recognizedBonusTotalForRows = (rows: TrackedOrder[]) =>
-    rows.reduce((sum, order) => {
-      const stats = repWeeklyBonusContextForOrder(order);
-      return sum + (computeOrderBonus(order, stats.rate, 0, stats.count).total ?? 0);
-    }, 0);
-  const summarizeRecognizedProfit = (deliveredRows: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
-    const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
-    const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
-    const recordedDeliveryExpense = periodExpenses
-      .filter((expense) => expense.type === "Delivery")
-      .reduce((sum, expense) => sum + expense.amount, 0);
-    const recognizedLogistics = logisticsFromOrders > 0 ? logisticsFromOrders : recordedDeliveryExpense;
-    const expenseRowsExDelivery = periodExpenses.filter((expense) => expense.type !== "Delivery");
-    const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
-    const bonusEstimate = recognizedBonusTotalForRows(deliveredRows);
-    const operatingExpense = recordedOperatingExpense + bonusEstimate;
-    const grossProfit = revenue - cogs - recognizedLogistics;
-    const netProfit = grossProfit - operatingExpense;
-    return {
-      revenue,
-      cogs,
-      recognizedLogistics,
-      recordedDeliveryExpense,
-      recordedOperatingExpense,
-      bonusEstimate,
-      operatingExpense,
-      grossProfit,
-      netProfit,
-      totalRecognizedExpense: recognizedLogistics + operatingExpense
-    };
-  };
   const roundCash = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
   const financeStateNameForOrder = (order: TrackedOrder) => {
     const raw = order.state ?? order.location ?? "";
@@ -11055,7 +11070,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     if (card.label === "Net Profit") {
-      const expenseHelper = dashboardExpenseTotal === 0 ? "No expenses counted this period" : `${formatMoney(dashboardExpenseTotal)} expenses deducted`;
+      const expenseHelper = dashboardOperatingExpense === 0
+        ? "No operating costs counted this period"
+        : `${formatMoney(dashboardRecordedExpenseTotal)} expense rows${dashboardBonusEstimate > 0 ? ` + ${formatMoney(dashboardBonusEstimate)} bonus est.` : ""}`;
       return { ...card, value: formatMoney(dashboardNetProfit), trend: formatTrend(percentChange(dashboardNetProfit, dashboardPreviousNetProfit)), helper: expenseHelper };
     }
 
@@ -13529,7 +13546,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Total Revenue", formatMoney(dashboardRevenue)],
       ["COGS", formatMoney(dashboardCogs)],
       ["Gross Profit", formatMoney(dashboardGrossProfit)],
-      ["Expenses", formatMoney(dashboardExpenseTotal)],
+      ["Logistics", formatMoney(dashboardLogistics)],
+      ["Operating Expenses", formatMoney(dashboardOperatingExpense)],
       ["Net Profit", formatMoney(dashboardNetProfit)],
       ["Total Orders", String(dashboardOrders.length)],
       ["Fulfillment Rate", `${dashboardDeliveryRate}%`],
@@ -22685,25 +22703,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-gray-900 m-0">Dashboard Math Rules</h2>
-                    <p className="text-xs text-gray-400 m-0">Revenue and profit count only after delivery — total orders counts all created orders.</p>
+                    <p className="text-xs text-gray-400 m-0">Revenue and profit use delivered-date recognition. Total orders and fulfillment still track the orders created in this period.</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {[
-                    { label: "Revenue",       color: "blue",    formula: "SUM(grand total) where status = Delivered" },
+                    { label: "Revenue",       color: "blue",    formula: "SUM(grand total) for orders delivered in this period" },
                     { label: "COGS",          color: "orange",  formula: "Unit cost × delivered quantity" },
-                    { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} = ${formatMoney(dashboardGrossProfit)}` },
-                    { label: "Net Profit",    color: "violet",  formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardExpenseTotal)} = ${formatMoney(dashboardNetProfit)}` },
-                    { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
+                    { label: "Logistics",     color: "amber",   formula: `${formatMoney(dashboardLogistics)} recognized delivery cost${dashboardLogistics > 0 && dashboardProfitSummary.recordedDeliveryExpense > 0 && dashboardLogistics === dashboardProfitSummary.recordedDeliveryExpense ? " (expense fallback)" : ""}` },
+                    { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} − ${formatMoney(dashboardLogistics)} = ${formatMoney(dashboardGrossProfit)}` },
+                    { label: "Operating",     color: "violet",  formula: `${formatMoney(dashboardOperatingExpense)} expenses${dashboardBonusEstimate > 0 ? ` incl. ${formatMoney(dashboardBonusEstimate)} bonus est.` : ""}` },
+                    { label: "Net Profit",    color: "rose",    formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardOperatingExpense)} = ${formatMoney(dashboardNetProfit)}` },
+                    { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
                     { label: "Net Margin",    color: "rose",    formula: `Net profit / revenue = ${dashboardNetMargin}%` },
                   ].map(({ label, formula, color }) => {
                     const dotMap: Record<string, string> = {
                       blue: "bg-blue-500", orange: "bg-orange-500", emerald: "bg-emerald-500",
-                      violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500"
+                      violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500", amber: "bg-amber-500"
                     };
                     const labelMap: Record<string, string> = {
                       blue: "text-blue-700", orange: "text-orange-700", emerald: "text-emerald-700",
-                      violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700"
+                      violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700", amber: "text-amber-700"
                     };
                     return (
                       <div key={label} className="flex flex-col gap-1.5 p-3.5 bg-gray-50 rounded-xl border border-gray-100">
@@ -22720,7 +22740,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
                   <span>Revenue</span><ArrowRight className="w-3 h-3" />
                   <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
-                  <span>− Expenses ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
+                  <span>− Logistics</span><ArrowRight className="w-3 h-3" />
+                  <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
                   <strong className="text-gray-900">Net Profit</strong>
                 </div>
               </section>
@@ -28010,7 +28031,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {[
                     { label: "Gross Revenue", value: formatMoney(expenseRevenue), color: "text-green-600" },
                     { label: "Cost of Goods", value: formatMoney(expenseCogs), color: "text-red-500", op: "-" },
-                    { label: "Total Expenses", value: formatMoney(totalExpenses), color: "text-red-500", op: "-" },
+                    { label: "Logistics", value: formatMoney(expenseLogistics), color: "text-red-500", op: "-" },
+                    { label: "Operating Expenses", value: formatMoney(expenseOperatingExpense), color: "text-red-500", op: "-" },
                     { label: "Net Profit", value: formatMoney(expenseNetProfit), color: "text-[#1F8FE0]", op: "=" },
                   ].map(({ label, value, color, op }, idx) => (
                     <div key={label} className="flex items-center gap-3">
@@ -28024,7 +28046,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 <div className="flex flex-wrap gap-4 text-xs text-gray-500">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> COGS ({expenseRevenue === 0 ? 0 : Math.round((expenseCogs / expenseRevenue) * 100)}%)</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Operating Expenses ({expenseRevenue === 0 ? 0 : Math.round((totalExpenses / expenseRevenue) * 100)}%)</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Logistics ({expenseRevenue === 0 ? 0 : Math.round((expenseLogistics / expenseRevenue) * 100)}%)</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Operating Expenses ({expenseRevenue === 0 ? 0 : Math.round((expenseOperatingExpense / expenseRevenue) * 100)}%{expenseBonusEstimate > 0 ? ` · incl. ${formatMoney(expenseBonusEstimate)} bonus est.` : ""})</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Profit Margin ({expenseMargin}%)</span>
                 </div>
               </section>
