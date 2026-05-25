@@ -334,7 +334,7 @@ export const buildRepBonusSnapshot = async (
   }
 
   const rep = repResult.data as RepUser | null;
-  if (!rep || rep.role !== "Sales Rep") {
+  if (!rep) {
     throw new Error("Sales rep not found.");
   }
 
