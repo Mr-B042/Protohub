@@ -28625,11 +28625,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                     {/* Top performers — per-rep stats for the week */}
                     {(() => {
-                      // Build per-rep stats. We use CASH week for deliveries, revenue and bonus
-                      // (= what the rep gets paid this Saturday), and COHORT for the
-                      // delivery-rate against target (= quality of orders they brought in).
+                      // Build per-rep stats. This block intentionally mixes:
+                      // - delivered-this-week output (deliveries, revenue, AOV)
+                      // - cohort-week quality (rate against this week's order cohort)
+                      // The bonus shown here is the per-order estimate for this week's delivered
+                      // orders using the cohort gate, not the final payroll preview total.
                       const cashWeekRange = { start: startKey, end: endKey };
-                      const repStats = users.filter((u) => u.role === "Sales Rep" || u.role === "Owner" || u.role === "Admin").map((u) => {
+                      const repStats = users.filter((u) => u.role === "Sales Rep").map((u) => {
                         const cashOrders   = deliveredCash.filter((o) => o.assignedRepId === u.id);
                         const carryoverOrders = cashOrders.filter((o) => !isInExplicitRange(orderCreatedKey(o), cashWeekRange));
                         const cohortOrders = cohort.filter((o) => o.assignedRepId === u.id);
@@ -28637,7 +28639,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
                         const repRs   = getRepCohortStats(u.id);
-                        const bonus   = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
+                        const bonusEstimate = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
@@ -28646,7 +28648,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           delivered: cashOrders.length,
                           carryoverDelivered: carryoverOrders.length,
                           revenue,
-                          bonus,
+                          bonusEstimate,
                           aov,
                           cohortPlaced: cohortOrders.length,
                           cohortDelivered: cohortDeliveredOrders.length,
@@ -28659,7 +28661,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       .sort((a, b) => b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
-                      const totalBonus = repStats.reduce((s, r) => s + r.bonus, 0);
+                      const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
                       const totalCarryoverDelivered = repStats.reduce((s, r) => s + r.carryoverDelivered, 0);
 
@@ -28668,18 +28670,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
                               <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Cash-week delivery & bonus. Orders delivered this week count this week, even if they were placed earlier. Cohort-week delivery rate still tracks this week&apos;s placed orders against the {target}% target.</p>
+                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below.</p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
                               {totalCarryoverDelivered > 0 && (
                                 <div className="text-right">
                                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Carry-over delivered</p>
                                   <p className="text-base font-extrabold text-amber-700 m-0">{totalCarryoverDelivered}</p>
+                                  <p className="text-[10px] text-gray-400 mt-0.5">Placed before this week</p>
                                 </div>
                               )}
                               <div className="text-right">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus payable</p>
-                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonus)}</p>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
+                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">Per-order only · final payroll may differ</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Avg AOV</p>
@@ -28716,7 +28720,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       </td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
-                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonus)}</td>
+                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonusEstimate)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
                                         <span className="font-semibold text-gray-900">{r.cohortDelivered}</span>
                                         <span className="text-gray-400"> / {r.cohortPlaced}</span>
@@ -28788,7 +28792,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-xs text-blue-900 leading-relaxed">
                       <strong className="block mb-1">📖 How to read this view</strong>
                       <ul className="list-disc pl-5 m-0 space-y-1">
-                        <li><strong>Delivered week P&amp;L</strong> recognizes revenue, COGS, logistics, and bonuses on the week the orders were actually delivered.</li>
+                        <li><strong>Delivered week P&amp;L</strong> recognizes revenue, COGS, logistics, and operating costs on the week the orders were actually delivered. If your Finance period is set to this same week, the net profit should now reconcile to the accounting tabs.</li>
                         <li><strong>Cash received</strong> comes from remittance entries logged during this week, not just the total remitted sitting on the order now.</li>
                         <li><strong>Cohort week</strong> tells you whether the ads <em>this week</em> paid back. The number keeps rising until pending orders finalize, so a Monday review will show a lower delivery rate than a Friday review of the same week.</li>
                         <li><strong>Delivered by source cohort</strong> explains why the number of orders placed this week and the number delivered this week are usually different.</li>
