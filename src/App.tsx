@@ -9109,12 +9109,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // ===== Bonus engine =====
   // Computes per-order bonus given the rep's weekly delivery rate.
   // Pure compute (no side-effects) — returns components for transparency.
-  const computeOrderBonus = (
+  function computeOrderBonus(
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
     repWeeklyAOV: number,
     repWeeklyOrderCount: number
-  ) => {
+  ) {
     if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
       return { base: 0, upgrade: 0, crossSell: 0, freeGift: 0, manual: order.manualBonusOverride, total: order.manualBonusOverride, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
     }
@@ -9177,7 +9177,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     void repWeeklyAOV;
     const total = base + upgrade + crossSell + freeGift;
     return { base, upgrade, crossSell, freeGift, manual: 0, total, components };
-  };
+  }
 
   // Projected bonus: what the rep would earn IF this order is delivered — ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
