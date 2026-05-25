@@ -125,6 +125,7 @@ import {
 } from "./data";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
+const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
 
 function manifestVersionToken(brandName: string, logoUrl: string): string {
   return `${brandName.trim().length}-${logoUrl.trim().length}`;
@@ -180,6 +181,7 @@ type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
 type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
+type WaybillFlowFilter = "All" | "Manual Transfer" | "Customer Delivery";
 type StockCountStatus = "Pending" | "Agent Submitted" | "Admin Confirmed" | "Verified" | "Discrepancy";
 type WriteOffReason = "Damaged" | "Theft" | "Unreported Sale" | "Return to Warehouse" | "Other";
 type StockCountEntry = {
@@ -697,6 +699,11 @@ type AbandonedCartRecord = {
   assignedRepId?: string;
   lastActivity: string;
   createdAt: string;
+  embedLabel?: string;
+  preferredDelivery?: string;
+  outageCaptured?: boolean;
+  outageCapturedAt?: string;
+  capturePayload?: Record<string, any> | null;
 };
 type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
 type DeliveryAgentCoverage = {
@@ -872,6 +879,58 @@ type WeeklyAccountingDataset = {
   deliveredOrders: TrackedOrder[];
   expenses: ExpenseRecord[];
   remittanceTransactions: WeeklyAccountingRemittanceTransaction[];
+};
+type AbandonedCartAttribution = {
+  utmSource?: string;
+  utmCampaign?: string;
+  utmMedium?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  referrer?: string;
+};
+type CartJourneyBlockedEventType =
+  | "submit_blocked_missing_name"
+  | "submit_blocked_missing_phone"
+  | "submit_blocked_invalid_phone"
+  | "submit_blocked_missing_whatsapp"
+  | "submit_blocked_invalid_whatsapp"
+  | "submit_blocked_missing_address"
+  | "submit_blocked_missing_city"
+  | "submit_blocked_missing_state"
+  | "submit_blocked_missing_delivery"
+  | "submit_blocked_missing_confirmation"
+  | "submit_blocked_missing_commitment";
+type CartJourneyEvent = {
+  id: string;
+  cartId: string;
+  productId?: string;
+  packageId?: string;
+  state?: string;
+  eventType:
+    | "form_opened"
+    | "first_interaction"
+    | "package_selected"
+    | "state_selected"
+    | "additional_item_preview_opened"
+    | "additional_item_added"
+    | "additional_item_removed"
+    | "submit_attempted"
+    | CartJourneyBlockedEventType
+    | "order_submitted"
+    | "redirect_triggered"
+    | "cart_date_changed"
+    | "order_date_changed"
+    | "order_assigned"
+    | "order_reassigned"
+    | "delivery_agent_assigned"
+    | "delivery_agent_reassigned"
+    | "order_status_changed"
+    | "contact_attempt_logged"
+    | "form_exited";
+  companionProductId?: string;
+  companionPackageId?: string;
+  metadata: Record<string, string | number | boolean | null>;
+  createdAt: string;
 };
 type LiveFormPulseSourceStat = {
   source: string;
@@ -2630,6 +2689,17 @@ const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement
   return matchingMovement?.createdAt ?? matchingMovement?.date ?? (waybill.status === "Received" && waybill.dateReceived ? waybill.createdAt : undefined);
 };
 
+const isCustomerDeliveryWaybill = (waybill: WaybillRecord) => {
+  const destination = `${waybill.receivingLocationName ?? ""} ${waybill.receivingState ?? ""}`;
+  return destination.includes("Customer:") || /auto-created on order delivery/i.test(waybill.note ?? "");
+};
+
+const matchesWaybillFlow = (waybill: WaybillRecord, filter: WaybillFlowFilter) => {
+  if (filter === "All") return true;
+  const customerDelivery = isCustomerDeliveryWaybill(waybill);
+  return filter === "Customer Delivery" ? customerDelivery : !customerDelivery;
+};
+
 const scheduleDateForRange = (range: ScheduleRange, customDate?: string) => {
   if (range === "Custom" && customDate) return customDate;
   const date = new Date();
@@ -2808,6 +2878,60 @@ const formatOrderCreatedAt = (order: Pick<TrackedOrder, "createdAt" | "date">) =
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
+
+type CapturedCartOfferLine = {
+  name: string;
+  detail?: string;
+  qty: number;
+  total: number;
+};
+const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
+  const payload = cart.capturePayload;
+  return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+};
+const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
+  const next: AbandonedCartAttribution = {};
+  const assign = (key: keyof AbandonedCartAttribution, value: unknown) => {
+    if (next[key]) return;
+    if (typeof value === "string" && value.trim()) {
+      next[key] = value.trim();
+    }
+  };
+  for (const event of [...journeyEvents].reverse()) {
+    const metadata = event.metadata ?? {};
+    assign("utmSource", metadata.utmSource);
+    assign("utmCampaign", metadata.utmCampaign);
+    assign("utmMedium", metadata.utmMedium);
+    assign("utmContent", metadata.utmContent);
+    assign("utmTerm", metadata.utmTerm);
+    assign("referrer", metadata.referrer);
+  }
+  return next;
+};
+const cartAttributionFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
+  const payload = cartCapturePayloadFor(cart);
+  const read = (key: keyof AbandonedCartAttribution) => {
+    const value = payload?.[key];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  };
+  const journeyAttribution = cartJourneyAttributionFor(journeyEvents);
+  return {
+    utmSource: read("utmSource") ?? journeyAttribution.utmSource,
+    utmCampaign: read("utmCampaign") ?? journeyAttribution.utmCampaign,
+    utmMedium: read("utmMedium") ?? journeyAttribution.utmMedium,
+    utmContent: read("utmContent") ?? journeyAttribution.utmContent,
+    utmTerm: read("utmTerm") ?? journeyAttribution.utmTerm,
+    referrer: read("referrer") ?? journeyAttribution.referrer
+  };
+};
+const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
+  const attribution = cartAttributionFor(cart, journeyEvents);
+  return Boolean(
+    (attribution.utmSource && attribution.utmSource.toLowerCase() !== "direct")
+    || attribution.utmCampaign
+    || attribution.utmContent
+  );
+};
 
 const timeSinceCreated = (order: TrackedOrder): string => {
   const created = new Date(order.createdAt ?? order.date);
@@ -3317,10 +3441,45 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     amount: Number(cart.amount ?? 0),
     currency: cart.currency ?? "NGN",
     source: cart.source ?? "Website",
+    embedLabel: cart.embedLabel ?? undefined,
     status: cart.status ?? "Open abandoned",
     assignedRepId: cart.assignedRepId ?? undefined,
+    preferredDelivery: cart.preferredDelivery ?? undefined,
+    outageCaptured: cart.outageCaptured ?? undefined,
+    outageCapturedAt: cart.outageCapturedAt ?? undefined,
+    capturePayload: cart.capturePayload && typeof cart.capturePayload === "object" && !Array.isArray(cart.capturePayload)
+      ? cart.capturePayload
+      : undefined,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
+  };
+};
+
+const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
+  const event = snakeToCamel<any>(value);
+  const metadataCandidate = event.metadata;
+  const metadata: Record<string, string | number | boolean | null> =
+    metadataCandidate && typeof metadataCandidate === "object" && !Array.isArray(metadataCandidate)
+      ? Object.fromEntries(
+          Object.entries(metadataCandidate).filter(([, entry]) =>
+            typeof entry === "string"
+            || typeof entry === "number"
+            || typeof entry === "boolean"
+            || entry === null
+          )
+        ) as Record<string, string | number | boolean | null>
+      : {};
+  return {
+    id: event.id,
+    cartId: event.cartId ?? event.cart_id ?? "",
+    productId: event.productId ?? event.product_id ?? undefined,
+    packageId: event.packageId ?? event.package_id ?? undefined,
+    state: event.state ?? undefined,
+    eventType: (event.eventType ?? event.event_type ?? "form_opened") as CartJourneyEvent["eventType"],
+    companionProductId: event.companionProductId ?? event.companion_product_id ?? undefined,
+    companionPackageId: event.companionPackageId ?? event.companion_package_id ?? undefined,
+    metadata,
+    createdAt: event.createdAt ?? event.created_at ?? ""
   };
 };
 
@@ -3864,6 +4023,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Selected expense for the Expense Details modal
   const [selectedExpenseId, setSelectedExpenseId] = useState<string>("");
   const [waybillStatusFilter, setWaybillStatusFilter] = useState<WaybillStatus | "All">("All");
+  const [waybillFlowFilter, setWaybillFlowFilter] = useState<WaybillFlowFilter>("Manual Transfer");
   const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
@@ -4183,19 +4343,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [financeRemittanceGeneratedAt, setFinanceRemittanceGeneratedAt] = useState("");
   const [financeRemittanceLoading, setFinanceRemittanceLoading] = useState(false);
   const [financeRemittanceError, setFinanceRemittanceError] = useState("");
-  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
-    readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
-      raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
+  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">(() =>
+    readPref<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
+      raw === "Campaign Orders" || raw === "Abandoned Carts" || raw === "Daily Ad Spend" ? raw : null
     )
+  );
+  const [adTrackingSearch, setAdTrackingSearch] = useState<string>(() =>
+    readPref<string>("protohub.adTracking.search", "", (raw) => typeof raw === "string" ? raw : null)
   );
   useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
+  useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
   const [campaignPage, setCampaignPage] = useState(1);
+  const [adTrackingCartPage, setAdTrackingCartPage] = useState(1);
+  const [adTrackingCartStatus, setAdTrackingCartStatus] = useState<CartStatus>(() =>
+    readPref<CartStatus>("protohub.adTracking.abandonedCartStatus", "All statuses", (raw) =>
+      cartStatuses.includes(raw as CartStatus) ? (raw as CartStatus) : null
+    )
+  );
+  const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
   const [adSpendDraft, setAdSpendDraft] = useState<Record<string, string>>({});
   const [adSpendSaving, setAdSpendSaving] = useState(false);
+  useEffect(() => {
+    setCampaignPage(1);
+    setAdTrackingCartPage(1);
+  }, [adTrackingSearch]);
+  useEffect(() => { writePref("protohub.adTracking.abandonedCartStatus", adTrackingCartStatus); }, [adTrackingCartStatus]);
+  useEffect(() => {
+    setAdTrackingCartPage(1);
+  }, [adTrackingCartStatus]);
   const [financeRepSearch, setFinanceRepSearch] = useState("");
   const [outstandingPage, setOutstandingPage] = useState(1);
   const [financeProductSearch, setFinanceProductSearch] = useState("");
@@ -4270,6 +4450,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [roundRobinSearch, setRoundRobinSearch] = useState("");
   const [embedTab, setEmbedTab] = useState<EmbedTab>("Create Order Form");
   const [embedStateField, setEmbedStateField] = useState("Free-text input");
+  const [publicFormMode, setPublicFormMode] = useState<"classic" | "guided_checkout">("classic");
   const [publicOrderAssignmentMode, setPublicOrderAssignmentMode] = useState<"auto_assign" | "manual_review">("auto_assign");
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
@@ -4450,6 +4631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     embedSettingsApi.get().then((s: any) => {
       if (!s) return;
       if (typeof s.stateFieldMode      === "string")  setEmbedStateField(s.stateFieldMode === "dropdown" ? "Dropdown" : "Free-text input");
+      if (typeof s.publicFormMode === "string") setPublicFormMode(s.publicFormMode === "guided_checkout" ? "guided_checkout" : "classic");
       if (typeof s.publicOrderAssignmentMode === "string") setPublicOrderAssignmentMode(s.publicOrderAssignmentMode === "manual_review" ? "manual_review" : "auto_assign");
       if (typeof s.showEmail           === "boolean") setShowEmailField(s.showEmail);
       if (typeof s.showWhatsapp        === "boolean") setShowWhatsappField(s.showWhatsapp);
@@ -4787,6 +4969,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const normalizedRangeMaxDays = Math.max(normalizedRangeMinDays, Number.isFinite(deliveryRangeMaxDays) ? deliveryRangeMaxDays : normalizedRangeMinDays);
       await embedSettingsApi.patch({
         state_field_mode:             embedStateField === "Dropdown" ? "dropdown" : "freetext",
+        public_form_mode:             publicFormMode,
         public_order_assignment_mode: publicOrderAssignmentMode,
         show_email:                   showEmailField,
         show_whatsapp:                showWhatsappField,
@@ -6268,6 +6451,199 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ...row,
     orderCount: row.orders.length
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
+  const adTrackingSearchNeedle = adTrackingSearch.trim().toLowerCase();
+  const matchesAdTrackingSearch = (...parts: Array<string | undefined | null>) => {
+    if (!adTrackingSearchNeedle) return true;
+    return parts.some((part) => typeof part === "string" && part.toLowerCase().includes(adTrackingSearchNeedle));
+  };
+  const filteredCampaignGroupedRows = campaignGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(row.id, row.topSource)
+  );
+  const filteredCreativeGroupedRows = creativeGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(row.id, row.campaignId, ...row.orders.map((order) => order.utmSource ?? ""))
+  );
+  const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) =>
+    matchesAdTrackingSearch(
+      order.id,
+      order.customer,
+      order.phone,
+      order.productName,
+      order.status,
+      order.utmCampaign,
+      order.utmSource,
+      order.utmMedium,
+      order.utmContent
+    )
+  );
+  const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
+    if (order.sourceCartId && !map.has(order.sourceCartId)) {
+      map.set(order.sourceCartId, order);
+    }
+    return map;
+  }, new Map<string, TrackedOrder>());
+  const campaignBaseCarts = abandonedCarts
+    .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
+    .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
+  const adTrackingJourneyCartIds = useMemo(
+    () => Array.from(new Set(campaignBaseCarts.map((cart) => cart.id).filter(Boolean))),
+    [campaignBaseCarts]
+  );
+  const adTrackingJourneyCartIdsKey = adTrackingJourneyCartIds.join("|");
+  const filteredCampaignBaseCarts = campaignBaseCarts
+    .map((cart) => ({
+      cart,
+      journeyEvents: adTrackingCartJourneyMap[cart.id] ?? [],
+      attribution: cartAttributionFor(cart, adTrackingCartJourneyMap[cart.id] ?? []),
+      linkedOrder: adTrackingLinkedOrderBySourceCartId.get(cart.id)
+    }))
+    .filter(({ cart }) => adTrackingCartStatus === "All statuses" || cart.status === adTrackingCartStatus)
+    .filter(({ cart, journeyEvents }) => cartHasAdAttribution(cart, journeyEvents));
+  const cartCampaignGroupedRows = Object.values(
+    filteredCampaignBaseCarts.reduce<Record<string, {
+      id: string;
+      carts: typeof filteredCampaignBaseCarts;
+      recoveredCount: number;
+      deliveredCount: number;
+      value: number;
+      topSource: string;
+    }>>((acc, row) => {
+      const key = row.attribution.utmCampaign?.trim() || "Unlabelled";
+      const bucket = acc[key] ?? {
+        id: key,
+        carts: [],
+        recoveredCount: 0,
+        deliveredCount: 0,
+        value: 0,
+        topSource: ""
+      };
+      bucket.carts.push(row);
+      bucket.value += row.cart.amount;
+      if (row.linkedOrder) {
+        bucket.recoveredCount += 1;
+        if ((row.linkedOrder.status ?? "New") === "Delivered") {
+          bucket.deliveredCount += 1;
+        }
+      }
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => {
+    const sourceCounts: Record<string, number> = {};
+    row.carts.forEach(({ attribution }) => {
+      const src = attribution.utmSource?.trim() || "unknown";
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+    });
+    return {
+      ...row,
+      cartCount: row.carts.length,
+      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
+    };
+  }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
+  const cartCreativeGroupedRows = Object.values(
+    filteredCampaignBaseCarts
+      .filter(({ attribution }) => attribution.utmContent?.trim())
+      .reduce<Record<string, {
+        id: string;
+        campaignId: string;
+        carts: typeof filteredCampaignBaseCarts;
+        recoveredCount: number;
+        deliveredCount: number;
+        value: number;
+      }>>((acc, row) => {
+        const key = row.attribution.utmContent!.trim();
+        const bucket = acc[key] ?? {
+          id: key,
+          campaignId: row.attribution.utmCampaign?.trim() || "Unlabelled",
+          carts: [],
+          recoveredCount: 0,
+          deliveredCount: 0,
+          value: 0
+        };
+        bucket.carts.push(row);
+        bucket.value += row.cart.amount;
+        if (row.linkedOrder) {
+          bucket.recoveredCount += 1;
+          if ((row.linkedOrder.status ?? "New") === "Delivered") {
+            bucket.deliveredCount += 1;
+          }
+        }
+        acc[key] = bucket;
+        return acc;
+      }, {})
+  ).map((row) => ({
+    ...row,
+    cartCount: row.carts.length
+  })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
+  const filteredCartCampaignGroupedRows = cartCampaignGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(row.id, row.topSource, ...row.carts.map(({ attribution }) => attribution.utmSource ?? ""))
+  );
+  const filteredCartCreativeGroupedRows = cartCreativeGroupedRows.filter((row) =>
+    matchesAdTrackingSearch(row.id, row.campaignId, ...row.carts.map(({ attribution }) => attribution.utmSource ?? ""))
+  );
+  const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) =>
+    matchesAdTrackingSearch(
+      cart.id,
+      cart.customer,
+      cart.phone,
+      cart.productName,
+      cart.status,
+      attribution.utmCampaign,
+      attribution.utmSource,
+      attribution.utmMedium,
+      attribution.utmContent,
+      linkedOrder?.customer ?? "",
+      linkedOrder?.id ?? ""
+    )
+  );
+  useEffect(() => {
+    if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
+      setAdTrackingCartJourneyLoading(false);
+      return;
+    }
+    if (adTrackingJourneyCartIds.length === 0) {
+      setAdTrackingCartJourneyMap({});
+      setAdTrackingCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setAdTrackingCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(adTrackingJourneyCartIds);
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setAdTrackingCartJourneyMap(normalized);
+      } catch {
+        if (cancelled) return;
+        if (!silent) {
+          setAdTrackingCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
+        setAdTrackingCartJourneyLoading(false);
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, adTrackingJourneyCartIdsKey, adTrackingTab]);
 
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
@@ -6661,6 +7037,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
   const pfDeliveryRate = Math.round(pfDeliveryRateExact);
   const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
+  const pfBonusEstimate = pfDelivered.reduce(
+    (sum, order) => sum + computeOrderBonus(order, pfDeliveryRateExact, pfRevenuePerDelivered, pfOrders.length).total,
+    0
+  );
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
@@ -6704,7 +7084,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       : [
           { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
           { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-          { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
+          { label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" },
           { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
         ];
   const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
@@ -25512,19 +25892,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const base = waybillRecords.filter((w) =>
                   (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
+                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
                 const inTransit = base.filter((w) => w.status === "In Transit");
                 const received = base.filter((w) => w.status === "Received");
+                const customerDeliveries = base.filter((w) => isCustomerDeliveryWaybill(w));
+                const manualTransfers = base.filter((w) => !isCustomerDeliveryWaybill(w));
                 const totalFees = base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
                 const inTransitUnits = inTransit.reduce((s, w) => s + w.quantity, 0);
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
                     {[
                       { label: "In Transit", value: inTransit.length, sub: `${inTransitUnits} units`, color: "text-blue-700 bg-blue-50 border-blue-200" },
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
+                      { label: "Manual Transfers", value: manualTransfers.length, sub: "stock transfer records", color: "text-slate-700 bg-slate-50 border-slate-200" },
+                      { label: "Customer Deliveries", value: customerDeliveries.length, sub: "auto-waybills from delivered orders", color: "text-amber-700 bg-amber-50 border-amber-200" },
                       { label: "Total Waybill Fees", value: formatMoney(totalFees), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" },
-                      { label: "Total Transfers", value: base.length, sub: "filtered", color: "text-gray-700 bg-gray-50 border-gray-200" },
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -25585,6 +25969,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="Defective">Defective</option>
                     <option value="Missing">Missing</option>
                   </select>
+                  <select
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    aria-label="Waybill flow"
+                    value={waybillFlowFilter}
+                    onChange={(e) => setWaybillFlowFilter(e.target.value as WaybillFlowFilter)}
+                  >
+                    <option value="All">Flow: All</option>
+                    <option value="Manual Transfer">Manual Transfer</option>
+                    <option value="Customer Delivery">Customer Delivery</option>
+                  </select>
                   {/* Mobile-only: New Waybill stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
@@ -25597,6 +25991,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const filtered = waybillRecords.filter((w) =>
                   (waybillStatusFilter === "All" || w.status === waybillStatusFilter)
+                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
@@ -28375,8 +28770,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </header>
 
               {/* Tabs */}
-              <div className="grid grid-cols-2 gap-2 sm:hidden">
-                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+              <div className="grid grid-cols-3 gap-2 sm:hidden">
+                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-3 rounded-xl border text-left text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] border-[#1F8FE0] shadow-sm" : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700"}`}>
                     {tab}
@@ -28384,7 +28779,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 ))}
               </div>
               <div className="hidden sm:flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
+                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
                     {tab}
@@ -28419,15 +28814,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                  <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={adTrackingSearch}
+                      onChange={(event) => setAdTrackingSearch(event.target.value)}
+                      placeholder="Search campaign, creative, source, or customer..."
+                      className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    />
+                  </label>
                 </div>
                 {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
               </div>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
                 {[
-                  { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
-                  { title: "Active Campaigns", value: String(campaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
-                  { title: "Unique Creatives", value: String(creativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
-                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
+                  { title: "Tracked Orders", value: String(filteredAdTrackingOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                  { title: "Active Campaigns", value: String(filteredCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
+                  { title: "Unique Creatives", value: String(filteredCreativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
+                  { title: "Attributed Revenue", value: formatMoney(filteredAdTrackingOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -28458,11 +28862,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Campaigns</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_campaign` from tracked orders in this period.</p>
                 </div>
-                {campaignGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No campaign-tagged tracked orders in this period yet.</div>
+                {filteredCampaignGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                    {adTrackingSearchNeedle ? "No campaigns matched this search yet." : "No campaign-tagged tracked orders in this period yet."}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    {campaignGroupedRows.map((row) => (
+                    {filteredCampaignGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
@@ -28498,11 +28904,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Ad Creatives</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_content` from tracked orders in this period.</p>
                 </div>
-                {creativeGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No creative-tagged tracked orders in this period yet.</div>
+                {filteredCreativeGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                    {adTrackingSearchNeedle ? "No creatives matched this search yet." : "No creative-tagged tracked orders in this period yet."}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                    {creativeGroupedRows.map((row) => (
+                    {filteredCreativeGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
@@ -28536,17 +28944,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                   <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredCampaignOrders.length} attributed</span>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredAdTrackingOrders.length} attributed</span>
                 </div>
                 <div className="sm:hidden divide-y divide-gray-100">
-                  {filteredCampaignOrders.length === 0 ? (
-                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</div>
+                  {filteredAdTrackingOrders.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">
+                      {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                    </div>
                   ) : (
                     (() => {
                       const CAMP_PAGE = 25;
-                      const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                      const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                       const campPageClamped = Math.min(campaignPage, campTotalPages);
-                      return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                      return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
                         <article key={order.id} className="p-4 space-y-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -28591,14 +29001,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredCampaignOrders.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</td></tr>
+                      {filteredAdTrackingOrders.length === 0 ? (
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">
+                          {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                        </td></tr>
                       ) : (
                         (() => {
                           const CAMP_PAGE = 25;
-                          const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                          const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                           const campPageClamped = Math.min(campaignPage, campTotalPages);
-                          return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                          return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
                               <td className="px-4 py-4">
@@ -28621,12 +29033,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 {(() => {
                   const CAMP_PAGE = 25;
-                  const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                  const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                   if (campTotalPages <= 1) return null;
                   const campPageClamped = Math.min(campaignPage, campTotalPages);
                   return (
                     <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredCampaignOrders.length)} of {filteredCampaignOrders.length}</span>
+                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredAdTrackingOrders.length)} of {filteredAdTrackingOrders.length}</span>
                       <div className="flex items-center gap-1 flex-wrap">
                         <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
                         {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
@@ -28640,6 +29052,278 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 })()}
               </section>
               </>)}
+
+              {adTrackingTab === "Abandoned Carts" && (() => {
+                const CART_PAGE = 25;
+                const cartTotalPages = Math.max(1, Math.ceil(filteredAdTrackingCarts.length / CART_PAGE));
+                const cartPageClamped = Math.min(adTrackingCartPage, cartTotalPages);
+                const pagedTrackedCarts = filteredAdTrackingCarts.slice((cartPageClamped - 1) * CART_PAGE, cartPageClamped * CART_PAGE);
+
+                return (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+                        <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                          {periods.map((item) => (
+                            <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
+                          ))}
+                        </div>
+                        <div className="relative w-full sm:w-auto">
+                          <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange((v) => !v)}>
+                            <CalendarDays className="w-4 h-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                          </button>
+                          {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
+                        </div>
+                        <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(e) => { setCurrency(e.target.value as CurrencyCode); showToast(`Currency changed to ${currencies[e.target.value as CurrencyCode].label}.`); }}>
+                          <option value="NGN">₦ Nigerian Naira</option>
+                          <option value="USD">$ US Dollar</option>
+                          <option value="GBP">£ British Pound</option>
+                        </select>
+                        {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                        <select
+                          className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          aria-label="Abandoned cart status"
+                          value={adTrackingCartStatus}
+                          onChange={(e) => setAdTrackingCartStatus(e.target.value as CartStatus)}
+                        >
+                          {cartStatuses.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                        <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                          <input
+                            value={adTrackingSearch}
+                            onChange={(event) => setAdTrackingSearch(event.target.value)}
+                            placeholder="Search cart, campaign, source, or customer..."
+                            className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          />
+                        </label>
+                      </div>
+                      {adTrackingCartJourneyLoading && (
+                        <p className="m-0 text-xs text-gray-400">Refreshing abandoned-cart attribution…</p>
+                      )}
+                      {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
+                    </div>
+
+                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracked abandoned cart summary">
+                      {[
+                        { title: "Tracked Carts", value: String(filteredAdTrackingCarts.length), helper: "abandoned carts with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                        { title: "Recovered", value: String(filteredAdTrackingCarts.filter((row) => row.linkedOrder).length), helper: "later converted to orders", icon: ArrowRight, tone: "purple" },
+                        { title: "Unique Campaigns", value: String(filteredCartCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "campaigns behind abandoned carts", icon: Zap, tone: "green" },
+                        { title: "Captured Value", value: formatMoney(filteredAdTrackingCarts.reduce((sum, row) => sum + row.cart.amount, 0)), helper: "value of abandoned tracked carts", icon: CircleDollarSign, tone: "orange" }
+                      ].map((metric) => {
+                        const Icon = metric.icon;
+                        return (
+                          <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm" key={metric.title}>
+                            <div className="flex items-center justify-between mb-3">
+                              <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "purple" ? "bg-purple-50 text-purple-500" : metric.tone === "green" ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500"}`}>
+                                <Icon className="w-5 h-5" />
+                              </span>
+                            </div>
+                            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                            <strong className="text-2xl font-bold text-gray-900 block my-1">{metric.value}</strong>
+                            <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
+                          </article>
+                        );
+                      })}
+                    </section>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-4 border-b border-gray-100">
+                          <h2 className="text-sm font-bold text-gray-800">Campaigns behind abandoned carts</h2>
+                          <p className="text-xs text-gray-400">Grouped by `utm_campaign` from abandoned carts in this period.</p>
+                        </div>
+                        {filteredCartCampaignGroupedRows.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                            {adTrackingSearchNeedle ? "No abandoned-cart campaigns matched this search yet." : "No campaign-tagged abandoned carts in this period yet."}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {filteredCartCampaignGroupedRows.slice(0, 8).map((row) => (
+                              <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-sm font-semibold text-gray-900 truncate">{row.id}</p>
+                                  <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                  <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-4 border-b border-gray-100">
+                          <h2 className="text-sm font-bold text-gray-800">Creatives behind abandoned carts</h2>
+                          <p className="text-xs text-gray-400">Grouped by `utm_content` from abandoned carts in this period.</p>
+                        </div>
+                        {filteredCartCreativeGroupedRows.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                            {adTrackingSearchNeedle ? "No abandoned-cart creatives matched this search yet." : "No creative-tagged abandoned carts in this period yet."}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {filteredCartCreativeGroupedRows.slice(0, 8).map((row) => (
+                              <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-sm font-semibold text-gray-900 truncate">{row.id}</p>
+                                  <p className="m-0 mt-1 text-xs text-gray-400 truncate">{row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                  <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    </div>
+
+                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-sm font-bold text-gray-800">Abandoned Carts</h2>
+                          <p className="text-xs text-gray-400">All abandoned carts captured via tracked links.</p>
+                        </div>
+                        <span className="text-xs font-semibold text-gray-500">{filteredAdTrackingCarts.length} tracked</span>
+                      </div>
+
+                      {filteredAdTrackingCarts.length === 0 ? (
+                        <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
+                          {adTrackingSearchNeedle ? "No tracked abandoned carts matched this search." : "No abandoned carts with UTM attribution in this period yet."}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="sm:hidden divide-y divide-gray-100">
+                            {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                              const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                              const statusTone = cart.status === "Converted"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : cart.status === "Contacted"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : cart.status === "Assigned"
+                                    ? "bg-violet-100 text-violet-700"
+                                    : "bg-amber-100 text-amber-700";
+                              return (
+                                <article
+                                  key={`tracked-cart-mobile-${cart.id}`}
+                                  className="px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 transition-colors"
+                                  onClick={() => openCartModal(cart, "cartDetails")}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="text-[11px] font-semibold text-gray-400">#{(cartPageClamped - 1) * CART_PAGE + index + 1} · {cart.id}</div>
+                                      <div className="text-base font-bold text-gray-900 truncate">{cart.customer || "Partial lead"}</div>
+                                      <div className="text-xs text-gray-500 truncate">{cart.phone || "No phone yet"}</div>
+                                    </div>
+                                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold shrink-0 ${statusTone}`}>{cart.status}</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
+                                      <div className="font-semibold text-gray-900">{attribution.utmSource || cart.source}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
+                                      <div className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
+                                      <div className="font-semibold text-gray-900">{attribution.utmCampaign || "Unlabelled"}</div>
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
+                                      <div className="font-semibold text-gray-900">{attribution.utmContent || "—"}</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                                    <span>{formatMoment(cart.createdAt || cart.lastActivity)}</span>
+                                    <span>{conversionStatus || (linkedOrder ? `Linked order ${linkedOrder.status ?? "New"}` : "Tap to view cart details")}</span>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+
+                          <div className="hidden sm:block overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                                  {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((heading) => (
+                                    <th key={heading} className="px-5 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{heading}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                                  const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                                  const statusTone = cart.status === "Converted"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : cart.status === "Contacted"
+                                      ? "bg-blue-100 text-blue-700"
+                                      : cart.status === "Assigned"
+                                        ? "bg-violet-100 text-violet-700"
+                                        : "bg-amber-100 text-amber-700";
+                                  return (
+                                    <tr
+                                      key={`tracked-cart-${cart.id}`}
+                                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                                      onClick={() => openCartModal(cart, "cartDetails")}
+                                    >
+                                      <td className="px-5 py-4 font-semibold text-gray-500">#{(cartPageClamped - 1) * CART_PAGE + index + 1}</td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{cart.customer || "Partial lead"}</div>
+                                        <div className="mt-0.5 text-xs text-gray-500">{cart.id}</div>
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[170px]">
+                                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${statusTone}`}>{cart.status}</span>
+                                        {conversionStatus && <div className="mt-1 text-[11px] text-gray-500">{conversionStatus}</div>}
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[150px]">
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{attribution.utmSource || cart.source}</span>
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{attribution.utmCampaign || "Unlabelled"}</div>
+                                      </td>
+                                      <td className="px-5 py-4 min-w-[220px]">
+                                        <div className="font-semibold text-gray-900">{attribution.utmContent || "—"}</div>
+                                      </td>
+                                      <td className="px-5 py-4 text-right font-bold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</td>
+                                      <td className="px-5 py-4 text-gray-500 whitespace-nowrap">{formatMoment(cart.createdAt || cart.lastActivity)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {cartTotalPages > 1 && (
+                            <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                              <span>Showing {(cartPageClamped - 1) * CART_PAGE + 1}–{Math.min(cartPageClamped * CART_PAGE, filteredAdTrackingCarts.length)} of {filteredAdTrackingCarts.length}</span>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped <= 1} onClick={() => setAdTrackingCartPage(cartPageClamped - 1)}>Prev</button>
+                                {Array.from({ length: cartTotalPages }, (_, i) => i + 1).filter((page) => page === 1 || page === cartTotalPages || Math.abs(page - cartPageClamped) <= 1).map((page, idx, arr) => (
+                                  <Fragment key={`cart-page-${page}`}>
+                                    {idx > 0 && arr[idx - 1] !== page - 1 && <span className="px-1">…</span>}
+                                    <button className={`rounded border px-2 py-1 ${page === cartPageClamped ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setAdTrackingCartPage(page)}>{page}</button>
+                                  </Fragment>
+                                ))}
+                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped >= cartTotalPages} onClick={() => setAdTrackingCartPage(cartPageClamped + 1)}>Next</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </section>
+                  </>
+                );
+              })()}
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -29560,6 +30244,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </label>
                         </div>
                       )}
+                    </div>
+
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 pt-3.5 pb-1.5">
+                        <p className="text-sm font-semibold text-gray-800">Checkout experience</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Choose whether customers see the current classic layout or a guided checkout with clearer final-step prompts.</p>
+                      </div>
+                      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "classic" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-form-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicFormMode === "classic"}
+                            onChange={() => setPublicFormMode("classic")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Classic form</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">Keep the familiar long-form checkout with the standard submit flow.</span>
+                          </span>
+                        </label>
+                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "guided_checkout" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                          <input
+                            type="radio"
+                            name="public-form-mode"
+                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                            checked={publicFormMode === "guided_checkout"}
+                            onChange={() => setPublicFormMode("guided_checkout")}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-gray-800">Guided checkout</span>
+                            <span className="block text-xs text-gray-500 mt-0.5">Adds a step indicator, review-and-place section, and a stronger Place My Order handoff for mobile buyers.</span>
+                          </span>
+                        </label>
+                      </div>
                     </div>
 
                     {/* Required fields group */}
