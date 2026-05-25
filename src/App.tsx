@@ -11058,6 +11058,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     financePeriod === "Custom" && financeDateRange.start && financeDateRange.end
       ? `${financeDateRange.start} to ${financeDateRange.end}`
       : financePeriod;
+  const activeFinanceTabMeta = financeTabMeta[financeTab];
 
   const dashboardCards = summaryCards.map((card) => {
     if (card.label === "Total Revenue") {
@@ -28295,6 +28296,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   ))}
                 </nav>
               </div>
+
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Selected finance tab summary">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <h2 className="text-sm font-bold text-gray-900">{financeTab}</h2>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${financeLensToneClasses[activeFinanceTabMeta.primaryLens]}`}>
+                        {activeFinanceTabMeta.primaryLens}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                        {selectedFinancePeriodLabel}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 leading-relaxed m-0">{activeFinanceTabMeta.summary}</p>
+                    <p className="text-xs text-amber-700 mt-2 mb-0">{activeFinanceTabMeta.caution}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 shrink-0">
+                    {activeFinanceTabMeta.lenses.map((lens) => (
+                      <span
+                        key={`${financeTab}-${lens}`}
+                        className={`inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-semibold ${financeLensToneClasses[lens]}`}
+                      >
+                        {lens}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </section>
 
               {/* Product filter chips — toggle one or more products to scope every tab's metrics. Empty = all products merged. */}
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Product filter">
