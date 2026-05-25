@@ -149,7 +149,7 @@ type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
@@ -165,7 +165,8 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
+type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance";
+type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
 type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
@@ -872,6 +873,64 @@ type WeeklyAccountingDataset = {
   expenses: ExpenseRecord[];
   remittanceTransactions: WeeklyAccountingRemittanceTransaction[];
 };
+type LiveFormPulseSourceStat = {
+  source: string;
+  viewed: number;
+  interacted: number;
+  submitted: number;
+  lastSeenAt: string | null;
+};
+type LiveFormPulseEmbedStat = {
+  embedLabel: string;
+  viewed: number;
+  interacted: number;
+  submitted: number;
+  lastSeenAt: string | null;
+};
+type LiveFormPulseRecentEvent = {
+  cartId: string;
+  eventType: string;
+  source: string;
+  embedLabel: string;
+  productName: string;
+  packageName?: string | null;
+  createdAt: string;
+};
+type LiveFormPulseSummary = {
+  activeNow: number;
+  viewedToday: number;
+  interactedToday: number;
+  submitAttemptsToday: number;
+  conversionsToday: number;
+  redirectsToday: number;
+  viewedLiveWindow: number;
+  interactedLiveWindow: number;
+  submitAttemptsLiveWindow: number;
+  conversionsLiveWindow: number;
+  redirectsLiveWindow: number;
+  interactionRate: number;
+  submitRate: number;
+  conversionRate: number;
+  lastViewedAt: string | null;
+  lastInteractionAt: string | null;
+  lastSubmitAttemptAt: string | null;
+  lastConversionAt: string | null;
+  lastRedirectAt: string | null;
+};
+type LiveFormPulseResponse = {
+  generatedAt: string;
+  activeWindowMinutes: number;
+  dateFrom?: string;
+  dateTo?: string;
+  summary: LiveFormPulseSummary;
+  health: {
+    status: "healthy" | "attention" | "quiet" | "idle";
+    message: string;
+  };
+  sources: LiveFormPulseSourceStat[];
+  embeds: LiveFormPulseEmbedStat[];
+  recentEvents: LiveFormPulseRecentEvent[];
+};
 type PayStructure = {
   userId: string;
   type: PayStructureType;
@@ -1028,7 +1087,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1077,6 +1136,12 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Performance", "Accounting"],
     summary: "Use this to compare products by cohort delivery performance, delivered revenue so far, landed costs, allocated opex, margin, ROI, and ROAS.",
     caution: "This is still a cohort-performance board first. Profit is more consistent now, but it is not a closed product ledger."
+  },
+  "Package Performance": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting"],
+    summary: "Use this to compare which package sizes or pcs are getting ordered most, delivered most, and generating the strongest delivered revenue inside each product.",
+    caution: "This is the package layer under product performance. Ordered counts come from the selected period cohort, while delivered cash and profit use delivered orders in the selected delivery period."
   },
   "State Performance": {
     primaryLens: "Performance",
@@ -1167,19 +1232,19 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
 type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Admin": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Manager": [
-    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
@@ -1189,7 +1254,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
   "Viewer": [
-    "Dashboard", "Orders", "Customers", "Notifications", "Settings"
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
   ]
 };
 
@@ -2490,6 +2555,64 @@ const relativeMinutesLabel = (value?: string | null) => {
   if (diffHours < 24) return `${diffHours}h ago`;
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays}d ago`;
+};
+const ageInHours = (value?: string | null) => {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (Date.now() - parsed.getTime()) / (60 * 60 * 1000));
+};
+const liveFormPulseHealthBadgeClass = (status: LiveFormPulseResponse["health"]["status"]) => {
+  switch (status) {
+    case "healthy":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "attention":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "quiet":
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    default:
+      return "bg-slate-100 text-slate-600 border-slate-200";
+  }
+};
+const liveFormPulseEventLabel = (eventType: string) => {
+  switch (eventType) {
+    case "viewed_form":
+      return "Viewed form";
+    case "interacted_form":
+      return "Interacted with form";
+    case "submit_attempted":
+      return "Tried to submit";
+    case "redirected_to_whatsapp":
+      return "Redirected to WhatsApp";
+    case "redirected_to_call":
+      return "Redirected to call";
+    case "order_created":
+      return "Order submitted";
+    default:
+      return eventType.replace(/_/g, " ");
+  }
+};
+const liveFormPulseLastSeenAt = (pulse?: LiveFormPulseResponse | null) => {
+  if (!pulse) return null;
+  return [
+    pulse.summary.lastViewedAt,
+    pulse.summary.lastInteractionAt,
+    pulse.summary.lastSubmitAttemptAt,
+    pulse.summary.lastConversionAt,
+    pulse.summary.lastRedirectAt
+  ].filter(Boolean).sort().reverse()[0] ?? null;
+};
+const liveFormPulseScopeLabel = (period: Period, bounds: { dateFrom: string; dateTo: string } | null) => {
+  if (period === "Today") return "today";
+  if (period === "This Week") return "this week";
+  if (period === "This Month") return "this month";
+  if (period === "This Year") return "this year";
+  if (bounds?.dateFrom && bounds?.dateTo) return `${bounds.dateFrom} to ${bounds.dateTo}`;
+  return "this period";
+};
+const liveFormPulseMetricLabel = (base: string, period: Period) => {
+  if (period === "Today") return `Today ${base}`;
+  return base;
 };
 const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement[]) => {
   if (waybill.status === "In Transit") {
@@ -5120,6 +5243,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repDetailShowAll, setRepDetailShowAll] = useState(false);
   const [salesProductIds, setSalesProductIds] = useState<Set<string>>(new Set());
   const [showSalesProductFilter, setShowSalesProductFilter] = useState(false);
+  const [liveFormPulse, setLiveFormPulse] = useState<LiveFormPulseResponse | null>(null);
+  const [liveFormPulseLoading, setLiveFormPulseLoading] = useState(false);
+  const [liveFormPulseEmbedFilter, setLiveFormPulseEmbedFilter] = useState("");
+  const [liveFormPulseEmbedOptions, setLiveFormPulseEmbedOptions] = useState<string[]>([]);
   const [managerPerformanceRemote, setManagerPerformanceRemote] = useState<{ rows: any[]; summary: any } | null>(null);
   const [managerPerformanceLoading, setManagerPerformanceLoading] = useState(false);
   const [managerActionSavingKey, setManagerActionSavingKey] = useState<string | null>(null);
@@ -6484,6 +6611,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return Array.from(acc.values()).sort((a, b) => b.revenue - a.revenue);
   })();
   const projectedRevenue = formatMoney(dashboardProjectedRevenue);
+  const orderWorkspacePage: OrderWorkspacePage = activePage === "Follow-up Queue" || activePage === "Closed Orders" ? activePage : "Orders";
+  const matchesFollowUpQueuePage = (order: TrackedOrder) => {
+    const status = statusForOrder(order);
+    if (CLOSED_ORDER_STATUSES.has(status)) return false;
+    if (status === "Postponed") return true;
+    if (nextFollowUpForOrder(order)) return true;
+    return followUpInsightsForOrder(order).length > 0;
+  };
+  const matchesOrderWorkspacePage = (order: TrackedOrder) => {
+    if (orderWorkspacePage === "Follow-up Queue") return matchesFollowUpQueuePage(order);
+    if (orderWorkspacePage === "Closed Orders") return CLOSED_ORDER_STATUSES.has(statusForOrder(order));
+    return true;
+  };
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -6505,15 +6645,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesSource = orderSource === "All Sources" || source === orderSource;
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
+    const matchesWorkspace = matchesOrderWorkspacePage(order);
 
-    return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct;
+    return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct && matchesWorkspace;
   });
   const ORDERS_PAGE_SIZE = 25;
   const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
-  const pfOrders = orderProductIds.size === 0 ? periodOrders : periodOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
+  const workspaceOrders = periodOrders.filter(matchesOrderWorkspacePage);
+  const pfOrders = orderProductIds.size === 0 ? workspaceOrders : workspaceOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
@@ -6522,6 +6664,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
+  const pfFollowUpRows = pfOrders.filter(matchesFollowUpQueuePage);
+  const pfFollowUpDueNow = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.overdue).length;
+  const pfFollowUpDueSoon = pfFollowUpRows.filter((order) => nextFollowUpForOrder(order)?.dueSoon).length;
+  const pfFollowUpPostponed = pfFollowUpRows.filter((order) => statusForOrder(order) === "Postponed").length;
+  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((order) => {
+    const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
+    return latestAttempt ? ageInHours(latestAttempt.attemptedAt) <= 24 : false;
+  }).length;
+  const pfClosedDelivered = pfOrders.filter((order) => statusForOrder(order) === "Delivered").length;
+  const pfClosedCancelled = pfOrders.filter((order) => statusForOrder(order) === "Cancelled").length;
+  const pfClosedFailed = pfOrders.filter((order) => statusForOrder(order) === "Failed").length;
   const ordersByProduct = Object.entries(
     pfOrders.reduce<Record<string, { count: number; revenue: number; units: number }>>((acc, order) => {
       const current = acc[order.productName] ?? { count: 0, revenue: 0, units: 0 };
@@ -6534,6 +6687,75 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return acc;
     }, {})
   );
+  const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
+    ? [
+        { label: "Queue Total", value: pfOrders.length, sub: "non-terminal orders needing action", icon: Headphones, color: "bg-amber-50 text-amber-500" },
+        { label: "Due Now", value: pfFollowUpDueNow, sub: "follow-ups overdue right now", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
+        { label: "Due Soon", value: pfFollowUpDueSoon, sub: "follow-ups due within 2 hours", icon: Clock, color: "bg-blue-50 text-blue-500" },
+        { label: "Postponed", value: pfFollowUpPostponed, sub: "customers waiting on a later callback", icon: CalendarDays, color: "bg-purple-50 text-purple-500" }
+      ]
+    : orderWorkspacePage === "Closed Orders"
+      ? [
+          { label: "Closed Total", value: pfOrders.length, sub: "terminal outcomes in this period", icon: Archive, color: "bg-slate-100 text-slate-600" },
+          { label: "Delivered", value: pfClosedDelivered, sub: "completed successfully", icon: BadgeCheck, color: "bg-green-50 text-green-500" },
+          { label: "Cancelled", value: pfClosedCancelled, sub: "customer or team cancelled", icon: CircleX, color: "bg-amber-50 text-amber-500" },
+          { label: "Failed", value: pfClosedFailed, sub: "dispatch or completion failed", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" }
+        ]
+      : [
+          { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
+          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
+          { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
+          { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
+        ];
+  const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
+    ? {
+        icon: Headphones,
+        iconClassName: "bg-amber-50 text-amber-500",
+        title: "Queue Pressure",
+        helper: "Track the most urgent orders needing calls, confirmations, or callbacks.",
+        body: `${pfFollowUpDueNow} due now · ${pfFollowUpDueSoon} due soon · ${pfFollowUpRecentlyTouched} touched in the last 24 hours`
+      }
+    : orderWorkspacePage === "Closed Orders"
+      ? {
+          icon: Archive,
+          iconClassName: "bg-slate-100 text-slate-600",
+          title: "Closed Outcome Mix",
+          helper: "See how much of the archive is delivered versus cancelled or failed.",
+          body: `${pfClosedDelivered} delivered · ${pfClosedCancelled} cancelled · ${pfClosedFailed} failed`
+        }
+      : {
+          icon: TrendingUp,
+          iconClassName: "bg-purple-50 text-purple-500",
+          title: "Revenue Opportunity",
+          helper: "Model the impact of a higher delivery conversion rate.",
+          body: ""
+        };
+  const orderWorkspaceTitle = orderWorkspacePage === "Follow-up Queue"
+    ? "Follow-up Queue"
+    : orderWorkspacePage === "Closed Orders"
+      ? "Closed Orders"
+      : "Orders Management";
+  const orderWorkspaceSubtitle = orderWorkspacePage === "Follow-up Queue"
+    ? "Work the most urgent callbacks, promised deliveries, and pending customer actions."
+    : orderWorkspacePage === "Closed Orders"
+      ? "Review delivered, cancelled, and failed outcomes without active pipeline noise."
+      : "Track and manage all customer orders in real-time";
+  const orderWorkspaceTableEmpty = orderWorkspacePage === "Follow-up Queue"
+    ? "No follow-up orders match this filter."
+    : orderWorkspacePage === "Closed Orders"
+      ? "No closed orders match this filter."
+      : "No orders found";
+  const orderWorkspaceProductHeading = orderWorkspacePage === "Follow-up Queue"
+    ? "Follow-up Queue by Product"
+    : orderWorkspacePage === "Closed Orders"
+      ? "Closed Orders by Product"
+      : "New Orders by Product";
+  const orderWorkspaceProductHelper = orderWorkspacePage === "Follow-up Queue"
+    ? "Orders still needing a call, callback, or rep action in the selected period."
+    : orderWorkspacePage === "Closed Orders"
+      ? "Terminal outcomes in the selected period, grouped by product."
+      : "All orders (any status) created in the selected period";
+  const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
   const linkedOrderBySourceCartId = useMemo(() => {
     const next = new Map<string, TrackedOrder>();
     for (const order of trackedOrders) {
@@ -6575,6 +6797,48 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
+  const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds), [cartProductIds]);
+  const cartProductIdFilterKey = useMemo(() => cartProductIdFilterList.slice().sort().join(","), [cartProductIdFilterList]);
+  const liveFormPulseBounds = useMemo(() => periodBoundsForQuery(cartsPeriod, cartsDateRange), [cartsPeriod, cartsDateRange]);
+  const liveFormPulseScope = useMemo(() => liveFormPulseScopeLabel(cartsPeriod, liveFormPulseBounds), [cartsPeriod, liveFormPulseBounds]);
+
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts" || !["Owner", "Admin"].includes(realRole)) {
+      setLiveFormPulse(null);
+      setLiveFormPulseLoading(false);
+      setLiveFormPulseEmbedOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLiveFormPulseLoading(true);
+        const pulse = await cartsApi.livePulse({
+          productIds: cartProductIdFilterList.length > 0 ? cartProductIdFilterList : undefined,
+          embedLabels: liveFormPulseEmbedFilter ? [liveFormPulseEmbedFilter] : undefined,
+          dateFrom: liveFormPulseBounds?.dateFrom,
+          dateTo: liveFormPulseBounds?.dateTo
+        });
+        if (cancelled) return;
+        setLiveFormPulse(pulse as LiveFormPulseResponse);
+        setLiveFormPulseEmbedOptions(
+          Array.from(
+            new Set(((pulse as LiveFormPulseResponse | null)?.embeds ?? []).map((entry) => entry.embedLabel).filter(Boolean))
+          ).sort()
+        );
+      } catch {
+        if (cancelled) return;
+        setLiveFormPulse(null);
+        setLiveFormPulseEmbedOptions([]);
+      } finally {
+        if (!cancelled) setLiveFormPulseLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, cartProductIdFilterKey, cartProductIdFilterList, cartsDateRange, cartsPeriod, liveFormPulseBounds, liveFormPulseEmbedFilter, realRole]);
 
   // (Role + scoping derivation moved up so data filters can use viewerScopeRepId.)
   // If the active page isn't in this user's allowed set (role swap, deep
@@ -8774,6 +9038,171 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
   }).filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
+  const packagePerformanceRows = (() => {
+    const search = financeProductSearch.trim().toLowerCase();
+    const totalDeliveredRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+    return products
+      .filter((product) => !selectedProductId || product.id === selectedProductId)
+      .flatMap((product) => {
+        type PackageAccumulator = {
+          packageId?: string | null;
+          packageName: string;
+          packageQuantity: number;
+          isFallback: boolean;
+          totalOrders: number;
+          deliveredCount: number;
+          orderedUnits: number;
+          deliveredUnits: number;
+          placedRevenue: number;
+          deliveredRevenue: number;
+          cogs: number;
+          logistics: number;
+        };
+        const packageMap = new Map<string, PackageAccumulator>();
+        const productOrders = financePeriodOrders.filter((order) => order.productId === product.id);
+        const productDelivered = financeDeliveredRows.filter((order) => order.productId === product.id);
+        const productRevenue = productDelivered.reduce((sum, order) => sum + order.amount, 0);
+        const productDirectExpenses = financeOpexExpenses
+          .filter((expense) => expense.productId === product.id)
+          .reduce((sum, expense) => sum + expense.amount, 0);
+        const productAllocatedSharedOpex = proportionalShare(
+          productRevenue,
+          totalDeliveredRevenue,
+          financeSharedOpex,
+          productDelivered.length,
+          financeCohortDeliveredRows.length
+        );
+        const resolveOrderUnits = (order: TrackedOrder) => {
+          const packageRecord = product.packages.find((item) => item.id === order.packageId);
+          return Math.max(1, order.quantity ?? packageRecord?.quantity ?? 1);
+        };
+        const packageLabelForOrder = (order: TrackedOrder) => {
+          const packageRecord = product.packages.find((item) => item.id === order.packageId);
+          if (packageRecord) {
+            return {
+              key: packageRecord.id,
+              packageId: packageRecord.id,
+              packageName: packageRecord.name,
+              packageQuantity: packageRecord.quantity,
+              isFallback: false
+            };
+          }
+          const orderUnits = resolveOrderUnits(order);
+          const manualLabel = (order.packageName ?? "").trim() || `Manual ${formatBundleUnitLabel(orderUnits)}`;
+          return {
+            key: `manual:${manualLabel}:${orderUnits}`,
+            packageId: order.packageId ?? null,
+            packageName: manualLabel,
+            packageQuantity: orderUnits,
+            isFallback: true
+          };
+        };
+
+        productOrders.forEach((order) => {
+          const units = resolveOrderUnits(order);
+          const pkg = packageLabelForOrder(order);
+          const current = packageMap.get(pkg.key) ?? {
+            packageId: pkg.packageId,
+            packageName: pkg.packageName,
+            packageQuantity: pkg.packageQuantity,
+            isFallback: pkg.isFallback,
+            totalOrders: 0,
+            deliveredCount: 0,
+            orderedUnits: 0,
+            deliveredUnits: 0,
+            placedRevenue: 0,
+            deliveredRevenue: 0,
+            cogs: 0,
+            logistics: 0
+          };
+          current.totalOrders += 1;
+          current.orderedUnits += units;
+          current.placedRevenue += order.amount || 0;
+          packageMap.set(pkg.key, current);
+        });
+
+        productDelivered.forEach((order) => {
+          const units = resolveOrderUnits(order);
+          const pkg = packageLabelForOrder(order);
+          const current = packageMap.get(pkg.key) ?? {
+            packageId: pkg.packageId,
+            packageName: pkg.packageName,
+            packageQuantity: pkg.packageQuantity,
+            isFallback: pkg.isFallback,
+            totalOrders: 0,
+            deliveredCount: 0,
+            orderedUnits: 0,
+            deliveredUnits: 0,
+            placedRevenue: 0,
+            deliveredRevenue: 0,
+            cogs: 0,
+            logistics: 0
+          };
+          current.deliveredCount += 1;
+          current.deliveredUnits += units;
+          current.deliveredRevenue += order.amount || 0;
+          current.cogs += costForOrder(order);
+          current.logistics += order.logisticsCost ?? 0;
+          packageMap.set(pkg.key, current);
+        });
+
+        return Array.from(packageMap.entries()).map(([packageKey, row]) => {
+          const hasOrderCohort = row.totalOrders > 0;
+          const deliveryRate = hasOrderCohort ? Math.round((row.deliveredCount / row.totalOrders) * 100) : 0;
+          const allocatedProductOpex = productRevenue === 0
+            ? 0
+            : (row.deliveredRevenue / productRevenue) * (productDirectExpenses + productAllocatedSharedOpex);
+          const netProfit = row.deliveredRevenue - row.cogs - row.logistics - allocatedProductOpex;
+          const shareOfProductOrders = productOrders.length === 0 ? 0 : Math.round((row.totalOrders / productOrders.length) * 100);
+          const shareOfProductDelivered = productDelivered.length === 0 ? 0 : Math.round((row.deliveredCount / productDelivered.length) * 100);
+          return {
+            packageKey,
+            product,
+            packageId: row.packageId ?? undefined,
+            packageName: row.packageName,
+            packageQuantity: row.packageQuantity,
+            isFallback: row.isFallback,
+            hasOrderCohort,
+            totalOrders: row.totalOrders,
+            deliveredCount: row.deliveredCount,
+            deliveryRate,
+            tier: performanceTier(deliveryRate),
+            orderedUnits: row.orderedUnits,
+            deliveredUnits: row.deliveredUnits,
+            placedRevenue: row.placedRevenue,
+            deliveredRevenue: row.deliveredRevenue,
+            cogs: row.cogs,
+            logistics: row.logistics,
+            expenses: allocatedProductOpex,
+            netProfit,
+            margin: row.deliveredRevenue === 0 ? 0 : Math.round((netProfit / row.deliveredRevenue) * 100),
+            shareOfProductOrders,
+            shareOfProductDelivered
+          };
+        });
+      })
+      .filter((row) => {
+        if (!search) return true;
+        return row.product.name.toLowerCase().includes(search)
+          || row.product.sku.toLowerCase().includes(search)
+          || row.packageName.toLowerCase().includes(search)
+          || formatBundleUnitLabel(row.packageQuantity).includes(search);
+      })
+      .sort((a, b) =>
+        b.totalOrders - a.totalOrders
+        || b.deliveredCount - a.deliveredCount
+        || b.deliveredRevenue - a.deliveredRevenue
+      );
+  })();
+  const topOrderedPackageRow = packagePerformanceRows[0] ?? null;
+  const topDeliveredPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredCount - a.deliveredCount || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
+  const topDeliveredUnitsPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredUnits - a.deliveredUnits || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
+  const bestPackageDeliveryRateRow = packagePerformanceRows
+    .filter((row) => row.totalOrders > 0)
+    .slice()
+    .sort((a, b) => b.deliveryRate - a.deliveryRate || b.deliveredCount - a.deliveredCount || b.totalOrders - a.totalOrders)[0] ?? null;
+  const trackedPackageRowsCount = packagePerformanceRows.filter((row) => !row.isFallback).length;
+  const legacyPackageRowsCount = packagePerformanceRows.filter((row) => row.isFallback).length;
   const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
@@ -9350,7 +9779,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Follow-up Queue" ? "Follow-up queue is ready." : activePage === "Closed Orders" ? "Closed orders archive is ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -9528,6 +9957,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminRouteToPage: Record<string, ActivePage> = {
       "": "Dashboard",
       orders: "Orders",
+      "follow-up-queue": "Follow-up Queue",
+      "closed-orders": "Closed Orders",
       "abandoned-carts": "Abandoned Carts",
       "scheduled-deliveries": "Scheduled Deliveries",
       deliveries: "Deliveries",
@@ -9555,16 +9986,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       settings: "Settings"
     };
 
-    if (section === "orders" && parts[3] === "new") {
-      setActivePage("Orders");
+    const adminOrderWorkspaceRoutePage = section === "orders"
+      ? "Orders"
+      : section === "follow-up-queue"
+        ? "Follow-up Queue"
+        : section === "closed-orders"
+          ? "Closed Orders"
+          : null;
+
+    if (adminOrderWorkspaceRoutePage && parts[3] === "new") {
+      setActivePage(adminOrderWorkspaceRoutePage);
       openCreateOrderModal();
       return;
     }
 
-    if (section === "orders" && parts[3]) {
-      // Deep link to a specific admin order — land on the admin Orders page
-      // and open the same details modal the Eye-button uses.
-      setActivePage("Orders");
+    if (adminOrderWorkspaceRoutePage && parts[3]) {
+      setActivePage(adminOrderWorkspaceRoutePage);
       setSelectedOrderId(parts[3]);
       if (parts[4] === "edit") {
         setModal("editOrderItems");
@@ -21069,13 +21506,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               </div>
             </>
-          ) : activePage === "Orders" ? (
+          ) : (activePage === "Orders" || activePage === "Follow-up Queue" || activePage === "Closed Orders") ? (
             <div className="space-y-6">
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Orders Management</h1>
-                  <p className="text-sm font-medium text-gray-500">Track and manage all customer orders in real-time</p>
+                  <h1 className="text-2xl font-bold text-[#1F8FE0]">{orderWorkspaceTitle}</h1>
+                  <p className="text-sm font-medium text-gray-500">{orderWorkspaceSubtitle}</p>
                 </div>
                 {/* Desktop-only action buttons — on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -21145,12 +21582,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {/* Metric cards */}
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Orders summary">
-                {[
-                  { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-                  { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-                  { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
-                  { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" },
-                ].map(({ label, value, sub, icon: Icon, color }) => (
+                {orderWorkspaceMetricCards.map(({ label, value, sub, icon: Icon, color }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
                     <span className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${color}`}><Icon className="w-5 h-5" /></span>
                     <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</h2>
@@ -21168,8 +21600,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
                     <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><BookOpen className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">New Orders by Product</h2>
-                      <p className="text-xs text-gray-400">All orders (any status) created in the selected period</p>
+                      <h2 className="text-sm font-bold text-gray-900">{orderWorkspaceProductHeading}</h2>
+                      <p className="text-xs text-gray-400">{orderWorkspaceProductHelper}</p>
                     </div>
                   </div>
                   {ordersByProduct.length === 0 ? (
@@ -21188,7 +21620,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   )}
                 </section>
 
-                {/* Revenue Opportunity */}
+                {orderWorkspacePage === "Orders" ? (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
                     <span className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
@@ -21226,6 +21658,28 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <strong className="text-lg font-bold text-[#1F8FE0]">{formatMoney(pfProjectedRevenue)}</strong>
                   </div>
                 </section>
+                ) : (
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${orderWorkspaceInsight.iconClassName}`}>
+                      <OrderWorkspaceInsightIcon className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h2 className="text-sm font-bold text-gray-900">{orderWorkspaceInsight.title}</h2>
+                      <p className="text-xs text-gray-400">{orderWorkspaceInsight.helper}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-dashed border-[#1F8FE0]/40 bg-slate-50 px-4 py-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1F8FE0] m-0">{orderWorkspaceInsight.title}</p>
+                    <strong className="text-2xl font-bold text-gray-900 block mt-2">{orderWorkspaceInsight.body}</strong>
+                    <p className="text-xs text-gray-500 mt-3 mb-0">
+                      {orderWorkspacePage === "Follow-up Queue"
+                        ? "Use this queue to stay ahead of overdue callbacks and promised delivery dates."
+                        : "Use this archive to review what converted, what failed, and where quality is slipping."}
+                    </p>
+                  </div>
+                </section>
+                )}
               </div>
 
               {/* Orders table */}
@@ -21420,7 +21874,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspaceTableEmpty}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -21646,6 +22100,149 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </article>
                 ))}
               </section>
+
+              {(realRole === "Owner" || realRole === "Admin") && (
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4" aria-label="Live form pulse">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base font-bold text-gray-900 m-0">Live Form Pulse</h2>
+                        {liveFormPulse?.health ? (
+                          <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${liveFormPulseHealthBadgeClass(liveFormPulse.health.status)}`}>
+                            {liveFormPulse.health.status}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 mb-0">Live traffic, interaction, submit, redirect, and recovery signals from the customer order form.</p>
+                    </div>
+                    <div className="flex items-start gap-3 flex-wrap justify-end">
+                      <label className="flex flex-col gap-1 text-left">
+                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Embed label</span>
+                        <select
+                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 min-w-[220px]"
+                          value={liveFormPulseEmbedFilter}
+                          onChange={(e) => setLiveFormPulseEmbedFilter(e.target.value)}
+                        >
+                          <option value="">All embeds</option>
+                          {liveFormPulseEmbedOptions.map((label) => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="text-right">
+                        {liveFormPulseLoading ? <p className="text-[11px] font-semibold text-gray-400 m-0">Refreshing live pulse…</p> : null}
+                        <p className="text-[11px] text-gray-400 mt-1 mb-0">
+                          {liveFormPulse?.generatedAt ? `Updated ${relativeMinutesLabel(liveFormPulse.generatedAt)}` : "Waiting for pulse data"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 via-white to-emerald-50 px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">Current health</p>
+                      <p className="text-sm text-gray-700 mt-2 mb-0">
+                        {liveFormPulse?.health?.message ?? "Once fresh traffic hits the form, Protohub will show the live health signal here."}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 w-full lg:w-auto">
+                      {[
+                        { label: "Active now", value: liveFormPulse?.summary.activeNow ?? 0, sub: `${liveFormPulse?.activeWindowMinutes ?? 10}m window` },
+                        { label: "Views", value: liveFormPulse?.summary.viewedLiveWindow ?? 0, sub: "live window" },
+                        { label: "Clicks", value: liveFormPulse?.summary.interactedLiveWindow ?? 0, sub: "live window" },
+                        { label: "Submits", value: liveFormPulse?.summary.submitAttemptsLiveWindow ?? 0, sub: "live window" },
+                        { label: "Orders", value: liveFormPulse?.summary.conversionsLiveWindow ?? 0, sub: "live window" }
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3 min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                          <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                          <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-700 m-0">Last seen live</p>
+                      <p className="text-lg font-bold text-slate-900 mt-1 mb-0">{relativeMinutesLabel(liveFormPulseLastSeenAt(liveFormPulse))}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-slate-500 mt-0 mb-0">
+                        {liveFormPulseLastSeenAt(liveFormPulse)
+                          ? `Freshest pulse at ${formatMoment(liveFormPulseLastSeenAt(liveFormPulse))}`
+                          : "No live signal has been captured yet"}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1 mb-0">Combines views, interactions, submit attempts, orders, and redirects.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.15fr,0.85fr] gap-4">
+                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h3 className="text-sm font-bold text-gray-900 m-0">{cartsPeriod === "Today" ? "Today’s conversion pulse" : `${liveFormPulseScope.charAt(0).toUpperCase()}${liveFormPulseScope.slice(1)} conversion pulse`}</h3>
+                          <p className="text-xs text-gray-500 mt-1 mb-0">Use this to spot if traffic is reaching the form but not turning into submitted orders across {liveFormPulseScope}.{liveFormPulseEmbedFilter ? ` Showing ${liveFormPulseEmbedFilter} only.` : " Showing all embeds."}</p>
+                        </div>
+                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1">
+                          {liveFormPulse?.summary.conversionRate ?? 0}% view → order
+                        </span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        {[
+                          { label: liveFormPulseMetricLabel("Views", cartsPeriod), value: liveFormPulse?.summary.viewedToday ?? 0, sub: liveFormPulse?.summary.lastViewedAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastViewedAt)}` : "No view yet" },
+                          { label: liveFormPulseMetricLabel("Clicks", cartsPeriod), value: liveFormPulse?.summary.interactedToday ?? 0, sub: `${liveFormPulse?.summary.interactionRate ?? 0}% of views` },
+                          { label: liveFormPulseMetricLabel("Submit tries", cartsPeriod), value: liveFormPulse?.summary.submitAttemptsToday ?? 0, sub: liveFormPulse?.summary.lastSubmitAttemptAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastSubmitAttemptAt)}` : "No attempt yet" },
+                          { label: liveFormPulseMetricLabel("Orders", cartsPeriod), value: liveFormPulse?.summary.conversionsToday ?? 0, sub: liveFormPulse?.summary.lastConversionAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastConversionAt)}` : "No order yet" },
+                          { label: liveFormPulseMetricLabel("Redirects", cartsPeriod), value: liveFormPulse?.summary.redirectsToday ?? 0, sub: liveFormPulse?.summary.lastRedirectAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastRedirectAt)}` : "No redirect yet" }
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
+                            <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
+                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+
+                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h3 className="text-sm font-bold text-gray-900 m-0">Traffic sources live</h3>
+                          <p className="text-xs text-gray-500 mt-1 mb-0">See which sources and embed labels are still sending real traffic.</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {liveFormPulse && liveFormPulse.sources.length > 0 ? (
+                          liveFormPulse.sources.slice(0, 5).map((source) => (
+                            <div key={source.source} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-3 py-3">
+                              <div>
+                                <p className="text-sm font-semibold text-gray-900 m-0">{source.source || "Unknown source"}</p>
+                                <p className="text-[11px] text-gray-500 mt-1 mb-0">{source.viewed} views · {source.interacted} clicks · {source.submitted} submits</p>
+                              </div>
+                              <span className="text-[11px] text-gray-400">{relativeMinutesLabel(source.lastSeenAt)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-gray-500">No source activity captured across {liveFormPulseScope} yet.</p>
+                        )}
+                        {liveFormPulse && liveFormPulse.embeds.length > 0 ? (
+                          <div className="pt-1">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 mb-2">Embed labels</p>
+                            <div className="flex flex-wrap gap-2">
+                              {liveFormPulse.embeds.slice(0, 6).map((embed) => (
+                                <span key={embed.embedLabel || "unknown"} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs font-semibold text-gray-700">
+                                  {embed.embedLabel || "Unlabeled"} · {embed.viewed}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  </div>
+                </section>
+              )}
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-200">
@@ -27462,6 +28059,144 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}%</span></td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}%</span></td>
                                 <td className="px-4 py-4 font-semibold text-gray-900">{row.adSpend === 0 ? (row.revenue > 0 ? "Uncapped" : "N/A") : `${(row.revenue / row.adSpend).toFixed(2)}x`}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {financeTab === "Package Performance" && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                    {[
+                      {
+                        title: "Most Ordered",
+                        row: topOrderedPackageRow,
+                        helper: topOrderedPackageRow ? `${topOrderedPackageRow.totalOrders} orders · ${topOrderedPackageRow.orderedUnits} pcs ordered` : "No package activity in this period.",
+                      },
+                      {
+                        title: "Most Delivered",
+                        row: topDeliveredPackageRow,
+                        helper: topDeliveredPackageRow ? `${topDeliveredPackageRow.deliveredCount} delivered · ${topDeliveredPackageRow.deliveredUnits} pcs delivered` : "No package activity in this period.",
+                      },
+                      {
+                        title: "Most Delivered PCS",
+                        row: topDeliveredUnitsPackageRow,
+                        helper: topDeliveredUnitsPackageRow ? `${topDeliveredUnitsPackageRow.deliveredUnits} pcs · ${topDeliveredUnitsPackageRow.deliveredCount} delivered orders` : "No package activity in this period.",
+                      },
+                      {
+                        title: "Best Delivery Rate",
+                        row: bestPackageDeliveryRateRow,
+                        helper: bestPackageDeliveryRateRow ? `${bestPackageDeliveryRateRow.deliveryRate}% · ${bestPackageDeliveryRateRow.deliveredCount}/${bestPackageDeliveryRateRow.totalOrders}` : "No package activity in this period.",
+                      }
+                    ].map((metric) => (
+                      <article key={metric.title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
+                        {metric.row ? (
+                          <>
+                            <strong className="text-lg font-bold text-gray-900 block mt-2">{metric.row.product.name}</strong>
+                            <p className="text-sm font-semibold text-[#1F8FE0] mt-1 mb-0">{metric.row.packageName} · {formatBundleUnitLabel(metric.row.packageQuantity)}</p>
+                            <p className="text-[11px] text-gray-400 font-medium mt-2">{metric.helper}</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-400 italic mt-3">{metric.helper}</p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label className="flex flex-col gap-1 w-full sm:flex-1 sm:max-w-xs">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Product for Analysis</span>
+                      <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Package product for analysis" value={selectedProductId} onChange={(event) => { const p = products.find((pr) => pr.id === event.target.value); setSelectedProductId(event.target.value); setFinanceProductSearch(p?.name ?? ""); }}>
+                        <option value="">All products</option>
+                        {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
+                      <Search className="w-4 h-4 text-gray-400 shrink-0" />
+                      <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product, package, or pcs..." />
+                    </label>
+                    <div className="self-end flex flex-wrap items-center gap-2 sm:pb-2">
+                      <span className="text-xs text-gray-400">{packagePerformanceRows.length} package rows</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">Tracked {trackedPackageRowsCount}</span>
+                      {legacyPackageRowsCount > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-700">Manual / legacy {legacyPackageRowsCount}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600">
+                      <span className="font-semibold text-gray-800">Tracked package</span> rows are tied to a real saved package. <span className="font-semibold text-gray-800">Manual / legacy</span> rows come from older orders or fallback package text where the original package link was missing. <span className="font-semibold text-gray-800">Ordered</span> uses the selected created-date period, while <span className="font-semibold text-gray-800">Delivered</span> and delivered profit use the selected delivered-date period.
+                    </div>
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {packagePerformanceRows.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</div>
+                      ) : (
+                        packagePerformanceRows.map((row) => (
+                          <article key={row.packageKey} className="px-4 py-4 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="font-bold text-gray-900">{row.product.name}</div>
+                                <div className="text-sm font-semibold text-[#1F8FE0]">{row.packageName} · {formatBundleUnitLabel(row.packageQuantity)}</div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? row.tier : "Carry-over only"}</span>
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span><div className="text-gray-700">{row.totalOrders}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span><div className="text-green-700 font-semibold">{row.deliveredCount}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Ordered PCS</span><div className="text-gray-700">{row.orderedUnits}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered PCS</span><div className="text-gray-700">{row.deliveredUnits}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span><div className="font-bold text-gray-900">{row.hasOrderCohort ? `${row.deliveryRate}%` : "—"}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Share of Product</span><div className="text-gray-700">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue Delivered</span><div className="font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Approx Net Profit</span><div className="font-bold text-gray-900">{formatMoney(row.netProfit)}</div></div>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="w-full text-sm sticky-col-first">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                            {["Product", "Package / PCS", "Orders", "Delivered", "Delivery Rate", "Ordered PCS", "Delivered PCS", "Placed Revenue", "Delivered Revenue", "Approx Net Profit", "Share of Product"].map((h) => (
+                              <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {packagePerformanceRows.length === 0 ? (
+                            <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</td></tr>
+                          ) : (
+                            packagePerformanceRows.map((row) => (
+                              <tr key={row.packageKey} className="hover:bg-gray-50 transition-colors">
+                                <td className="px-4 py-4">
+                                  <div className="font-bold text-gray-900">{row.product.name}</div>
+                                  <div className="text-xs text-gray-400 font-mono">{row.product.sku}</div>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <div className="font-semibold text-gray-900">{row.packageName}</div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-xs text-gray-500">{formatBundleUnitLabel(row.packageQuantity)}</span>
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 text-gray-700">{row.totalOrders}</td>
+                                <td className="px-4 py-4 text-green-700 font-semibold">{row.deliveredCount}</td>
+                                <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? `${row.deliveryRate}%` : "Carry-over only"}</span></td>
+                                <td className="px-4 py-4 text-gray-700">{row.orderedUnits}</td>
+                                <td className="px-4 py-4 text-gray-700">{row.deliveredUnits}</td>
+                                <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.placedRevenue)}</td>
+                                <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</td>
+                                <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(row.netProfit)}</td>
+                                <td className="px-4 py-4 text-gray-700 whitespace-nowrap">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</td>
                               </tr>
                             ))
                           )}
