@@ -2027,11 +2027,11 @@ const orderDangerButtonClass =
 const orderInputClass =
   "border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-100 dark:placeholder:text-slate-500";
 const followUpNoteBubbleClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-300/50 bg-amber-100/90 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-400/30 dark:bg-[#4a2d0a]/88 dark:text-amber-50";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-700/70 bg-amber-950/88 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
 const followUpNoteBubbleCompactClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-300/50 bg-amber-100/90 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-400/30 dark:bg-[#4a2d0a]/88 dark:text-amber-50";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-700/70 bg-amber-950/88 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
 const followUpNoteBubbleDotClass =
-  "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500/80 dark:bg-amber-200/85";
+  "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-300";
 const orderNoteCardClass =
   "rounded-[22px] border border-gray-200 bg-white px-4 py-4 sm:px-5 sm:py-5 shadow-sm dark:bg-[#0b141d] dark:border-slate-800/90 dark:shadow-[0_18px_40px_rgba(2,6,23,0.3)]";
 const orderNoteMetaClass = "text-[12px] sm:text-[13px] font-semibold tracking-[0.01em] text-gray-500 dark:text-slate-400";
@@ -2485,10 +2485,10 @@ const nextFollowUpForOrder = (order: TrackedOrder) => {
   return dueNow ?? entries[0];
 };
 const followUpBadgeClass = (entry: OrderFollowUpInsight | null) => {
-  if (!entry) return "bg-gray-100 text-gray-500";
-  if (entry.overdue) return "bg-rose-100 text-rose-700";
-  if (entry.dueSoon) return "bg-amber-100 text-amber-700";
-  return "bg-blue-100 text-blue-700";
+  if (!entry) return "border border-slate-600 bg-slate-800/90 text-slate-100";
+  if (entry.overdue) return "border border-rose-700/70 bg-rose-950/85 text-rose-100";
+  if (entry.dueSoon) return "border border-amber-700/70 bg-amber-950/88 text-amber-100";
+  return "border border-sky-700/70 bg-sky-950/85 text-sky-100";
 };
 const followUpHeadline = (entry: OrderFollowUpInsight | null) => {
   if (!entry) return "No follow-up set";
@@ -2544,39 +2544,39 @@ const queueTimingMeta = (item: {
     case "late":
       return {
         label: lateMinutes && lateMinutes > 0 ? `Late by ${compactDurationFromMinutes(lateMinutes)}` : "Late now",
-        tone: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200"
+        tone: "border border-rose-700/70 bg-rose-950/85 text-rose-100"
       };
     case "due_now":
       return {
         label: "Due now",
-        tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200"
+        tone: "border border-amber-700/70 bg-amber-950/88 text-amber-100"
       };
     case "due_soon":
       if (dueMs != null) {
         const minutes = Math.max(0, Math.round((dueMs - Date.now()) / (60 * 1000)));
         return {
           label: minutes <= 0 ? "Due soon" : `Due in ${compactDurationFromMinutes(minutes)}`,
-          tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
+          tone: "border border-sky-700/70 bg-sky-950/85 text-sky-100"
         };
       }
       return {
         label: "Due soon",
-        tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
+        tone: "border border-sky-700/70 bg-sky-950/85 text-sky-100"
       };
     case "scheduled":
       return {
         label: "Scheduled",
-        tone: "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200"
+        tone: "border border-slate-600 bg-slate-800/90 text-slate-100"
       };
     case "handled_late":
       return {
         label: lateMinutes && lateMinutes > 0 ? `Handled ${compactDurationFromMinutes(lateMinutes)} late` : "Handled late",
-        tone: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-200"
+        tone: "border border-orange-700/70 bg-orange-950/85 text-orange-100"
       };
     case "handled_on_time":
       return {
         label: "Handled on time",
-        tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
+        tone: "border border-emerald-700/70 bg-emerald-950/85 text-emerald-100"
       };
     default:
       return null;
