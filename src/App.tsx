@@ -527,6 +527,7 @@ type CrossSellLine = {
   productName: string;
   quantity: number;
   amount: number;
+  selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
 };
 type FreeGiftLine = {
   id: string;
@@ -6329,6 +6330,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
   const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
   const [orderScheduleTime, setOrderScheduleTime] = useState(() => nextTimeValue());
+  const [dateEditTarget, setDateEditTarget] = useState<string>("");
+  const [dateEditDate, setDateEditDate] = useState("");
+  const [dateEditTime, setDateEditTime] = useState(() => nextTimeValue());
+  const [dateEditReason, setDateEditReason] = useState("");
+  const [dateEditSaving, setDateEditSaving] = useState(false);
+  const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
   const [showRepFollowUpField, setShowRepFollowUpField] = useState(false);
   const [assignStockProductId, setAssignStockProductId] = useState("");
   const [assignStockQty, setAssignStockQty] = useState("1");
@@ -6439,13 +6446,71 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedOrderContactAttempts = selectedOrder ? (orderContactAttemptsByOrder[selectedOrder.id] ?? []) : [];
   const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
   const selectedOrderLatestAttempt = latestContactAttemptForOrder(selectedOrderContactAttempts);
+  const selectedOrderJourney = useMemo(
+    () => selectedOrder?.sourceCartId ? (adTrackingCartJourneyMap[selectedOrder.sourceCartId] ?? []) : [],
+    [selectedOrder?.sourceCartId, adTrackingCartJourneyMap]
+  );
+  const selectedOrderJourneyAnalytics = useMemo(
+    () =>
+      summarizeCartJourneyAnalytics(
+        selectedOrder?.sourceCartId
+          ? {
+              [selectedOrder.sourceCartId]: selectedOrderJourney
+            }
+          : {}
+      ),
+    [selectedOrder?.sourceCartId, selectedOrderJourney]
+  );
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
+  const isOwnerOrAdmin = realRole === "Owner" || realRole === "Admin";
+  const isEditingSelectedOrderDate = Boolean(selectedOrder?.id) && dateEditTarget === selectedOrder?.id;
   const canDeleteAbandonedCarts = (() => {
     const role = auth.getUser()?.role;
     return role === "Owner" || role === "Admin";
   })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
+  const resetDateEditor = () => {
+    setDateEditTarget("");
+    setDateEditDate("");
+    setDateEditTime(nextTimeValue());
+    setDateEditReason("");
+    setDateEditSaving(false);
+  };
+  const openOrderDateEditor = (order: TrackedOrder) => {
+    const parts = splitMomentForInput(order.createdAt ?? order.date);
+    setDateEditTarget(order.id);
+    setDateEditDate(parts.date || todayKey());
+    setDateEditTime(parts.time || nextTimeValue());
+    setDateEditReason("");
+  };
+  const sortOrdersByCreatedAtDesc = (rows: TrackedOrder[]) =>
+    rows.slice().sort((left, right) => (orderCreatedTimestamp(right) ?? 0) - (orderCreatedTimestamp(left) ?? 0));
+  const saveDateEditor = async () => {
+    if (!dateEditTarget) return;
+    const planned = combinePlannedMoment(dateEditDate, dateEditTime);
+    if (!planned.iso) {
+      showToast("Choose a valid date and time first.");
+      return;
+    }
+    const reason = dateEditReason.trim();
+    if (reason.length < 3) {
+      showToast("Give a clear reason before saving the date change.");
+      return;
+    }
+
+    setDateEditSaving(true);
+    try {
+      const updated = normalizeTrackedOrder(await ordersApi.changeDate(dateEditTarget, { createdAt: planned.iso, reason }));
+      setTrackedOrders((value) => sortOrdersByCreatedAtDesc(value.map((order) => order.id === updated.id ? updated : order)));
+      showToast(`Order ${updated.id} date updated.`);
+      resetDateEditor();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not update the date right now.");
+    } finally {
+      setDateEditSaving(false);
+    }
+  };
   useEffect(() => {
     if (modal !== "cartDetails" || !selectedCartId) {
       setSelectedCartJourneyEvents([]);
@@ -6485,6 +6550,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       cancelled = true;
     };
   }, [modal, selectedCartId]);
+  useEffect(() => {
+    if (modal !== "orderDetails" || !selectedOrder?.sourceCartId || !isOwnerOrAdmin) {
+      setSelectedOrderJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const sourceCartId = selectedOrder.sourceCartId;
+    const loadJourney = async (silent = false) => {
+      if (!silent) {
+        setSelectedOrderJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk([sourceCartId]);
+        if (cancelled) return;
+        const normalized = Array.isArray(grouped?.[sourceCartId])
+          ? grouped[sourceCartId].map((event) => normalizeCartJourneyEvent(event))
+          : [];
+        setAdTrackingCartJourneyMap((value) => ({ ...value, [sourceCartId]: normalized }));
+      } catch {
+        if (!cancelled && !silent) {
+          setAdTrackingCartJourneyMap((value) => ({ ...value, [sourceCartId]: [] }));
+        }
+      } finally {
+        if (!cancelled && !silent) {
+          setSelectedOrderJourneyLoading(false);
+        }
+      }
+    };
+
+    void loadJourney();
+    pollingHandle = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadJourney(true);
+    }, CART_JOURNEY_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [modal, isOwnerOrAdmin, selectedOrder?.sourceCartId]);
   useEffect(() => {
     if (!selectedOrderId) {
       return;
@@ -35564,6 +35673,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
+                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+                      >
+                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+                      </button>
                     </div>
 	                </div>
 
@@ -35606,7 +35721,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                {/* Section 1: Customer Information */}
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Customer Information</h3>
+	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-2 mb-3 ${orderBorderClass}`}>
+	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Customer Information</h3>
+	                      <button
+	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                      >
+	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+	                      </button>
+	                    </div>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Name</p>
@@ -35645,7 +35768,74 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	
 	                {/* Section 2: Order Information */}
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Order Information</h3>
+                      <div className={`flex items-center justify-between gap-3 border-b pb-2 mb-3 ${orderBorderClass}`}>
+	                    <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Order Information</h3>
+                        {isOwnerOrAdmin && selectedOrder.sourceCartId && (
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 text-xs font-bold hover:bg-amber-50 transition-colors"
+                            onClick={() => openOrderDateEditor(selectedOrder)}
+                          >
+                            <CalendarDays className="w-3.5 h-3.5" /> Change order date
+                          </button>
+                        )}
+                      </div>
+                      {isEditingSelectedOrderDate && (
+                        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 grid gap-3">
+                          <div>
+                            <p className={`m-0 text-xs font-bold uppercase tracking-wider ${orderFaintTextClass}`}>Adjust converted order date</p>
+                            <p className={`m-0 mt-1 text-sm ${orderMutedTextClass}`}>Set the corrected order date and explain why this converted abandoned-cart order needs to move.</p>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label className="grid gap-1">
+                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Date</span>
+                              <input
+                                type="date"
+                                value={dateEditDate}
+                                onChange={(event) => setDateEditDate(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                            <label className="grid gap-1">
+                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Time</span>
+                              <input
+                                type="time"
+                                value={dateEditTime}
+                                onChange={(event) => setDateEditTime(event.target.value)}
+                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                              />
+                            </label>
+                          </div>
+                          <label className="grid gap-1">
+                            <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Reason</span>
+                            <textarea
+                              rows={2}
+                              value={dateEditReason}
+                              onChange={(event) => setDateEditReason(event.target.value)}
+                              placeholder="Why should this order date be corrected?"
+                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                            />
+                          </label>
+                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={dateEditSaving}
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+                              onClick={resetDateEditor}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={dateEditSaving}
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                              onClick={saveDateEditor}
+                            >
+                              <CalendarDays className="w-4 h-4" /> {dateEditSaving ? "Saving..." : "Save order date"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
@@ -35708,6 +35898,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned To</p>
 	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
+	                    </div>
+	                    <div>
+	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned By</p>
+	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>
+	                        {selectedOrder.assignedByNameSnapshot
+	                          ?? users.find((u) => u.id === selectedOrder.assignedByUserId)?.name
+	                          ?? (selectedOrder.assignedRepId
+	                            ? (selectedOrder.sourceCartId ? "Round-robin / system" : "Legacy / unrecorded")
+	                            : "Unassigned")}
+	                      </p>
 	                    </div>
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Agent</p>
@@ -35789,10 +35989,91 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                    </div>
 	                  </section>
 	
-	                {/* Section 4: Order Items */}
-	                <section>
-	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Items</h3>
-	                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+		                {/* Section 4: Order Items */}
+		                <section>
+		                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Items</h3>
+                    {(() => {
+                      const additionalItemTotal = (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+                      const mainOfferTotal = Math.max(0, (selectedOrder.amount || 0) - additionalItemTotal);
+                      const hasAdditionalItems = (selectedOrder.crossSellLines?.length ?? 0) > 0;
+                      const hasFreeGifts = (selectedOrder.freeGiftLines?.length ?? 0) > 0;
+                      const offerLabel = (line: CrossSellLine) =>
+                        line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
+                          ? "Additional item"
+                          : "Cross-sell";
+                      const offerDetail = (line: CrossSellLine) => {
+                        const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
+                        return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
+                      };
+                      return (
+                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-4 sm:px-5">
+                          <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div>
+                              <h4 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h4>
+                              <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
+                                Main offer plus any additional items saved with this order.
+                              </p>
+                            </div>
+                            <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
+                              {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
+                            </div>
+                          </div>
+                          <div className="mt-4 grid gap-3 border-t border-blue-100 pt-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
+                                  {selectedOrder.productName} · {selectedOrder.packageName}
+                                </p>
+                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
+                              </div>
+                              <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
+                                {formatProductMoney(mainOfferTotal, selectedOrder.currency)}
+                              </div>
+                            </div>
+                            {(selectedOrder.crossSellLines ?? []).map((line) => (
+                              <div key={`selected-breakdown-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
+                                    {offerLabel(line)} · {line.productName}
+                                  </p>
+                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
+                                </div>
+                                <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
+                                  {formatProductMoney(line.amount, selectedOrder.currency)}
+                                </div>
+                              </div>
+                            ))}
+                            {(selectedOrder.freeGiftLines ?? []).map((line) => (
+                              <div key={`selected-breakdown-gift-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
+                                    Free gift · {line.productName}
+                                  </p>
+                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                                    {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
+                                  </p>
+                                </div>
+                                <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
+                                  FREE
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-start justify-between gap-4 border-t border-blue-100 pt-4">
+                              <div className="min-w-0">
+                                <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
+                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                                  {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
+                                </p>
+                              </div>
+                              <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
+                                {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+		                  <div className="overflow-x-auto rounded-lg border border-gray-200">
 	                    <table className="w-full text-sm">
 	                      <thead>
 	                        <tr className="border-b border-gray-100 bg-gray-50/60">
@@ -35811,12 +36092,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                            )}
 	                            {quantityForOrder(selectedOrder)}
 	                          </td>
-	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(selectedOrder.amount / quantityForOrder(selectedOrder)), selectedOrder.currency)}</td>
-	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
+		                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(selectedOrder))), selectedOrder.currency)}</td>
+		                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), selectedOrder.currency)}</td>
 	                        </tr>
 	                        {(selectedOrder.crossSellLines ?? []).map((line) => (
 	                          <tr key={line.id} className="bg-amber-50/40">
-	                            <td className="px-4 py-2 text-gray-800 text-xs">↳ Cross-sell · {line.productName}</td>
+		                            <td className="px-4 py-2 text-gray-800 text-xs">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"} · {line.productName}</td>
 	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
 	                            <td className="px-4 py-2 text-right text-gray-700 text-xs">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), selectedOrder.currency)}</td>
 	                            <td className="px-4 py-2 text-right text-xs">
@@ -36070,10 +36351,129 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {/* Section 7: Form Submission Details */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
-	                    <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Form Submission Details</h3>
+	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
+	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission Details</h3>
+	                      <button
+	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                      >
+	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+	                      </button>
+	                    </div>
 	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
+
+                  {isOwnerOrAdmin && selectedOrder.sourceCartId && (
+                    <section>
+                      <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Customer Journey</h3>
+                      <div className={`rounded-[28px] px-5 py-5 ${orderPanelClass}`}>
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Source form timeline</p>
+                            <p className={`m-0 mt-2 text-[15px] sm:text-[16px] ${orderMutedTextClass}`}>
+                              What the customer did before this order was submitted from the form.
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Journey events</p>
+                            <p className={`m-0 mt-2 text-[18px] font-semibold ${orderTitleTextClass}`}>{selectedOrderJourney.length}</p>
+                          </div>
+                        </div>
+                        <div className={`mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Linked form session</p>
+                            <p className={`m-0 mt-2 text-[15px] font-semibold break-all ${orderTitleTextClass}`}>{selectedOrder.sourceCartId}</p>
+                          </div>
+                          <div>
+                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Last step reached</p>
+                            <p className={`m-0 mt-2 text-[15px] font-semibold ${orderTitleTextClass}`}>
+                              {selectedOrderJourney.length > 0 ? cartJourneyTitle(selectedOrderJourney[selectedOrderJourney.length - 1]) : "No tracked steps yet"}
+                            </p>
+                          </div>
+                        </div>
+                        {selectedOrderJourneyAnalytics.additionalItems.length > 0 ? (
+                          <div className={`mt-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div>
+                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Additional item path</p>
+                                <p className={`m-0 mt-2 text-[14px] leading-6 ${orderMutedTextClass}`}>
+                                  {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0
+                                    ? `Customer submitted this order with ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem} additional item${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem === 1 ? "" : "s"} still attached.`
+                                    : "Customer explored additional items during the form but submitted without carrying one into the order."}
+                                </p>
+                              </div>
+                              <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                                {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "Submitted with additional item" : "Submitted without additional item"}
+                              </span>
+                            </div>
+                            <div className="mt-3 grid gap-3">
+                              {selectedOrderJourneyAnalytics.additionalItems.map((item) => (
+                                <div key={item.key} className={`rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
+                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                                    <div>
+                                      <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{item.name}</p>
+                                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
+                                        {item.previewed} previewed · {item.added} added · {item.removed} removed · {item.submittedWithItem} carried into submit
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                                      {item.previewed > 0 ? (
+                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-blue-200 bg-blue-50 text-blue-700">
+                                          Previewed
+                                        </span>
+                                      ) : null}
+                                      {item.added > 0 ? (
+                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-emerald-200 bg-emerald-50 text-emerald-700">
+                                          Added
+                                        </span>
+                                      ) : null}
+                                      {item.removed > 0 ? (
+                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-amber-200 bg-amber-50 text-amber-700">
+                                          Removed before submit
+                                        </span>
+                                      ) : null}
+                                      {item.submittedWithItem > 0 ? (
+                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-violet-200 bg-violet-50 text-violet-700">
+                                          In submitted order
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="mt-4 flex items-center justify-between gap-2">
+                          <p className={`m-0 text-[12px] ${orderMutedTextClass}`}>Owner/Admin only. Useful for seeing what they viewed, added, removed, and when they submitted.</p>
+                          {selectedOrderJourneyLoading ? <span className={`text-[11px] font-semibold ${orderFaintTextClass}`}>Loading...</span> : null}
+                        </div>
+                        {selectedOrderJourney.length === 0 && !selectedOrderJourneyLoading ? (
+                          <p className={`m-0 mt-4 text-sm ${orderMutedTextClass}`}>No journey timeline has been captured for this submitted order yet.</p>
+                        ) : (
+                          <div className="mt-4 grid gap-2">
+                            {selectedOrderJourney.map((event, index) => (
+                              <div key={event.id} className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
+                                <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-50 text-[#1F8FE0] text-xs font-extrabold flex items-center justify-center">
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                                    <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{cartJourneyTitle(event)}</p>
+                                    <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(event.createdAt)}</span>
+                                  </div>
+                                  {cartJourneyDetail(event) ? (
+                                    <p className={`m-0 mt-1 text-[13px] leading-6 ${orderMutedTextClass}`}>{cartJourneyDetail(event)}</p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  )}
 
 	                {/* Footer */}
 	                <div className="flex justify-end pt-2 border-t border-gray-100">
