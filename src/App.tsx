@@ -8479,10 +8479,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
   const pfDeliveryRate = Math.round(pfDeliveryRateExact);
   const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
-  const pfBonusEstimate = pfDelivered.reduce(
+  const canViewOrderBonusEstimate = currentRole === "Sales Rep";
+  const pfBonusEstimate = canViewOrderBonusEstimate ? pfDelivered.reduce(
     (sum, order) => sum + computeOrderBonus(order, pfDeliveryRateExact, pfRevenuePerDelivered, pfOrders.length).total,
     0
-  );
+  ) : 0;
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
@@ -8540,7 +8541,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       : [
           { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
           { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-          { label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" },
+          ...(canViewOrderBonusEstimate
+            ? [{ label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" }]
+            : []),
           { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
         ];
   const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
