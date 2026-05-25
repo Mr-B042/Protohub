@@ -8781,6 +8781,79 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const expenseCogs = expenseDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
   const expenseNetProfit = expenseRevenue - expenseCogs - totalExpenses;
   const expenseMargin = expenseRevenue === 0 ? 0 : Math.round((expenseNetProfit / expenseRevenue) * 1000) / 10;
+  // Bonus accrual + recognized profit (used by Dashboard + Finance)
+  const weekStartSundayForDateKey = (value?: string | null) => {
+    const key = normalizeDateKey(value ?? "");
+    if (!key) return null;
+    const d = new Date(`${key}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() - d.getDay());
+    return formatDateKey(d);
+  };
+  const repWeeklyBonusStats = useMemo(() => {
+    const map = new Map<string, { placed: number; delivered: number }>();
+    trackedOrders.forEach((order) => {
+      const createdKey = orderCreatedKey(order);
+      const weekKey = weekStartSundayForDateKey(createdKey);
+      if (!weekKey) return;
+      const key = `${order.assignedRepId ?? "__none__"}::${weekKey}`;
+      const current = map.get(key) ?? { placed: 0, delivered: 0 };
+      current.placed += 1;
+      if ((order.status ?? "New") === "Delivered") current.delivered += 1;
+      map.set(key, current);
+    });
+    return map;
+  }, [trackedOrders]);
+  const repWeeklyBonusContextForOrder = (order: TrackedOrder) => {
+    const weekKey = weekStartSundayForDateKey(orderCreatedKey(order));
+    const stats = weekKey ? repWeeklyBonusStats.get(`${order.assignedRepId ?? "__none__"}::${weekKey}`) : undefined;
+    if (!stats || stats.placed === 0) {
+      return { rate: 100, count: 0 };
+    }
+    return {
+      rate: Math.round((stats.delivered / stats.placed) * 100),
+      count: stats.placed
+    };
+  };
+  const recognizedBonusTotalForRows = (rows: TrackedOrder[]) =>
+    rows.reduce((sum, order) => {
+      const stats = repWeeklyBonusContextForOrder(order);
+      return sum + (computeOrderBonus(order, stats.rate, 0, stats.count).total ?? 0);
+    }, 0);
+  const summarizeRecognizedProfit = (deliveredRows: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
+    const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
+    const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
+    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const recordedDeliveryExpense = periodExpenses
+      .filter((expense) => expense.type === "Delivery")
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const recognizedLogistics = logisticsFromOrders > 0 ? logisticsFromOrders : recordedDeliveryExpense;
+    const expenseRowsExDelivery = periodExpenses.filter((expense) => expense.type !== "Delivery");
+    const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
+    const bonusEstimate = recognizedBonusTotalForRows(deliveredRows);
+    const operatingExpense = recordedOperatingExpense + bonusEstimate;
+    const grossProfit = revenue - cogs - recognizedLogistics;
+    const netProfit = grossProfit - operatingExpense;
+    return {
+      revenue,
+      cogs,
+      recognizedLogistics,
+      recordedDeliveryExpense,
+      recordedOperatingExpense,
+      bonusEstimate,
+      operatingExpense,
+      grossProfit,
+      netProfit,
+      totalRecognizedExpense: recognizedLogistics + operatingExpense
+    };
+  };
+  const roundCash = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+  const financeStateNameForOrder = (order: TrackedOrder) => {
+    const raw = order.state ?? order.location ?? "";
+    const canonical = canonicalStateByToken.get(normalizeStateToken(raw));
+    return canonical ?? titleCaseStateLabel(raw) ?? "Unknown";
+  };
+
   // Product filter helpers — applied across all finance computations
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
@@ -8792,16 +8865,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeGeneralExpenses = financeExpenseTotal - financeProductLinkedExpenses;
   const financeDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
-  const financeRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
-  const financeCogs = financeDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-  const financeLogisticsCost = financeDeliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+  const financeCreatedDateCorrectionCount = financePeriodOrders.filter((order) => orderHasCreatedAtCorrection(order)).length;
+  const financeDeliveredDateCorrectionCount = financeDeliveredRows.filter((order) => orderHasDeliveredDateCorrection(order)).length;
+  const financeProfitSummary = summarizeRecognizedProfit(financeDeliveredRows, financeExpenses);
+  const financeRevenue = financeProfitSummary.revenue;
+  const financeCogs = financeProfitSummary.cogs;
+  const financeLogisticsCost = financeProfitSummary.recognizedLogistics;
+  const financeBonusEstimate = financeProfitSummary.bonusEstimate;
   const financeDeliveryExpenses = financeExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
-  const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery" && expense.type !== "Failed Delivery");
-  const financeOpex = financeOpexExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery");
+  const financeOpex = financeProfitSummary.operatingExpense;
   const financeSharedOpex = financeOpexExpenses.filter((expense) => !expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeAdSpendTotal = financeExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
-  const financeGrossProfit = financeRevenue - financeCogs - financeLogisticsCost;
-  const financeNetProfit = financeGrossProfit - financeOpex;
+  const financeGrossProfit = financeProfitSummary.grossProfit;
+  const financeNetProfit = financeProfitSummary.netProfit;
   const financeGrossMargin = financeRevenue === 0 ? 0 : Math.round((financeGrossProfit / financeRevenue) * 1000) / 10;
   const financeNetMargin = financeRevenue === 0 ? 0 : Math.round((financeNetProfit / financeRevenue) * 1000) / 10;
   const financeDeliveredCount = financeDeliveredRows.length;
@@ -28248,6 +28325,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </article>
                     ))}
                   </section>
+
+                  {financeBonusEstimate > 0 && (
+                    <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3" aria-label="Bonus accrual">
+                      <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider m-0">Recognized bonus liability</p>
+                      <p className="text-xs text-amber-700 mt-1 m-0">
+                        Operating expenses include {formatMoney(financeBonusEstimate)} of rep bonus accrued against delivered orders in this period. This is owed but not yet paid out.
+                      </p>
+                    </section>
+                  )}
+
+                  {(financeCreatedDateCorrectionCount > 0 || financeDeliveredDateCorrectionCount > 0) && (
+                    <section className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3" aria-label="Date corrections in this period">
+                      <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wider m-0">Date corrections in this period</p>
+                      <p className="text-xs text-blue-700 mt-1 m-0">
+                        {financeCreatedDateCorrectionCount > 0 ? `${financeCreatedDateCorrectionCount} order${financeCreatedDateCorrectionCount === 1 ? "" : "s"} use corrected order dates.` : "No corrected order dates."}{" "}
+                        {financeDeliveredDateCorrectionCount > 0 ? `${financeDeliveredDateCorrectionCount} delivered order${financeDeliveredDateCorrectionCount === 1 ? "" : "s"} use corrected delivered dates.` : "No corrected delivered dates."}
+                      </p>
+                    </section>
+                  )}
 
                   {/* Cash Position — POD-specific reconciliation between recognized revenue and cash actually received */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5" aria-label="Cash position">
