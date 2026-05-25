@@ -135,7 +135,10 @@ const checks = [
       "Dormant low stock",
       "SMART_STOCK_LOOKBACK_DAYS",
       "smartStockDemandSignals",
-      "repSmartStockSignals"
+      "repSmartStockSignals",
+      "smartStockNotificationPayload",
+      "createStockRiskAlerts",
+      "salesRepRecipientIds"
     ]
   }
 ];

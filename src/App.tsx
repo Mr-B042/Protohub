@@ -3859,6 +3859,7 @@ const SMART_STOCK_LOOKBACK_DAYS = 7;
 const SMART_STOCK_DORMANT_DAYS = 21;
 const SMART_STOCK_CRITICAL_DAYS_COVER = 2;
 const SMART_STOCK_WATCH_DAYS_COVER = 5;
+const SMART_STOCK_NOTIFICATION_LIMIT = 6;
 
 type SmartStockDemandSignal = {
   productId: string;
@@ -4955,6 +4956,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
   const seenFollowUpNotificationIdsRef = useRef<Set<string>>(new Set());
+  const smartStockNotificationKeysRef = useRef<Set<string>>(new Set());
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
@@ -11586,6 +11588,76 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const repSmartStockSignals = smartStockDemandSignals
     .filter((signal) => repSmartStockStates.size === 0 || repSmartStockStates.has(signal.state))
     .slice(0, 3);
+  const canTriggerTeamStockRiskNotifications = realRole === "Owner" || realRole === "Admin" || realRole === "Inventory Manager";
+  const smartStockNotificationPayload = smartStockDemandSignals.slice(0, SMART_STOCK_NOTIFICATION_LIMIT).map((signal) => {
+    const relatedRepIds = new Set<string>();
+    trackedOrders.forEach((order) => {
+      if (!order.assignedRepId || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
+      if (normalizeAgentState(order.state) !== signal.state) return;
+      if (orderCreatedKey(order) < smartStockRecentStartKey) return;
+      relatedRepIds.add(order.assignedRepId);
+    });
+    if (
+      !canTriggerTeamStockRiskNotifications
+      && realRole === "Sales Rep"
+      && authUser?.id
+      && repSmartStockSignals.some((item) => item.productId === signal.productId && item.state === signal.state)
+    ) {
+      relatedRepIds.add(authUser.id);
+    }
+    return {
+      productId: signal.productId,
+      productName: signal.productName,
+      state: signal.state,
+      stock: signal.stock,
+      recentUnits: signal.recentUnits,
+      openOrders: signal.openOrders,
+      daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
+      severity: signal.severity,
+      salesRepRecipientIds: Array.from(relatedRepIds)
+    };
+  }).filter((signal) => canTriggerTeamStockRiskNotifications || (authUser?.id ? signal.salesRepRecipientIds.includes(authUser.id) : false));
+  const smartStockNotificationKey = smartStockNotificationPayload
+    .map((signal) => `${smartStockTodayKey}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
+    .join("|");
+  useEffect(() => {
+    if (!auth.isLoggedIn() || !hasCompletedInitialDataLoad || !smartStockNotificationKey || smartStockNotificationPayload.length === 0) {
+      return;
+    }
+    if (!(canTriggerTeamStockRiskNotifications || realRole === "Sales Rep")) {
+      return;
+    }
+    if (smartStockNotificationKeysRef.current.has(smartStockNotificationKey)) {
+      return;
+    }
+    smartStockNotificationKeysRef.current.add(smartStockNotificationKey);
+    notificationsApi.createStockRiskAlerts({ signals: smartStockNotificationPayload })
+      .then((rows: any[]) => {
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        setSystemNotifications((prev) => {
+          const existingIds = new Set(prev.map((notification) => notification.id));
+          const incoming = rows
+            .filter((row) => row?.id && !existingIds.has(row.id))
+            .map((row) => ({
+              id: row.id,
+              type: row.type ?? "low_stock",
+              title: row.title,
+              message: row.message,
+              read: !!row.read,
+              createdAt: row.createdAt ?? row.created_at ?? new Date().toISOString(),
+              productId: row.productId ?? row.product_id,
+              link: row.link,
+              orderId: row.orderId ?? row.order_id,
+              recipientId: row.recipientId ?? row.recipient_id
+            } as SystemNotification));
+          return incoming.length > 0 ? [...incoming, ...prev] : prev;
+        });
+      })
+      .catch(() => {
+        // The server also dedupes, so a later data refresh can safely retry.
+        smartStockNotificationKeysRef.current.delete(smartStockNotificationKey);
+      });
+  }, [smartStockNotificationKey, hasCompletedInitialDataLoad, canTriggerTeamStockRiskNotifications, realRole]);
   const repDeliveredOrders = repOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const repRevenue = repDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const repPendingCount = repOrders.filter((order) => (order.status ?? "New") === "New").length;
@@ -11789,6 +11861,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   })();
   const repOrderIds = new Set(repOrders.map((order) => order.id));
   const repWorkspaceSystemNotifications = systemNotifications.filter((notification) => {
+    if (notification.type === "low_stock") {
+      const viewerId = currentManagedUser?.id ?? authUser?.id ?? "";
+      if (notification.recipientId && notification.recipientId === viewerId) return true;
+      return !notification.recipientId && repSmartStockSignals.some((signal) => signal.productId === notification.productId);
+    }
     const directOrderId = notification.orderId;
     if (directOrderId && repOrderIds.has(directOrderId)) {
       return true;
@@ -22154,6 +22231,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             : notification.type === "order_rescheduled" ? "Order Rescheduled"
                             : notification.type === "order_follow_up" ? "Follow-up Due"
                             : notification.type === "order_assigned" ? "Order Assigned"
+                            : notification.type === "low_stock" ? "Stock Alert"
                             : "Notification");
                         return (
                           <article
@@ -23381,7 +23459,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <div
                               key={n.id}
                               className={`flex items-start gap-3 px-4 py-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${!n.read ? "bg-blue-50/30" : ""}`}
-                              onClick={() => { markOneNotificationRead(n.id); if (n.link) { setShowNotifPanel(false); } }}
+                              onClick={() => {
+                                markOneNotificationRead(n.id);
+                                if (n.link) {
+                                  setShowNotifPanel(false);
+                                  window.location.hash = n.link.startsWith("#") ? n.link : `#${n.link}`;
+                                }
+                              }}
                             >
                               <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${iconBg}`}>
                                 {isOrderType ? <Package className={`w-4 h-4 ${iconColor}`} /> : n.type === "low_stock" ? <AlertTriangle className={`w-4 h-4 ${iconColor}`} /> : <Bell className={`w-4 h-4 ${iconColor}`} />}

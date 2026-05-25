@@ -419,6 +419,19 @@ export const customersApi = {
 export const notificationsApi = {
   list: () => get<any[]>("/api/notifications"),
   create: (body: { type: string; message: string; productId?: string }) => post<any>("/api/notifications", body),
+  createStockRiskAlerts: (body: {
+    signals: Array<{
+      productId: string;
+      productName: string;
+      state: string;
+      stock: number;
+      recentUnits: number;
+      openOrders: number;
+      daysCover?: number;
+      severity: "stockout" | "critical" | "watch";
+      salesRepRecipientIds?: string[];
+    }>;
+  }) => post<any[]>("/api/notifications/stock-risk", body),
   markAllRead: () => patch<{ message: string }>("/api/notifications/read-all", {}),
   markRead: (id: string) => patch<any>(`/api/notifications/${id}/read`, {}),
   deleteRead: () => del<void>("/api/notifications/read")
