@@ -182,7 +182,7 @@ type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate";
 type ManagerQueueActionType = "reviewed_queue" | "nudged_rep" | "escalated_order";
 type NotificationFilter = "All" | "Unread";
-type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount";
+type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount" | "state-stock";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
@@ -4742,10 +4742,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // and look like "I clicked pricing, got nothing." Coerce to dashboard
     // when there's no product to show.
     const stored = readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
-      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" ? raw : null
+      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" || raw === "state-stock" ? raw : null
     );
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
+  const [stateStockProductId, setStateStockProductId] = useState("");
+  const [stateStockStateFilter, setStateStockStateFilter] = useState("");
+  const [stateStockSearch, setStateStockSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
@@ -7162,6 +7165,72 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     );
     return matchesProduct && matchesType && matchesAgent && matchesStart && matchesEnd && matchesDrill;
   });
+  const inventoryStateHubRows = agents.flatMap((agent) =>
+    agentLocationRows(agent).map((location) => ({
+      agentId: agent.id,
+      agentName: agent.name,
+      location
+    }))
+  );
+  const stateStockStateOptions = Array.from(
+    new Set(
+      inventoryStateHubRows
+        .map((row) => normalizeAgentState(row.location.state))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  const stateStockSearchTerm = stateStockSearch.trim().toLowerCase();
+  const inventoryStateStockGroups = catalogProducts
+    .filter((product) => !stateStockProductId || product.id === stateStockProductId)
+    .map((product) => {
+      const productMatchesSearch = !stateStockSearchTerm
+        || `${product.name} ${product.sku}`.toLowerCase().includes(stateStockSearchTerm);
+      const rows = stateStockStateOptions
+        .map((state) => {
+          const stateHubs = inventoryStateHubRows.filter(
+            (row) => normalizeAgentState(row.location.state) === state
+          );
+          const quantity = stateHubs.reduce(
+            (sum, row) => sum + Number(row.location.stock.find((stock) => stock.productId === product.id)?.quantity ?? 0),
+            0
+          );
+          return {
+            state,
+            quantity,
+            hubCount: stateHubs.length,
+            status: stateStockStatusMeta(quantity)
+          };
+        })
+        .filter((row) => {
+          if (stateStockStateFilter && row.state !== stateStockStateFilter) {
+            return false;
+          }
+          if (!stateStockSearchTerm) {
+            return true;
+          }
+          return productMatchesSearch || row.state.toLowerCase().includes(stateStockSearchTerm);
+        })
+        .sort((a, b) => b.quantity - a.quantity || a.state.localeCompare(b.state));
+
+      if (rows.length === 0) {
+        return null;
+      }
+
+      return {
+        product,
+        rows,
+        totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
+        stockedStates: rows.filter((row) => row.quantity > 0).length,
+        noStockStates: rows.filter((row) => row.quantity <= 0).length
+      };
+    })
+    .filter((group): group is NonNullable<typeof group> => group !== null);
+  const visibleStateStockCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.stockedStates, 0);
+  const visibleStateNoStockCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.noStockStates, 0);
+  const visibleStateRowCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.rows.length, 0);
+  const visibleStateOptionCount = new Set(
+    inventoryStateStockGroups.flatMap((group) => group.rows.map((row) => row.state))
+  ).size;
 
   const formatMoney = (amount: number) =>
     new Intl.NumberFormat(selectedCurrency.locale, {
@@ -11831,6 +11900,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (section === "inventory" && parts[3] === "history") {
       setActivePage("Inventory");
       setInventoryView("history");
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "state-stock") {
+      setActivePage("Inventory");
+      setInventoryView("state-stock");
       return;
     }
 
@@ -19343,6 +19418,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setInventoryView("history");
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory/history");
+  };
+  const openInventoryStateStockRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("state-stock");
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory/state-stock");
   };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
@@ -34730,6 +34811,157 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                 </section>
               </div>
+            ) : inventoryView === "state-stock" ? (
+              <div className="space-y-6">
+                <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div className="flex flex-col gap-1">
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <h1 className="text-2xl font-bold text-[#1F8FE0]">State Stock</h1>
+                    <p className="text-sm font-medium text-gray-500">See which states currently hold the most stock for each product. Sorted highest to lowest, with simple no-stock, low-stock, and enough labels.</p>
+                  </div>
+                </header>
+
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  <strong className="block">Simple stock guide</strong>
+                  <span className="text-xs leading-5 text-blue-900">No stock = <strong>0</strong> unit. Low stock = <strong>1 to {STATE_STOCK_LOW_THRESHOLD}</strong> units. Enough = <strong>{STATE_STOCK_LOW_THRESHOLD + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</span>
+                </div>
+
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
+                      <select
+                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        value={stateStockProductId}
+                        onChange={(event) => setStateStockProductId(event.target.value)}
+                      >
+                        <option value="">All products</option>
+                        {catalogProducts
+                          .slice()
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map((product) => (
+                            <option key={product.id} value={product.id}>{product.name}</option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">State</span>
+                      <select
+                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        value={stateStockStateFilter}
+                        onChange={(event) => setStateStockStateFilter(event.target.value)}
+                      >
+                        <option value="">All states</option>
+                        {stateStockStateOptions.map((state) => (
+                          <option key={state} value={state}>{state}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          value={stateStockSearch}
+                          onChange={(event) => setStateStockSearch(event.target.value)}
+                          placeholder="Search product or state"
+                          className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        />
+                      </div>
+                    </label>
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Actions</span>
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => {
+                          setStateStockProductId("");
+                          setStateStockStateFilter("");
+                          setStateStockSearch("");
+                        }}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Clear filters
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {dataLoading ? (
+                  <TableSkeleton cols={4} rows={5} />
+                ) : inventoryStateStockGroups.length === 0 ? (
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
+                    <MapPin className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-bold text-gray-700">No state stock rows found</p>
+                    <p className="text-xs text-gray-500 mt-1">Try another product, remove the state filter, or wait for agent hub stock to be assigned.</p>
+                  </section>
+                ) : (
+                  <>
+                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="State stock summary">
+                      {[
+                        { label: "Products in View", value: inventoryStateStockGroups.length, helper: "products currently listed" },
+                        { label: "States in View", value: visibleStateOptionCount, helper: "states currently visible" },
+                        { label: "States with Stock", value: visibleStateStockCount, helper: "rows above zero units" },
+                        { label: "No-stock Rows", value: visibleStateNoStockCount, helper: `${visibleStateRowCount} total visible rows` }
+                      ].map((card) => (
+                        <article key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{card.label}</p>
+                          <strong className="text-2xl font-bold text-gray-900 block my-1">{card.value}</strong>
+                          <p className="text-[10px] text-gray-400 font-medium">{card.helper}</p>
+                        </article>
+                      ))}
+                    </section>
+
+                    <div className="space-y-4">
+                      {inventoryStateStockGroups
+                        .slice()
+                        .sort((a, b) => b.totalQuantity - a.totalQuantity || a.product.name.localeCompare(b.product.name))
+                        .map((group) => (
+                          <section key={group.product.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center gap-4">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h2 className="text-lg font-bold text-gray-900 m-0">{group.product.name}</h2>
+                                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">{group.product.sku}</span>
+                                </div>
+                                <p className="text-sm text-gray-500 mt-1 mb-0">{group.product.description || "Current state-by-state stock spread for this product."}</p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
+                                  Warehouse <strong>{group.product.warehouseStock}</strong>
+                                </span>
+                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
+                                  With agents <strong>{group.totalQuantity}</strong>
+                                </span>
+                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
+                                  Stocked states <strong>{group.stockedStates}</strong>
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="divide-y divide-gray-100">
+                              {group.rows.map((row) => (
+                                <div key={`${group.product.id}-${row.state}`} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-gray-900">{row.state}</div>
+                                    <div className="text-[11px] text-gray-400">
+                                      {row.hubCount} hub{row.hubCount === 1 ? "" : "s"} tracked
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 sm:gap-3">
+                                    <span className="text-sm font-bold text-gray-900 whitespace-nowrap">{row.quantity} unit{row.quantity === 1 ? "" : "s"}</span>
+                                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${row.status.className}`}>
+                                      {row.status.label}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                    </div>
+                  </>
+                )}
+              </div>
             ) : inventoryView === "pricing" && selectedProduct ? (
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -35067,6 +35299,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-violet-200 text-violet-700 text-sm font-semibold hover:bg-violet-50 transition-colors" onClick={openInventoryCombosRoute}><Boxes className="w-4 h-4" /> Combo Library</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryStateStockRoute}><MapPin className="w-4 h-4" /> State Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryUpdateStockRoute()}><RefreshCw className="w-4 h-4" /> Update Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                     </div>
