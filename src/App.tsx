@@ -922,9 +922,18 @@ type RepBonusMotivator = {
   customerName?: string;
   priority: number;
 };
+type RepBonusOrderOpportunity = {
+  orderId: string;
+  customerName?: string;
+  packageName?: string;
+  amount: number;
+  type: "upsell_opportunity" | "cross_sell_opportunity" | "bonus_opportunity";
+  subtitle?: string;
+};
 type RepBonusCoachResponse = {
   snapshot: RepBonusSnapshot;
   motivators: RepBonusMotivator[];
+  orderOpportunities: RepBonusOrderOpportunity[];
 };
 
 const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
@@ -9099,7 +9108,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? repWorkspaceDateRange.start
     : repWorkspaceNavStart;
   const repBonusWeekEnd = weekEndFromStartKey(repBonusWeekStart);
+  const repBonusOpportunityByOrderId = new Map((repBonusCoach?.orderOpportunities ?? []).map((opportunity) => [opportunity.orderId, opportunity]));
   const repBonusPrimaryOrder = repBonusCoach?.motivators.find((motivator) => motivator.orderId)?.orderId ?? "";
+  const repBonusProjectedExtra = repBonusCoach
+    ? Math.max(0, repBonusCoach.snapshot.projectedBonusOpenPipeline - repBonusCoach.snapshot.currentBonusEarned)
+    : 0;
+  const repBonusTierProgressPercent = !repBonusCoach
+    ? 0
+    : repBonusCoach.snapshot.nextTierTarget && repBonusCoach.snapshot.ordersNeededForNextTier
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            ((repBonusCoach.snapshot.nextTierTarget - repBonusCoach.snapshot.ordersNeededForNextTier) / repBonusCoach.snapshot.nextTierTarget) * 100
+          )
+        )
+      : 100;
+  const repBonusRateProgressPercent = !repBonusCoach
+    ? 0
+    : repBonusCoach.snapshot.nextDeliveryRateTarget
+      ? Math.max(0, Math.min(100, (repBonusCoach.snapshot.deliveryRate / repBonusCoach.snapshot.nextDeliveryRateTarget) * 100))
+      : 100;
 
   useEffect(() => {
     if (activePage !== "Sales Rep Workspace" || repConsoleTab !== "Dashboard") {
@@ -17304,6 +17333,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             const status = order.status ?? "New";
             const latestNote = latestTimelineNoteForOrder(order);
             const nextFollowUp = nextFollowUpForOrder(order);
+            const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
             return (
               <article key={order.id} className="px-4 py-4 space-y-3 bg-white dark:bg-[#101a24]">
                 <div className="flex items-start justify-between gap-3">
@@ -17344,6 +17374,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="col-span-2">
                     <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Next Follow-up</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {bonusOpportunity && (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                          + {formatProductMoney(bonusOpportunity.amount, "NGN")} bonus
+                        </span>
+                      )}
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
@@ -17394,6 +17429,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               const status = order.status ?? "New";
               const latestNote = latestTimelineNoteForOrder(order);
               const nextFollowUp = nextFollowUpForOrder(order);
+              const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
               return (
                 <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors">
                   <td className="px-4 py-4 font-bold text-[#1F8FE0]">{order.id}</td>
@@ -17415,6 +17451,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <td className={`px-4 py-4 text-center font-medium ${orderBodyTextClass}`}>
                     <div>{responseTimeForOrder(order)}</div>
                     <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-1">
+                      {bonusOpportunity && (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                          + {formatProductMoney(bonusOpportunity.amount, "NGN")}
+                        </span>
+                      )}
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
@@ -17452,7 +17493,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     </>
   );
 
-  const renderRepOrderDetail = (order: TrackedOrder) => (
+  const renderRepOrderDetail = (order: TrackedOrder) => {
+    const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
+    const bonusMotivator = repBonusCoach?.motivators.find((motivator) => motivator.orderId === order.id);
+
+    return (
     <div className="space-y-6 pb-6 sm:pb-8 lg:pb-12">
       {/* Header & Breadcrumbs */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -17511,6 +17556,53 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
 
       {renderFollowUpWorkSection(order, { compact: true })}
+
+      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">Bonus Coach On This Order</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            See whether this customer is part of your strongest bonus push right now and how it connects to this week&apos;s target.
+          </p>
+        </div>
+        <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <article className={`rounded-xl border p-4 ${bonusOpportunity ? "border-emerald-100 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}>
+            <span className={`text-[11px] font-semibold uppercase tracking-wider ${bonusOpportunity ? "text-emerald-700" : "text-gray-500"}`}>
+              {bonusOpportunity ? "Live order opportunity" : "No special order bonus"}
+            </span>
+            <strong className={`block mt-2 text-xl font-bold ${bonusOpportunity ? "text-emerald-900" : "text-gray-900"}`}>
+              {bonusOpportunity ? formatProductMoney(bonusOpportunity.amount, "NGN") : "Keep this order moving"}
+            </strong>
+            <p className={`mt-2 text-sm leading-6 ${bonusOpportunity ? "text-emerald-800" : "text-gray-600"}`}>
+              {bonusMotivator?.title
+                ?? bonusOpportunity?.subtitle
+                ?? "This order is not your top named bonus unlock right now, but a clean delivery still contributes to your weekly payout progress."}
+            </p>
+          </article>
+          <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Weekly target tracker</span>
+            <strong className="block mt-2 text-lg font-bold text-violet-900">
+              {repBonusCoach?.snapshot.nextTierTarget
+                ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries`
+                : repBonusCoach?.snapshot.nextDeliveryRateTarget
+                  ? `${repBonusCoach.snapshot.deliveryRate}% of ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
+                  : "You are on track"}
+            </strong>
+            <p className="mt-2 text-sm text-violet-800 leading-6">
+              {repBonusCoach?.snapshot.ordersNeededForNextTier
+                ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more delivery${repBonusCoach.snapshot.ordersNeededForNextTier === 1 ? "" : "ies"} unlock the next bonus tier this week.`
+                : repBonusCoach?.snapshot.deliveriesNeededForRateTarget
+                  ? `${repBonusCoach.snapshot.deliveriesNeededForRateTarget} more successful delivery${repBonusCoach.snapshot.deliveriesNeededForRateTarget === 1 ? "" : "ies"} push you to the next delivery-rate gate.`
+                  : "There is no higher weekly gate blocking extra payout right now."}
+            </p>
+            <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-violet-500 transition-all"
+                style={{ width: `${Math.max(8, repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent)}%` }}
+              />
+            </div>
+          </article>
+        </div>
+      </section>
 
       {/* Main Grid: Customer Info & Order Items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -18005,6 +18097,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
     </div>
   );
+  };
 
   const renderCallRepConsole = () => {
     const order = callQueueOrder;
@@ -18313,11 +18406,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Bonus earned</span>
                       <strong className="block mt-2 text-2xl font-bold text-emerald-900">{formatProductMoney(repBonusCoach.snapshot.currentBonusEarned, "NGN")}</strong>
                       <p className="mt-1 text-xs text-emerald-800">From {repBonusCoach.snapshot.deliveredCount} delivered orders this week.</p>
+                      <div className="mt-3 h-2 rounded-full bg-emerald-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all"
+                          style={{ width: `${Math.max(6, Math.min(100, repBonusCoach.snapshot.deliveredCount * 8))}%` }}
+                        />
+                      </div>
                     </article>
                     <article className="rounded-xl border border-blue-100 bg-blue-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Open pipeline</span>
                       <strong className="block mt-2 text-2xl font-bold text-blue-900">{formatProductMoney(repBonusCoach.snapshot.projectedBonusOpenPipeline, "NGN")}</strong>
-                      <p className="mt-1 text-xs text-blue-800">Projected if your open bonus opportunities close.</p>
+                      <p className="mt-1 text-xs text-blue-800">
+                        {repBonusProjectedExtra > 0
+                          ? `${formatProductMoney(repBonusProjectedExtra, "NGN")} more is still sitting in open orders.`
+                          : "Projected if your open bonus opportunities close."}
+                      </p>
+                      <div className="mt-3 h-2 rounded-full bg-blue-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-500 transition-all"
+                          style={{
+                            width: `${Math.max(
+                              8,
+                              Math.min(
+                                100,
+                                repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
+                                  ? (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
+                                  : 0
+                              )
+                            )}%`
+                          }}
+                        />
+                      </div>
                     </article>
                     <article className="rounded-xl border border-amber-100 bg-amber-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">Delivery rate</span>
@@ -18327,6 +18446,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
                           : "No higher delivery-rate gate blocking bonus right now."}
                       </p>
+                      <div className="mt-3 h-2 rounded-full bg-amber-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-amber-500 transition-all"
+                          style={{ width: `${Math.max(8, repBonusRateProgressPercent)}%` }}
+                        />
+                      </div>
                     </article>
                     <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Next unlock</span>
@@ -18344,6 +18469,56 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
                             : "No higher tier is waiting right now."}
                       </p>
+                      <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-violet-500 transition-all"
+                          style={{ width: `${Math.max(8, repBonusTierProgressPercent)}%` }}
+                        />
+                      </div>
+                    </article>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <article className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tier progress</span>
+                          <p className="mt-1 text-sm font-bold text-gray-900">
+                            {repBonusCoach.snapshot.nextTierTarget
+                              ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries toward the next bonus tier`
+                              : "You are already on the highest available tier for this week."}
+                          </p>
+                        </div>
+                        {repBonusCoach.snapshot.ordersNeededForNextTier && (
+                          <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
+                            {repBonusCoach.snapshot.ordersNeededForNextTier} left
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
+                        <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${Math.max(8, repBonusTierProgressPercent)}%` }} />
+                      </div>
+                    </article>
+
+                    <article className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Delivery-rate gate</span>
+                          <p className="mt-1 text-sm font-bold text-gray-900">
+                            {repBonusCoach.snapshot.nextDeliveryRateTarget
+                              ? `${repBonusCoach.snapshot.deliveryRate}% now. Push to ${repBonusCoach.snapshot.nextDeliveryRateTarget}% to unlock the next gate.`
+                              : "No delivery-rate gate is blocking extra bonus right now."}
+                          </p>
+                        </div>
+                        {repBonusCoach.snapshot.deliveriesNeededForRateTarget && (
+                          <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
+                            {repBonusCoach.snapshot.deliveriesNeededForRateTarget} more
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
+                        <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${Math.max(8, repBonusRateProgressPercent)}%` }} />
+                      </div>
                     </article>
                   </div>
 
@@ -18467,6 +18642,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div className="divide-y divide-gray-100">
                   {repFollowUpRows.slice(0, 5).map(({ order, followUp }) => {
                     const latestNote = latestTimelineNoteForOrder(order);
+                    const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
                     return (
                       <button
                         key={`follow-up-${order.id}`}
@@ -18488,6 +18664,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </p>
                           </div>
                           <div className="flex flex-col items-start gap-1 lg:items-end">
+                            {bonusOpportunity && (
+                              <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                + {formatProductMoney(bonusOpportunity.amount, "NGN")} bonus
+                              </span>
+                            )}
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(followUp ?? null)}`}>
                               {followUpHeadline(followUp ?? null)}
                             </span>

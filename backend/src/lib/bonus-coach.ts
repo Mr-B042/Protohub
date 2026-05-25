@@ -66,9 +66,19 @@ export type RepBonusMotivator = {
   priority: number;
 };
 
+export type RepBonusOrderOpportunity = {
+  orderId: string;
+  customerName?: string;
+  packageName?: string;
+  amount: number;
+  type: "upsell_opportunity" | "cross_sell_opportunity" | "bonus_opportunity";
+  subtitle?: string;
+};
+
 export type RepBonusCoachResponse = {
   snapshot: RepBonusSnapshot;
   motivators: RepBonusMotivator[];
+  orderOpportunities: RepBonusOrderOpportunity[];
 };
 
 type BonusCoachContext = {
@@ -504,6 +514,8 @@ export const getRepBonusCoach = async (
   weekStart: string
 ): Promise<RepBonusCoachResponse> => {
   const context = await buildRepBonusSnapshot(orgId, repId, weekStart);
+  const rate = context.repStats.total > 0 ? (context.repStats.delivered / context.repStats.total) * 100 : 0;
+  const aov = context.repStats.delivered > 0 ? context.repStats.revenue / context.repStats.delivered : 0;
   const snapshot: RepBonusSnapshot = {
     weekStart,
     weekEnd: weekEndFromStart(weekStart),
@@ -519,8 +531,39 @@ export const getRepBonusCoach = async (
     topPerformerGap: context.topPerformerGap,
     topPerformerRank: context.topPerformerRank
   };
+  const orderOpportunities: RepBonusOrderOpportunity[] = context.openOrders
+    .flatMap((order) => {
+      const projected = projectedBonusForOpenOrder(order, context.productMap, rate, aov, context.repStats.total);
+      if (!(projected > 0)) {
+        return [];
+      }
+      const hasUpgrade = typeof order.upsell_from_qty === "number"
+        && typeof order.upsell_to_qty === "number"
+        && order.upsell_to_qty > order.upsell_from_qty;
+      const hasCrossSell = Array.isArray(order.cross_sell_lines) && order.cross_sell_lines.length > 0;
+      const opportunityType: RepBonusOrderOpportunity["type"] = hasUpgrade
+        ? "upsell_opportunity"
+        : hasCrossSell
+          ? "cross_sell_opportunity"
+          : "bonus_opportunity";
+      return [{
+        orderId: order.id,
+        customerName: order.customer ?? undefined,
+        packageName: order.package_name ?? undefined,
+        amount: projected,
+        type: opportunityType,
+        subtitle: hasUpgrade
+          ? `Upsell ${order.customer ?? "this customer"} from ${order.upsell_from_qty} to ${order.upsell_to_qty} pcs to grow this bonus.`
+          : hasCrossSell
+            ? `${order.customer ?? "This customer"} already has add-ons attached that can convert into bonus on delivery.`
+            : "A clean delivery on this order still adds to your weekly bonus progress."
+      }];
+    })
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 12);
   return {
     snapshot,
-    motivators: buildRepBonusMotivators(context)
+    motivators: buildRepBonusMotivators(context),
+    orderOpportunities
   };
 };
