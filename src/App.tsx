@@ -27722,13 +27722,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Waybill</div>
                             <div className="font-mono text-xs text-gray-500 break-all">{w.id}</div>
                             <div className="font-semibold text-sm text-gray-900 mt-1">{w.productName}</div>
+                            <div className="mt-1">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                                {getWaybillFlowLabel(w)}
+                              </span>
+                            </div>
                           </div>
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusColors[w.status]}`}>{w.status}</span>
                         </div>
                         <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Route</span>
-                            <span className="text-gray-700">{w.sendingState} → {w.receivingState}</span>
+                            <span className="text-gray-700">{w.sendingState} → {getWaybillDestinationLabel(w)}</span>
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Quantity</span>
@@ -27769,7 +27774,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          {["ID", "Product", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
+                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -27779,11 +27784,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{w.id}</td>
                             <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{w.productName}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                                {getWaybillFlowLabel(w)}
+                              </span>
+                            </td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.quantity} units</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className="text-gray-600">{w.sendingState}</span>
                               <span className="mx-1 text-gray-400">→</span>
-                              <span className="text-gray-900 font-medium">{w.receivingState}</span>
+                              <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</td>
