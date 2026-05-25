@@ -109,6 +109,12 @@ import {
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
 import {
+  FOLLOW_UP_OUTCOME_GROUP_LABELS,
+  classifyFrontendFollowUpOutcome,
+  followUpOutcomeToneClass,
+  type FollowUpRecoveryBucket
+} from "./lib/followUpOutcomes";
+import {
   Line,
   LineChart,
   ResponsiveContainer,
@@ -616,6 +622,8 @@ type TrackedOrder = {
   scheduledAt?: string;
   deliveredDate?: string;
   assignedRepId?: string;
+  assignedByUserId?: string;
+  assignedByNameSnapshot?: string;
   agentId?: string;
   stockDeducted?: boolean;
   logisticsCost?: number;
@@ -639,6 +647,14 @@ type TrackedOrder = {
   bonusManuallyAdjusted?: boolean;
   bonusPaid?: boolean;
   notes?: OrderNote[];
+  originalCreatedAt?: string;
+  createdAtCorrectedAt?: string;
+  createdAtCorrectedBy?: string;
+  createdAtCorrectionReason?: string;
+  originalDeliveredDate?: string;
+  deliveredDateCorrectedAt?: string;
+  deliveredDateCorrectedBy?: string;
+  deliveredDateCorrectionReason?: string;
   date: string;
 };
 type OrderNote = {
@@ -674,6 +690,8 @@ type OrderContactAttempt = {
   channel: "call" | "whatsapp" | "sms" | "manual";
   attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
   outcomeCode: string;
+  outcomeGroup?: "progress" | "recoverable" | "unreachable" | "closed_loss" | "other";
+  recoveryBucket?: FollowUpRecoveryBucket;
   outcomeNote?: string;
   customerReached?: boolean;
   nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
@@ -3791,6 +3809,735 @@ if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)
   dataKeys.forEach((key) => window.localStorage.removeItem(key));
   window.localStorage.setItem(MIGRATION_KEY, "true");
 }
+
+// ─── Phase 1 restoration: helpers/types lost in commit 3161a7f ───
+// Source of truth: dd03f30:src/App.tsx (the commit immediately before destruction)
+
+// ── CART_JOURNEY_POLL_MS ────────────────────
+const CART_JOURNEY_POLL_MS = 5_000;
+
+// ── FORM_PULSE_POLL_MS ────────────────────
+const FORM_PULSE_POLL_MS = 8_000;
+
+// ── isNativePushShell ────────────────────
+const isNativePushShell = (() => {
+  try {
+    const maybeCapacitor = (globalThis as any)?.Capacitor;
+    if (typeof maybeCapacitor?.isNativePlatform === "function") {
+      return !!maybeCapacitor.isNativePlatform();
+    }
+    if (typeof maybeCapacitor?.getPlatform === "function") {
+      return maybeCapacitor.getPlatform() !== "web";
+    }
+  } catch {
+    // fall through to false
+  }
+  return false;
+})();
+
+// ── ORDER_DETAILS_POLL_MS ────────────────────
+const ORDER_DETAILS_POLL_MS = 10_000;
+
+// ── WEEKEND_STOCK_SUMMARY_POLL_MS ────────────────────
+const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
+
+// ── OrderAssignmentScope ────────────────────
+type OrderAssignmentScope = "All assignments" | "Assigned by me";
+
+// ── orderAssignmentScopeLabel ────────────────────
+const orderAssignmentScopeLabel = (scope: OrderAssignmentScope) =>
+  scope === "Assigned by me" ? "My orders" : "All assignments";
+
+// ── STATE_STOCK_LOW_THRESHOLD ────────────────────
+const STATE_STOCK_LOW_THRESHOLD = 5;
+
+// ── stateStockStatusMeta ────────────────────
+const stateStockStatusMeta = (quantity: number) =>
+  quantity <= 0
+    ? {
+        label: "No stock",
+        className: "border-rose-200 bg-rose-50 text-rose-700"
+      }
+    : quantity <= STATE_STOCK_LOW_THRESHOLD
+      ? {
+          label: "Low stock",
+          className: "border-amber-200 bg-amber-50 text-amber-700"
+        }
+      : {
+          label: "Enough",
+          className: "border-emerald-200 bg-emerald-50 text-emerald-700"
+        };
+
+// ── FinanceSummaryDataset ────────────────────
+type FinanceSummaryDataset = {
+  dateFrom: string;
+  dateTo: string;
+  generatedAt: string;
+  cohortOrders: TrackedOrder[];
+  deliveredOrders: TrackedOrder[];
+};
+
+// ── normalizeStateToken ────────────────────
+const normalizeStateToken = (value?: string) => (value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+
+// ── titleCaseStateLabel ────────────────────
+const titleCaseStateLabel = (value?: string) =>
+  (value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+
+// ── canonicalStateByToken ────────────────────
+const canonicalStateByToken = new Map<string, string>(
+  nigeriaStates.map((state) => [normalizeStateToken(state), state])
+);
+
+// ── stateTokenAliases ────────────────────
+const stateTokenAliases: Record<string, string> = {
+  fct: "FCT Abuja",
+  abuja: "FCT Abuja",
+  federalcapitalterritory: "FCT Abuja",
+  federalcapitalterritoryabuja: "FCT Abuja",
+  portharcourt: "Rivers",
+  portharcourtrivers: "Rivers",
+  ph: "Rivers",
+  ibadan: "Oyo"
+};
+
+// ── followUpQueueStatuses ────────────────────
+const followUpQueueStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Postponed"];
+
+// ── closedOrderStatuses ────────────────────
+const closedOrderStatuses: OrderStatus[] = ["All Orders", "Delivered", "Cancelled", "Failed"];
+
+// ── ORDER_WORKSPACE_PAGES ────────────────────
+const ORDER_WORKSPACE_PAGES: OrderWorkspacePage[] = ["Orders", "Follow-up Queue", "Closed Orders"];
+
+// ── orderWorkspaceHashByPage ────────────────────
+const orderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
+  Orders: "#/dashboard/admin/orders",
+  "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
+  "Closed Orders": "#/dashboard/admin/closed-orders"
+};
+
+// ── isOrderWorkspacePage ────────────────────
+const isOrderWorkspacePage = (page: ActivePage): page is OrderWorkspacePage => ORDER_WORKSPACE_PAGES.includes(page as OrderWorkspacePage);
+
+// ── followUpNoteBubbleClass ────────────────────
+const followUpNoteBubbleClass =
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-700/70 bg-amber-950/88 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
+
+// ── followUpNoteBubbleCompactClass ────────────────────
+const followUpNoteBubbleCompactClass =
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-700/70 bg-amber-950/88 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
+
+// ── followUpNoteBubbleDotClass ────────────────────
+const followUpNoteBubbleDotClass =
+  "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-300";
+
+// ── renderOrderNoteBubble ────────────────────
+const renderOrderNoteBubble = (
+  text: string,
+  options?: { compact?: boolean; className?: string; textClassName?: string }
+) => {
+  const compact = options?.compact ?? false;
+  const baseClass = compact ? followUpNoteBubbleCompactClass : followUpNoteBubbleClass;
+  return (
+    <div className={`${baseClass}${options?.className ? ` ${options.className}` : ""}`}>
+      <span className={followUpNoteBubbleDotClass} />
+      <span className={`min-w-0 flex-1 ${options?.textClassName ?? ""}`}>{text}</span>
+    </div>
+  );
+};
+
+// ── formatDateWithWeekday ────────────────────
+const formatDateWithWeekday = (value?: string | Date | null) => {
+  if (!value) return "";
+  const d = typeof value === "string" || value instanceof Date ? new Date(value as any) : null;
+  if (!d || isNaN(d.getTime())) return String(value ?? "");
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: _currentTimezone,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString();
+  }
+};
+
+// ── followUpReasonBadgeText ────────────────────
+const followUpReasonBadgeText = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return null;
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  if (!outcome) return attempt.outcomeCode || null;
+  return outcome.label;
+};
+
+// ── followUpReasonGroupLabel ────────────────────
+const followUpReasonGroupLabel = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return null;
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  if (!outcome) return null;
+  return FOLLOW_UP_OUTCOME_GROUP_LABELS[outcome.group] ?? null;
+};
+
+// ── followUpReasonBadgeClass ────────────────────
+const followUpReasonBadgeClass = (attempt?: OrderContactAttempt | null) => {
+  if (!attempt) return "bg-slate-100 text-slate-700";
+  const outcome = classifyFrontendFollowUpOutcome({
+    outcomeCode: attempt.outcomeCode,
+    outcomeGroup: attempt.outcomeGroup,
+    recoveryBucket: attempt.recoveryBucket
+  });
+  return followUpOutcomeToneClass(outcome?.group ?? attempt.outcomeGroup ?? "other");
+};
+
+// ── getWaybillFlowLabel ────────────────────
+const getWaybillFlowLabel = (waybill: WaybillRecord) =>
+  isCustomerDeliveryWaybill(waybill) ? "Customer Delivery" : "Manual Transfer";
+
+// ── getWaybillDestinationLabel ────────────────────
+const getWaybillDestinationLabel = (waybill: WaybillRecord) =>
+  isCustomerDeliveryWaybill(waybill) ? "Customer" : (waybill.receivingState || "—");
+
+// ── orderHasCreatedAtCorrection ────────────────────
+const orderHasCreatedAtCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
+  Boolean(order?.createdAtCorrectedAt && order?.originalCreatedAt);
+
+// ── orderHasDeliveredDateCorrection ────────────────────
+const orderHasDeliveredDateCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
+  Boolean(order?.deliveredDateCorrectedAt && order?.originalDeliveredDate);
+
+// ── orderDateAuditRows ────────────────────
+const orderDateAuditRows = (order: Partial<TrackedOrder> | null | undefined) => {
+  if (!order) return [] as Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }>;
+  const rows: Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }> = [];
+  if (orderHasCreatedAtCorrection(order)) {
+    rows.push({
+      kind: "created",
+      label: "Order date corrected",
+      from: formatMoment(order.originalCreatedAt) || displayDateFromKey(normalizeDateKey(order.originalCreatedAt ?? "")),
+      to: formatMoment(order.createdAt) || displayDateFromKey(normalizeDateKey(order.createdAt ?? order.date ?? "")),
+      reason: order.createdAtCorrectionReason ?? undefined,
+      correctedAt: order.createdAtCorrectedAt ?? undefined
+    });
+  }
+  if (orderHasDeliveredDateCorrection(order)) {
+    rows.push({
+      kind: "delivered",
+      label: "Delivered date corrected",
+      from: displayDateFromKey(normalizeDateKey(order.originalDeliveredDate ?? "")),
+      to: displayDateFromKey(orderDeliveredKey(order as TrackedOrder)),
+      reason: order.deliveredDateCorrectionReason ?? undefined,
+      correctedAt: order.deliveredDateCorrectedAt ?? undefined
+    });
+  }
+  return rows;
+};
+
+// ── renderOrderDateAuditStack ────────────────────
+const renderOrderDateAuditStack = (
+  order: Partial<TrackedOrder> | null | undefined,
+  options: { compact?: boolean; className?: string } = {}
+) => {
+  const rows = orderDateAuditRows(order);
+  if (rows.length === 0) return null;
+  const compact = options.compact === true;
+  return (
+    <div className={options.className ?? `${compact ? "mt-2" : "mt-3"} space-y-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2`}>
+      {rows.map((row) => (
+        <div key={row.kind} className="space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              {row.label}
+            </span>
+            {row.correctedAt && (
+              <span className="text-[10px] text-amber-700/90">
+                logged {formatMoment(row.correctedAt)}
+              </span>
+            )}
+          </div>
+          <p className={`m-0 text-amber-900 ${compact ? "text-[11px]" : "text-xs"}`}>
+            {row.from} → {row.to}
+          </p>
+          {row.reason && (
+            <p className={`m-0 text-amber-800/90 ${compact ? "text-[10px]" : "text-[11px]"}`}>
+              Reason: {row.reason}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ── clonePackageCompanions ────────────────────
+const clonePackageCompanions = (companions: PackageCompanion[]) =>
+  companions.map((companion) =>
+    normalisePackageCompanion({
+      ...companion,
+      companionId: makeCompanionId()
+    })
+  );
+
+// ── companionConfiguredTotal ────────────────────
+const companionConfiguredTotal = (
+  companion: Pick<PackageCompanion, "pricingMode" | "fixedPrice" | "quantity">,
+  standardPrice: number
+) => {
+  const normalizedQuantity = Math.max(1, Number(companion.quantity) || 1);
+  if (companion.pricingMode === "free") return 0;
+  if (companion.pricingMode === "fixed") return Math.max(0, Number(companion.fixedPrice ?? 0));
+  return standardPrice * normalizedQuantity;
+};
+
+// ── selectedPackagesSummaryForOrder ────────────────────
+const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
+  const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+  const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
+  const quantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
+  const lines = [
+    `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(mainOfferTotal, order.currency)})`
+  ];
+  (order.crossSellLines ?? []).forEach((line, index) => {
+    const detail = line.packageName ? `${line.productName} · ${line.packageName}` : line.productName;
+    lines.push(`Additional Package ${index + 1}: ${detail} (${line.quantity} pc${line.quantity === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
+  });
+  (order.freeGiftLines ?? []).forEach((line, index) => {
+    lines.push(`Free Gift ${index + 1}: ${line.productName} (${line.quantity} unit${line.quantity === 1 ? "" : "s"})`);
+  });
+  if ((order.crossSellLines?.length ?? 0) > 0) {
+    lines.push(`Total: ${formatProductMoney(order.amount, order.currency)}`);
+  }
+  return lines.join("\n");
+};
+
+// ── CART_JOURNEY_BLOCKED_LABELS ────────────────────
+const CART_JOURNEY_BLOCKED_LABELS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Submit blocked",
+  submit_blocked_missing_phone: "Submit blocked",
+  submit_blocked_invalid_phone: "Submit blocked",
+  submit_blocked_missing_whatsapp: "Submit blocked",
+  submit_blocked_invalid_whatsapp: "Submit blocked",
+  submit_blocked_missing_address: "Submit blocked",
+  submit_blocked_missing_city: "Submit blocked",
+  submit_blocked_missing_state: "Submit blocked",
+  submit_blocked_missing_delivery: "Submit blocked",
+  submit_blocked_missing_confirmation: "Submit blocked",
+  submit_blocked_missing_commitment: "Submit blocked"
+};
+
+// ── CART_JOURNEY_BLOCKED_DETAILS ────────────────────
+const CART_JOURNEY_BLOCKED_DETAILS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Customer tried to submit without entering a name.",
+  submit_blocked_missing_phone: "Customer tried to submit without entering a phone number.",
+  submit_blocked_invalid_phone: "Customer tried to submit but the phone number looked invalid.",
+  submit_blocked_missing_whatsapp: "Customer tried to submit without entering the required WhatsApp number.",
+  submit_blocked_invalid_whatsapp: "Customer tried to submit but the WhatsApp number looked invalid.",
+  submit_blocked_missing_address: "Customer tried to submit without entering a delivery address.",
+  submit_blocked_missing_city: "Customer tried to submit without entering a city.",
+  submit_blocked_missing_state: "Customer tried to submit without selecting a state.",
+  submit_blocked_missing_delivery: "Customer tried to submit without choosing a delivery time.",
+  submit_blocked_missing_confirmation: "Customer tried to submit without ticking the confirmation box.",
+  submit_blocked_missing_commitment: "Customer tried to submit without acknowledging the commitment notice."
+};
+
+// ── CART_JOURNEY_BLOCKED_HINTS ────────────────────
+const CART_JOURNEY_BLOCKED_HINTS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Tried to submit but didn’t enter a name.",
+  submit_blocked_missing_phone: "Tried to submit but didn’t enter a phone number.",
+  submit_blocked_invalid_phone: "Tried to submit but the phone number looked invalid.",
+  submit_blocked_missing_whatsapp: "Tried to submit but didn’t enter the required WhatsApp number.",
+  submit_blocked_invalid_whatsapp: "Tried to submit but the WhatsApp number looked invalid.",
+  submit_blocked_missing_address: "Tried to submit but didn’t enter the delivery address.",
+  submit_blocked_missing_city: "Tried to submit but didn’t enter a city.",
+  submit_blocked_missing_state: "Tried to submit but didn’t select a state.",
+  submit_blocked_missing_delivery: "Tried to submit but didn’t choose a delivery time.",
+  submit_blocked_missing_confirmation: "Tried to submit but didn’t tick the confirmation box.",
+  submit_blocked_missing_commitment: "Tried to submit but didn’t acknowledge the commitment notice."
+};
+
+// ── CART_JOURNEY_BLOCKED_ANALYTICS_LABELS ────────────────────
+const CART_JOURNEY_BLOCKED_ANALYTICS_LABELS: Record<CartJourneyBlockedEventType, string> = {
+  submit_blocked_missing_name: "Missing name",
+  submit_blocked_missing_phone: "Missing phone",
+  submit_blocked_invalid_phone: "Invalid phone",
+  submit_blocked_missing_whatsapp: "Missing WhatsApp",
+  submit_blocked_invalid_whatsapp: "Invalid WhatsApp",
+  submit_blocked_missing_address: "Missing address",
+  submit_blocked_missing_city: "Missing city",
+  submit_blocked_missing_state: "Missing state",
+  submit_blocked_missing_delivery: "Missing delivery time",
+  submit_blocked_missing_confirmation: "Missing confirmation",
+  submit_blocked_missing_commitment: "Missing commitment acknowledgement"
+};
+
+// ── isCartJourneyBlockedEvent ────────────────────
+const isCartJourneyBlockedEvent = (eventType: CartJourneyEvent["eventType"]): eventType is CartJourneyBlockedEventType =>
+  Object.prototype.hasOwnProperty.call(CART_JOURNEY_BLOCKED_LABELS, eventType);
+
+// ── isAdditionalItemJourneyEventType ────────────────────
+const isAdditionalItemJourneyEventType = (
+  eventType: CartJourneyEvent["eventType"]
+): eventType is "additional_item_preview_opened" | "additional_item_added" | "additional_item_removed" =>
+  eventType === "additional_item_preview_opened"
+  || eventType === "additional_item_added"
+  || eventType === "additional_item_removed";
+
+// ── cartJourneyTitle ────────────────────
+const cartJourneyTitle = (event: CartJourneyEvent) => {
+  if (isCartJourneyBlockedEvent(event.eventType)) return CART_JOURNEY_BLOCKED_LABELS[event.eventType];
+  switch (event.eventType) {
+    case "form_opened": return "Journey started";
+    case "first_interaction": return "First interaction";
+    case "package_selected": return "Package changed";
+    case "state_selected": return "State selected";
+    case "additional_item_preview_opened": return "Viewed additional item";
+    case "additional_item_added": return "Added additional item";
+    case "additional_item_removed": return "Removed additional item";
+    case "submit_attempted": return "Tried to submit";
+    case "order_submitted": return "Order submitted";
+    case "redirect_triggered": return "Redirect fired";
+    case "cart_date_changed": return "Cart date changed";
+    case "order_date_changed": return "Order date changed";
+    case "order_assigned": return "Order assigned";
+    case "order_reassigned": return "Order reassigned";
+    case "delivery_agent_assigned": return "Delivery agent assigned";
+    case "delivery_agent_reassigned": return "Delivery agent changed";
+    case "order_status_changed": return "Order status changed";
+    case "contact_attempt_logged": return "Rep follow-up logged";
+    case "form_exited": return "Left the form";
+    default: return "Form activity";
+  }
+};
+
+// ── cartJourneyDetail ────────────────────
+const cartJourneyDetail = (event: CartJourneyEvent) => {
+  const metadata = event.metadata ?? {};
+  const productName = typeof metadata.productName === "string" ? metadata.productName : "";
+  const packageName = typeof metadata.packageName === "string" ? metadata.packageName : "";
+  const stateName = typeof metadata.state === "string" ? metadata.state : event.state ?? "";
+  const quantity = typeof metadata.quantity === "number" ? metadata.quantity : null;
+  const variants = typeof metadata.variants === "number" ? metadata.variants : null;
+  const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
+  const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
+  const actorName = typeof metadata.actorName === "string" ? metadata.actorName : "";
+  const repName = typeof metadata.repName === "string" ? metadata.repName : "";
+  const agentName = typeof metadata.agentName === "string" ? metadata.agentName : "";
+  const fromStatus = typeof metadata.fromStatus === "string" ? metadata.fromStatus : "";
+  const toStatus = typeof metadata.toStatus === "string" ? metadata.toStatus : "";
+  const channel = typeof metadata.channel === "string" ? metadata.channel : "";
+  const outcomeCode = typeof metadata.outcomeCode === "string" ? metadata.outcomeCode : "";
+  const nextActionType = typeof metadata.nextActionType === "string" ? metadata.nextActionType : "";
+  const fromDate = typeof metadata.fromDate === "string" ? metadata.fromDate : "";
+  const toDate = typeof metadata.toDate === "string" ? metadata.toDate : "";
+  const reason = typeof metadata.reason === "string" ? metadata.reason : "";
+  if (isCartJourneyBlockedEvent(event.eventType)) {
+    return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
+  }
+  switch (event.eventType) {
+    case "first_interaction":
+      return `${customerName || "Customer"} actively engaged with the form.`;
+    case "package_selected":
+      return packageName || productName || "Switched package";
+    case "state_selected":
+      return stateName || "Picked a state";
+    case "additional_item_preview_opened":
+      return variants && variants > 1 ? `${productName || "Additional item"} · ${variants} bundle choices` : (productName || "Opened an additional item");
+    case "additional_item_added":
+      return quantity && quantity > 1 ? `${productName || "Additional item"} · ${quantity} pcs` : (productName || "Added an additional item");
+    case "additional_item_removed":
+      return productName || "Removed an additional item";
+    case "submit_attempted":
+      return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;
+    case "order_submitted":
+      return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
+    case "redirect_triggered":
+      return "Redirected to the landing-page thank-you destination.";
+    case "cart_date_changed":
+      return `${actorName || "Admin"} changed the cart date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
+    case "order_date_changed":
+      return `${actorName || "Admin"} changed the order date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
+    case "order_assigned":
+      return repName ? `${repName} was assigned to handle this order.` : (actorName ? `${actorName} assigned this order.` : "A rep was assigned to this order.");
+    case "order_reassigned":
+      return repName ? `Reassigned to ${repName}.` : (actorName ? `${actorName} reassigned this order.` : "The order was reassigned.");
+    case "delivery_agent_assigned":
+      return agentName ? `${agentName} was assigned as the delivery agent.` : (actorName ? `${actorName} assigned a delivery agent.` : "A delivery agent was assigned.");
+    case "delivery_agent_reassigned":
+      return agentName ? `Delivery agent changed to ${agentName}.` : (actorName ? `${actorName} changed the delivery agent.` : "The delivery agent was changed.");
+    case "order_status_changed":
+      return fromStatus && toStatus ? `${fromStatus} → ${toStatus}` : (toStatus || "Order status updated");
+    case "contact_attempt_logged":
+      return outcomeCode
+        ? `${actorName || "Rep"} logged a ${channel || "follow-up"} contact attempt: ${outcomeCode}${nextActionType ? ` · next ${nextActionType.replace(/_/g, " ")}` : ""}`
+        : `${actorName || "Rep"} logged a follow-up attempt.`;
+    case "form_exited":
+      return additionalItems && additionalItems > 0 ? `Left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Left before submitting";
+    default:
+      return productName || packageName || stateName || "";
+  }
+};
+
+// ── additionalItemNameFromJourneyEvent ────────────────────
+const additionalItemNameFromJourneyEvent = (event: CartJourneyEvent) => {
+  const productName = event.metadata?.productName;
+  return typeof productName === "string" && productName.trim().length > 0
+    ? productName.trim()
+    : "Additional item";
+};
+
+// ── cartJourneyFollowUpHint ────────────────────
+const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
+  if (events.length === 0) return null;
+  if (events.some((event) => event.eventType === "order_submitted")) return null;
+
+  const latestBlocked = [...events].reverse().find((event) => isCartJourneyBlockedEvent(event.eventType));
+  if (latestBlocked && isCartJourneyBlockedEvent(latestBlocked.eventType)) {
+    return CART_JOURNEY_BLOCKED_HINTS[latestBlocked.eventType];
+  }
+
+  const lastEvent = events[events.length - 1];
+  const addedSelections = new Map<string, { name: string; added: number; removed: number; selected: boolean; previews: number }>();
+  for (const event of events) {
+    if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
+    const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
+    const existing = addedSelections.get(key) ?? {
+      name: additionalItemNameFromJourneyEvent(event),
+      added: 0,
+      removed: 0,
+      selected: false,
+      previews: 0
+    };
+    if (event.eventType === "additional_item_preview_opened") existing.previews += 1;
+    if (event.eventType === "additional_item_added") {
+      existing.added += 1;
+      existing.selected = true;
+    }
+    if (event.eventType === "additional_item_removed") {
+      existing.removed += 1;
+      existing.selected = false;
+    }
+    addedSelections.set(key, existing);
+  }
+
+  const removedItem = [...addedSelections.values()].sort((a, b) => (b.removed - a.removed) || (b.added - a.added))[0];
+  if (removedItem && removedItem.removed > 0 && removedItem.added > 0) {
+    return `Added ${removedItem.name} but removed it before leaving.`;
+  }
+
+  const repeatedPreview = [...addedSelections.values()].sort((a, b) => b.previews - a.previews)[0];
+  if (repeatedPreview && repeatedPreview.previews > 1 && repeatedPreview.added === 0) {
+    return `Viewed ${repeatedPreview.name} more than once but never added it.`;
+  }
+
+  if (lastEvent?.eventType === "form_exited" && events.some((event) => event.eventType === "submit_attempted")) {
+    return "Tried to submit before leaving. Follow up quickly.";
+  }
+
+  const selectedAdditionalItems = [...addedSelections.values()].filter((entry) => entry.selected).length;
+  if (lastEvent?.eventType === "form_exited" && selectedAdditionalItems > 0) {
+    return `Left after adding ${selectedAdditionalItems} additional item${selectedAdditionalItems === 1 ? "" : "s"}.`;
+  }
+
+  const latestState = [...events].reverse().find((event) => event.eventType === "state_selected");
+  if (latestState) {
+    const stateName = typeof latestState.metadata?.state === "string" ? latestState.metadata.state : latestState.state;
+    return stateName ? `Picked ${stateName} but didn’t submit yet.` : "Picked a state but didn’t submit yet.";
+  }
+
+  const latestPackage = [...events].reverse().find((event) => event.eventType === "package_selected");
+  if (latestPackage) {
+    return "Changed package but didn’t submit yet.";
+  }
+
+  return "Opened the form but didn’t finish.";
+};
+
+// ── cartJourneyRecoveryScore ────────────────────
+const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
+  if (events.length === 0) {
+    return { score: 5, band: "Cold" as const, summary: "No tracked intent yet." };
+  }
+  if (events.some((event) => event.eventType === "order_submitted")) {
+    return { score: 100, band: "Converted" as const, summary: "Already submitted." };
+  }
+
+  let score = 0;
+  const seen = new Set(events.map((event) => event.eventType));
+  const blockedCount = events.filter((event) => isCartJourneyBlockedEvent(event.eventType)).length;
+  const additionalAdded = events.filter((event) => event.eventType === "additional_item_added").length;
+  const additionalRemoved = events.filter((event) => event.eventType === "additional_item_removed").length;
+  const previewCount = events.filter((event) => event.eventType === "additional_item_preview_opened").length;
+  const contactAttempts = events.filter((event) => event.eventType === "contact_attempt_logged").length;
+  const postSubmitProgress = events.filter((event) =>
+    event.eventType === "order_assigned"
+    || event.eventType === "order_reassigned"
+    || event.eventType === "delivery_agent_assigned"
+    || event.eventType === "delivery_agent_reassigned"
+    || event.eventType === "order_status_changed"
+  ).length;
+
+  if (seen.has("form_opened")) score += 8;
+  if (seen.has("first_interaction")) score += 10;
+  if (seen.has("package_selected")) score += 14;
+  if (seen.has("state_selected")) score += 14;
+  if (seen.has("submit_attempted")) score += 28;
+  if (blockedCount > 0) score += 18;
+  if (previewCount > 0) score += 8;
+  if (additionalAdded > 0) score += 12;
+  if (additionalRemoved > 0) score += 4;
+  if (contactAttempts > 0) score += Math.min(8, contactAttempts * 4);
+  if (postSubmitProgress > 0) score += Math.min(14, postSubmitProgress * 4);
+
+  const lastEvent = events[events.length - 1];
+  if (lastEvent?.eventType === "form_exited" && seen.has("submit_attempted")) score += 6;
+  if (lastEvent?.eventType === "form_exited" && additionalAdded > additionalRemoved) score += 4;
+  if (seen.has("package_selected") && !seen.has("state_selected") && !seen.has("submit_attempted")) score -= 4;
+
+  score = Math.max(0, Math.min(100, score));
+  if (score >= 70) {
+    return { score, band: "Hot" as const, summary: "High intent. Prioritize follow-up." };
+  }
+  if (score >= 45) {
+    return { score, band: "Warm" as const, summary: "Strong interest, but still recoverable." };
+  }
+  if (score >= 20) {
+    return { score, band: "Cool" as const, summary: "Some intent shown. Needs context." };
+  }
+  return { score, band: "Cold" as const, summary: "Very light engagement so far." };
+};
+
+// ── cartJourneyRecoveryBadgeClass ────────────────────
+const cartJourneyRecoveryBadgeClass = (band: ReturnType<typeof cartJourneyRecoveryScore>["band"]) => {
+  switch (band) {
+    case "Converted":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "Hot":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "Warm":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "Cool":
+      return "border-sky-200 bg-sky-50 text-sky-700";
+    default:
+      return "border-gray-200 bg-gray-50 text-gray-600";
+  }
+};
+
+// ── summarizeCartJourneyAnalytics ────────────────────
+const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEvent[]>) => {
+  const funnel = {
+    opened: 0,
+    packageSelected: 0,
+    stateSelected: 0,
+    additionalItemViewed: 0,
+    additionalItemAdded: 0,
+    submitAttempted: 0,
+    submitted: 0,
+    exited: 0,
+    submittedWithAdditionalItem: 0
+  };
+  const blockedCounts = new Map<CartJourneyBlockedEventType, number>();
+  const additionalItemStats = new Map<string, { key: string; name: string; previewed: number; added: number; removed: number; submittedWithItem: number }>();
+
+  for (const events of Object.values(journeyMap)) {
+    if (events.length === 0) continue;
+    const seenTypes = new Set(events.map((event) => event.eventType));
+    if (seenTypes.has("form_opened")) funnel.opened += 1;
+    if (seenTypes.has("package_selected")) funnel.packageSelected += 1;
+    if (seenTypes.has("state_selected")) funnel.stateSelected += 1;
+    if (seenTypes.has("additional_item_preview_opened")) funnel.additionalItemViewed += 1;
+    if (seenTypes.has("additional_item_added")) funnel.additionalItemAdded += 1;
+    if (seenTypes.has("submit_attempted")) funnel.submitAttempted += 1;
+    if (seenTypes.has("order_submitted")) funnel.submitted += 1;
+    if (seenTypes.has("form_exited")) funnel.exited += 1;
+
+    const selectedByItem = new Map<string, boolean>();
+    for (const event of events) {
+      if (isCartJourneyBlockedEvent(event.eventType)) {
+        blockedCounts.set(event.eventType, (blockedCounts.get(event.eventType) ?? 0) + 1);
+      }
+      if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
+      const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
+      const current = additionalItemStats.get(key) ?? {
+        key,
+        name: additionalItemNameFromJourneyEvent(event),
+        previewed: 0,
+        added: 0,
+        removed: 0,
+        submittedWithItem: 0
+      };
+      if (event.eventType === "additional_item_preview_opened") current.previewed += 1;
+      if (event.eventType === "additional_item_added") {
+        current.added += 1;
+        selectedByItem.set(key, true);
+      }
+      if (event.eventType === "additional_item_removed") {
+        current.removed += 1;
+        selectedByItem.set(key, false);
+      }
+      additionalItemStats.set(key, current);
+    }
+
+    if (seenTypes.has("order_submitted")) {
+      const submittedWithAnyItem = [...selectedByItem.values()].some(Boolean);
+      if (submittedWithAnyItem) {
+        funnel.submittedWithAdditionalItem += 1;
+      }
+      for (const [key, selected] of selectedByItem.entries()) {
+        if (!selected) continue;
+        const current = additionalItemStats.get(key);
+        if (current) {
+          current.submittedWithItem += 1;
+          additionalItemStats.set(key, current);
+        }
+      }
+    }
+  }
+
+  const additionalItems = [...additionalItemStats.values()]
+    .map((item) => {
+      const previewToAddRate = item.previewed > 0 ? Math.round((item.added / item.previewed) * 100) : 0;
+      const addToSubmitRate = item.added > 0 ? Math.round((item.submittedWithItem / item.added) * 100) : 0;
+      const attachRate = funnel.submitted > 0 ? Math.round((item.submittedWithItem / funnel.submitted) * 100) : 0;
+      return {
+        ...item,
+        previewToAddRate,
+        addToSubmitRate,
+        attachRate
+      };
+    })
+    .sort((a, b) => (b.submittedWithItem - a.submittedWithItem) || (b.addToSubmitRate - a.addToSubmitRate) || (b.added - a.added) || (b.previewed - a.previewed));
+
+  const topAdditionalItem = additionalItems[0] ?? null;
+
+  return {
+    funnel,
+    blocked: [...blockedCounts.entries()]
+      .map(([eventType, count]) => ({ eventType, count, label: CART_JOURNEY_BLOCKED_ANALYTICS_LABELS[eventType] }))
+      .sort((a, b) => b.count - a.count),
+    additionalItems,
+    additionalItemSummary: {
+      attachRate: funnel.submitted > 0 ? Math.round((funnel.submittedWithAdditionalItem / funnel.submitted) * 100) : 0,
+      topAdditionalItem
+    }
+  };
+};
+// ─── End Phase 1 restoration ───
+
 
 export function App({ onLogout }: { onLogout?: () => void }) {
   const authUser = auth.getUser();
