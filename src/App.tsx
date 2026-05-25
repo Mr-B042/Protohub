@@ -29887,7 +29887,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       // The bonus shown here is the per-order estimate for this week's delivered
                       // orders using the cohort gate, not the final payroll preview total.
                       const cashWeekRange = { start: startKey, end: endKey };
-                      const repStats = users.filter((u) => u.role === "Sales Rep").map((u) => {
+                      const repStats = users.map((u) => {
                         const cashOrders   = deliveredCash.filter((o) => o.assignedRepId === u.id);
                         const carryoverOrders = cashOrders.filter((o) => !isInExplicitRange(orderCreatedKey(o), cashWeekRange));
                         const cohortOrders = cohort.filter((o) => o.assignedRepId === u.id);
@@ -29913,7 +29913,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           finalRate
                         };
                       })
-                      .filter((r) => r.cohortPlaced > 0 || r.delivered > 0)
+                      .filter((r) => {
+                        if (r.user.role === "Sales Rep") return r.cohortPlaced > 0 || r.delivered > 0;
+                        return r.user.role === "Admin" && r.bonusEstimate > 0;
+                      })
                       .sort((a, b) => b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
@@ -29925,8 +29928,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
-                              <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below.</p>
+                              <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps + bonus admins</h3>
+                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Admins appear here only when their delivered orders earned bonus in this week, and carry-over deliveries are marked clearly below.</p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
                               {totalCarryoverDelivered > 0 && (
@@ -29951,7 +29954,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <table className="w-full text-sm">
                               <thead className="bg-gray-50">
                                 <tr className="text-left">
-                                  {["Rank","Rep","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
+                                  {["Rank","Person","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
                                     <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                                   ))}
                                 </tr>
