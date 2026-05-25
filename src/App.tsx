@@ -10138,7 +10138,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     pushSystemNotification({
       type: "info",
       title: "Customer flagged as high-risk",
-      message: `${flagTargetPhone}${reason ? ` — ${reason}` : ""} (any new order from this number will warn the rep at create time)`
+      message: `${flagTargetPhone}${reason ? ` — ${reason}` : ""} (any new order from this number will warn the rep at create time)`,
+      link: "/dashboard/admin/customers"
     });
   };
   const unflagCustomer = (phone: string) => {
@@ -10168,12 +10169,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     notificationsApi.create({
       type: notification.type,
       message: notification.message,
-      productId: notification.productId
+      productId: notification.productId,
+      title: notification.title,
+      link: notification.link,
+      orderId: notification.orderId
     })
       .then((row: any) => {
         if (!row?.id) return;
         // Replace the optimistic id with the real one so future markRead calls hit the server.
-        setSystemNotifications((prev) => prev.map((n) => n.id === local.id ? { ...n, id: row.id, createdAt: row.created_at ?? n.createdAt } : n));
+        setSystemNotifications((prev) => prev.map((n) => n.id === local.id ? {
+          ...n,
+          id: row.id,
+          title: row.title ?? n.title,
+          link: row.link ?? n.link,
+          orderId: row.orderId ?? row.order_id ?? n.orderId,
+          productId: row.productId ?? row.product_id ?? n.productId,
+          recipientId: row.recipientId ?? row.recipient_id ?? n.recipientId,
+          createdAt: row.createdAt ?? row.created_at ?? n.createdAt
+        } : n));
       })
       .catch(() => { /* swallow — local copy is still in state */ });
   };
@@ -10191,6 +10204,36 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     notificationsApi.markRead(id).catch(() => { /* swallow — local copy is already read */ });
   };
   const unreadNotificationCount = systemNotifications.filter((n) => !n.read).length;
+  const notificationTargetLink = (notification: SystemNotification) => {
+    if (notification.link) return notification.link;
+    const adminBase = "/dashboard/admin";
+    const repBase = "/dashboard/sales-rep";
+    const isRepViewer = currentRole === "Sales Rep";
+    if (notification.orderId) {
+      return `${isRepViewer ? repBase : adminBase}/orders/${encodeURIComponent(notification.orderId)}`;
+    }
+    if (notification.type === "low_stock") {
+      return isRepViewer ? `${repBase}/notifications` : `${adminBase}/inventory/state-stock`;
+    }
+    const text = `${notification.title ?? ""} ${notification.message ?? ""}`.toLowerCase();
+    if (text.includes("cart")) return `${adminBase}/abandoned-carts`;
+    if (text.includes("waybill")) return `${adminBase}/waybill`;
+    if (text.includes("customer")) return `${adminBase}/customers`;
+    if (notification.type === "remittance_overdue" || text.includes("remittance")) return `${adminBase}/finance-accounting`;
+    if (text.includes("penalty") || text.includes("payroll") || text.includes("bonus")) return `${adminBase}/payroll`;
+    if (text.includes("sms") || text.includes("email") || text.includes("setting")) return `${adminBase}/settings`;
+    if (notification.productId) return isRepViewer ? `${repBase}/products` : `${adminBase}/inventory`;
+    return isRepViewer ? `${repBase}/notifications` : `${adminBase}/notifications`;
+  };
+  const navigateToNotificationTarget = (notification: SystemNotification) => {
+    const target = notificationTargetLink(notification);
+    const nextHash = target.startsWith("#") ? target : `#${target}`;
+    if (window.location.hash === nextHash) {
+      if (target.includes("/notifications")) setActivePage("Notifications");
+      return;
+    }
+    window.location.hash = nextHash;
+  };
 
   // ===== Stock count =====
   const activeStockCount = stockCounts.find((s) => s.id === activeStockCountId) ?? null;
@@ -10844,7 +10887,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       type: "info",
       title: "Penalty applied",
       message: `${record.repName} — ${penaltyType}${amountPart}${bonusPart}${penaltyOrderId ? ` (order ${penaltyOrderId})` : ""}${penaltyReason.trim() ? ` — ${penaltyReason.trim()}` : ""}`,
-      orderId: penaltyOrderId || undefined
+      orderId: penaltyOrderId || undefined,
+      link: penaltyOrderId ? `/dashboard/admin/orders/${penaltyOrderId}` : "/dashboard/admin/payroll"
     });
     penaltiesApi.create({
       repId: record.repId,
@@ -16126,7 +16170,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         pushSystemNotification({
           type: "low_stock",
           message: `Low stock: ${product.name} — warehouse down to ${newWarehouseStock} unit${newWarehouseStock === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
-          productId: product.id
+          productId: product.id,
+          link: "/dashboard/admin/inventory/state-stock"
         });
       }
     }
@@ -17927,7 +17972,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       type: "info",
       title: "Stock assigned to agent",
       message: `${quantity} × ${product.name} → ${_assAgentName} (warehouse now ${product.warehouseStock - quantity})`,
-      productId: product.id
+      productId: product.id,
+      link: `/dashboard/admin/agents/${_assAgId}`
     });
   };
 
@@ -18107,7 +18153,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         type: "info",
         title: hasLoss ? "Agent stock write-off" : "Agent stock reconciled",
         message: `${product.name} · ${selectedAgent.name}: ${partsLog.join(" · ")} (now ${nextQuantity})`,
-        productId: product.id
+        productId: product.id,
+        link: `/dashboard/admin/agents/${selectedAgent.id}`
       });
     }
   };
@@ -23461,10 +23508,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               className={`flex items-start gap-3 px-4 py-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${!n.read ? "bg-blue-50/30" : ""}`}
                               onClick={() => {
                                 markOneNotificationRead(n.id);
-                                if (n.link) {
-                                  setShowNotifPanel(false);
-                                  window.location.hash = n.link.startsWith("#") ? n.link : `#${n.link}`;
-                                }
+                                setShowNotifPanel(false);
+                                navigateToNotificationTarget(n);
                               }}
                             >
                               <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${iconBg}`}>
@@ -23484,7 +23529,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     {/* Footer */}
                     <button
                       className="!min-h-0 w-full py-3 text-xs font-semibold text-[#1F8FE0] hover:bg-gray-50 border-t border-gray-100 transition-colors"
-                      onClick={() => { setShowNotifPanel(false); setActivePage("Notifications"); }}
+                      onClick={() => {
+                        setShowNotifPanel(false);
+                        window.location.hash = currentRole === "Sales Rep" ? "#/dashboard/sales-rep/notifications" : "#/dashboard/admin/notifications";
+                      }}
                     >View all notifications</button>
                   </div>
                 </>
@@ -33717,11 +33765,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const isExpanded = expandedNotificationId === n.id;
                       const product = n.productId ? products.find((p) => p.id === n.productId) : undefined;
                       const handleRowClick = () => {
-                        setExpandedNotificationId(isExpanded ? null : n.id);
                         if (!n.read) markOneNotificationRead(n.id);
-                      };
-                      const navigateToLink = () => {
-                        if (n.link) window.location.hash = n.link.startsWith("#") ? n.link : `#${n.link}`;
+                        navigateToNotificationTarget(n);
                       };
                       return (
                         <li key={n.id} className={`${!n.read ? "bg-blue-50/40" : ""}`}>
@@ -33739,7 +33784,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </div>
                             <div className="flex items-center gap-2 shrink-0 mt-1">
                               {!n.read && <span className="w-2 h-2 rounded-full bg-[#1F8FE0]" aria-label="Unread" />}
-                              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                              <button
+                                type="button"
+                                className="!min-h-0 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                aria-label={isExpanded ? "Collapse notification details" : "Expand notification details"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setExpandedNotificationId(isExpanded ? null : n.id);
+                                  if (!n.read) markOneNotificationRead(n.id);
+                                }}
+                              >
+                                <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                              </button>
                             </div>
                           </div>
 
@@ -33777,14 +33833,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </div>
                               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-200">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  {n.link && (
-                                    <button
-                                      className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors"
-                                      onClick={(e) => { e.stopPropagation(); navigateToLink(); }}
-                                    >
-                                      Open <ArrowRight className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
+                                  <button
+                                    className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); navigateToNotificationTarget(n); }}
+                                  >
+                                    Open destination <ArrowRight className="w-3.5 h-3.5" />
+                                  </button>
                                   {n.read ? (
                                     <span className="text-[11px] text-gray-400 italic">Read</span>
                                   ) : (

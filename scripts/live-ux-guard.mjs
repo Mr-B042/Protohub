@@ -140,6 +140,18 @@ const checks = [
       "createStockRiskAlerts",
       "salesRepRecipientIds"
     ]
+  },
+  {
+    name: "Clickable notification routing",
+    why: "Every notification row should open the most relevant destination, including older rows that do not have a saved link.",
+    required: [
+      "notificationTargetLink",
+      "navigateToNotificationTarget",
+      "Open destination",
+      "/dashboard/admin/inventory/state-stock",
+      "/dashboard/admin/waybill",
+      "/dashboard/admin/customers"
+    ]
   }
 ];
 

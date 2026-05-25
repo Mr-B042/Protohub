@@ -418,7 +418,7 @@ export const customersApi = {
 // ── Notifications ─────────────────────────────────────────
 export const notificationsApi = {
   list: () => get<any[]>("/api/notifications"),
-  create: (body: { type: string; message: string; productId?: string }) => post<any>("/api/notifications", body),
+  create: (body: { type: string; message: string; productId?: string; title?: string; link?: string; orderId?: string }) => post<any>("/api/notifications", body),
   createStockRiskAlerts: (body: {
     signals: Array<{
       productId: string;

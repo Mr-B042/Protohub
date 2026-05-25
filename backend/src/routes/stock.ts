@@ -122,7 +122,9 @@ router.post("/update",
         org_id: req.user!.orgId,
         type: "info",
         message: movementMessage,
-        product_id: productId
+        product_id: productId,
+        title: "Warehouse stock adjusted",
+        link: "/dashboard/admin/inventory"
       }),
       sendPushToRoles(req.user!.orgId, ["Owner", "Admin"], {
         title: "Warehouse stock adjusted",
@@ -144,7 +146,9 @@ router.post("/update",
         org_id:     req.user!.orgId,
         type:       "low_stock",
         message,
-        product_id: productId
+        product_id: productId,
+        title:      "Low Stock Alert",
+        link:       "/dashboard/admin/inventory/state-stock"
       });
       await sendPushToRoles(req.user!.orgId, ["Owner", "Admin", "Inventory Manager"], {
         title: "Low Stock Alert",

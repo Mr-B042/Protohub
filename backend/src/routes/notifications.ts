@@ -58,17 +58,28 @@ router.post("/", async (req, res) => {
   const Schema = z.object({
     type:      z.enum(["low_stock", "remittance_overdue", "info", "order_new", "order_confirmed", "order_delivered", "order_cancelled", "order_failed", "order_rescheduled", "order_assigned", "order_follow_up"]),
     message:   z.string().min(1),
-    productId: z.string().uuid().optional()
+    productId: z.string().uuid().optional(),
+    title:     z.string().trim().min(1).max(160).optional(),
+    link:      z.string().trim().min(1).max(300).optional(),
+    orderId:   z.string().trim().min(1).max(80).optional()
   });
   const parsed = Schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const { type, message, productId } = parsed.data;
+  const { type, message, productId, title, link, orderId } = parsed.data;
   const { data, error } = await supabase
     .from("system_notifications")
-    .insert({ org_id: req.user!.orgId, type, message, product_id: productId ?? null })
+    .insert({
+      org_id: req.user!.orgId,
+      type,
+      title: title ?? null,
+      message,
+      link: link ?? null,
+      order_id: orderId ?? null,
+      product_id: productId ?? null
+    })
     .select().single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(201).json(data);

@@ -388,7 +388,9 @@ cron.schedule("0 9 * * *", async () => {
       await supabase.from("system_notifications").insert({
         org_id:  orgId,
         type:    "info",
-        message
+        title:   "Stale Abandoned Carts",
+        message,
+        link:    "/dashboard/admin/abandoned-carts"
       });
       const branding = await getOrgPushBranding(orgId);
       await sendPushToRoles(orgId, ["Owner", "Admin"], {
@@ -452,7 +454,9 @@ cron.schedule("5 9 * * *", async () => {
       await supabase.from("system_notifications").insert({
         org_id:  orgId,
         type:    "remittance_overdue",
-        message
+        title:   "Remittance Overdue",
+        message,
+        link:    "/dashboard/admin/finance-accounting"
       });
       const branding = await getOrgPushBranding(orgId);
       await sendPushToRoles(orgId, ["Owner", "Admin"], {
