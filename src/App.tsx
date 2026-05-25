@@ -38352,6 +38352,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
+	              const selectedCartJourney = selectedCartJourneyEvents;
+	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
 	              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -38433,62 +38436,60 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                  {/* Workflow + timeline */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Workflow</h4>
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Workflow</h4>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Sales Rep</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{repName}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Source</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.source}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Created</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last activity</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
                         {linkedOrder && (
                           <>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Linked order</p><p className="font-semibold text-gray-900 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Conversion path</p><p className="font-semibold text-gray-900 m-0">{conversionPathLabel ?? "Converted"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Linked order</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Conversion path</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{conversionPathLabel ?? "Converted"}</p></div>
                           </>
                         )}
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last step reached</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Journey events</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartJourney.length}</p></div>
+	                      <div className="sm:col-span-2">
+	                        <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Recovery priority</p>
+	                        <div className="mt-1 flex items-center gap-2 flex-wrap">
+	                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+	                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
+	                        </div>
+	                      </div>
+	                    </div>
+	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
+	                      <div className="flex items-center justify-between gap-2 mb-2">
+	                        <div>
+	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Customer journey</p>
+	                          <p className="text-[12px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
+	                        </div>
+	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Loading...</span> : null}
+	                      </div>
+	                      {selectedCartJourney.length === 0 && !selectedCartJourneyLoading ? (
+	                        <p className="text-sm text-gray-500 dark:text-slate-400 m-0">No journey timeline has been captured for this cart yet.</p>
+	                      ) : (
+	                        <div className="grid gap-2">
+	                          {selectedCartJourney.map((event, index) => (
+	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 dark:bg-[#101a24] dark:border-slate-800/80 px-3 py-2">
+	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 text-xs font-extrabold flex items-center justify-center">
+	                                {index + 1}
+	                              </div>
+	                              <div className="min-w-0 flex-1">
+	                                <div className="flex items-start justify-between gap-3 flex-wrap">
+	                                  <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 m-0">{cartJourneyTitle(event)}</p>
+	                                  <span className="text-[11px] text-gray-400 dark:text-slate-500">{formatMoment(event.createdAt)}</span>
+	                                </div>
+	                                {cartJourneyDetail(event) ? (
+	                                  <p className="text-xs text-gray-600 dark:text-slate-300 m-0 mt-0.5">{cartJourneyDetail(event)}</p>
+	                                ) : null}
+	                              </div>
+	                            </div>
+	                          ))}
+	                        </div>
+	                      )}
 	                    </div>
 	                  </section>
-
-                      <section className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800/90 dark:bg-[#0d1823]">
-                        <div className="mb-4 flex items-center justify-between gap-3 border-b border-gray-100 pb-3 dark:border-slate-800/90">
-                          <h4 className="m-0 text-xs font-extrabold uppercase tracking-[0.22em] text-gray-500 dark:text-slate-400">Customer Journey</h4>
-                          {selectedCartJourneyEvents.length > 0 && (
-                            <span className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-bold text-gray-500 dark:border-slate-700 dark:bg-[#121f2b] dark:text-slate-400">
-                              {selectedCartJourneyEvents.length} event{selectedCartJourneyEvents.length === 1 ? "" : "s"}
-                            </span>
-                          )}
-                        </div>
-                        {selectedCartJourneyLoading ? (
-                          <div className="rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-5 text-sm font-semibold text-gray-500 dark:border-[#1d3a50] dark:bg-[#101d28] dark:text-slate-400">
-                            Loading customer journey...
-                          </div>
-                        ) : selectedCartJourneyEvents.length === 0 ? (
-                          <div className="rounded-[22px] border border-dashed border-gray-200 bg-gray-50 px-5 py-5 text-sm font-semibold text-gray-500 dark:border-[#1d3a50] dark:bg-[#101d28] dark:text-slate-400">
-                            No customer-journey events have been captured for this cart yet.
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            {[...selectedCartJourneyEvents]
-                              .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                              .slice(0, 8)
-                              .map((event) => {
-                                const meta = cartJourneyEventMeta(event);
-                                return (
-                                  <article key={event.id} className="rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4 shadow-sm dark:border-[#1d3a50] dark:bg-[#101d28] dark:shadow-none">
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                                      <div className="min-w-0">
-                                        <p className="m-0 text-base font-extrabold text-gray-950 dark:text-slate-50 sm:text-lg">{cartJourneyEventLabel(event.eventType)}</p>
-                                        {meta ? <p className="m-0 mt-2 text-sm font-medium leading-6 text-gray-500 dark:text-slate-400 sm:text-base">{meta}</p> : null}
-                                      </div>
-                                      <time className="shrink-0 text-left text-sm font-semibold text-gray-400 dark:text-slate-500 sm:text-right sm:text-base" dateTime={event.createdAt}>
-                                        {formatMoment(event.createdAt)}
-                                      </time>
-                                    </div>
-                                  </article>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </section>
 
 	                  {/* Actions */}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
