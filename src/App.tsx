@@ -29920,6 +29920,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       .sort((a, b) => b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
+                      const hasBonusAdmin = repStats.some((r) => r.user.role === "Admin" && r.bonusEstimate > 0);
                       const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
                       const totalCarryoverDelivered = repStats.reduce((s, r) => s + r.carryoverDelivered, 0);
@@ -29928,8 +29929,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
-                              <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps + bonus admins</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Admins appear here only when their delivered orders earned bonus in this week, and carry-over deliveries are marked clearly below.</p>
+                              <h3 className="text-base font-bold text-gray-900 m-0">Top performers · {hasBonusAdmin ? "Sales Reps + bonus admins" : "Sales Reps"}</h3>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {hasBonusAdmin
+                                  ? "Delivered-this-week output with cohort-week quality. Admins appear here only when their delivered orders earned bonus in this week, and carry-over deliveries are marked clearly below."
+                                  : "Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below."}
+                              </p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
                               {totalCarryoverDelivered > 0 && (
@@ -29954,7 +29959,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <table className="w-full text-sm">
                               <thead className="bg-gray-50">
                                 <tr className="text-left">
-                                  {["Rank","Person","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
+                                  {["Rank", hasBonusAdmin ? "Person" : "Rep","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
                                     <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                                   ))}
                                 </tr>
