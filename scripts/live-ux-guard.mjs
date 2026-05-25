@@ -96,10 +96,14 @@ const checks = [
   },
   {
     name: "Sales rep motivator bonus coach",
-    why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach with named opportunities and the best-order jump.",
+    why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach with the owner/admin bonus challenge, named opportunities, and the best-order jump.",
     required: [
       "repBonusOpportunityByOrderId",
       "Bonus Coach",
+      "Weekly top-performer challenge",
+      "Set an extra winner bonus outside product/order bonus rules.",
+      "setTopPerformerBonusEnabled(!topPerformerBonusEnabled)",
+      "topPerformerBonusAmount",
       "Bonus earned",
       "Open pipeline",
       "Delivery rate",

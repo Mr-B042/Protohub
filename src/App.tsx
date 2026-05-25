@@ -21149,6 +21149,58 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
                 </span>
               </div>
+              {(currentRole === "Owner" || currentRole === "Admin") && (
+                <div className="px-5 pt-5">
+                  <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-200">Bonus challenge</span>
+                          <span className="inline-flex items-center rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-200">
+                            Admin/Owner only
+                          </span>
+                        </div>
+                        <h3 className="mt-1 text-sm font-bold text-amber-950 dark:text-amber-50">Weekly top-performer challenge</h3>
+                        <p className="mt-1 max-w-2xl text-xs leading-5 text-amber-800 dark:text-amber-100/80">
+                          Set an extra winner bonus outside product/order bonus rules. The Bonus Coach uses it to motivate the weekly leaderboard race.
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2 dark:border-amber-500/25 dark:bg-[#101a24]">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={topPerformerBonusEnabled}
+                            className={`relative h-6 w-11 !min-h-0 shrink-0 rounded-full p-0 transition-colors ${topPerformerBonusEnabled ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                            onClick={() => setTopPerformerBonusEnabled(!topPerformerBonusEnabled)}
+                          >
+                            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${topPerformerBonusEnabled ? "left-5" : "left-0.5"}`} />
+                          </button>
+                          <span className="text-xs font-bold text-gray-900 dark:text-slate-100">{topPerformerBonusEnabled ? "Challenge on" : "Challenge off"}</span>
+                        </div>
+                        {topPerformerBonusEnabled && (
+                          <label className="text-xs font-semibold text-amber-900 dark:text-amber-100">
+                            Winner bonus amount
+                            <input
+                              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-200 sm:w-44 dark:border-amber-500/30 dark:bg-[#0f1822] dark:text-slate-100 dark:placeholder:text-slate-500"
+                              inputMode="numeric"
+                              value={topPerformerBonusAmount}
+                              onChange={(event) => setTopPerformerBonusAmount(event.target.value)}
+                              placeholder="e.g. 10000"
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800 dark:text-amber-100/80">
+                      <span className="font-semibold">
+                        {topPerformerBonusEnabled ? `${formatProductMoney(Number(topPerformerBonusAmount) || 0, "NGN")} challenge prize` : "No challenge prize is active yet."}
+                      </span>
+                      <span>Highest delivered orders for the week wins; ties split the prize.</span>
+                    </div>
+                  </article>
+                </div>
+              )}
               {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && !selectedRepUser ? (
                 <div className="px-5 py-8 text-sm text-gray-500">
                   Select a sales rep{bonusAdminUsers.length > 0 ? " or bonus admin" : ""} above to preview bonus progress for this week.
