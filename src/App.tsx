@@ -14179,7 +14179,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return (
       <div
-        className="absolute top-full left-0 z-50 mt-1 w-[640px] max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden"
+        className="absolute top-full left-0 z-50 mt-1 w-[min(640px,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[min(80vh,42rem)] overflow-y-auto bg-white border border-gray-200 rounded-2xl shadow-2xl"
         data-testid={testId}
       >
         {/* Month grids */}
@@ -23149,7 +23149,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
-        <header className="app-topbar h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
+        <header className="app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:static lg:z-auto">
           <div className="flex items-center lg:hidden">
             <button
               className="topbar-icon-button p-2 -ml-2 text-gray-600 hover:text-gray-900"
@@ -23273,7 +23273,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-2 sm:pb-3 lg:p-8">
+        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8">
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
