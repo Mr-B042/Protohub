@@ -620,6 +620,7 @@ type TrackedOrder = {
   location?: string;
   deliveryWindow?: string;
   createdAt?: string;
+  updatedAt?: string;
   scheduledDate?: string;
   scheduledAt?: string;
   deliveredDate?: string;
@@ -3483,6 +3484,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
   return {
     ...value,
     sourceCartId: sourceCartIdForOrder(value) || undefined,
+    updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
     notes: orderNotesFor(value)
@@ -11321,15 +11323,48 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // For non-Owner/Admin viewers (e.g., a logged-in Sales Rep), force the scope
   // to their own user ID regardless of the View-as dropdown. The dropdown
   // itself is hidden for these roles, but this is the data-side safety net.
+  const repBonusWeekStart = repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start
+    ? repWorkspaceDateRange.start
+    : repWorkspaceNavStart;
+  const repBonusWeekEnd = weekEndFromStartKey(repBonusWeekStart);
+  const repBonusWeekRange = { start: repBonusWeekStart, end: repBonusWeekEnd };
+  const bonusCoachDeliveredKey = (order: TrackedOrder) =>
+    order.deliveredDate ? normalizeDateKey(order.deliveredDate) : normalizeDateKey(order.updatedAt ?? order.createdAt ?? order.date);
+  const bonusAdminUsers = users.filter((user) => user.role === "Admin").filter((user) => {
+    const deliveredThisWeek = trackedOrders.filter((order) =>
+      order.assignedRepId === user.id
+      && (order.status ?? "New") === "Delivered"
+      && isInExplicitRange(bonusCoachDeliveredKey(order), repBonusWeekRange)
+    );
+    if (deliveredThisWeek.length === 0) return false;
+    const nonDeliveredThisWeek = trackedOrders.filter((order) =>
+      order.assignedRepId === user.id
+      && (order.status ?? "New") !== "Delivered"
+      && isInExplicitRange(orderCreatedKey(order), repBonusWeekRange)
+    );
+    const total = deliveredThisWeek.length + nonDeliveredThisWeek.length;
+    const revenue = deliveredThisWeek.reduce((sum, order) => sum + (order.amount || 0), 0);
+    const rate = total > 0 ? (deliveredThisWeek.length / total) * 100 : 100;
+    const aov = deliveredThisWeek.length > 0 ? revenue / deliveredThisWeek.length : 0;
+    return deliveredThisWeek.some((order) => (computeOrderBonus(order, rate, aov, total).total ?? 0) > 0);
+  });
+  const repCoachUsers = [
+    ...salesRepUsers,
+    ...bonusAdminUsers.filter((admin) => !salesRepUsers.some((rep) => rep.id === admin.id))
+  ];
   const effectiveRepScopeId =
     (currentRole === "Owner" || currentRole === "Admin")
       ? repConsoleRepId
       : (currentManagedUser?.id ?? authUser?.id ?? "");
   const selectedRepUser = effectiveRepScopeId === "all" || !effectiveRepScopeId
     ? undefined
-    : salesRepUsers.find((user) => user.id === effectiveRepScopeId);
+    : repCoachUsers.find((user) => user.id === effectiveRepScopeId);
   const repScopeName = selectedRepUser?.name ?? "All reps";
-  const repScopeDescription = selectedRepUser ? "Rep-only workspace view" : "Owner full-access audit view";
+  const repScopeDescription = selectedRepUser
+    ? selectedRepUser.role === "Admin"
+      ? "Bonus admin workspace view"
+      : "Rep-only workspace view"
+    : "Owner full-access audit view";
   const repOrders = (effectiveRepScopeId === "all"
     ? trackedOrders
     : trackedOrders.filter((order) => order.assignedRepId === effectiveRepScopeId)
@@ -11546,10 +11581,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchedOrderId = notification.link?.match(/\/orders\/([^/?#]+)/)?.[1];
     return matchedOrderId ? repOrderIds.has(decodeURIComponent(matchedOrderId)) : false;
   });
-  const repBonusWeekStart = repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start
-    ? repWorkspaceDateRange.start
-    : repWorkspaceNavStart;
-  const repBonusWeekEnd = weekEndFromStartKey(repBonusWeekStart);
   const repBonusOpportunityByOrderId = new Map((repBonusCoach?.orderOpportunities ?? []).map((opportunity) => [opportunity.orderId, opportunity]));
   const repBonusPrimaryOrder = repBonusCoach?.motivators.find((motivator) => motivator.orderId)?.orderId ?? "";
   const repBonusProjectedExtra = repBonusCoach
@@ -11909,7 +11940,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       settings: "Settings"
     };
     const requestedRepId = queryParams.get("rep") ?? "all";
-    const resolvedRepId = requestedRepId === "all" || salesRepUsers.some((user) => user.id === requestedRepId)
+    const resolvedRepId = requestedRepId === "all" || repCoachUsers.some((user) => user.id === requestedRepId)
       ? requestedRepId
       : "all";
 
@@ -11979,7 +12010,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!isRepCartSection && modal && ["assignCart", "convertCart"].includes(modal) && hashRoute.startsWith("#/dashboard/sales-rep")) {
       setModal(null);
     }
-  }, [hashRoute, currentRole, salesRepUsers]);
+  }, [hashRoute, currentRole, repCoachUsers]);
 
   useEffect(() => {
     if (hashRoute.startsWith("#/dashboard/sales-rep") || hashRoute.startsWith("#/order-form/embed")) {
@@ -21127,7 +21158,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   onChange={(event) => handleRepConsoleScopeChange(event.target.value)}
                 >
                   <option value="all">All reps (Owner full access)</option>
-                  {salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                  {repCoachUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role === "Admin" ? " (Admin bonus)" : ""}</option>)}
                 </select>
               </div>
               <div className="flex flex-col">
@@ -21171,7 +21202,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
               {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && !selectedRepUser ? (
                 <div className="px-5 py-8 text-sm text-gray-500">
-                  Select a sales rep above to preview their bonus progress for this week.
+                  Select a sales rep{bonusAdminUsers.length > 0 ? " or bonus admin" : ""} above to preview bonus progress for this week.
                 </div>
               ) : repBonusCoachLoading ? (
                 <div className="px-5 py-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">

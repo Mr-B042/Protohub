@@ -12,6 +12,7 @@ import { supabase } from "./supabase.js";
 type BonusCoachOrder = PayrollOrder & {
   customer?: string | null;
   package_name?: string | null;
+  updated_at?: string | null;
 };
 
 type OrgBonusSettings = {
@@ -307,22 +308,22 @@ export const buildRepBonusSnapshot = async (
       .maybeSingle(),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", weekStart)
       .lt("delivered_date", nextWeekStart),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .is("delivered_date", null)
-      .gte("created_at", weekStartTs)
-      .lt("created_at", nextWeekStartTs),
+      .gte("updated_at", weekStartTs)
+      .lt("updated_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
       .neq("status", "Delivered")
@@ -330,7 +331,7 @@ export const buildRepBonusSnapshot = async (
       .lt("created_at", nextWeekStartTs),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date, customer, package_name")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
       .in("status", [...ACTIVE_ORDER_STATUSES])
