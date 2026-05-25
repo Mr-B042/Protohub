@@ -6363,7 +6363,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderAuditLog, setOrderAuditLog] = useState<{ id: string; from_status: string | null; to_status: string; note: string | null; created_at: string; changed_by: string | null }[]>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
-  const [cartWhatsAppPicker, setCartWhatsAppPicker] = useState<null | {
+  const [whatsAppPicker, setWhatsAppPicker] = useState<null | {
     customerName: string;
     normalUrl: string;
     businessUrl: string;
@@ -9060,13 +9060,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
   };
   const openAgentBalanceWhatsapp = (group: AgentWeeklyBalanceGroup) => {
-    const digits = sanitizePhoneDigitsInput(group.agentWhatsappPhone || group.agentPhone || "");
-    if (!digits) {
-      showToast(`No WhatsApp number saved for ${group.agentName}.`);
-      return;
-    }
-    const text = encodeURIComponent(formatAgentBalanceWeekMessage(group));
-    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener,noreferrer");
+    openWhatsAppPicker({
+      phone: group.agentWhatsappPhone || group.agentPhone,
+      message: formatAgentBalanceWeekMessage(group),
+      customerName: group.agentName
+    });
   };
   const exportWeekendStockSummaryCsv = () => {
     const rows = [
@@ -13656,30 +13654,43 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
   };
 
+  const openWhatsAppPicker = ({
+    phone,
+    message,
+    customerName
+  }: {
+    phone: string | null | undefined;
+    message: string;
+    customerName: string;
+  }) => {
+    const normalUrl = buildWhatsAppUrl(phone, message);
+    const businessUrl = buildWhatsAppBusinessUrl(phone, message);
+    const name = customerName || "this contact";
+    if (!normalUrl || !businessUrl) {
+      showToast(`No valid WhatsApp number for ${name}.`);
+      return;
+    }
+    setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });
+  };
+
   const openWhatsAppForOrder = (order: TrackedOrder) => {
-    openWhatsAppUrl(
-      buildWhatsAppUrl(order.whatsapp || order.phone, buildOrderWhatsAppMessage(order)),
-      order.customer
-    );
+    openWhatsAppPicker({
+      phone: order.whatsapp || order.phone,
+      message: buildOrderWhatsAppMessage(order),
+      customerName: order.customer || `order ${order.id}`
+    });
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
-    openWhatsAppUrl(
-      buildWhatsAppUrl(cart.whatsapp || cart.phone, buildCartWhatsAppMessage(cart)),
-      cart.customer
-    );
+    openWhatsAppPicker({
+      phone: cart.whatsapp || cart.phone,
+      message: buildCartWhatsAppMessage(cart),
+      customerName: cart.customer || "this customer"
+    });
   };
 
   const openCartWhatsAppPicker = (cart: AbandonedCartRecord) => {
-    const message = buildCartWhatsAppMessage(cart);
-    const normalUrl = buildWhatsAppUrl(cart.whatsapp || cart.phone, message);
-    const businessUrl = buildWhatsAppBusinessUrl(cart.whatsapp || cart.phone, message);
-    const customerName = cart.customer || "this customer";
-    if (!normalUrl || !businessUrl) {
-      showToast(`No valid WhatsApp number for ${customerName}.`);
-      return;
-    }
-    setCartWhatsAppPicker({ customerName, normalUrl, businessUrl });
+    openWhatsAppForCart(cart);
   };
 
   useEffect(() => {
@@ -36319,23 +36330,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </div>
       )}
 
-      {cartWhatsAppPicker && (
+      {whatsAppPicker && (
         <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
-          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="cart-whatsapp-picker-title">
+          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-picker-title">
             <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
               <div>
-                <h3 id="cart-whatsapp-picker-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">
+                <h3 id="whatsapp-picker-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">
                   Open WhatsApp
                 </h3>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Choose which WhatsApp app to use for {cartWhatsAppPicker.customerName}.
+                  Choose which WhatsApp app to use for {whatsAppPicker.customerName}.
                 </p>
               </div>
               <button
                 type="button"
                 className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100"
                 aria-label="Close WhatsApp picker"
-                onClick={() => setCartWhatsAppPicker(null)}
+                onClick={() => setWhatsAppPicker(null)}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -36345,9 +36356,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 type="button"
                 className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
                 onClick={() => {
-                  const target = cartWhatsAppPicker.normalUrl;
-                  const customerName = cartWhatsAppPicker.customerName;
-                  setCartWhatsAppPicker(null);
+                  const target = whatsAppPicker.normalUrl;
+                  const customerName = whatsAppPicker.customerName;
+                  setWhatsAppPicker(null);
                   openWhatsAppUrl(target, customerName);
                 }}
               >
@@ -36364,9 +36375,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 type="button"
                 className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
                 onClick={() => {
-                  const target = cartWhatsAppPicker.businessUrl;
-                  const customerName = cartWhatsAppPicker.customerName;
-                  setCartWhatsAppPicker(null);
+                  const target = whatsAppPicker.businessUrl;
+                  const customerName = whatsAppPicker.customerName;
+                  setWhatsAppPicker(null);
                   openWhatsAppUrl(target, customerName);
                 }}
               >
