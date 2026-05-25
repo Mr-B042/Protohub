@@ -11603,20 +11603,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     : repBonusCoach.snapshot.nextDeliveryRateTarget
       ? Math.max(0, Math.min(100, (repBonusCoach.snapshot.deliveryRate / repBonusCoach.snapshot.nextDeliveryRateTarget) * 100))
       : 100;
-  const repBonusEarnedProgressPercent = !repBonusCoach
-    ? 0
-    : Math.max(6, Math.min(100, repBonusCoach.snapshot.deliveredCount * 8));
-  const repBonusPipelineProgressPercent = !repBonusCoach
-    ? 0
-    : Math.max(
-        8,
-        Math.min(
-          100,
-          repBonusCoach.snapshot.projectedBonusOpenPipeline > 0
-            ? (repBonusCoach.snapshot.currentBonusEarned / repBonusCoach.snapshot.projectedBonusOpenPipeline) * 100
-            : 0
-        )
-      );
   const repBonusNextUnlockValue = !repBonusCoach
     ? "On track"
     : repBonusCoach.snapshot.ordersNeededForNextTier
@@ -11631,16 +11617,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       : repBonusCoach.snapshot.topPerformerGap
         ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
         : "No higher tier is waiting right now.";
-  const repBonusTierProgressCopy = !repBonusCoach
-    ? ""
-    : repBonusCoach.snapshot.nextTierTarget
-      ? `${repBonusCoach.snapshot.deliveredCount} of ${repBonusCoach.snapshot.nextTierTarget} deliveries toward the next bonus tier`
-      : "You are already on the highest available tier for this week.";
-  const repBonusRateGateCopy = !repBonusCoach
-    ? ""
-    : repBonusCoach.snapshot.nextDeliveryRateTarget
-      ? `${repBonusCoach.snapshot.deliveryRate}% now. Push to ${repBonusCoach.snapshot.nextDeliveryRateTarget}% to unlock the next gate.`
-      : "No delivery-rate gate is blocking extra bonus right now.";
   const repBonusEmptyActionCopy = "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.";
 
   useEffect(() => {
@@ -21198,12 +21174,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Bonus earned</span>
                       <strong className="block mt-2 text-2xl font-bold text-emerald-900">{formatProductMoney(repBonusCoach.snapshot.currentBonusEarned, "NGN")}</strong>
                       <p className="mt-1 text-xs text-emerald-800">From {repBonusDeliveredCount} delivered orders this week.</p>
-                      <div className="mt-3 h-2 rounded-full bg-emerald-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-emerald-500 transition-all"
-                          style={{ width: `${repBonusEarnedProgressPercent}%` }}
-                        />
-                      </div>
                     </article>
                     <article className="rounded-xl border border-blue-100 bg-blue-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Open pipeline</span>
@@ -21213,12 +21183,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           ? `${formatProductMoney(repBonusProjectedExtra, "NGN")} more is still sitting in open orders.`
                           : "Projected if your open bonus opportunities close."}
                       </p>
-                      <div className="mt-3 h-2 rounded-full bg-blue-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-blue-500 transition-all"
-                          style={{ width: `${repBonusPipelineProgressPercent}%` }}
-                        />
-                      </div>
                     </article>
                     <article className="rounded-xl border border-amber-100 bg-amber-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">Delivery rate</span>
@@ -21228,59 +21192,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
                           : "No higher delivery-rate gate blocking bonus right now."}
                       </p>
-                      <div className="mt-3 h-2 rounded-full bg-amber-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-amber-500 transition-all"
-                          style={{ width: `${repBonusRateProgressPercent}%` }}
-                        />
-                      </div>
                     </article>
                     <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Next unlock</span>
                       <strong className="block mt-2 text-xl font-bold text-violet-900">{repBonusNextUnlockValue}</strong>
                       <p className="mt-1 text-xs text-violet-800">{repBonusNextUnlockCopy}</p>
-                      <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-violet-500 transition-all"
-                          style={{ width: `${repBonusTierProgressPercent}%` }}
-                        />
-                      </div>
-                    </article>
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <article className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tier progress</span>
-                          <p className="mt-1 text-sm font-bold text-gray-900">{repBonusTierProgressCopy}</p>
-                        </div>
-                        {repBonusCoach.snapshot.ordersNeededForNextTier && (
-                          <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
-                            {repBonusCoach.snapshot.ordersNeededForNextTier} left
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                        <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${repBonusTierProgressPercent}%` }} />
-                      </div>
-                    </article>
-
-                    <article className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Delivery-rate gate</span>
-                          <p className="mt-1 text-sm font-bold text-gray-900">{repBonusRateGateCopy}</p>
-                        </div>
-                        {repBonusCoach.snapshot.deliveriesNeededForRateTarget && (
-                          <span className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
-                            {repBonusCoach.snapshot.deliveriesNeededForRateTarget} more
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                        <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${repBonusRateProgressPercent}%` }} />
-                      </div>
                     </article>
                   </div>
 

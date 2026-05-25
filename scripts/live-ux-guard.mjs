@@ -96,17 +96,24 @@ const checks = [
   },
   {
     name: "Sales rep motivator bonus coach",
-    why: "The first Sales Rep Motivator Bonus UX must keep active progress rails, named opportunities, and the best-order jump.",
+    why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach with named opportunities and the best-order jump.",
     required: [
       "repBonusOpportunityByOrderId",
-      "Bonus Coach On This Order",
+      "Bonus Coach",
+      "Bonus earned",
+      "Open pipeline",
+      "Delivery rate",
+      "Next unlock",
       "Open best order",
       "Named opportunity",
-      "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.",
-      "Math.max(8, repBonusCoach?.snapshot.nextTierTarget ? repBonusTierProgressPercent : repBonusRateProgressPercent)"
+      "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders."
     ],
     forbidden: [
       "const repBonusZeroState",
+      "const repBonusEarnedProgressPercent",
+      "const repBonusPipelineProgressPercent",
+      "Tier progress",
+      "Delivery-rate gate",
       "No live bonus opportunity is open yet.",
       "First successful delivery starts your rate progress.",
       "Start with your first confirmed-to-delivered order this week to unlock bonus progress."
