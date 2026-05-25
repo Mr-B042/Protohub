@@ -211,6 +211,10 @@ export const authApi = {
     workingDays?: string[];
     workingDayStart?: string;
     workingDayEnd?: string;
+    adTrackingLabels?: {
+      campaigns: Record<string, string>;
+      creatives: Record<string, string>;
+    };
   }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
   updateBranding: (body: {
@@ -237,6 +241,14 @@ export const authApi = {
       workingDayStart: string;
       workingDayEnd: string;
     }>("/api/auth/org-branding", body),
+  saveAdTrackingLabels: (body: {
+    campaigns?: Record<string, string>;
+    creatives?: Record<string, string>;
+  }) =>
+    patch<{
+      campaigns: Record<string, string>;
+      creatives: Record<string, string>;
+    }>("/api/auth/ad-tracking-labels", body),
 
   invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),

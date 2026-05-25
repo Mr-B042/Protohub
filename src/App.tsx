@@ -97,6 +97,7 @@ import {
   unsubscribeFromPush,
   ensureServiceWorkerRegistration,
   ensurePushSubscriptionCurrent,
+  initializeNativePushBridge,
   isCurrentlySubscribed,
   getCurrentPushEndpoint,
   getPermissionState,
@@ -104,7 +105,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, remittanceTransactionsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
@@ -3835,6 +3836,7 @@ const isNativePushShell = (() => {
   }
   return false;
 })();
+const nativePushTroubleshootingDisabled = isNativePushShell;
 
 // ── ORDER_DETAILS_POLL_MS ────────────────────
 const ORDER_DETAILS_POLL_MS = 10_000;
@@ -5183,10 +5185,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyAccountingData, setWeeklyAccountingData] = useState<WeeklyAccountingDataset | null>(null);
   const [weeklyAccountingLoading, setWeeklyAccountingLoading] = useState(false);
   const [weeklyAccountingError, setWeeklyAccountingError] = useState("");
+  const [financeSummaryData, setFinanceSummaryData] = useState<FinanceSummaryDataset | null>(null);
+  const [financeSummaryLoading, setFinanceSummaryLoading] = useState(false);
+  const [financeSummaryError, setFinanceSummaryError] = useState("");
   const [financeRemittanceTransactions, setFinanceRemittanceTransactions] = useState<WeeklyAccountingRemittanceTransaction[]>([]);
   const [financeRemittanceGeneratedAt, setFinanceRemittanceGeneratedAt] = useState("");
   const [financeRemittanceLoading, setFinanceRemittanceLoading] = useState(false);
   const [financeRemittanceError, setFinanceRemittanceError] = useState("");
+  const [financeRemittanceBackfillLoading, setFinanceRemittanceBackfillLoading] = useState(false);
+  const [financeRemittanceBackfillSummary, setFinanceRemittanceBackfillSummary] = useState("");
   const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">(() =>
     readPref<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
       raw === "Campaign Orders" || raw === "Abandoned Carts" || raw === "Daily Ad Spend" ? raw : null
@@ -5205,6 +5212,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       cartStatuses.includes(raw as CartStatus) ? (raw as CartStatus) : null
     )
   );
+  const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
+  const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
+  const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
+  const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
+  const [adTrackingLabelSaving, setAdTrackingLabelSaving] = useState(false);
+  const [adTrackingLabelsLoadedScope, setAdTrackingLabelsLoadedScope] = useState<string | null>(null);
   const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
   const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
@@ -5241,6 +5254,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const adTrackingLabelScope = authUser?.orgId ?? "default";
+
+  useEffect(() => {
+    const parseLabelMap = (raw: string): Record<string, string> | null => {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        const next: Record<string, string> = {};
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (typeof value === "string" && value.trim()) next[key] = value.trim();
+        });
+        return next;
+      } catch {
+        return null;
+      }
+    };
+    setCampaignCardLabels(readPref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
+    setCreativeCardLabels(readPref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
+    setEditingAdTrackingLabel(null);
+    setAdTrackingLabelDraft("");
+    setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+  }, [adTrackingLabelScope]);
+
+  useEffect(() => {
+    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
+    writePref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, JSON.stringify(campaignCardLabels));
+  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, campaignCardLabels]);
+
+  useEffect(() => {
+    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
+    writePref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, JSON.stringify(creativeCardLabels));
+  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, creativeCardLabels]);
 
   // ── Role + access derivation (must come before any data filter that
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
@@ -5367,6 +5412,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       if (typeof res?.workingDayEnd === "string" && res.workingDayEnd) {
         setWorkingDayEnd(res.workingDayEnd);
+      }
+      if (res?.adTrackingLabels) {
+        setCampaignCardLabels(
+          res.adTrackingLabels.campaigns && typeof res.adTrackingLabels.campaigns === "object"
+            ? res.adTrackingLabels.campaigns
+            : {}
+        );
+        setCreativeCardLabels(
+          res.adTrackingLabels.creatives && typeof res.adTrackingLabels.creatives === "object"
+            ? res.adTrackingLabels.creatives
+            : {}
+        );
+        setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
       }
       workingScheduleSyncedRef.current = {
         enabled: !!res?.workingScheduleEnabled,
@@ -5650,6 +5708,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const loadFinanceSummaryData = async (options: { quiet?: boolean } = {}) => {
+    const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
+    if (!bounds) {
+      setFinanceSummaryData(null);
+      setFinanceSummaryError("");
+      return;
+    }
+
+    setFinanceSummaryLoading(true);
+    try {
+      const result = await financeSummaryApi.summary({
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        ...(financeProductFilter.length > 0 ? { productIds: financeProductFilter.join(",") } : {})
+      });
+      const cohortOrders = Array.isArray(result?.cohortOrders)
+        ? result.cohortOrders
+        : (Array.isArray(result?.cohort_orders) ? result.cohort_orders : []);
+      const deliveredOrders = Array.isArray(result?.deliveredOrders)
+        ? result.deliveredOrders
+        : (Array.isArray(result?.delivered_orders) ? result.delivered_orders : []);
+      setFinanceSummaryData({
+        dateFrom: typeof result?.dateFrom === "string" ? result.dateFrom : bounds.dateFrom,
+        dateTo: typeof result?.dateTo === "string" ? result.dateTo : bounds.dateTo,
+        generatedAt: typeof result?.generatedAt === "string"
+          ? result.generatedAt
+          : (typeof result?.generated_at === "string" ? result.generated_at : ""),
+        cohortOrders: cohortOrders.map((row: any) => normalizeTrackedOrder(row)),
+        deliveredOrders: deliveredOrders.map((row: any) => normalizeTrackedOrder(row))
+      });
+      setFinanceSummaryError("");
+    } catch (err: any) {
+      setFinanceSummaryError(err?.message ?? "please retry.");
+      if (!options.quiet) {
+        showToast(`Failed to load finance summary: ${err?.message ?? "please retry"}.`);
+      }
+    } finally {
+      setFinanceSummaryLoading(false);
+    }
+  };
+
   const loadFinanceRemittanceData = async (options: { quiet?: boolean } = {}) => {
     const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
     if (!bounds) {
@@ -5678,6 +5777,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     } finally {
       setFinanceRemittanceLoading(false);
+    }
+  };
+
+  const runFinanceRemittanceBackfill = async () => {
+    if (!(authUser?.role === "Owner" || authUser?.role === "Admin")) {
+      showToast("Only Owner or Admin can bootstrap remittance history.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Bootstrap missing remittance history for older orders? This creates estimated receipt-dated cash entries for orders that already have remitted amounts but no remittance ledger rows yet. Protohub will use each order's last updated time as the best available historical receipt date."
+    );
+    if (!confirmed) return;
+
+    setFinanceRemittanceBackfillLoading(true);
+    try {
+      const result = await remittanceTransactionsApi.backfill({ dateMode: "updated_at" });
+      const insertedCount = Math.max(0, Number(result?.insertedCount ?? 0));
+      const skippedExistingCount = Math.max(0, Number(result?.skippedExistingCount ?? 0));
+      const skippedNoDateCount = Math.max(0, Number(result?.skippedNoDateCount ?? 0));
+      const summary =
+        insertedCount > 0
+          ? `Bootstrapped ${insertedCount} historical remittance ${insertedCount === 1 ? "entry" : "entries"} using estimated last-update receipt dates.`
+          : "No missing historical remittance entries were found to backfill.";
+      const detailParts = [
+        skippedExistingCount > 0 ? `${skippedExistingCount} order${skippedExistingCount === 1 ? "" : "s"} already had ledger history` : "",
+        skippedNoDateCount > 0 ? `${skippedNoDateCount} order${skippedNoDateCount === 1 ? "" : "s"} still need manual review` : ""
+      ].filter(Boolean);
+      const detail = detailParts.length > 0 ? ` ${detailParts.join(" · ")}.` : "";
+      setFinanceRemittanceBackfillSummary(summary + detail);
+      showToast(summary + detail);
+      await Promise.all([
+        loadFinanceSummaryData({ quiet: true }),
+        loadFinanceRemittanceData({ quiet: true }),
+        loadWeeklyAccountingData({ quiet: true })
+      ]);
+    } catch (err: any) {
+      const message = err?.message ?? "please retry.";
+      setFinanceRemittanceBackfillSummary(`Backfill failed: ${message}`);
+      showToast(`Failed to bootstrap remittance history: ${message}`);
+    } finally {
+      setFinanceRemittanceBackfillLoading(false);
     }
   };
 
@@ -6356,6 +6496,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [dateEditReason, setDateEditReason] = useState("");
   const [dateEditSaving, setDateEditSaving] = useState(false);
   const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
+  const [repCartJourneyMap, setRepCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const [repCartJourneyLoading, setRepCartJourneyLoading] = useState(false);
   const [showRepFollowUpField, setShowRepFollowUpField] = useState(false);
   const [assignStockProductId, setAssignStockProductId] = useState("");
   const [assignStockQty, setAssignStockQty] = useState("1");
@@ -6392,6 +6534,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (financeTab !== "Weekly Accounting") return;
     void loadWeeklyAccountingData({ quiet: !!weeklyAccountingData });
   }, [activePage, financeTab, weeklyAcctSunday, financeProductFilter.join(","), authUser?.id]);
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Finance & Accounting") return;
+    if (financeTab === "Weekly Accounting") return;
+    void loadFinanceSummaryData({ quiet: !!financeSummaryData });
+  }, [activePage, financeTab, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
@@ -7268,7 +7416,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
   ];
 
-  const buildEmbedUrl = (product: Product | undefined = generatedProduct, currencyOverride?: ProductCurrencyCode, redirectOverride?: string) => {
+  const buildEmbedUrl = (
+    product: Product | undefined = generatedProduct,
+    currencyOverride?: ProductCurrencyCode,
+    redirectOverride?: string,
+    previewMode = false
+  ) => {
     if (!product) {
       return "";
     }
@@ -7280,6 +7433,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
+    }
+    if (previewMode) {
+      params.set("preview", "1");
     }
 
     return `${window.location.origin}${window.location.pathname}#/order-form/embed?${params.toString()}`;
@@ -7512,19 +7668,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ...row,
     orderCount: row.orders.length
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
+  const campaignCardLabelFor = (id: string) => campaignCardLabels[id]?.trim() || "";
+  const creativeCardLabelFor = (id: string) => creativeCardLabels[id]?.trim() || "";
   const adTrackingSearchNeedle = adTrackingSearch.trim().toLowerCase();
   const matchesAdTrackingSearch = (...parts: Array<string | undefined | null>) => {
     if (!adTrackingSearchNeedle) return true;
     return parts.some((part) => typeof part === "string" && part.toLowerCase().includes(adTrackingSearchNeedle));
   };
   const filteredCampaignGroupedRows = campaignGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(row.id, row.topSource)
+    matchesAdTrackingSearch(
+      row.id,
+      campaignCardLabelFor(row.id),
+      row.topSource,
+      ...row.orders.map((order) => order.utmSource ?? "")
+    )
   );
   const filteredCreativeGroupedRows = creativeGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(row.id, row.campaignId, ...row.orders.map((order) => order.utmSource ?? ""))
-  );
-  const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) =>
     matchesAdTrackingSearch(
+      row.id,
+      creativeCardLabelFor(row.id),
+      row.campaignId,
+      campaignCardLabelFor(row.campaignId),
+      ...row.orders.map((order) => order.utmSource ?? "")
+    )
+  );
+  const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) => {
+    const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+    const creativeId = order.utmContent?.trim() || "";
+    return matchesAdTrackingSearch(
       order.id,
       order.customer,
       order.phone,
@@ -7533,9 +7704,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       order.utmCampaign,
       order.utmSource,
       order.utmMedium,
-      order.utmContent
-    )
-  );
+      order.utmContent,
+      campaignCardLabelFor(campaignId),
+      creativeId ? creativeCardLabelFor(creativeId) : ""
+    );
+  });
   const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
     if (order.sourceCartId && !map.has(order.sourceCartId)) {
       map.set(order.sourceCartId, order);
@@ -7636,13 +7809,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     cartCount: row.carts.length
   })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
   const filteredCartCampaignGroupedRows = cartCampaignGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(row.id, row.topSource, ...row.carts.map(({ attribution }) => attribution.utmSource ?? ""))
+    matchesAdTrackingSearch(
+      row.id,
+      campaignCardLabelFor(row.id),
+      row.topSource,
+      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
+    )
   );
   const filteredCartCreativeGroupedRows = cartCreativeGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(row.id, row.campaignId, ...row.carts.map(({ attribution }) => attribution.utmSource ?? ""))
-  );
-  const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) =>
     matchesAdTrackingSearch(
+      row.id,
+      creativeCardLabelFor(row.id),
+      row.campaignId,
+      campaignCardLabelFor(row.campaignId),
+      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
+    )
+  );
+  const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) => {
+    const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+    const creativeId = attribution.utmContent?.trim() || "";
+    return matchesAdTrackingSearch(
       cart.id,
       cart.customer,
       cart.phone,
@@ -7652,10 +7838,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       attribution.utmSource,
       attribution.utmMedium,
       attribution.utmContent,
+      campaignCardLabelFor(campaignId),
+      creativeId ? creativeCardLabelFor(creativeId) : "",
       linkedOrder?.customer ?? "",
       linkedOrder?.id ?? ""
-    )
-  );
+    );
+  });
   useEffect(() => {
     if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
       setAdTrackingCartJourneyLoading(false);
@@ -7705,6 +7893,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       }
     };
   }, [activePage, adTrackingJourneyCartIdsKey, adTrackingTab]);
+  const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
+    setEditingAdTrackingLabel({ kind, id });
+    setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
+  };
+  const cancelAdTrackingLabelEdit = () => {
+    setEditingAdTrackingLabel(null);
+    setAdTrackingLabelDraft("");
+  };
+  const saveAdTrackingLabelEdit = async () => {
+    if (!editingAdTrackingLabel) return;
+    const trimmed = adTrackingLabelDraft.trim().slice(0, 80);
+    const nextCampaignLabels = { ...campaignCardLabels };
+    const nextCreativeLabels = { ...creativeCardLabels };
+    if (editingAdTrackingLabel.kind === "campaign") {
+      if (trimmed) nextCampaignLabels[editingAdTrackingLabel.id] = trimmed;
+      else delete nextCampaignLabels[editingAdTrackingLabel.id];
+    } else {
+      if (trimmed) nextCreativeLabels[editingAdTrackingLabel.id] = trimmed;
+      else delete nextCreativeLabels[editingAdTrackingLabel.id];
+    }
+    setAdTrackingLabelSaving(true);
+    try {
+      const saved = await authApi.saveAdTrackingLabels({
+        campaigns: nextCampaignLabels,
+        creatives: nextCreativeLabels
+      });
+      setCampaignCardLabels(saved?.campaigns && typeof saved.campaigns === "object" ? saved.campaigns : nextCampaignLabels);
+      setCreativeCardLabels(saved?.creatives && typeof saved.creatives === "object" ? saved.creatives : nextCreativeLabels);
+      showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
+      setEditingAdTrackingLabel(null);
+      setAdTrackingLabelDraft("");
+    } catch (err: any) {
+      setCampaignCardLabels(nextCampaignLabels);
+      setCreativeCardLabels(nextCreativeLabels);
+      setEditingAdTrackingLabel(null);
+      setAdTrackingLabelDraft("");
+      if ((err?.message ?? "").toLowerCase().includes("migration 076")) {
+        showToast("Shared labels are not active in the database yet. Saved on this device for now.");
+      } else {
+        showToast(`Could not sync this ${editingAdTrackingLabel.kind} label right now. Saved on this device for now.`);
+      }
+    } finally {
+      setAdTrackingLabelSaving(false);
+    }
+  };
 
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
@@ -9229,13 +9462,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
-  const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeOrderSource = financeSummaryData?.cohortOrders ?? trackedOrders;
+  const financeDeliveredSource = financeSummaryData?.deliveredOrders ?? deliveredOrderRows;
+  const financePeriodOrders = financeOrderSource.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeCohortDeliveredRows = financePeriodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const financeExpenses = expenses.filter((expense) => isInPeriod(expense.date, financePeriod, financeDateRange) && expenseMatchesProductFilter(expense));
   const financeExpenseTotal = financeExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeGeneralExpenses = financeExpenseTotal - financeProductLinkedExpenses;
-  const financeDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeDeliveredRows = financeDeliveredSource.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeCreatedDateCorrectionCount = financePeriodOrders.filter((order) => orderHasCreatedAtCorrection(order)).length;
   const financeDeliveredDateCorrectionCount = financeDeliveredRows.filter((order) => orderHasDeliveredDateCorrection(order)).length;
   const financeProfitSummary = summarizeRecognizedProfit(financeDeliveredRows, financeExpenses);
@@ -9522,6 +9757,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceReceivedDate(todayKey());
     showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
     ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
+      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
     }).catch((err: any) => {
@@ -9606,6 +9842,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           remittance_received_at: remittanceBatchReceivedDate
         });
       }));
+      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
     } catch (err: any) {
@@ -10651,6 +10888,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       remittance_received_at: repRemittanceReceivedDate,
       timeline_notes: nextNotes
     }).then(async () => {
+      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
       if (newExpenses.length === 0) {
@@ -11148,6 +11386,80 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     contacted: repAssignedCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length,
     needsAttention: repAssignedCarts.filter((cart) => ["Abandoned", "No response", "Open abandoned"].includes(cart.status)).length
   };
+  const repJourneyCartIds = useMemo(
+    () => Array.from(new Set(repAssignedCarts.map((cart) => cart.id).filter(Boolean))),
+    [repAssignedCarts]
+  );
+  const repJourneyCartIdsKey = repJourneyCartIds.join("|");
+  const repCartJourneyAnalytics = useMemo(
+    () => summarizeCartJourneyAnalytics(repCartJourneyMap),
+    [repCartJourneyMap]
+  );
+  const repCartHintById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(repCartJourneyMap)
+          .map(([cartId, events]) => [cartId, cartJourneyFollowUpHint(events)] as const)
+          .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+      ),
+    [repCartJourneyMap]
+  );
+  const repCartRecoveryById = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(repCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
+      ),
+    [repCartJourneyMap]
+  );
+  useEffect(() => {
+    if (activePage !== "Sales Rep Workspace") {
+      setRepCartJourneyLoading(false);
+      return;
+    }
+    if (repJourneyCartIds.length === 0) {
+      setRepCartJourneyMap({});
+      setRepCartJourneyLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const loadJourneys = async (silent = false) => {
+      if (!silent) {
+        setRepCartJourneyLoading(true);
+      }
+      try {
+        const grouped = await cartsApi.journeyBulk(repJourneyCartIds);
+        if (cancelled) return;
+        const normalized: Record<string, CartJourneyEvent[]> = {};
+        for (const [cartId, events] of Object.entries(grouped ?? {})) {
+          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
+        }
+        setRepCartJourneyMap(normalized);
+      } catch {
+        if (cancelled) return;
+        if (!silent) {
+          setRepCartJourneyMap({});
+        }
+      } finally {
+        if (cancelled || silent) return;
+        setRepCartJourneyLoading(false);
+      }
+    };
+
+    void loadJourneys();
+    pollingHandle = window.setInterval(() => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void loadJourneys(true);
+    }, CART_JOURNEY_ANALYTICS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) {
+        window.clearInterval(pollingHandle);
+      }
+    };
+  }, [activePage, repJourneyCartIdsKey]);
   const repStatusFilteredOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
     if (repOrderStatusTab === "Pending") {
@@ -11548,6 +11860,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // Check push notification status on mount
   useEffect(() => {
     void (async () => {
+      await initializeNativePushBridge().catch(() => null);
       await ensureServiceWorkerRegistration().catch(() => null);
       await ensurePushSubscriptionCurrent().catch(() => false);
       await refreshPushDiagnostics();
@@ -20586,6 +20899,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   >
                     <WhatsAppIcon className="w-4 h-4" /> WhatsApp
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => openRepOrderDetail(order)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm"
+                  >
+                    <Eye className="w-4 h-4" /> Details
+                  </button>
                 </div>
               </div>
 
@@ -21051,9 +21371,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>
                               <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
                             </div>
-                            <p className="mt-1 text-sm text-gray-600 m-0">
-                              {latestNote ? noteSnippet(latestNote.text, 120) : "No saved feedback note yet."}
-                            </p>
+                            {latestNote ? (
+                              renderOrderNoteBubble(noteSnippet(latestNote.text, 160), {
+                                compact: true,
+                                className: "mt-2 max-w-[26rem]",
+                                textClassName: "text-[12px] leading-5"
+                              })
+                            ) : (
+                              <p className="mt-1 text-sm text-gray-600 m-0">No saved feedback note yet.</p>
+                            )}
                             <p className="mt-1 text-[11px] text-gray-400 m-0">
                               {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Open the order and post a note after each customer call."}
                             </p>
@@ -21067,9 +21393,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(followUp ?? null)}`}>
                               {followUpHeadline(followUp ?? null)}
                             </span>
-                            {followUp?.noteText && (
-                              <span className="text-[11px] text-gray-500">{noteSnippet(followUp.noteText, 64)}</span>
-                            )}
+                            {followUp?.noteText
+                              ? renderOrderNoteBubble(noteSnippet(followUp.noteText, 96), {
+                                  compact: true,
+                                  className: "mt-1.5 max-w-[18rem]",
+                                  textClassName: "text-[11px] leading-5"
+                                })
+                              : null}
                           </div>
                         </div>
                       </button>
@@ -21103,6 +21433,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Abandoned Carts Assigned</h2>
                 <p className="text-xs text-gray-400 font-medium mt-0.5">{repScopeName} follow-up queue only.</p>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  {repCartJourneyAnalytics.blocked[0] ? (
+                    <span className="inline-flex items-center rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                      Top blocker: {repCartJourneyAnalytics.blocked[0].label}
+                    </span>
+                  ) : null}
+                  {repCartJourneyLoading ? (
+                    <span className="text-[11px] font-semibold text-gray-400">Loading journey hints...</span>
+                  ) : null}
+                </div>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-gray-100 border-b border-gray-100">
                 {[
@@ -21313,7 +21653,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium">No assigned carts found</div>
             ) : (
               <div className="sm:hidden divide-y divide-gray-100">
-                {filteredRepCarts.map((cart) => (
+                {filteredRepCarts.map((cart) => {
+                  const followUpHint = repCartHintById[cart.id];
+                  const recovery = repCartRecoveryById[cart.id];
+                  return (
                   <article key={cart.id} className="px-4 py-4 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -21335,12 +21678,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Product</p>
                         <p className="mt-1 font-semibold text-gray-800">{cart.productName}</p>
                         <p className="text-[11px] text-gray-500">{cart.packageName}</p>
+                        {recovery ? (
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+                            <span className="text-[11px] text-gray-500">{recovery.summary}</span>
+                          </div>
+                        ) : null}
                       </div>
                       <div>
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Last Activity</p>
                         <p className="mt-1 font-semibold text-gray-800">{formatMoment(cart.lastActivity)}</p>
                       </div>
                     </div>
+                    {followUpHint ? (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
+                        <p className="text-xs font-medium text-amber-900 mt-1 mb-0">{followUpHint}</p>
+                      </div>
+                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openRepCartAssignRoute(cart.id)}>
                         <UserPlus className="w-3 h-3" /> Assign
@@ -21350,7 +21705,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </button>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div className="hidden sm:block overflow-x-auto">
@@ -21379,6 +21735,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <td className="px-4 py-4">
                           <div className="font-medium text-gray-900">{cart.productName}</div>
                           <div className="text-xs text-gray-400">{cart.packageName}</div>
+                          {repCartRecoveryById[cart.id] ? (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(repCartRecoveryById[cart.id].band)}`}>{repCartRecoveryById[cart.id].band} · {repCartRecoveryById[cart.id].score}</span>
+                              <span className="text-[11px] text-gray-500">{repCartRecoveryById[cart.id].summary}</span>
+                            </div>
+                          ) : null}
+                          {repCartHintById[cart.id] ? (
+                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
+                              <p className="text-[11px] font-medium text-amber-900 mt-1 mb-0 leading-5">{repCartHintById[cart.id]}</p>
+                            </div>
+                          ) : null}
                         </td>
                         <td className="px-4 py-4">
                           <select
@@ -28821,25 +29189,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
-                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                    {periods.map((item) => (
-                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
-                    ))}
-                  </div>
-                  {/* Date range — full width on mobile */}
-                  <div className="relative w-full sm:w-auto">
-                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
-                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                    </button>
-                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
-                  </div>
+                  {financeTab !== "Weekly Accounting" && (
+                    <>
+                      {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                      <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                        {periods.map((item) => (
+                          <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
+                        ))}
+                      </div>
+                      {/* Date range — full width on mobile */}
+                      <div className="relative w-full sm:w-auto">
+                        <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
+                          <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                        </button>
+                        {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
+                      </div>
+                    </>
+                  )}
                   {/* Currency — full width on mobile */}
                   <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
+                  {financeTab === "Weekly Accounting" && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
+                      Weekly Accounting uses the week selector inside the report below.
+                    </div>
+                  )}
                   {/* Mobile-only: Export Report stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
@@ -28847,7 +29224,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
+                {financeTab !== "Weekly Accounting" && renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
@@ -28859,7 +29236,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     onClick={() => openFinanceTab(tab)}
                     key={tab}
                   >
-                    {tab}
+                    <span className="block">{tab}</span>
+                    <span className="block mt-1 text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                      {financeTabMeta[tab].primaryLens}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -28873,7 +29253,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       onClick={() => openFinanceTab(tab)}
                       key={tab}
                     >
-                      {tab}
+                      <span className="block">{tab}</span>
+                      <span className="block mt-0.5 text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                        {financeTabMeta[tab].primaryLens}
+                      </span>
                     </button>
                   ))}
                 </nav>
@@ -28942,6 +29325,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   })}
                 </div>
               </section>
+
+              {financeTab !== "Weekly Accounting" && (financeSummaryLoading || financeSummaryError || financeSummaryData?.generatedAt) && (
+                <section className={`rounded-xl border px-4 py-3 text-xs ${
+                  financeSummaryError
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                }`}>
+                  {financeSummaryError
+                    ? `Dedicated finance summary could not fully refresh, so Protohub is falling back to cached order data for now: ${financeSummaryError}`
+                    : financeSummaryLoading
+                      ? "Refreshing full finance summary from the order book..."
+                      : `Dedicated finance summary updated ${formatMoment(financeSummaryData?.generatedAt ?? "")}.`}
+                </section>
+              )}
 
               {financeTab === "Financial Overview" && (
                 <div className="space-y-4">
@@ -29065,13 +29462,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {financeTab === "Weekly Accounting" && (() => {
                 // Sun→Sat range driven by weeklyAcctSunday
-                const start = new Date(`${weeklyAcctSunday}T00:00:00`);
+                const startKey = weeklyAcctSunday;
+                const start = new Date(`${startKey}T00:00:00`);
                 const end   = new Date(start); end.setDate(end.getDate() + 6); end.setHours(23, 59, 59, 999);
-                const startKey = start.toISOString().slice(0, 10);
-                const endKey   = end.toISOString().slice(0, 10);
+                const endKey   = formatDateKey(end);
                 const inWeek = (iso: string | undefined) => {
                   if (!iso) return false;
-                  const k = String(iso).slice(0, 10);
+                  const k = normalizeDateKey(iso);
                   return k >= startKey && k <= endKey;
                 };
                 // Honour the page-level Finance Product filter (string[] of product ids).
@@ -29824,6 +30221,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           : `Receipt-dated remittance cash updated ${formatMoment(financeRemittanceGeneratedAt)}.`}
                     </div>
                   )}
+                  {(financeCreatedDateCorrectionCount > 0 || financeDeliveredDateCorrectionCount > 0) && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      <p className="m-0 font-bold">Finance date-correction protection is on</p>
+                      <p className="m-0 mt-1 text-xs text-amber-800">
+                        {financeCreatedDateCorrectionCount > 0 ? `${financeCreatedDateCorrectionCount} order${financeCreatedDateCorrectionCount === 1 ? "" : "s"} in this finance period use corrected order dates.` : "No corrected order dates in this finance period."}{" "}
+                        {financeDeliveredDateCorrectionCount > 0 ? `${financeDeliveredDateCorrectionCount} delivered order${financeDeliveredDateCorrectionCount === 1 ? "" : "s"} use corrected delivered dates.` : "No corrected delivered dates in this delivered period."}{" "}
+                        Receipt-dated cash entries now keep their own snapshots, so later date edits should not rewrite older remittance history.
+                      </p>
+                    </div>
+                  )}
+                  {(currentRole === "Owner" || currentRole === "Admin") && (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <p className="m-0 text-sm font-bold text-blue-900">Historical cash bootstrap</p>
+                        <p className="m-0 text-xs text-blue-800">
+                          Older cash weeks before the new remittance ledger may still be incomplete. Run this once to create estimated historical receipt entries for past remitted orders that never had ledger rows. Protohub uses each order&apos;s last updated time as the best available historical receipt date.
+                        </p>
+                        {financeRemittanceBackfillSummary && (
+                          <p className="m-0 text-[11px] text-blue-900">{financeRemittanceBackfillSummary}</p>
+                        )}
+                      </div>
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-300 bg-white text-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors disabled:opacity-50"
+                        disabled={financeRemittanceBackfillLoading}
+                        onClick={runFinanceRemittanceBackfill}
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${financeRemittanceBackfillLoading ? "animate-spin" : ""}`} />
+                        {financeRemittanceBackfillLoading ? "Bootstrapping..." : "Backfill history"}
+                      </button>
+                    </div>
+                  )}
                   {/* Top metric cards */}
                   <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Remittance summary">
                     {[
@@ -30060,6 +30488,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           {pagedOutstanding.map((order) => {
                             const status = orderRemittanceStatus(order);
                             const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                            const auditStack = renderOrderDateAuditStack(order, { compact: true });
                             return (
                               <article key={order.id} className="px-5 py-4 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -30067,6 +30496,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <div className="font-bold text-[#1F8FE0]">{order.id}</div>
                                     <div className="text-sm font-medium text-gray-900">{order.customer}</div>
                                     <div className="text-xs text-gray-400">{order.phone}</div>
+                                    {auditStack}
                                   </div>
                                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${statusTone}`}>{status}</span>
                                 </div>
@@ -30119,10 +30549,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             return pagedOutstanding.map((order) => {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                              const auditStack = renderOrderDateAuditStack(order, { compact: true });
                               return (
                                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-3 font-bold text-[#1F8FE0]">{order.id}</td>
-                                  <td className="px-4 py-3"><div className="font-medium text-gray-900">{order.customer}</div><div className="text-xs text-gray-400">{order.phone}</div></td>
+                                  <td className="px-4 py-3">
+                                    <div className="font-medium text-gray-900">{order.customer}</div>
+                                    <div className="text-xs text-gray-400">{order.phone}</div>
+                                    {auditStack}
+                                  </td>
                                   <td className="px-4 py-3 text-gray-700">{agents.find((a) => a.id === order.agentId)?.name ?? "Unassigned"}</td>
                                   <td className="px-4 py-3 text-gray-700">{formatProductMoney(order.amount, order.currency)}</td>
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
@@ -30776,7 +31211,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <input
                       value={adTrackingSearch}
                       onChange={(event) => setAdTrackingSearch(event.target.value)}
-                      placeholder="Search campaign, creative, source, or customer..."
+                      placeholder="Search campaign, creative, or label..."
                       className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     />
                   </label>
@@ -30829,9 +31264,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Campaign</div>
-                              <div className="text-lg font-bold text-gray-900 break-all">{row.id}</div>
+                            <div className="min-w-0 flex-1">
+                              {editingAdTrackingLabel?.kind === "campaign" && editingAdTrackingLabel.id === row.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    value={adTrackingLabelDraft}
+                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    disabled={adTrackingLabelSaving}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void saveAdTrackingLabelEdit();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAdTrackingLabelEdit();
+                                      }
+                                    }}
+                                    placeholder="Add label..."
+                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
+                                    maxLength={80}
+                                  />
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save campaign label" disabled={adTrackingLabelSaving}>
+                                    <Check className="w-4 h-4" />
+                                  </button>
+                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel campaign label edit" disabled={adTrackingLabelSaving}>
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => beginAdTrackingLabelEdit("campaign", row.id)}
+                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${campaignCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
+                                  >
+                                    <span className={`truncate text-base font-semibold ${campaignCardLabelFor(row.id) ? "" : "italic"}`}>
+                                      {campaignCardLabelFor(row.id) || "Add label..."}
+                                    </span>
+                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                                      <Pencil className="w-4 h-4" />
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-purple-50 text-purple-700 px-2.5 py-1 text-xs font-semibold">Campaign</span>
                           </div>
@@ -30871,13 +31348,55 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Creative</div>
-                              <div className="text-base font-bold text-gray-900 break-all">{row.id}</div>
+                            <div className="min-w-0 flex-1">
+                              {editingAdTrackingLabel?.kind === "creative" && editingAdTrackingLabel.id === row.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    value={adTrackingLabelDraft}
+                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
+                                    disabled={adTrackingLabelSaving}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void saveAdTrackingLabelEdit();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAdTrackingLabelEdit();
+                                      }
+                                    }}
+                                    placeholder="Add label..."
+                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
+                                    maxLength={80}
+                                  />
+                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save creative label" disabled={adTrackingLabelSaving}>
+                                    <Check className="w-4 h-4" />
+                                  </button>
+                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel creative label edit" disabled={adTrackingLabelSaving}>
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => beginAdTrackingLabelEdit("creative", row.id)}
+                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${creativeCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
+                                  >
+                                    <span className={`truncate text-base font-semibold ${creativeCardLabelFor(row.id) ? "" : "italic"}`}>
+                                      {creativeCardLabelFor(row.id) || "Add label..."}
+                                    </span>
+                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                                      <Pencil className="w-4 h-4" />
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-green-50 text-green-700 px-2.5 py-1 text-xs font-semibold">Creative</span>
                           </div>
-                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{row.campaignId}</span></div>
+                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{campaignCardLabelFor(row.campaignId) || row.campaignId}</span></div>
                           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
@@ -30913,7 +31432,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const CAMP_PAGE = 25;
                       const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                       const campPageClamped = Math.min(campaignPage, campTotalPages);
-                      return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                      return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => {
+                        const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+                        const creativeId = order.utmContent?.trim() || "";
+                        const campaignLabel = campaignCardLabelFor(campaignId);
+                        const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                        return (
                         <article key={order.id} className="p-4 space-y-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -30929,9 +31453,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div className="space-y-1.5 text-sm">
                             <div className="font-medium text-gray-700">{order.productName}</div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 break-all">{order.utmCampaign}</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 break-all">{campaignLabel || campaignId}</span>
                               <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 break-all">{order.utmSource}</span>
                             </div>
+                            {campaignLabel && campaignLabel !== campaignId ? <div className="text-[11px] text-gray-500 break-all">{campaignId}</div> : null}
                           </div>
                           <div className="grid grid-cols-2 gap-3 text-sm">
                             <div>
@@ -30940,11 +31465,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </div>
                             <div>
                               <span className="text-[10px] uppercase tracking-wider text-gray-400">Content</span>
-                              <div className="text-gray-600 break-words">{order.utmContent || "—"}</div>
+                              <div className="text-gray-600 break-words">{creativeLabel || creativeId || "—"}</div>
+                              {creativeLabel && creativeLabel !== creativeId ? <div className="text-[11px] text-gray-500 break-words">{creativeId}</div> : null}
                             </div>
                           </div>
                         </article>
-                      ));
+                        );
+                      });
                     })()
                   )}
                 </div>
@@ -30967,7 +31494,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           const CAMP_PAGE = 25;
                           const campTotalPages = Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE);
                           const campPageClamped = Math.min(campaignPage, campTotalPages);
-                          return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                          return filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => {
+                            const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+                            const creativeId = order.utmContent?.trim() || "";
+                            const campaignLabel = campaignCardLabelFor(campaignId);
+                            const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                            return (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
                               <td className="px-4 py-4">
@@ -30975,14 +31507,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="text-xs text-gray-400">{order.phone}</div>
                               </td>
                               <td className="px-4 py-4 text-gray-700">{order.productName}</td>
-                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
+                              <td className="px-4 py-4">
+                                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{campaignLabel || campaignId}</span>
+                                {campaignLabel && campaignLabel !== campaignId ? <div className="mt-0.5 text-xs text-gray-500">{campaignId}</div> : null}
+                              </td>
                               <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
                               <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
-                              <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
+                              <td className="px-4 py-4 text-gray-600">
+                                {creativeLabel || creativeId || "—"}
+                                {creativeLabel && creativeLabel !== creativeId ? <div className="mt-0.5 text-xs text-gray-500">{creativeId}</div> : null}
+                              </td>
                               <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
                               <td className="px-4 py-4 text-gray-500">{formatOrderCreatedAt(order)}</td>
                             </tr>
-                          ));
+                            );
+                          });
                         })()
                       )}
                     </tbody>
@@ -31052,7 +31591,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <input
                             value={adTrackingSearch}
                             onChange={(event) => setAdTrackingSearch(event.target.value)}
-                            placeholder="Search cart, campaign, source, or customer..."
+                            placeholder="Search cart, campaign, creative, or label..."
                             className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                           />
                         </label>
@@ -31098,18 +31637,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </div>
                         ) : (
                           <div className="divide-y divide-gray-100">
-                            {filteredCartCampaignGroupedRows.slice(0, 8).map((row) => (
-                              <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-sm font-semibold text-gray-900 truncate">{row.id}</p>
-                                  <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                            {filteredCartCampaignGroupedRows.slice(0, 8).map((row) => {
+                              const label = campaignCardLabelFor(row.id);
+                              return (
+                                <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
+                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
+                                    <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                  </div>
                                 </div>
-                                <div className="text-right shrink-0">
-                                  <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
-                                  <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </section>
@@ -31125,18 +31668,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </div>
                         ) : (
                           <div className="divide-y divide-gray-100">
-                            {filteredCartCreativeGroupedRows.slice(0, 8).map((row) => (
-                              <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-sm font-semibold text-gray-900 truncate">{row.id}</p>
-                                  <p className="m-0 mt-1 text-xs text-gray-400 truncate">{row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                            {filteredCartCreativeGroupedRows.slice(0, 8).map((row) => {
+                              const label = creativeCardLabelFor(row.id);
+                              const campaignLabel = campaignCardLabelFor(row.campaignId);
+                              return (
+                                <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
+                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
+                                    <p className="m-0 mt-1 text-xs text-gray-400 truncate">{campaignLabel || row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
+                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
+                                  </div>
                                 </div>
-                                <div className="text-right shrink-0">
-                                  <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
-                                  <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </section>
@@ -31159,6 +31707,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <>
                           <div className="sm:hidden divide-y divide-gray-100">
                             {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                              const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+                              const creativeId = attribution.utmContent?.trim() || "";
+                              const campaignLabel = campaignCardLabelFor(campaignId);
+                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                               const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                               const statusTone = cart.status === "Converted"
                                 ? "bg-emerald-100 text-emerald-700"
@@ -31192,11 +31744,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     </div>
                                     <div>
                                       <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
-                                      <div className="font-semibold text-gray-900">{attribution.utmCampaign || "Unlabelled"}</div>
+                                      <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
+                                      {campaignLabel && campaignLabel !== campaignId && <div className="text-[11px] text-gray-500">{campaignId}</div>}
                                     </div>
                                     <div>
                                       <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
-                                      <div className="font-semibold text-gray-900">{attribution.utmContent || "—"}</div>
+                                      <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                      {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
                                     </div>
                                   </div>
                                   <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
@@ -31219,6 +31773,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </thead>
                               <tbody className="divide-y divide-gray-100">
                                 {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
+                                  const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+                                  const creativeId = attribution.utmContent?.trim() || "";
+                                  const campaignLabel = campaignCardLabelFor(campaignId);
+                                  const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                                   const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                                   const statusTone = cart.status === "Converted"
                                     ? "bg-emerald-100 text-emerald-700"
@@ -31246,10 +31804,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{attribution.utmSource || cart.source}</span>
                                       </td>
                                       <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{attribution.utmCampaign || "Unlabelled"}</div>
+                                        <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
+                                        {campaignLabel && campaignLabel !== campaignId && <div className="mt-0.5 text-xs text-gray-500">{campaignId}</div>}
                                       </td>
                                       <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{attribution.utmContent || "—"}</div>
+                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                        {creativeLabel && creativeLabel !== creativeId && <div className="mt-0.5 text-xs text-gray-500">{creativeId}</div>}
                                       </td>
                                       <td className="px-5 py-4 text-right font-bold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</td>
                                       <td className="px-5 py-4 text-gray-500 whitespace-nowrap">{formatMoment(cart.createdAt || cart.lastActivity)}</td>
@@ -31284,15 +31844,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-                const activeProds = catalogProducts.filter((p) => p.active);
+                const activeProdRows = catalogProducts
+                  .filter((p) => p.active)
+                  .map((product) => {
+                    const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                    const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
+                    const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
+                    return { product, weeklySpend, weeklyRevenue, weeklyOrders };
+                  })
+                  .sort((a, b) =>
+                    b.weeklyOrders - a.weeklyOrders
+                    || b.weeklyRevenue - a.weeklyRevenue
+                    || b.weeklySpend - a.weeklySpend
+                    || a.product.name.localeCompare(b.product.name)
+                  );
                 const weekLabel = `${displayDateFromKey(adSpendWeekDays[0])} – ${displayDateFromKey(adSpendWeekDays[6])}`;
                 const todayKey2 = todayKey();
 
                 // Week totals
-                const weekTotalSpend = adSpendWeekDays.reduce((s, day) =>
-                  s + activeProds.reduce((ps, p) => ps + (parseFloat(adSpendDraft[`${p.id}-${day}`] ?? "") || 0), 0), 0);
-                const weekTotalRevenue = adSpendWeekDays.reduce((s, day) =>
-                  s + activeProds.reduce((ps, p) => ps + revenueForProductDay(p.id, day), 0), 0);
+                const weekTotalSpend = activeProdRows.reduce((sum, row) => sum + row.weeklySpend, 0);
+                const weekTotalRevenue = activeProdRows.reduce((sum, row) => sum + row.weeklyRevenue, 0);
 
                 return (
                   <div className="space-y-4">
@@ -31333,21 +31904,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ))}
                     </div>
 
-                    {activeProds.length === 0 ? (
+                    {activeProdRows.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 italic">No active products. Add a product first.</div>
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {activeProds.map((product) => {
-                            const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
-                            const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }) => {
                             const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                             return (
                               <article key={product.id} className="p-4 space-y-4">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="text-sm font-semibold text-gray-800">{product.name}</div>
-                                    <div className="text-xs text-gray-400">Weekly ad spend and revenue breakdown</div>
+                                    <div className="text-xs text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders this week yet"}</div>
                                   </div>
                                   {rowRoas !== null && (
                                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
@@ -31434,9 +32003,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </tr>
                             </thead>
                             <tbody>
-                              {activeProds.map((product, pi) => {
-                                const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
-                                const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
+                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }, pi) => {
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
 
                                 return (
@@ -31445,6 +32012,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
                                       <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={3}>
                                         <div className="text-sm">{product.name}</div>
+                                        <div className="mt-1 text-[10px] font-medium text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet"}</div>
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
                                             {rowRoas.toFixed(2)}x ROAS
@@ -32106,11 +32674,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {/* Extra offers & free gifts moved to per-package offer setup.
                       One source of truth, with state restrictions and pricing modes per package. */}
                   {previewProduct && (
-                    <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
+                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
                       <ShoppingBag className="w-5 h-5 text-[#1F8FE0] mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
-                        <p className="text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
+                        <p className="admin-tone-title text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
+                        <p className="admin-tone-body text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
                         <button
                           className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#1F8FE0] rounded-md hover:opacity-90"
                           onClick={() => { openPackagesView(previewProduct); }}
@@ -32119,12 +32687,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                   )}
                   {previewProduct && (
-                    <div className="border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
+                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
                       <div>
-                        <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
+                        <p className="admin-tone-title text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
+                        <p className="admin-tone-body text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
+                      <textarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -32410,7 +32978,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
                           onClick={() => {
                             if (!previewProduct) return;
-                            window.open(buildEmbedUrl(previewProduct), "_blank", "noopener,noreferrer");
+                            window.open(buildEmbedUrl(previewProduct, undefined, undefined, true), "_blank", "noopener,noreferrer");
                           }}
                         >
                           <ExternalLink className="w-4 h-4" /> Preview form
@@ -32666,7 +33234,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <div className="flex items-center gap-2">
                                         <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={embedUrl} aria-label={`${product.name} direct embed URL`} />
                                         <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(embedUrl, "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(buildEmbedUrl(product, productEmbedCurrency(product), productEmbedRedirect(product), true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
                                       </div>
                                     </div>
                                   ) : (
@@ -33025,13 +33593,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : null}
                       {pushPermission === "denied" ? (
                         <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
+                      ) : nativePushTroubleshootingDisabled ? (
+                        <p className="text-xs text-amber-600 font-medium">This mobile app build does not support the browser re-register flow yet, so those web push controls are disabled here.</p>
                       ) : !pushServerConfigured ? (
                         <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
                       ) : pushSubscribed ? (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
-                          disabled={pushLoading}
+                          disabled={pushLoading || nativePushTroubleshootingDisabled}
                           onClick={async () => {
+                            if (nativePushTroubleshootingDisabled) {
+                              showToast("Notification controls are not available inside the mobile app yet.");
+                              return;
+                            }
                             setPushLoading(true);
                             try {
                               await unsubscribeFromPush();
@@ -33050,8 +33624,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          disabled={pushLoading || !pushServerConfigured}
+                          disabled={pushLoading || !pushServerConfigured || nativePushTroubleshootingDisabled}
                           onClick={async () => {
+                            if (nativePushTroubleshootingDisabled) {
+                              showToast("Notification controls are not available inside the mobile app yet.");
+                              return;
+                            }
                             setPushLoading(true);
                             try {
                               await subscribeToPush();
@@ -33075,8 +33653,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
-                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
+                        disabled={nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Service worker tools are not available inside the mobile app.");
+                            return;
+                          }
                           if ("serviceWorker" in navigator) {
                             const reg = await navigator.serviceWorker.getRegistration();
                             if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
@@ -33086,8 +33669,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Update Service Worker</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushLoading}
+                        disabled={pushLoading || nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Force re-subscribe is not available inside the mobile app yet.");
+                            return;
+                          }
                           setPushLoading(true);
                           try {
                             await unsubscribeFromPush();
@@ -33104,8 +33691,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Force Re-subscribe</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
+                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted" || nativePushTroubleshootingDisabled}
                         onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Web push test tools are not available inside the mobile app yet.");
+                            return;
+                          }
                           setPushTestLoading(true);
                           try {
                             await sendTestPush();
