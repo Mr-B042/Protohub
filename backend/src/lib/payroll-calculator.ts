@@ -5,7 +5,7 @@ type UpgradeBonusRule = { fromQty: number; toQty: number; amount: number };
 type ThresholdBonusRule = { threshold: number; amount: number };
 type DeliveryRateBonusRule = { ratePercent: number; amount: number };
 
-type ProductBonusConfig = {
+export type ProductBonusConfig = {
   baseDelivered?: BonusRule[];
   manualOrderBonuses?: BonusRule[];
   upgradeBonuses?: UpgradeBonusRule[];
@@ -26,7 +26,7 @@ type PayrollUser = {
   role: string;
 };
 
-type PayStructure = {
+export type PayStructure = {
   user_id: string;
   type: "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";
   fixed_salary?: number | null;
@@ -39,7 +39,7 @@ type PayrollPenalty = {
   amount?: number | null;
 };
 
-type PayrollOrder = {
+export type PayrollOrder = {
   id: string;
   assigned_rep_id?: string | null;
   status?: string | null;
@@ -58,7 +58,7 @@ type PayrollOrder = {
   date?: string | null;
 };
 
-type ProductRecord = {
+export type ProductRecord = {
   id: string;
   bonus_config?: ProductBonusConfig | null;
 };
@@ -94,7 +94,7 @@ type PeriodBounds = {
   periodEndTs: string;
 };
 
-const defaultBonusConfig = (): Required<ProductBonusConfig> => ({
+export const defaultBonusConfig = (): Required<ProductBonusConfig> => ({
   baseDelivered: [],
   manualOrderBonuses: [],
   upgradeBonuses: [],
@@ -130,7 +130,7 @@ const parsePayrollPeriod = (period: string): PeriodBounds | null => {
   };
 };
 
-const normalizeDateKey = (value?: string | null) => {
+export const normalizeDateKey = (value?: string | null) => {
   if (!value) return "";
   const parsed = new Date(value);
   if (!Number.isNaN(parsed.getTime())) {
@@ -143,11 +143,11 @@ const normalizeDateKey = (value?: string | null) => {
   return "";
 };
 
-const orderCreatedKey = (order: PayrollOrder) => normalizeDateKey(order.created_at ?? order.date);
-const orderDeliveredKey = (order: PayrollOrder) =>
+export const orderCreatedKey = (order: PayrollOrder) => normalizeDateKey(order.created_at ?? order.date);
+export const orderDeliveredKey = (order: PayrollOrder) =>
   order.delivered_date ? normalizeDateKey(order.delivered_date) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
 
-const weekKeyForDateKey = (dateKey: string) => {
+export const weekKeyForDateKey = (dateKey: string) => {
   if (!dateKey) return "";
   const date = new Date(`${dateKey}T00:00:00`);
   const yearStart = new Date(date.getFullYear(), 0, 1);
@@ -190,7 +190,18 @@ const normalizedRepDrivenCrossSellLines = (lines: unknown) =>
       })
     : [];
 
-const computeOrderBonus = (
+export const buildProductBonusConfigMap = (products: ProductRecord[]) => {
+  const productMap = new Map<string, Required<ProductBonusConfig>>();
+  for (const product of products) {
+    productMap.set(product.id, {
+      ...defaultBonusConfig(),
+      ...(product.bonus_config ?? {})
+    });
+  }
+  return productMap;
+};
+
+export const computeOrderBonus = (
   order: PayrollOrder,
   productMap: Map<string, Required<ProductBonusConfig>>,
   repWeeklyDeliveryRate: number,
@@ -314,13 +325,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
   const payrollMonthDelivered = Array.from(deliveredOrders.values());
   const pendingOrders = (pendingOrdersResult.data ?? []) as PayrollOrder[];
 
-  const productMap = new Map<string, Required<ProductBonusConfig>>();
-  for (const product of products) {
-    productMap.set(product.id, {
-      ...defaultBonusConfig(),
-      ...(product.bonus_config ?? {})
-    });
-  }
+  const productMap = buildProductBonusConfigMap(products);
 
   const repWeeklyStats = new Map<string, Map<string, { delivered: number; total: number; revenue: number }>>();
   const upsertWeekStat = (repId: string, weekKey: string, patch: Partial<{ delivered: number; total: number; revenue: number }>) => {

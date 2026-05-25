@@ -137,6 +137,16 @@ type RecordAttemptInput = {
   nextActionNote?: string | null;
 };
 
+type RecordProgressNoteInput = {
+  orgId: string;
+  orderId: string;
+  repId?: string | null;
+  actorName: string;
+  channel: ContactAttemptChannel;
+  noteText: string;
+  attemptType?: ContactAttemptType;
+};
+
 type SyncOrderFollowUpInput = {
   orgId: string;
   orderId: string;
@@ -580,9 +590,9 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
   ];
 
   const nextResponse = input.nextActionAt
-      ? `Next ${input.nextActionType ?? "follow-up"} set for ${input.nextActionAt}`
-      : input.outcomeNote?.trim()
-        ? input.outcomeNote.trim()
+    ? `Next ${input.nextActionType ?? "follow-up"} set for ${input.nextActionAt}`
+    : input.outcomeNote?.trim()
+      ? input.outcomeNote.trim()
       : outcome.outcomeCode;
 
   await supabase
@@ -611,5 +621,90 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
     await refreshOrderFollowUpSummary(input.orgId, input.orderId);
   }
 
+  return attempt;
+};
+
+export const recordFollowUpProgressNote = async (input: RecordProgressNoteInput) => {
+  const noteText = input.noteText.trim();
+  if (!noteText) throw new Error("Progress note text is required.");
+
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, status, assigned_rep_id, response, call_outcome, notes, timeline_notes")
+    .eq("org_id", input.orgId)
+    .eq("id", input.orderId)
+    .single();
+
+  if (orderError || !order) {
+    throw new Error("Order not found.");
+  }
+
+  const { data: task } = await supabase
+    .from("follow_up_tasks")
+    .select("id, order_id, assigned_rep_id, team_id, manager_id, task_type, priority, status, due_at, sla_minutes, note, source_kind, source_ref, completed_at")
+    .eq("org_id", input.orgId)
+    .eq("order_id", input.orderId)
+    .in("status", ACTIVE_FOLLOW_UP_STATUSES)
+    .order("due_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const activeTask = (task ?? null) as FollowUpTaskRow | null;
+  const ownership = activeTask?.team_id || activeTask?.manager_id
+    ? { teamId: activeTask.team_id ?? null, managerId: activeTask.manager_id ?? null }
+    : await resolveFollowUpOwnership(input.orgId, input.repId ?? order.assigned_rep_id ?? null);
+
+  const attemptedAt = new Date().toISOString();
+  const attemptType = input.attemptType
+    ?? (activeTask?.task_type === "payment_check" ? "payment_follow_up" : "scheduled_callback");
+
+  const { data: attempt, error: attemptError } = await supabase
+    .from("order_contact_attempts")
+    .insert({
+      org_id: input.orgId,
+      order_id: input.orderId,
+      task_id: activeTask?.id ?? null,
+      rep_id: input.repId ?? order.assigned_rep_id ?? null,
+      team_id: ownership.teamId,
+      manager_id: ownership.managerId,
+      attempted_at: attemptedAt,
+      channel: input.channel,
+      attempt_type: attemptType,
+      outcome_code: "Rep Update",
+      outcome_note: noteText,
+      customer_reached: null,
+      next_action_type: null,
+      next_action_at: null,
+      promise_window: null,
+      is_serious_signal: null
+    })
+    .select()
+    .single();
+
+  if (attemptError || !attempt) {
+    throw new Error(attemptError?.message ?? "Could not save the follow-up progress note.");
+  }
+
+  const currentNotes = orderNotesFor(order.notes, order.timeline_notes);
+  const timelineNotes = [
+    {
+      id: `note-${randomUUID()}`,
+      text: `Follow-up progress update: ${noteText}`,
+      by: input.actorName,
+      date: attemptedAt
+    },
+    ...currentNotes
+  ];
+
+  await supabase
+    .from("orders")
+    .update({
+      response: noteText,
+      timeline_notes: timelineNotes
+    })
+    .eq("org_id", input.orgId)
+    .eq("id", input.orderId);
+
+  await refreshOrderFollowUpSummary(input.orgId, input.orderId);
   return attempt;
 };

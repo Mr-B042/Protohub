@@ -2,14 +2,12 @@ import { type Dispatch, type SetStateAction, Fragment, useEffect, useMemo, useRe
 import {
   ArrowRight,
   Archive,
-  Ban,
   Bell,
   BellRing,
   Check,
   ChevronRight,
   CalendarDays,
   CalendarClock,
-  Clock3,
   BadgeCheck,
   Banknote,
   BookOpen,
@@ -57,6 +55,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Sun,
+  Siren,
   Tag,
   ToggleLeft,
   ToggleRight,
@@ -98,7 +97,6 @@ import {
   unsubscribeFromPush,
   ensureServiceWorkerRegistration,
   ensurePushSubscriptionCurrent,
-  initializeNativePushBridge,
   isCurrentlySubscribed,
   getCurrentPushEndpoint,
   getPermissionState,
@@ -106,19 +104,10 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, remittanceTransactionsApi, stockApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi
+  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
-import {
-  FOLLOW_UP_OUTCOME_DEFINITIONS,
-  FOLLOW_UP_OUTCOME_GROUPS,
-  FOLLOW_UP_OUTCOME_GROUP_LABELS,
-  classifyFrontendFollowUpOutcome,
-  followUpOutcomeDefinitionForBucket,
-  followUpOutcomeToneClass,
-  type FollowUpRecoveryBucket
-} from "./lib/followUpOutcomes";
 import {
   Line,
   LineChart,
@@ -136,25 +125,6 @@ import {
 } from "./data";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
-const CART_JOURNEY_POLL_MS = 5_000;
-const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
-const FORM_PULSE_POLL_MS = 8_000;
-const isNativePushShell = (() => {
-  try {
-    const maybeCapacitor = (globalThis as any)?.Capacitor;
-    if (typeof maybeCapacitor?.isNativePlatform === "function") {
-      return !!maybeCapacitor.isNativePlatform();
-    }
-    if (typeof maybeCapacitor?.getPlatform === "function") {
-      return maybeCapacitor.getPlatform() !== "web";
-    }
-  } catch {
-    // fall through to false
-  }
-  return false;
-})();
-const ORDER_DETAILS_POLL_MS = 10_000;
-const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
 
 function manifestVersionToken(brandName: string, logoUrl: string): string {
   return `${brandName.trim().length}-${logoUrl.trim().length}`;
@@ -179,12 +149,10 @@ type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
-type OrderAssignmentScope = "All assignments" | "Assigned by me";
-type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
@@ -197,7 +165,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance";
+type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
 type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
@@ -206,32 +174,13 @@ type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate";
 type ManagerQueueActionType = "reviewed_queue" | "nudged_rep" | "escalated_order";
 type NotificationFilter = "All" | "Unread";
-type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount" | "state-stock";
+type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
 type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
 type StockCountStatus = "Pending" | "Agent Submitted" | "Admin Confirmed" | "Verified" | "Discrepancy";
 type WriteOffReason = "Damaged" | "Theft" | "Unreported Sale" | "Return to Warehouse" | "Other";
-const orderAssignmentScopeLabel = (scope: OrderAssignmentScope) =>
-  scope === "Assigned by me" ? "My orders" : "All assignments";
-
-const STATE_STOCK_LOW_THRESHOLD = 5;
-const stateStockStatusMeta = (quantity: number) =>
-  quantity <= 0
-    ? {
-        label: "No stock",
-        className: "border-rose-200 bg-rose-50 text-rose-700"
-      }
-    : quantity <= STATE_STOCK_LOW_THRESHOLD
-      ? {
-          label: "Low stock",
-          className: "border-amber-200 bg-amber-50 text-amber-700"
-        }
-      : {
-          label: "Enough",
-          className: "border-emerald-200 bg-emerald-50 text-emerald-700"
-        };
 type StockCountEntry = {
   id: string;
   productId: string;
@@ -279,7 +228,6 @@ type WaybillRecord = {
   createdBy: string;
   createdAt: string;
 };
-type WaybillFlowFilter = "All" | "Manual Transfer" | "Customer Delivery";
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -476,12 +424,6 @@ type PackageCompanion = {
   embedHtml?: string;      // optional raw embed code rendered in sandboxed iframe
   priority?: number;       // higher shown first when multiple cards exist
   displayMode?: "compact" | "card"; // 'card' renders a big visual bump above Pay On Delivery
-  proofMode?: "real" | "promo_copy" | "hidden";
-  urgencyMode?: "standard" | "price_loss";
-  promoAllTimeBuyerCount?: number;
-  promoBuyersLast24HoursCount?: number;
-  promoLastAddedRelative?: string;
-  promoIsMostAdded?: boolean;
 };
 type PackageComponent = {
   componentId?: string;
@@ -501,9 +443,6 @@ type ProductPackage = {
   active: boolean;
   companionProducts?: PackageCompanion[];
   packageComponents?: PackageComponent[];
-  offerSyncEnabled?: boolean;
-  offerSyncSourceProductId?: string | null;
-  offerSyncSourcePackageId?: string | null;
 };
 type PackBonusRule = {
   id: string;
@@ -579,7 +518,6 @@ type CrossSellLine = {
   productName: string;
   quantity: number;
   amount: number;
-  selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
 };
 type FreeGiftLine = {
   id: string;
@@ -675,8 +613,6 @@ type TrackedOrder = {
   scheduledAt?: string;
   deliveredDate?: string;
   assignedRepId?: string;
-  assignedByUserId?: string;
-  assignedByNameSnapshot?: string;
   agentId?: string;
   stockDeducted?: boolean;
   logisticsCost?: number;
@@ -700,56 +636,7 @@ type TrackedOrder = {
   bonusManuallyAdjusted?: boolean;
   bonusPaid?: boolean;
   notes?: OrderNote[];
-  originalCreatedAt?: string;
-  createdAtCorrectedAt?: string;
-  createdAtCorrectedBy?: string;
-  createdAtCorrectionReason?: string;
-  originalDeliveredDate?: string;
-  deliveredDateCorrectedAt?: string;
-  deliveredDateCorrectedBy?: string;
-  deliveredDateCorrectionReason?: string;
   date: string;
-};
-type WeeklyAccountingRemittanceTransaction = {
-  id: string;
-  orderId: string;
-  deltaAmount: number;
-  previousAmountRemitted: number;
-  runningAmountRemitted: number;
-  receivedAt: string;
-  loggedByName?: string | null;
-  reason?: string | null;
-  productId?: string | null;
-  productName?: string | null;
-  packageName?: string | null;
-  customer?: string | null;
-  orderCreatedAt?: string | null;
-  orderDeliveredDate?: string | null;
-  assignedRepId?: string | null;
-  agentId?: string | null;
-  agentName?: string | null;
-  orderAmount?: number | null;
-  logisticsCost?: number | null;
-  currentAmountRemitted?: number | null;
-  currentExpectedRemittance?: number | null;
-  currentOutstanding?: number | null;
-  remittanceStatus?: "Pending" | "Partial" | "Paid" | null;
-};
-type WeeklyAccountingDataset = {
-  weekStart: string;
-  weekEnd: string;
-  generatedAt: string;
-  cohortOrders: TrackedOrder[];
-  deliveredOrders: TrackedOrder[];
-  expenses: ExpenseRecord[];
-  remittanceTransactions: WeeklyAccountingRemittanceTransaction[];
-};
-type FinanceSummaryDataset = {
-  dateFrom: string;
-  dateTo: string;
-  generatedAt: string;
-  cohortOrders: TrackedOrder[];
-  deliveredOrders: TrackedOrder[];
 };
 type OrderNote = {
   id: string;
@@ -784,8 +671,6 @@ type OrderContactAttempt = {
   channel: "call" | "whatsapp" | "sms" | "manual";
   attemptType: "scheduled_callback" | "fresh_follow_up" | "delivery_confirmation" | "payment_follow_up" | "waybill_follow_up";
   outcomeCode: string;
-  outcomeGroup?: "progress" | "recoverable" | "unreachable" | "closed_loss" | "other";
-  recoveryBucket?: "ready_now" | "call_tomorrow" | "call_in_2_3_days" | "salary_wait" | "spouse_approval" | "wants_discount" | "asked_for_whatsapp" | "no_answer" | "switched_off" | "line_busy" | "not_interested" | "wrong_number" | "out_of_coverage";
   outcomeNote?: string;
   customerReached?: boolean;
   nextActionType?: "callback" | "payment_check" | "delivery_confirmation" | "waybill_follow_up";
@@ -798,7 +683,6 @@ type AbandonedCartRecord = {
   phone: string;
   whatsapp?: string;
   email?: string;
-  address?: string;
   city?: string;
   state?: string;
   productId?: string;
@@ -808,127 +692,12 @@ type AbandonedCartRecord = {
   amount: number;
   currency: ProductCurrencyCode;
   source: Exclude<OrderSource, "All Sources">;
-  embedLabel?: string;
   status: Exclude<CartStatus, "All statuses">;
   assignedRepId?: string;
-  preferredDelivery?: string;
-  outageCaptured?: boolean;
-  outageCapturedAt?: string;
-  capturePayload?: Record<string, unknown>;
   lastActivity: string;
   createdAt: string;
 };
-type AbandonedCartAttribution = {
-  utmSource?: string;
-  utmCampaign?: string;
-  utmMedium?: string;
-  utmContent?: string;
-  utmTerm?: string;
-  referrer?: string;
-};
 type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
-type CartJourneyBlockedEventType =
-  | "submit_blocked_missing_name"
-  | "submit_blocked_missing_phone"
-  | "submit_blocked_invalid_phone"
-  | "submit_blocked_missing_whatsapp"
-  | "submit_blocked_invalid_whatsapp"
-  | "submit_blocked_missing_address"
-  | "submit_blocked_missing_city"
-  | "submit_blocked_missing_state"
-  | "submit_blocked_missing_delivery"
-  | "submit_blocked_missing_confirmation"
-  | "submit_blocked_missing_commitment";
-type CartJourneyEvent = {
-  id: string;
-  cartId: string;
-  productId?: string;
-  packageId?: string;
-  state?: string;
-  eventType:
-    | "form_opened"
-    | "first_interaction"
-    | "package_selected"
-    | "state_selected"
-    | "additional_item_preview_opened"
-    | "additional_item_added"
-    | "additional_item_removed"
-    | "submit_attempted"
-    | CartJourneyBlockedEventType
-    | "order_submitted"
-    | "redirect_triggered"
-    | "cart_date_changed"
-    | "order_date_changed"
-    | "order_assigned"
-    | "order_reassigned"
-    | "delivery_agent_assigned"
-    | "delivery_agent_reassigned"
-    | "order_status_changed"
-    | "contact_attempt_logged"
-    | "form_exited";
-  companionProductId?: string;
-  companionPackageId?: string;
-  metadata: Record<string, string | number | boolean | null>;
-  createdAt: string;
-};
-type LiveFormPulseSourceStat = {
-  source: string;
-  viewed: number;
-  interacted: number;
-  submitted: number;
-  lastSeenAt: string | null;
-};
-type LiveFormPulseEmbedStat = {
-  embedLabel: string;
-  viewed: number;
-  interacted: number;
-  submitted: number;
-  lastSeenAt: string | null;
-};
-type LiveFormPulseRecentEvent = {
-  cartId: string;
-  eventType: CartJourneyEvent["eventType"];
-  source: string;
-  embedLabel: string;
-  productName: string;
-  packageName?: string | null;
-  createdAt: string;
-};
-type LiveFormPulseSummary = {
-  activeNow: number;
-  viewedToday: number;
-  interactedToday: number;
-  submitAttemptsToday: number;
-  conversionsToday: number;
-  redirectsToday: number;
-  viewedLiveWindow: number;
-  interactedLiveWindow: number;
-  submitAttemptsLiveWindow: number;
-  conversionsLiveWindow: number;
-  redirectsLiveWindow: number;
-  interactionRate: number;
-  submitRate: number;
-  conversionRate: number;
-  lastViewedAt: string | null;
-  lastInteractionAt: string | null;
-  lastSubmitAttemptAt: string | null;
-  lastConversionAt: string | null;
-  lastRedirectAt: string | null;
-};
-type LiveFormPulseResponse = {
-  generatedAt: string;
-  activeWindowMinutes: number;
-  dateFrom?: string;
-  dateTo?: string;
-  summary: LiveFormPulseSummary;
-  health: {
-    status: "healthy" | "attention" | "quiet" | "idle";
-    message: string;
-  };
-  sources: LiveFormPulseSourceStat[];
-  embeds: LiveFormPulseEmbedStat[];
-  recentEvents: LiveFormPulseRecentEvent[];
-};
 type DeliveryAgentCoverage = {
   id?: string;
   state: string;
@@ -1069,6 +838,40 @@ type ExpenseRecord = {
   description: string;
   waybillId?: string;
 };
+type WeeklyAccountingRemittanceTransaction = {
+  id: string;
+  orderId: string;
+  deltaAmount: number;
+  previousAmountRemitted: number;
+  runningAmountRemitted: number;
+  receivedAt: string;
+  loggedByName?: string | null;
+  reason?: string | null;
+  productId?: string | null;
+  productName?: string | null;
+  packageName?: string | null;
+  customer?: string | null;
+  orderCreatedAt?: string | null;
+  orderDeliveredDate?: string | null;
+  assignedRepId?: string | null;
+  agentId?: string | null;
+  agentName?: string | null;
+  orderAmount?: number;
+  logisticsCost?: number;
+  currentAmountRemitted?: number;
+  currentExpectedRemittance?: number;
+  currentOutstanding?: number;
+  remittanceStatus?: string | null;
+};
+type WeeklyAccountingDataset = {
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: string;
+  cohortOrders: TrackedOrder[];
+  deliveredOrders: TrackedOrder[];
+  expenses: ExpenseRecord[];
+  remittanceTransactions: WeeklyAccountingRemittanceTransaction[];
+};
 type PayStructure = {
   userId: string;
   type: PayStructureType;
@@ -1092,7 +895,36 @@ type PayrollPreviewData = {
   period: string;
   rows: PayrollRun["rows"];
   total: number;
-  topPerformer?: PayrollRun["topPerformer"];
+  topPerformer?: PayrollRun["topPerformer"] | null;
+};
+type RepBonusSnapshot = {
+  weekStart: string;
+  weekEnd: string;
+  deliveredCount: number;
+  deliveredRevenue: number;
+  deliveryRate: number;
+  currentBonusEarned: number;
+  projectedBonusOpenPipeline: number;
+  nextTierTarget: number | null;
+  ordersNeededForNextTier: number | null;
+  nextDeliveryRateTarget: number | null;
+  deliveriesNeededForRateTarget: number | null;
+  topPerformerGap: number | null;
+  topPerformerRank: number | null;
+};
+type RepBonusMotivator = {
+  type: "next_delivered_unlock" | "delivery_rate_unlock" | "upsell_opportunity" | "cross_sell_opportunity" | "top_performer_race" | "bonus_at_risk";
+  title: string;
+  subtitle?: string;
+  amount?: number;
+  targetRate?: number;
+  orderId?: string;
+  customerName?: string;
+  priority: number;
+};
+type RepBonusCoachResponse = {
+  snapshot: RepBonusSnapshot;
+  motivators: RepBonusMotivator[];
 };
 
 const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
@@ -1153,44 +985,10 @@ const nigeriaStates = [
   "FCT Abuja"
 ];
 
-const normalizeStateToken = (value?: string) => (value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
-const titleCaseStateLabel = (value?: string) =>
-  (value ?? "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-
-const canonicalStateByToken = new Map<string, string>(
-  nigeriaStates.map((state) => [normalizeStateToken(state), state])
-);
-
-const stateTokenAliases: Record<string, string> = {
-  fct: "FCT Abuja",
-  abuja: "FCT Abuja",
-  federalcapitalterritory: "FCT Abuja",
-  federalcapitalterritoryabuja: "FCT Abuja",
-  portharcourt: "Rivers",
-  portharcourtrivers: "Rivers",
-  ph: "Rivers",
-  ibadan: "Oyo"
-};
-
 const normalizeStateName = (value?: string) => {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) return "";
-  const token = normalizeStateToken(trimmed);
-  if (!token) return "";
-  if (stateTokenAliases[token]) return stateTokenAliases[token];
-  const exact = canonicalStateByToken.get(token);
-  if (exact) return exact;
-  for (const [knownToken, state] of canonicalStateByToken.entries()) {
-    if (token === knownToken || token.includes(knownToken) || knownToken.includes(token)) {
-      return state;
-    }
-  }
-  return titleCaseStateLabel(trimmed);
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
+  return (value ?? "").trim();
 };
 
 const moneyValues = {
@@ -1202,15 +1000,6 @@ const moneyValues = {
 
 const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Scheduled Delivered", "Scheduled Late", "Scheduled Pending"];
-const followUpQueueStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Postponed"];
-const closedOrderStatuses: OrderStatus[] = ["All Orders", "Delivered", "Cancelled", "Failed"];
-const ORDER_WORKSPACE_PAGES: OrderWorkspacePage[] = ["Orders", "Follow-up Queue", "Closed Orders"];
-const orderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
-  Orders: "#/dashboard/admin/orders",
-  "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
-  "Closed Orders": "#/dashboard/admin/closed-orders"
-};
-const isOrderWorkspacePage = (page: ActivePage): page is OrderWorkspacePage => ORDER_WORKSPACE_PAGES.includes(page as OrderWorkspacePage);
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
@@ -1230,7 +1019,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "State Performance"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1279,12 +1068,6 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Performance", "Accounting"],
     summary: "Use this to compare products by cohort delivery performance, delivered revenue so far, landed costs, allocated opex, margin, ROI, and ROAS.",
     caution: "This is still a cohort-performance board first. Profit is more consistent now, but it is not a closed product ledger."
-  },
-  "Package Performance": {
-    primaryLens: "Performance",
-    lenses: ["Performance", "Accounting"],
-    summary: "Use this to compare which package sizes or pcs are getting ordered most, delivered most, and generating the strongest delivered revenue inside each product.",
-    caution: "This is the package layer under product performance. Ordered counts come from the selected period cohort, while delivered cash and profit use only delivered orders in that same cohort."
   },
   "State Performance": {
     primaryLens: "Performance",
@@ -1375,29 +1158,29 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
 type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
-    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Admin": [
-    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Manager": [
-    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
+    "Dashboard", "Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Orders", "Follow-up Queue", "Closed Orders", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
+    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
   ],
   "Inventory Manager": [
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
   "Viewer": [
-    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
+    "Dashboard", "Orders", "Customers", "Notifications", "Settings"
   ]
 };
 
@@ -2026,30 +1809,10 @@ const orderDangerButtonClass =
   "border border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-500/35 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-500/10";
 const orderInputClass =
   "border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-100 dark:placeholder:text-slate-500";
-const followUpNoteBubbleClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-700/70 bg-amber-950/88 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
-const followUpNoteBubbleCompactClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-700/70 bg-amber-950/88 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
-const followUpNoteBubbleDotClass =
-  "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-300";
 const orderNoteCardClass =
   "rounded-[22px] border border-gray-200 bg-white px-4 py-4 sm:px-5 sm:py-5 shadow-sm dark:bg-[#0b141d] dark:border-slate-800/90 dark:shadow-[0_18px_40px_rgba(2,6,23,0.3)]";
 const orderNoteMetaClass = "text-[12px] sm:text-[13px] font-semibold tracking-[0.01em] text-gray-500 dark:text-slate-400";
 const orderNoteBodyClass = "mt-3 text-[16px] sm:text-[18px] leading-7 sm:leading-8 font-medium text-gray-900 dark:text-slate-100 whitespace-pre-wrap break-words";
-
-const renderOrderNoteBubble = (
-  text: string,
-  options?: { compact?: boolean; className?: string; textClassName?: string }
-) => {
-  const compact = options?.compact ?? false;
-  const baseClass = compact ? followUpNoteBubbleCompactClass : followUpNoteBubbleClass;
-  return (
-    <div className={`${baseClass}${options?.className ? ` ${options.className}` : ""}`}>
-      <span className={followUpNoteBubbleDotClass} />
-      <span className={`min-w-0 flex-1 ${options?.textClassName ?? ""}`}>{text}</span>
-    </div>
-  );
-};
 
 const renderOrderNoteCard = (note: OrderNote, options?: { compact?: boolean }) => {
   const compact = options?.compact ?? false;
@@ -2208,22 +1971,6 @@ const formatDateOnly = (value?: string | Date | null) => {
     return d.toLocaleDateString();
   }
 };
-const formatDateWithWeekday = (value?: string | Date | null) => {
-  if (!value) return "";
-  const d = typeof value === "string" || value instanceof Date ? new Date(value as any) : null;
-  if (!d || isNaN(d.getTime())) return String(value ?? "");
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: _currentTimezone,
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-      year: "numeric"
-    }).format(d);
-  } catch {
-    return d.toLocaleDateString();
-  }
-};
 const formatMoment = (value?: string | Date | null) => {
   if (!value) return "";
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -2309,6 +2056,7 @@ const scheduledKeyForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "schedul
 const scheduleSummaryForOrder = (order: Pick<TrackedOrder, "scheduledAt" | "scheduledDate">) =>
   scheduledMomentForOrder(order) ? formatPlannedMoment(order.scheduledAt, order.scheduledDate) : "Not scheduled";
 const scheduleOpenStatuses = ["Confirmed", "In Process", "Dispatched", "Postponed"] as const;
+const scheduleTerminalStatuses = ["Delivered", "Cancelled", "Failed"] as const;
 type DeliveryScheduleOutcome = {
   kind: "unscheduled" | "on_time" | "late";
   label: string;
@@ -2362,7 +2110,9 @@ const matchesScheduleAuditMode = (
   if (!scheduledKey) return false;
   if (mode === "History") return true;
   if (mode === "Active") return scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]);
-  if (mode === "Missed") return scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && scheduledKey < today;
+  if (mode === "Missed") {
+    return scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && scheduledKey < today;
+  }
   if (status !== "Delivered") return false;
   const outcome = deliveryScheduleOutcomeForOrder(order);
   if (mode === "On Time") return outcome.kind === "on_time";
@@ -2485,10 +2235,10 @@ const nextFollowUpForOrder = (order: TrackedOrder) => {
   return dueNow ?? entries[0];
 };
 const followUpBadgeClass = (entry: OrderFollowUpInsight | null) => {
-  if (!entry) return "border border-slate-600 bg-slate-800/90 text-slate-100";
-  if (entry.overdue) return "border border-rose-700/70 bg-rose-950/85 text-rose-100";
-  if (entry.dueSoon) return "border border-amber-700/70 bg-amber-950/88 text-amber-100";
-  return "border border-sky-700/70 bg-sky-950/85 text-sky-100";
+  if (!entry) return "bg-gray-100 text-gray-500";
+  if (entry.overdue) return "bg-rose-100 text-rose-700";
+  if (entry.dueSoon) return "bg-amber-100 text-amber-700";
+  return "bg-blue-100 text-blue-700";
 };
 const followUpHeadline = (entry: OrderFollowUpInsight | null) => {
   if (!entry) return "No follow-up set";
@@ -2544,39 +2294,39 @@ const queueTimingMeta = (item: {
     case "late":
       return {
         label: lateMinutes && lateMinutes > 0 ? `Late by ${compactDurationFromMinutes(lateMinutes)}` : "Late now",
-        tone: "border border-rose-700/70 bg-rose-950/85 text-rose-100"
+        tone: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200"
       };
     case "due_now":
       return {
         label: "Due now",
-        tone: "border border-amber-700/70 bg-amber-950/88 text-amber-100"
+        tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200"
       };
     case "due_soon":
       if (dueMs != null) {
         const minutes = Math.max(0, Math.round((dueMs - Date.now()) / (60 * 1000)));
         return {
           label: minutes <= 0 ? "Due soon" : `Due in ${compactDurationFromMinutes(minutes)}`,
-          tone: "border border-sky-700/70 bg-sky-950/85 text-sky-100"
+          tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
         };
       }
       return {
         label: "Due soon",
-        tone: "border border-sky-700/70 bg-sky-950/85 text-sky-100"
+        tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
       };
     case "scheduled":
       return {
         label: "Scheduled",
-        tone: "border border-slate-600 bg-slate-800/90 text-slate-100"
+        tone: "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200"
       };
     case "handled_late":
       return {
         label: lateMinutes && lateMinutes > 0 ? `Handled ${compactDurationFromMinutes(lateMinutes)} late` : "Handled late",
-        tone: "border border-orange-700/70 bg-orange-950/85 text-orange-100"
+        tone: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-200"
       };
     case "handled_on_time":
       return {
         label: "Handled on time",
-        tone: "border border-emerald-700/70 bg-emerald-950/85 text-emerald-100"
+        tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
       };
     default:
       return null;
@@ -2607,35 +2357,6 @@ const humanizeFollowUpTaskType = (value?: FollowUpTask["taskType"]) => {
   if (value === "delivery_confirmation") return "Delivery Confirmation";
   if (value === "waybill_follow_up") return "Waybill Follow-up";
   return "Callback";
-};
-const followUpReasonBadgeText = (attempt?: OrderContactAttempt | null) => {
-  if (!attempt) return null;
-  const outcome = classifyFrontendFollowUpOutcome({
-    outcomeCode: attempt.outcomeCode,
-    outcomeGroup: attempt.outcomeGroup,
-    recoveryBucket: attempt.recoveryBucket
-  });
-  if (!outcome) return attempt.outcomeCode || null;
-  return outcome.label;
-};
-const followUpReasonGroupLabel = (attempt?: OrderContactAttempt | null) => {
-  if (!attempt) return null;
-  const outcome = classifyFrontendFollowUpOutcome({
-    outcomeCode: attempt.outcomeCode,
-    outcomeGroup: attempt.outcomeGroup,
-    recoveryBucket: attempt.recoveryBucket
-  });
-  if (!outcome) return null;
-  return FOLLOW_UP_OUTCOME_GROUP_LABELS[outcome.group] ?? null;
-};
-const followUpReasonBadgeClass = (attempt?: OrderContactAttempt | null) => {
-  if (!attempt) return "bg-slate-100 text-slate-700";
-  const outcome = classifyFrontendFollowUpOutcome({
-    outcomeCode: attempt.outcomeCode,
-    outcomeGroup: attempt.outcomeGroup,
-    recoveryBucket: attempt.recoveryBucket
-  });
-  return followUpOutcomeToneClass(outcome?.group ?? attempt.outcomeGroup ?? "other");
 };
 const percentOf = (part: number, total: number) => (total <= 0 ? 0 : Math.round((part / total) * 100));
 const statusForOrder = (order: Pick<TrackedOrder, "status">) => (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
@@ -2776,23 +2497,6 @@ const getWaybillStatusMoment = (waybill: WaybillRecord, movements: StockMovement
   const matchingMovement = movements.find((movement) => movement.waybillId === waybill.id && movement.type === movementType);
   return matchingMovement?.createdAt ?? matchingMovement?.date ?? (waybill.status === "Received" && waybill.dateReceived ? waybill.createdAt : undefined);
 };
-
-const isCustomerDeliveryWaybill = (waybill: WaybillRecord) => {
-  const destination = `${waybill.receivingLocationName ?? ""} ${waybill.receivingState ?? ""}`;
-  return destination.includes("Customer:") || /auto-created on order delivery/i.test(waybill.note ?? "");
-};
-
-const matchesWaybillFlow = (waybill: WaybillRecord, filter: WaybillFlowFilter) => {
-  if (filter === "All") return true;
-  const customerDelivery = isCustomerDeliveryWaybill(waybill);
-  return filter === "Customer Delivery" ? customerDelivery : !customerDelivery;
-};
-
-const getWaybillFlowLabel = (waybill: WaybillRecord) =>
-  isCustomerDeliveryWaybill(waybill) ? "Customer Delivery" : "Manual Transfer";
-
-const getWaybillDestinationLabel = (waybill: WaybillRecord) =>
-  isCustomerDeliveryWaybill(waybill) ? "Customer" : (waybill.receivingState || "—");
 
 const scheduleDateForRange = (range: ScheduleRange, customDate?: string) => {
   if (range === "Custom" && customDate) return customDate;
@@ -2972,69 +2676,6 @@ const formatOrderCreatedAt = (order: Pick<TrackedOrder, "createdAt" | "date">) =
 const orderCreatedKey = (order: TrackedOrder) => normalizeDateKey(order.createdAt ?? order.date);
 const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
-const orderHasCreatedAtCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
-  Boolean(order?.createdAtCorrectedAt && order?.originalCreatedAt);
-const orderHasDeliveredDateCorrection = (order: Partial<TrackedOrder> | null | undefined) =>
-  Boolean(order?.deliveredDateCorrectedAt && order?.originalDeliveredDate);
-const orderDateAuditRows = (order: Partial<TrackedOrder> | null | undefined) => {
-  if (!order) return [] as Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }>;
-  const rows: Array<{ kind: "created" | "delivered"; label: string; from: string; to: string; reason?: string; correctedAt?: string }> = [];
-  if (orderHasCreatedAtCorrection(order)) {
-    rows.push({
-      kind: "created",
-      label: "Order date corrected",
-      from: formatMoment(order.originalCreatedAt) || displayDateFromKey(normalizeDateKey(order.originalCreatedAt ?? "")),
-      to: formatMoment(order.createdAt) || displayDateFromKey(normalizeDateKey(order.createdAt ?? order.date ?? "")),
-      reason: order.createdAtCorrectionReason ?? undefined,
-      correctedAt: order.createdAtCorrectedAt ?? undefined
-    });
-  }
-  if (orderHasDeliveredDateCorrection(order)) {
-    rows.push({
-      kind: "delivered",
-      label: "Delivered date corrected",
-      from: displayDateFromKey(normalizeDateKey(order.originalDeliveredDate ?? "")),
-      to: displayDateFromKey(orderDeliveredKey(order as TrackedOrder)),
-      reason: order.deliveredDateCorrectionReason ?? undefined,
-      correctedAt: order.deliveredDateCorrectedAt ?? undefined
-    });
-  }
-  return rows;
-};
-const renderOrderDateAuditStack = (
-  order: Partial<TrackedOrder> | null | undefined,
-  options: { compact?: boolean; className?: string } = {}
-) => {
-  const rows = orderDateAuditRows(order);
-  if (rows.length === 0) return null;
-  const compact = options.compact === true;
-  return (
-    <div className={options.className ?? `${compact ? "mt-2" : "mt-3"} space-y-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2`}>
-      {rows.map((row) => (
-        <div key={row.kind} className="space-y-0.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-              {row.label}
-            </span>
-            {row.correctedAt && (
-              <span className="text-[10px] text-amber-700/90">
-                logged {formatMoment(row.correctedAt)}
-              </span>
-            )}
-          </div>
-          <p className={`m-0 text-amber-900 ${compact ? "text-[11px]" : "text-xs"}`}>
-            {row.from} → {row.to}
-          </p>
-          {row.reason && (
-            <p className={`m-0 text-amber-800/90 ${compact ? "text-[10px]" : "text-[11px]"}`}>
-              Reason: {row.reason}
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-};
 
 const timeSinceCreated = (order: TrackedOrder): string => {
   const created = new Date(order.createdAt ?? order.date);
@@ -3048,15 +2689,8 @@ const timeSinceCreated = (order: TrackedOrder): string => {
   return `${days}d`;
 };
 
-const ageInHours = (value?: string) => {
-  if (!value) return Number.POSITIVE_INFINITY;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
-  return Math.max(0, (Date.now() - parsed.getTime()) / (60 * 60 * 1000));
-};
-
 const responseTimeColor = (order: TrackedOrder, status: string): { label: string; cls: string } => {
-  const terminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
+  const terminal = status === "Delivered" || status === "Cancelled";
   const created = new Date(order.createdAt ?? order.date);
   if (Number.isNaN(created.getTime())) return { label: "—", cls: "text-gray-400" };
   if (terminal) return { label: "—", cls: "text-gray-300" };
@@ -3116,21 +2750,8 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   videoUrl: companion.videoUrl ?? "",
   embedHtml: companion.embedHtml ?? "",
   priority: typeof companion.priority === "number" ? companion.priority : 0,
-  displayMode: companion.displayMode === "card" ? "card" : "compact",
-  proofMode: companion.proofMode === "promo_copy" || companion.proofMode === "hidden" ? companion.proofMode : "real",
-  urgencyMode: companion.urgencyMode === "price_loss" ? "price_loss" : "standard",
-  promoAllTimeBuyerCount: typeof companion.promoAllTimeBuyerCount === "number" && companion.promoAllTimeBuyerCount > 0 ? Math.floor(companion.promoAllTimeBuyerCount) : undefined,
-  promoBuyersLast24HoursCount: typeof companion.promoBuyersLast24HoursCount === "number" && companion.promoBuyersLast24HoursCount > 0 ? Math.floor(companion.promoBuyersLast24HoursCount) : undefined,
-  promoLastAddedRelative: typeof companion.promoLastAddedRelative === "string" && companion.promoLastAddedRelative.trim() ? companion.promoLastAddedRelative.trim() : undefined,
-  promoIsMostAdded: companion.promoIsMostAdded === true
+  displayMode: companion.displayMode === "card" ? "card" : "compact"
 });
-const clonePackageCompanions = (companions: PackageCompanion[]) =>
-  companions.map((companion) =>
-    normalisePackageCompanion({
-      ...companion,
-      companionId: makeCompanionId()
-    })
-  );
 const normalisePackageComponent = (component: Partial<PackageComponent>): PackageComponent => ({
   componentId: component.componentId || `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   productId: component.productId || "",
@@ -3149,15 +2770,6 @@ const companionMatchesState = (
   const normalizedState = normalizeStateName(state);
   const matches = companion.stateRestrictions.map(normalizeStateName).includes(normalizedState);
   return mode === "block" ? !matches : matches;
-};
-const companionConfiguredTotal = (
-  companion: Pick<PackageCompanion, "pricingMode" | "fixedPrice" | "quantity">,
-  standardPrice: number
-) => {
-  const normalizedQuantity = Math.max(1, Number(companion.quantity) || 1);
-  if (companion.pricingMode === "free") return 0;
-  if (companion.pricingMode === "fixed") return Math.max(0, Number(companion.fixedPrice ?? 0));
-  return standardPrice * normalizedQuantity;
 };
 const formatBundleUnitLabel = (quantity: number) => `${quantity}${quantity === 1 ? "pc" : "pcs"}`;
 const summarizePackageComponents = (
@@ -3334,25 +2946,6 @@ const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDe
   }
   return out;
 };
-const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
-  const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
-  const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
-  const quantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
-  const lines = [
-    `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(mainOfferTotal, order.currency)})`
-  ];
-  (order.crossSellLines ?? []).forEach((line, index) => {
-    const detail = line.packageName ? `${line.productName} · ${line.packageName}` : line.productName;
-    lines.push(`Additional Package ${index + 1}: ${detail} (${line.quantity} pc${line.quantity === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
-  });
-  (order.freeGiftLines ?? []).forEach((line, index) => {
-    lines.push(`Free Gift ${index + 1}: ${line.productName} (${line.quantity} unit${line.quantity === 1 ? "" : "s"})`);
-  });
-  if ((order.crossSellLines?.length ?? 0) > 0) {
-    lines.push(`Total: ${formatProductMoney(order.amount, order.currency)}`);
-  }
-  return lines.join("\n");
-};
 const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissionDetails => {
   const publicNote = orderNotesFor(order).find((note) => typeof note.text === "string" && note.text.toLowerCase().startsWith("public form submission details:"));
   const parsed = publicNote ? parsePublicFormSubmissionNote(publicNote.text) : {};
@@ -3366,10 +2959,7 @@ const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissi
     address: formattedAddress || parsed.address,
     preferredDelivery: order.preferredDelivery ?? order.deliveryWindow ?? parsed.preferredDelivery,
     confirmation: order.confirmationChecked != null ? (order.confirmationChecked ? "Accepted" : "Not accepted") : parsed.confirmation,
-    selectedPackages:
-      (order.crossSellLines?.length ?? 0) > 0 || (order.freeGiftLines?.length ?? 0) > 0
-        ? selectedPackagesSummaryForOrder(order)
-        : parsed.selectedPackages || `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(order.amount, order.currency)})`,
+    selectedPackages: parsed.selectedPackages || `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(order.amount, order.currency)})`,
     utmSource: order.utmSource || parsed.utmSource,
     utmCampaign: order.utmCampaign || parsed.utmCampaign,
     utmMedium: order.utmMedium || parsed.utmMedium,
@@ -3523,175 +3113,27 @@ const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | 
   return null;
 };
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
-  const order = snakeToCamel<any>(value);
-  const legacyMetadata = parseLegacyOrderMetadata(order?.notes ?? value?.notes);
+  const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
   const scheduledAt = typeof value?.scheduledAt === "string" && value.scheduledAt
     ? value.scheduledAt
     : typeof value?.scheduled_at === "string" && value.scheduled_at
       ? value.scheduled_at
-    : typeof order?.scheduledAt === "string" && order.scheduledAt
-      ? order.scheduledAt
     : legacyMetadata.scheduledAt;
   const scheduledDate = typeof value?.scheduledDate === "string" && value.scheduledDate
     ? normalizeDateKey(value.scheduledDate)
     : typeof value?.scheduled_date === "string" && value.scheduled_date
       ? normalizeDateKey(value.scheduled_date)
-    : typeof order?.scheduledDate === "string" && order.scheduledDate
-      ? normalizeDateKey(order.scheduledDate)
     : scheduledAt
       ? normalizeDateKey(scheduledAt)
       : undefined;
-  const quantity = order?.quantity != null ? Number(order.quantity) : undefined;
-  const originalQuantity = order?.originalQuantity != null ? Number(order.originalQuantity) : undefined;
-  const amount = order?.amount != null ? Number(order.amount) : Number(value?.amount ?? 0);
-  const originalAmount = order?.originalAmount != null ? Number(order.originalAmount) : undefined;
-  const logisticsCost = order?.logisticsCost != null ? Number(order.logisticsCost) : typeof value?.logistics_cost === "number" ? value.logistics_cost : undefined;
-  const amountRemitted = order?.amountRemitted != null ? Number(order.amountRemitted) : typeof value?.amount_remitted === "number" ? value.amount_remitted : undefined;
-  const createdAt = typeof order?.createdAt === "string" && order.createdAt
-    ? order.createdAt
-    : typeof value?.created_at === "string" && value.created_at
-      ? value.created_at
-      : undefined;
   return {
-    ...order,
-    productId: order?.productId ?? undefined,
-    packageId: order?.packageId ?? undefined,
-    customer: order?.customer ?? "",
-    phone: order?.phone ?? "",
-    whatsapp: order?.whatsapp ?? undefined,
-    email: order?.email ?? undefined,
-    address: order?.address ?? undefined,
-    city: order?.city ?? undefined,
-    state: order?.state ?? undefined,
-    productName: order?.productName ?? "",
-    packageName: order?.packageName ?? "",
-    quantity: Number.isFinite(quantity) ? quantity : undefined,
-    originalQuantity: Number.isFinite(originalQuantity) ? originalQuantity : undefined,
-    amount,
-    originalAmount: Number.isFinite(originalAmount) ? originalAmount : undefined,
-    currency: (order?.currency ?? "NGN") as ProductCurrencyCode,
-    utmSource: order?.utmSource ?? "",
-    utmCampaign: order?.utmCampaign ?? "",
-    utmMedium: order?.utmMedium ?? undefined,
-    utmContent: order?.utmContent ?? undefined,
-    utmTerm: order?.utmTerm ?? undefined,
-    referrer: order?.referrer ?? undefined,
-    preferredDelivery: order?.preferredDelivery ?? undefined,
-    source: order?.source,
-    status: order?.status,
-    response: order?.response,
-    location: order?.location,
-    deliveryWindow: order?.deliveryWindow,
-    sourceCartId: sourceCartIdForOrder(order) || sourceCartIdForOrder(value) || undefined,
-    createdAt,
-    updatedAt: typeof order?.updatedAt === "string" && order.updatedAt
-      ? order.updatedAt
-      : typeof value?.updated_at === "string" && value.updated_at
-        ? value.updated_at
-        : undefined,
-    deliveredDate: typeof order?.deliveredDate === "string" && order.deliveredDate
-      ? order.deliveredDate
-      : typeof value?.delivered_date === "string" && value.delivered_date
-        ? value.delivered_date
-        : undefined,
-    originalCreatedAt: typeof order?.originalCreatedAt === "string" && order.originalCreatedAt
-      ? order.originalCreatedAt
-      : typeof value?.original_created_at === "string" && value.original_created_at
-        ? value.original_created_at
-        : undefined,
-    createdAtCorrectedAt: typeof order?.createdAtCorrectedAt === "string" && order.createdAtCorrectedAt
-      ? order.createdAtCorrectedAt
-      : typeof value?.created_at_corrected_at === "string" && value.created_at_corrected_at
-        ? value.created_at_corrected_at
-        : undefined,
-    createdAtCorrectedBy: typeof order?.createdAtCorrectedBy === "string" && order.createdAtCorrectedBy
-      ? order.createdAtCorrectedBy
-      : typeof value?.created_at_corrected_by === "string" && value.created_at_corrected_by
-        ? value.created_at_corrected_by
-        : undefined,
-    createdAtCorrectionReason: typeof order?.createdAtCorrectionReason === "string" && order.createdAtCorrectionReason
-      ? order.createdAtCorrectionReason
-      : typeof value?.created_at_correction_reason === "string" && value.created_at_correction_reason
-        ? value.created_at_correction_reason
-        : undefined,
-    originalDeliveredDate: typeof order?.originalDeliveredDate === "string" && order.originalDeliveredDate
-      ? order.originalDeliveredDate
-      : typeof value?.original_delivered_date === "string" && value.original_delivered_date
-        ? value.original_delivered_date
-        : undefined,
-    deliveredDateCorrectedAt: typeof order?.deliveredDateCorrectedAt === "string" && order.deliveredDateCorrectedAt
-      ? order.deliveredDateCorrectedAt
-      : typeof value?.delivered_date_corrected_at === "string" && value.delivered_date_corrected_at
-        ? value.delivered_date_corrected_at
-        : undefined,
-    deliveredDateCorrectedBy: typeof order?.deliveredDateCorrectedBy === "string" && order.deliveredDateCorrectedBy
-      ? order.deliveredDateCorrectedBy
-      : typeof value?.delivered_date_corrected_by === "string" && value.delivered_date_corrected_by
-        ? value.delivered_date_corrected_by
-        : undefined,
-    deliveredDateCorrectionReason: typeof order?.deliveredDateCorrectionReason === "string" && order.deliveredDateCorrectionReason
-      ? order.deliveredDateCorrectionReason
-      : typeof value?.delivered_date_correction_reason === "string" && value.delivered_date_correction_reason
-        ? value.delivered_date_correction_reason
-        : undefined,
-    assignedRepId: order?.assignedRepId ?? undefined,
-    assignedByUserId: order?.assignedByUserId ?? undefined,
-    assignedByNameSnapshot: order?.assignedByNameSnapshot ?? undefined,
-    agentId: order?.agentId ?? undefined,
-    stockDeducted: typeof order?.stockDeducted === "boolean" ? order.stockDeducted : undefined,
-    logisticsCost: Number.isFinite(logisticsCost) ? logisticsCost : undefined,
-    amountRemitted: Number.isFinite(amountRemitted) ? amountRemitted : undefined,
-    remittanceStatus: order?.remittanceStatus ?? undefined,
-    callOutcome: order?.callOutcome ?? undefined,
+    ...value,
+    sourceCartId: sourceCartIdForOrder(value) || undefined,
     scheduledAt,
     scheduledDate,
-    date: typeof order?.date === "string" && order.date
-      ? normalizeDateKey(order.date)
-      : createdAt
-        ? normalizeDateKey(createdAt)
-        : todayKey(),
-    notes: orderNotesFor(order)
+    notes: orderNotesFor(value)
   };
 };
-
-const normalizeExpenseRecord = (value: any): ExpenseRecord => ({
-  id: value.id,
-  type: (value.type ?? value.category ?? "Other") as ExpenseType,
-  amount: Number(value.amount ?? 0),
-  currency: (value.currency ?? "NGN") as CurrencyCode,
-  date: typeof value.date === "string" ? normalizeDateKey(value.date) : todayKey(),
-  createdAt: typeof value.createdAt === "string" ? value.createdAt : typeof value.created_at === "string" ? value.created_at : undefined,
-  productId: value.productId ?? value.product_id ?? undefined,
-  productName: value.productName ?? value.product_name ?? "",
-  description: value.description ?? "",
-  waybillId: value.waybillId ?? value.waybill_id ?? undefined
-});
-
-const normalizeWeeklyAccountingRemittanceTransaction = (value: any): WeeklyAccountingRemittanceTransaction => ({
-  id: value.id,
-  orderId: value.orderId ?? value.order_id ?? "",
-  deltaAmount: Number(value.deltaAmount ?? value.delta_amount ?? 0),
-  previousAmountRemitted: Number(value.previousAmountRemitted ?? value.previous_amount_remitted ?? 0),
-  runningAmountRemitted: Number(value.runningAmountRemitted ?? value.running_amount_remitted ?? 0),
-  receivedAt: value.receivedAt ?? value.received_at ?? "",
-  loggedByName: value.loggedByName ?? value.logged_by_name ?? null,
-  reason: value.reason ?? null,
-  productId: value.productId ?? value.product_id ?? null,
-  productName: value.productName ?? value.product_name ?? null,
-  packageName: value.packageName ?? value.package_name ?? null,
-  customer: value.customer ?? null,
-  orderCreatedAt: value.orderCreatedAt ?? value.order_created_at ?? null,
-  orderDeliveredDate: value.orderDeliveredDate ?? value.order_delivered_date ?? null,
-  assignedRepId: value.assignedRepId ?? value.assigned_rep_id ?? null,
-  agentId: value.agentId ?? value.agent_id ?? null,
-  agentName: value.agentName ?? value.agent_name ?? value.agent_name_snapshot ?? null,
-  orderAmount: value.orderAmount != null || value.order_amount != null ? Number(value.orderAmount ?? value.order_amount ?? 0) : null,
-  logisticsCost: value.logisticsCost != null || value.logistics_cost != null ? Number(value.logisticsCost ?? value.logistics_cost ?? 0) : null,
-  currentAmountRemitted: value.currentAmountRemitted != null || value.current_amount_remitted != null ? Number(value.currentAmountRemitted ?? value.current_amount_remitted ?? 0) : null,
-  currentExpectedRemittance: value.currentExpectedRemittance != null || value.current_expected_remittance != null ? Number(value.currentExpectedRemittance ?? value.current_expected_remittance ?? 0) : null,
-  currentOutstanding: value.currentOutstanding != null || value.current_outstanding != null ? Number(value.currentOutstanding ?? value.current_outstanding ?? 0) : null,
-  remittanceStatus: value.remittanceStatus ?? value.remittance_status ?? null
-});
 
 const normalizeFollowUpTask = (value: any): FollowUpTask => ({
   id: value.id,
@@ -3719,8 +3161,6 @@ const normalizeContactAttempt = (value: any): OrderContactAttempt => ({
   channel: (value.channel ?? "manual") as OrderContactAttempt["channel"],
   attemptType: (value.attemptType ?? value.attempt_type ?? "fresh_follow_up") as OrderContactAttempt["attemptType"],
   outcomeCode: value.outcomeCode ?? value.outcome_code ?? "",
-  outcomeGroup: (value.outcomeGroup ?? value.outcome_group ?? undefined) as OrderContactAttempt["outcomeGroup"],
-  recoveryBucket: (value.recoveryBucket ?? value.recovery_bucket ?? undefined) as OrderContactAttempt["recoveryBucket"],
   outcomeNote: value.outcomeNote ?? value.outcome_note ?? undefined,
   customerReached: typeof (value.customerReached ?? value.customer_reached) === "boolean" ? (value.customerReached ?? value.customer_reached) : undefined,
   nextActionType: (value.nextActionType ?? value.next_action_type ?? undefined) as OrderContactAttempt["nextActionType"],
@@ -3745,507 +3185,11 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     amount: Number(cart.amount ?? 0),
     currency: cart.currency ?? "NGN",
     source: cart.source ?? "Website",
-    embedLabel: cart.embedLabel ?? undefined,
     status: cart.status ?? "Open abandoned",
     assignedRepId: cart.assignedRepId ?? undefined,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
   };
-};
-
-const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
-  const event = snakeToCamel<any>(value);
-  const metadataCandidate = event.metadata;
-  const metadata: Record<string, string | number | boolean | null> =
-    metadataCandidate && typeof metadataCandidate === "object" && !Array.isArray(metadataCandidate)
-      ? Object.fromEntries(
-          Object.entries(metadataCandidate).filter(([, entry]) =>
-            typeof entry === "string"
-            || typeof entry === "number"
-            || typeof entry === "boolean"
-            || entry === null
-          )
-        ) as Record<string, string | number | boolean | null>
-      : {};
-  return {
-    id: event.id,
-    cartId: event.cartId ?? event.cart_id ?? "",
-    productId: event.productId ?? event.product_id ?? undefined,
-    packageId: event.packageId ?? event.package_id ?? undefined,
-    state: event.state ?? undefined,
-    eventType: (event.eventType ?? event.event_type ?? "form_opened") as CartJourneyEvent["eventType"],
-    companionProductId: event.companionProductId ?? event.companion_product_id ?? undefined,
-    companionPackageId: event.companionPackageId ?? event.companion_package_id ?? undefined,
-    metadata,
-    createdAt: event.createdAt ?? event.created_at ?? ""
-  };
-};
-
-const CART_JOURNEY_BLOCKED_LABELS: Record<CartJourneyBlockedEventType, string> = {
-  submit_blocked_missing_name: "Submit blocked",
-  submit_blocked_missing_phone: "Submit blocked",
-  submit_blocked_invalid_phone: "Submit blocked",
-  submit_blocked_missing_whatsapp: "Submit blocked",
-  submit_blocked_invalid_whatsapp: "Submit blocked",
-  submit_blocked_missing_address: "Submit blocked",
-  submit_blocked_missing_city: "Submit blocked",
-  submit_blocked_missing_state: "Submit blocked",
-  submit_blocked_missing_delivery: "Submit blocked",
-  submit_blocked_missing_confirmation: "Submit blocked",
-  submit_blocked_missing_commitment: "Submit blocked"
-};
-
-const CART_JOURNEY_BLOCKED_DETAILS: Record<CartJourneyBlockedEventType, string> = {
-  submit_blocked_missing_name: "Customer tried to submit without entering a name.",
-  submit_blocked_missing_phone: "Customer tried to submit without entering a phone number.",
-  submit_blocked_invalid_phone: "Customer tried to submit but the phone number looked invalid.",
-  submit_blocked_missing_whatsapp: "Customer tried to submit without entering the required WhatsApp number.",
-  submit_blocked_invalid_whatsapp: "Customer tried to submit but the WhatsApp number looked invalid.",
-  submit_blocked_missing_address: "Customer tried to submit without entering a delivery address.",
-  submit_blocked_missing_city: "Customer tried to submit without entering a city.",
-  submit_blocked_missing_state: "Customer tried to submit without selecting a state.",
-  submit_blocked_missing_delivery: "Customer tried to submit without choosing a delivery time.",
-  submit_blocked_missing_confirmation: "Customer tried to submit without ticking the confirmation box.",
-  submit_blocked_missing_commitment: "Customer tried to submit without acknowledging the commitment notice."
-};
-
-const CART_JOURNEY_BLOCKED_HINTS: Record<CartJourneyBlockedEventType, string> = {
-  submit_blocked_missing_name: "Tried to submit but didn’t enter a name.",
-  submit_blocked_missing_phone: "Tried to submit but didn’t enter a phone number.",
-  submit_blocked_invalid_phone: "Tried to submit but the phone number looked invalid.",
-  submit_blocked_missing_whatsapp: "Tried to submit but didn’t enter the required WhatsApp number.",
-  submit_blocked_invalid_whatsapp: "Tried to submit but the WhatsApp number looked invalid.",
-  submit_blocked_missing_address: "Tried to submit but didn’t enter the delivery address.",
-  submit_blocked_missing_city: "Tried to submit but didn’t enter a city.",
-  submit_blocked_missing_state: "Tried to submit but didn’t select a state.",
-  submit_blocked_missing_delivery: "Tried to submit but didn’t choose a delivery time.",
-  submit_blocked_missing_confirmation: "Tried to submit but didn’t tick the confirmation box.",
-  submit_blocked_missing_commitment: "Tried to submit but didn’t acknowledge the commitment notice."
-};
-
-const CART_JOURNEY_BLOCKED_ANALYTICS_LABELS: Record<CartJourneyBlockedEventType, string> = {
-  submit_blocked_missing_name: "Missing name",
-  submit_blocked_missing_phone: "Missing phone",
-  submit_blocked_invalid_phone: "Invalid phone",
-  submit_blocked_missing_whatsapp: "Missing WhatsApp",
-  submit_blocked_invalid_whatsapp: "Invalid WhatsApp",
-  submit_blocked_missing_address: "Missing address",
-  submit_blocked_missing_city: "Missing city",
-  submit_blocked_missing_state: "Missing state",
-  submit_blocked_missing_delivery: "Missing delivery time",
-  submit_blocked_missing_confirmation: "Missing confirmation",
-  submit_blocked_missing_commitment: "Missing commitment acknowledgement"
-};
-
-const isCartJourneyBlockedEvent = (eventType: CartJourneyEvent["eventType"]): eventType is CartJourneyBlockedEventType =>
-  Object.prototype.hasOwnProperty.call(CART_JOURNEY_BLOCKED_LABELS, eventType);
-
-const isAdditionalItemJourneyEventType = (
-  eventType: CartJourneyEvent["eventType"]
-): eventType is "additional_item_preview_opened" | "additional_item_added" | "additional_item_removed" =>
-  eventType === "additional_item_preview_opened"
-  || eventType === "additional_item_added"
-  || eventType === "additional_item_removed";
-
-const cartJourneyTitle = (event: CartJourneyEvent) => {
-  if (isCartJourneyBlockedEvent(event.eventType)) return CART_JOURNEY_BLOCKED_LABELS[event.eventType];
-  switch (event.eventType) {
-    case "form_opened": return "Journey started";
-    case "first_interaction": return "First interaction";
-    case "package_selected": return "Package changed";
-    case "state_selected": return "State selected";
-    case "additional_item_preview_opened": return "Viewed additional item";
-    case "additional_item_added": return "Added additional item";
-    case "additional_item_removed": return "Removed additional item";
-    case "submit_attempted": return "Tried to submit";
-    case "order_submitted": return "Order submitted";
-    case "redirect_triggered": return "Redirect fired";
-    case "cart_date_changed": return "Cart date changed";
-    case "order_date_changed": return "Order date changed";
-    case "order_assigned": return "Order assigned";
-    case "order_reassigned": return "Order reassigned";
-    case "delivery_agent_assigned": return "Delivery agent assigned";
-    case "delivery_agent_reassigned": return "Delivery agent changed";
-    case "order_status_changed": return "Order status changed";
-    case "contact_attempt_logged": return "Rep follow-up logged";
-    case "form_exited": return "Left the form";
-    default: return "Form activity";
-  }
-};
-
-const cartJourneyDetail = (event: CartJourneyEvent) => {
-  const metadata = event.metadata ?? {};
-  const productName = typeof metadata.productName === "string" ? metadata.productName : "";
-  const packageName = typeof metadata.packageName === "string" ? metadata.packageName : "";
-  const stateName = typeof metadata.state === "string" ? metadata.state : event.state ?? "";
-  const quantity = typeof metadata.quantity === "number" ? metadata.quantity : null;
-  const variants = typeof metadata.variants === "number" ? metadata.variants : null;
-  const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
-  const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
-  const actorName = typeof metadata.actorName === "string" ? metadata.actorName : "";
-  const repName = typeof metadata.repName === "string" ? metadata.repName : "";
-  const agentName = typeof metadata.agentName === "string" ? metadata.agentName : "";
-  const fromStatus = typeof metadata.fromStatus === "string" ? metadata.fromStatus : "";
-  const toStatus = typeof metadata.toStatus === "string" ? metadata.toStatus : "";
-  const channel = typeof metadata.channel === "string" ? metadata.channel : "";
-  const outcomeCode = typeof metadata.outcomeCode === "string" ? metadata.outcomeCode : "";
-  const nextActionType = typeof metadata.nextActionType === "string" ? metadata.nextActionType : "";
-  const fromDate = typeof metadata.fromDate === "string" ? metadata.fromDate : "";
-  const toDate = typeof metadata.toDate === "string" ? metadata.toDate : "";
-  const reason = typeof metadata.reason === "string" ? metadata.reason : "";
-  if (isCartJourneyBlockedEvent(event.eventType)) {
-    return CART_JOURNEY_BLOCKED_DETAILS[event.eventType];
-  }
-  switch (event.eventType) {
-    case "first_interaction":
-      return `${customerName || "Customer"} actively engaged with the form.`;
-    case "package_selected":
-      return packageName || productName || "Switched package";
-    case "state_selected":
-      return stateName || "Picked a state";
-    case "additional_item_preview_opened":
-      return variants && variants > 1 ? `${productName || "Additional item"} · ${variants} bundle choices` : (productName || "Opened an additional item");
-    case "additional_item_added":
-      return quantity && quantity > 1 ? `${productName || "Additional item"} · ${quantity} pcs` : (productName || "Added an additional item");
-    case "additional_item_removed":
-      return productName || "Removed an additional item";
-    case "submit_attempted":
-      return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;
-    case "order_submitted":
-      return additionalItems && additionalItems > 0 ? `Submitted with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Submitted successfully";
-    case "redirect_triggered":
-      return "Redirected to the landing-page thank-you destination.";
-    case "cart_date_changed":
-      return `${actorName || "Admin"} changed the cart date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
-    case "order_date_changed":
-      return `${actorName || "Admin"} changed the order date${fromDate && toDate ? ` from ${formatMoment(fromDate)} to ${formatMoment(toDate)}` : ""}${reason ? `. Reason: ${reason}` : "."}`;
-    case "order_assigned":
-      return repName ? `${repName} was assigned to handle this order.` : (actorName ? `${actorName} assigned this order.` : "A rep was assigned to this order.");
-    case "order_reassigned":
-      return repName ? `Reassigned to ${repName}.` : (actorName ? `${actorName} reassigned this order.` : "The order was reassigned.");
-    case "delivery_agent_assigned":
-      return agentName ? `${agentName} was assigned as the delivery agent.` : (actorName ? `${actorName} assigned a delivery agent.` : "A delivery agent was assigned.");
-    case "delivery_agent_reassigned":
-      return agentName ? `Delivery agent changed to ${agentName}.` : (actorName ? `${actorName} changed the delivery agent.` : "The delivery agent was changed.");
-    case "order_status_changed":
-      return fromStatus && toStatus ? `${fromStatus} → ${toStatus}` : (toStatus || "Order status updated");
-    case "contact_attempt_logged":
-      return outcomeCode
-        ? `${actorName || "Rep"} logged a ${channel || "follow-up"} contact attempt: ${outcomeCode}${nextActionType ? ` · next ${nextActionType.replace(/_/g, " ")}` : ""}`
-        : `${actorName || "Rep"} logged a follow-up attempt.`;
-    case "form_exited":
-      return additionalItems && additionalItems > 0 ? `Left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Left before submitting";
-    default:
-      return productName || packageName || stateName || "";
-  }
-};
-
-const additionalItemNameFromJourneyEvent = (event: CartJourneyEvent) => {
-  const productName = event.metadata?.productName;
-  return typeof productName === "string" && productName.trim().length > 0
-    ? productName.trim()
-    : "Additional item";
-};
-
-const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
-  if (events.length === 0) return null;
-  if (events.some((event) => event.eventType === "order_submitted")) return null;
-
-  const latestBlocked = [...events].reverse().find((event) => isCartJourneyBlockedEvent(event.eventType));
-  if (latestBlocked && isCartJourneyBlockedEvent(latestBlocked.eventType)) {
-    return CART_JOURNEY_BLOCKED_HINTS[latestBlocked.eventType];
-  }
-
-  const lastEvent = events[events.length - 1];
-  const addedSelections = new Map<string, { name: string; added: number; removed: number; selected: boolean; previews: number }>();
-  for (const event of events) {
-    if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
-    const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
-    const existing = addedSelections.get(key) ?? {
-      name: additionalItemNameFromJourneyEvent(event),
-      added: 0,
-      removed: 0,
-      selected: false,
-      previews: 0
-    };
-    if (event.eventType === "additional_item_preview_opened") existing.previews += 1;
-    if (event.eventType === "additional_item_added") {
-      existing.added += 1;
-      existing.selected = true;
-    }
-    if (event.eventType === "additional_item_removed") {
-      existing.removed += 1;
-      existing.selected = false;
-    }
-    addedSelections.set(key, existing);
-  }
-
-  const removedItem = [...addedSelections.values()].sort((a, b) => (b.removed - a.removed) || (b.added - a.added))[0];
-  if (removedItem && removedItem.removed > 0 && removedItem.added > 0) {
-    return `Added ${removedItem.name} but removed it before leaving.`;
-  }
-
-  const repeatedPreview = [...addedSelections.values()].sort((a, b) => b.previews - a.previews)[0];
-  if (repeatedPreview && repeatedPreview.previews > 1 && repeatedPreview.added === 0) {
-    return `Viewed ${repeatedPreview.name} more than once but never added it.`;
-  }
-
-  if (lastEvent?.eventType === "form_exited" && events.some((event) => event.eventType === "submit_attempted")) {
-    return "Tried to submit before leaving. Follow up quickly.";
-  }
-
-  const selectedAdditionalItems = [...addedSelections.values()].filter((entry) => entry.selected).length;
-  if (lastEvent?.eventType === "form_exited" && selectedAdditionalItems > 0) {
-    return `Left after adding ${selectedAdditionalItems} additional item${selectedAdditionalItems === 1 ? "" : "s"}.`;
-  }
-
-  const latestState = [...events].reverse().find((event) => event.eventType === "state_selected");
-  if (latestState) {
-    const stateName = typeof latestState.metadata?.state === "string" ? latestState.metadata.state : latestState.state;
-    return stateName ? `Picked ${stateName} but didn’t submit yet.` : "Picked a state but didn’t submit yet.";
-  }
-
-  const latestPackage = [...events].reverse().find((event) => event.eventType === "package_selected");
-  if (latestPackage) {
-    return "Changed package but didn’t submit yet.";
-  }
-
-  return "Opened the form but didn’t finish.";
-};
-
-const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
-  if (events.length === 0) {
-    return { score: 5, band: "Cold" as const, summary: "No tracked intent yet." };
-  }
-  if (events.some((event) => event.eventType === "order_submitted")) {
-    return { score: 100, band: "Converted" as const, summary: "Already submitted." };
-  }
-
-  let score = 0;
-  const seen = new Set(events.map((event) => event.eventType));
-  const blockedCount = events.filter((event) => isCartJourneyBlockedEvent(event.eventType)).length;
-  const additionalAdded = events.filter((event) => event.eventType === "additional_item_added").length;
-  const additionalRemoved = events.filter((event) => event.eventType === "additional_item_removed").length;
-  const previewCount = events.filter((event) => event.eventType === "additional_item_preview_opened").length;
-  const contactAttempts = events.filter((event) => event.eventType === "contact_attempt_logged").length;
-  const postSubmitProgress = events.filter((event) =>
-    event.eventType === "order_assigned"
-    || event.eventType === "order_reassigned"
-    || event.eventType === "delivery_agent_assigned"
-    || event.eventType === "delivery_agent_reassigned"
-    || event.eventType === "order_status_changed"
-  ).length;
-
-  if (seen.has("form_opened")) score += 8;
-  if (seen.has("first_interaction")) score += 10;
-  if (seen.has("package_selected")) score += 14;
-  if (seen.has("state_selected")) score += 14;
-  if (seen.has("submit_attempted")) score += 28;
-  if (blockedCount > 0) score += 18;
-  if (previewCount > 0) score += 8;
-  if (additionalAdded > 0) score += 12;
-  if (additionalRemoved > 0) score += 4;
-  if (contactAttempts > 0) score += Math.min(8, contactAttempts * 4);
-  if (postSubmitProgress > 0) score += Math.min(14, postSubmitProgress * 4);
-
-  const lastEvent = events[events.length - 1];
-  if (lastEvent?.eventType === "form_exited" && seen.has("submit_attempted")) score += 6;
-  if (lastEvent?.eventType === "form_exited" && additionalAdded > additionalRemoved) score += 4;
-  if (seen.has("package_selected") && !seen.has("state_selected") && !seen.has("submit_attempted")) score -= 4;
-
-  score = Math.max(0, Math.min(100, score));
-  if (score >= 70) {
-    return { score, band: "Hot" as const, summary: "High intent. Prioritize follow-up." };
-  }
-  if (score >= 45) {
-    return { score, band: "Warm" as const, summary: "Strong interest, but still recoverable." };
-  }
-  if (score >= 20) {
-    return { score, band: "Cool" as const, summary: "Some intent shown. Needs context." };
-  }
-  return { score, band: "Cold" as const, summary: "Very light engagement so far." };
-};
-
-const cartJourneyRecoveryBadgeClass = (band: ReturnType<typeof cartJourneyRecoveryScore>["band"]) => {
-  switch (band) {
-    case "Converted":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "Hot":
-      return "border-rose-200 bg-rose-50 text-rose-700";
-    case "Warm":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "Cool":
-      return "border-sky-200 bg-sky-50 text-sky-700";
-    default:
-      return "border-gray-200 bg-gray-50 text-gray-600";
-  }
-};
-
-const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEvent[]>) => {
-  const funnel = {
-    opened: 0,
-    packageSelected: 0,
-    stateSelected: 0,
-    additionalItemViewed: 0,
-    additionalItemAdded: 0,
-    submitAttempted: 0,
-    submitted: 0,
-    exited: 0,
-    submittedWithAdditionalItem: 0
-  };
-  const blockedCounts = new Map<CartJourneyBlockedEventType, number>();
-  const additionalItemStats = new Map<string, { key: string; name: string; previewed: number; added: number; removed: number; submittedWithItem: number }>();
-
-  for (const events of Object.values(journeyMap)) {
-    if (events.length === 0) continue;
-    const seenTypes = new Set(events.map((event) => event.eventType));
-    if (seenTypes.has("form_opened")) funnel.opened += 1;
-    if (seenTypes.has("package_selected")) funnel.packageSelected += 1;
-    if (seenTypes.has("state_selected")) funnel.stateSelected += 1;
-    if (seenTypes.has("additional_item_preview_opened")) funnel.additionalItemViewed += 1;
-    if (seenTypes.has("additional_item_added")) funnel.additionalItemAdded += 1;
-    if (seenTypes.has("submit_attempted")) funnel.submitAttempted += 1;
-    if (seenTypes.has("order_submitted")) funnel.submitted += 1;
-    if (seenTypes.has("form_exited")) funnel.exited += 1;
-
-    const selectedByItem = new Map<string, boolean>();
-    for (const event of events) {
-      if (isCartJourneyBlockedEvent(event.eventType)) {
-        blockedCounts.set(event.eventType, (blockedCounts.get(event.eventType) ?? 0) + 1);
-      }
-      if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
-      const key = event.companionProductId ?? additionalItemNameFromJourneyEvent(event);
-      const current = additionalItemStats.get(key) ?? {
-        key,
-        name: additionalItemNameFromJourneyEvent(event),
-        previewed: 0,
-        added: 0,
-        removed: 0,
-        submittedWithItem: 0
-      };
-      if (event.eventType === "additional_item_preview_opened") current.previewed += 1;
-      if (event.eventType === "additional_item_added") {
-        current.added += 1;
-        selectedByItem.set(key, true);
-      }
-      if (event.eventType === "additional_item_removed") {
-        current.removed += 1;
-        selectedByItem.set(key, false);
-      }
-      additionalItemStats.set(key, current);
-    }
-
-    if (seenTypes.has("order_submitted")) {
-      const submittedWithAnyItem = [...selectedByItem.values()].some(Boolean);
-      if (submittedWithAnyItem) {
-        funnel.submittedWithAdditionalItem += 1;
-      }
-      for (const [key, selected] of selectedByItem.entries()) {
-        if (!selected) continue;
-        const current = additionalItemStats.get(key);
-        if (current) {
-          current.submittedWithItem += 1;
-          additionalItemStats.set(key, current);
-        }
-      }
-    }
-  }
-
-  const additionalItems = [...additionalItemStats.values()]
-    .map((item) => {
-      const previewToAddRate = item.previewed > 0 ? Math.round((item.added / item.previewed) * 100) : 0;
-      const addToSubmitRate = item.added > 0 ? Math.round((item.submittedWithItem / item.added) * 100) : 0;
-      const attachRate = funnel.submitted > 0 ? Math.round((item.submittedWithItem / funnel.submitted) * 100) : 0;
-      return {
-        ...item,
-        previewToAddRate,
-        addToSubmitRate,
-        attachRate
-      };
-    })
-    .sort((a, b) => (b.submittedWithItem - a.submittedWithItem) || (b.addToSubmitRate - a.addToSubmitRate) || (b.added - a.added) || (b.previewed - a.previewed));
-
-  const topAdditionalItem = additionalItems[0] ?? null;
-
-  return {
-    funnel,
-    blocked: [...blockedCounts.entries()]
-      .map(([eventType, count]) => ({ eventType, count, label: CART_JOURNEY_BLOCKED_ANALYTICS_LABELS[eventType] }))
-      .sort((a, b) => b.count - a.count),
-    additionalItems,
-    additionalItemSummary: {
-      attachRate: funnel.submitted > 0 ? Math.round((funnel.submittedWithAdditionalItem / funnel.submitted) * 100) : 0,
-      topAdditionalItem
-    }
-  };
-};
-
-const liveFormPulseHealthBadgeClass = (status: LiveFormPulseResponse["health"]["status"]) => {
-  switch (status) {
-    case "healthy":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "attention":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "quiet":
-      return "border-sky-200 bg-sky-50 text-sky-700";
-    default:
-      return "border-gray-200 bg-gray-50 text-gray-600";
-  }
-};
-
-const liveFormPulseEventLabel = (eventType: LiveFormPulseRecentEvent["eventType"]) => {
-  switch (eventType) {
-    case "form_opened":
-      return "Viewed form";
-    case "first_interaction":
-      return "Started interacting";
-    case "submit_attempted":
-      return "Tried submit";
-    case "order_submitted":
-      return "Submitted order";
-    case "redirect_triggered":
-      return "Redirect fired";
-    default:
-      return cartJourneyTitle({
-        id: "",
-        cartId: "",
-        eventType,
-        metadata: {},
-        createdAt: ""
-      } as CartJourneyEvent);
-  }
-};
-
-const liveFormPulseLastSeenAt = (pulse?: LiveFormPulseResponse | null) => {
-  if (!pulse) return null;
-  const candidates = [
-    pulse.summary.lastViewedAt,
-    pulse.summary.lastInteractionAt,
-    pulse.summary.lastSubmitAttemptAt,
-    pulse.summary.lastConversionAt,
-    pulse.summary.lastRedirectAt
-  ].filter((value): value is string => Boolean(value));
-  if (candidates.length === 0) return null;
-  return candidates.reduce((latest, value) => (value > latest ? value : latest));
-};
-
-const liveFormPulseScopeLabel = (period: Period, bounds: { dateFrom: string; dateTo: string } | null) => {
-  if (period === "Today") return "today";
-  if (period === "This Week") return "this week";
-  if (period === "This Month") return "this month";
-  if (period === "This Year") return "this year";
-  if (bounds) {
-    return bounds.dateFrom === bounds.dateTo ? bounds.dateFrom : `${bounds.dateFrom} to ${bounds.dateTo}`;
-  }
-  return "the selected range";
-};
-
-const liveFormPulseMetricLabel = (base: string, period: Period) => {
-  if (period === "Today") return `${base} today`;
-  if (period === "This Week") return `${base} this week`;
-  if (period === "This Month") return `${base} this month`;
-  if (period === "This Year") return `${base} this year`;
-  return `${base} in range`;
 };
 
 const normalizeRealtimeUser = (value: any): ManagedUser => {
@@ -4272,6 +3216,63 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
     agentBalanceAgentIds: Array.isArray(user.agentBalanceAgentIds) ? user.agentBalanceAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     assignedAgentIds: Array.isArray(user.assignedAgentIds) ? user.assignedAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     roundRobinPosition: user.roundRobinPosition ?? 0
+  };
+};
+
+const normalizeExpenseRecord = (value: any): ExpenseRecord => {
+  const row = snakeToCamel<any>(value);
+  const normalizedType = typeof (row.type ?? row.category) === "string"
+    ? String(row.type ?? row.category)
+    : "Other";
+  const allowedExpenseTypes: ExpenseType[] = [
+    "Ad Spend",
+    "Delivery",
+    "Failed Delivery",
+    "Clearing & Shipping",
+    "Waybill",
+    "Airtime & Data",
+    "Other"
+  ];
+  return {
+    id: row.id,
+    type: allowedExpenseTypes.includes(normalizedType as ExpenseType) ? (normalizedType as ExpenseType) : "Other",
+    amount: Number(row.amount ?? 0),
+    currency: (["NGN", "USD", "GBP"].includes(row.currency) ? row.currency : "NGN") as CurrencyCode,
+    date: row.date ?? "",
+    createdAt: row.createdAt ?? undefined,
+    productId: row.productId ?? undefined,
+    productName: row.productName ?? "",
+    description: row.description ?? "",
+    waybillId: row.waybillId ?? undefined
+  };
+};
+
+const normalizeWeeklyAccountingRemittanceTransaction = (value: any): WeeklyAccountingRemittanceTransaction => {
+  const row = snakeToCamel<any>(value);
+  return {
+    id: row.id,
+    orderId: row.orderId ?? "",
+    deltaAmount: Number(row.deltaAmount ?? 0),
+    previousAmountRemitted: Number(row.previousAmountRemitted ?? 0),
+    runningAmountRemitted: Number(row.runningAmountRemitted ?? 0),
+    receivedAt: row.receivedAt ?? "",
+    loggedByName: row.loggedByName ?? null,
+    reason: row.reason ?? null,
+    productId: row.productId ?? null,
+    productName: row.productName ?? null,
+    packageName: row.packageName ?? null,
+    customer: row.customer ?? null,
+    orderCreatedAt: row.orderCreatedAt ?? null,
+    orderDeliveredDate: row.orderDeliveredDate ?? null,
+    assignedRepId: row.assignedRepId ?? null,
+    agentId: row.agentId ?? null,
+    agentName: row.agentName ?? null,
+    orderAmount: Number(row.orderAmount ?? 0),
+    logisticsCost: Number(row.logisticsCost ?? 0),
+    currentAmountRemitted: Number(row.currentAmountRemitted ?? 0),
+    currentExpectedRemittance: Number(row.currentExpectedRemittance ?? 0),
+    currentOutstanding: Number(row.currentOutstanding ?? 0),
+    remittanceStatus: row.remittanceStatus ?? null
   };
 };
 
@@ -4522,11 +3523,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderScheduleFilter, setOrderScheduleFilter] = useState<OrderScheduleFilter>(() =>
     readPref<OrderScheduleFilter>("protohub.orders.scheduleFilter", "All schedule marks", (raw) => raw as OrderScheduleFilter)
   );
-  const [orderAssignmentScope, setOrderAssignmentScope] = useState<OrderAssignmentScope>(() =>
-    readPref<OrderAssignmentScope>("protohub.orders.assignmentScope", "All assignments", (raw) =>
-      raw === "All assignments" || raw === "Assigned by me" ? raw : null
-    )
-  );
   const [orderSource, setOrderSource] = useState<OrderSource>(() =>
     readPref<OrderSource>("protohub.orders.source", "All Sources", (raw) => raw as OrderSource)
   );
@@ -4624,13 +3620,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // and look like "I clicked pricing, got nothing." Coerce to dashboard
     // when there's no product to show.
     const stored = readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
-      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" || raw === "state-stock" ? raw : null
+      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" ? raw : null
     );
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
-  const [stateStockProductId, setStateStockProductId] = useState("");
-  const [stateStockStateFilter, setStateStockStateFilter] = useState("");
-  const [stateStockSearch, setStateStockSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
@@ -4653,13 +3646,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageComponents, setPackageComponents] = useState<PackageComponent[]>([]);
   const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState("");
-  const [showPackageOfferCopyPanel, setShowPackageOfferCopyPanel] = useState(false);
-  const [packageOfferCopyTargetIds, setPackageOfferCopyTargetIds] = useState<string[]>([]);
-  const [packageOfferCopyBusy, setPackageOfferCopyBusy] = useState(false);
-  const [packageOfferCopyKeepSynced, setPackageOfferCopyKeepSynced] = useState(false);
-  const [packageOfferSyncEnabled, setPackageOfferSyncEnabled] = useState(false);
-  const [packageOfferSyncSourceProductId, setPackageOfferSyncSourceProductId] = useState<string | null>(null);
-  const [packageOfferSyncSourcePackageId, setPackageOfferSyncSourcePackageId] = useState<string | null>(null);
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
   const [showSalesDateRange, setShowSalesDateRange] = useState(false);
@@ -4746,7 +3732,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Selected expense for the Expense Details modal
   const [selectedExpenseId, setSelectedExpenseId] = useState<string>("");
   const [waybillStatusFilter, setWaybillStatusFilter] = useState<WaybillStatus | "All">("All");
-  const [waybillFlowFilter, setWaybillFlowFilter] = useState<WaybillFlowFilter>("Manual Transfer");
   const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
@@ -4761,6 +3746,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
   const [payrollPreviewData, setPayrollPreviewData] = useState<PayrollPreviewData | null>(null);
+  const [payrollPreviewLoading, setPayrollPreviewLoading] = useState(false);
   const [topPerformerBonusEnabled, setTopPerformerBonusEnabled] = useState(false);
   const [topPerformerBonusAmount, setTopPerformerBonusAmount] = useState("0");
   // Branding: company logo (data URL or remote URL) + display name
@@ -4813,25 +3799,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const emailSettingsSnapshotRef = useRef("");
   const smsSettingsSnapshotRef = useRef("");
-  const packageEditorHydrationKeyRef = useRef("");
-  const packageEditorDraftKeyRef = useRef("");
-  const packageEditorDirtyRef = useRef(false);
   const seenFollowUpNotificationIdsRef = useRef<Set<string>>(new Set());
   const productSettingsSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const productSettingsSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveQueueRef = useRef<Record<string, Promise<void>>>({});
   const orderUpsellSaveVersionRef = useRef<Record<string, number>>({});
   const orderUpsellSaveTimerRef = useRef<Record<string, number>>({});
-  const clearPackageEditorDraftTracking = () => {
-    packageEditorHydrationKeyRef.current = "";
-    packageEditorDraftKeyRef.current = "";
-    packageEditorDirtyRef.current = false;
-  };
-  const markPackageEditorDirty = () => {
-    if (modal === "addPackage" || modal === "editPackage") {
-      packageEditorDirtyRef.current = true;
-    }
-  };
   useEffect(() => { writeStored(storageKeys.companyLogo, companyLogo); }, [companyLogo]);
   useEffect(() => { writeStored(storageKeys.companyName, companyName); }, [companyName]);
   useEffect(() => {
@@ -4980,20 +3953,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
   useEffect(() => { writePref("protohub.orders.status",   orderStatus);   }, [orderStatus]);
-  useEffect(() => { writePref("protohub.orders.scheduleFilter", orderScheduleFilter); }, [orderScheduleFilter]);
-  useEffect(() => { writePref("protohub.orders.assignmentScope", orderAssignmentScope); }, [orderAssignmentScope]);
   useEffect(() => { writePref("protohub.orders.source",   orderSource);   }, [orderSource]);
   useEffect(() => { writePref("protohub.orders.location", orderLocation); }, [orderLocation]);
   useEffect(() => { writePref("protohub.orders.productIds", JSON.stringify(Array.from(orderProductIds))); }, [orderProductIds]);
-  useEffect(() => {
-    if (activePage === "Closed Orders" && !closedOrderStatuses.includes(orderStatus)) {
-      setOrderStatus("All Orders");
-      return;
-    }
-    if (activePage === "Follow-up Queue" && !followUpQueueStatuses.includes(orderStatus)) {
-      setOrderStatus("All Orders");
-    }
-  }, [activePage, orderStatus]);
   // Abandoned Carts filters — declared further down. We can't reference
   // cartsPeriod / cartProductIds here without TDZ errors; mirror happens via
   // setter wrappers further below in the carts state block.
@@ -5042,6 +4004,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })
   );
   useEffect(() => { writePref("protohub.schedule.range", scheduleRange); }, [scheduleRange]);
+  useEffect(() => { writePref("protohub.orders.scheduleFilter", orderScheduleFilter); }, [orderScheduleFilter]);
   useEffect(() => { writePref("protohub.schedule.productIds", JSON.stringify(Array.from(scheduleProductIds))); }, [scheduleProductIds]);
   const [showScheduleProductFilter, setShowScheduleProductFilter] = useState(false);
   // Deliveries product filter
@@ -5084,39 +4047,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyAccountingData, setWeeklyAccountingData] = useState<WeeklyAccountingDataset | null>(null);
   const [weeklyAccountingLoading, setWeeklyAccountingLoading] = useState(false);
   const [weeklyAccountingError, setWeeklyAccountingError] = useState("");
-  const [financeSummaryData, setFinanceSummaryData] = useState<FinanceSummaryDataset | null>(null);
-  const [financeSummaryLoading, setFinanceSummaryLoading] = useState(false);
-  const [financeSummaryError, setFinanceSummaryError] = useState("");
   const [financeRemittanceTransactions, setFinanceRemittanceTransactions] = useState<WeeklyAccountingRemittanceTransaction[]>([]);
   const [financeRemittanceGeneratedAt, setFinanceRemittanceGeneratedAt] = useState("");
   const [financeRemittanceLoading, setFinanceRemittanceLoading] = useState(false);
   const [financeRemittanceError, setFinanceRemittanceError] = useState("");
-  const [financeRemittanceBackfillLoading, setFinanceRemittanceBackfillLoading] = useState(false);
-  const [financeRemittanceBackfillSummary, setFinanceRemittanceBackfillSummary] = useState("");
-  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">(() =>
-    readPref<"Campaign Orders" | "Abandoned Carts" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
-      raw === "Campaign Orders" || raw === "Abandoned Carts" || raw === "Daily Ad Spend" ? raw : null
+  const [adTrackingTab, setAdTrackingTab] = useState<"Campaign Orders" | "Daily Ad Spend">(() =>
+    readPref<"Campaign Orders" | "Daily Ad Spend">("protohub.adTracking.tab", "Campaign Orders", (raw) =>
+      raw === "Campaign Orders" || raw === "Daily Ad Spend" ? raw : null
     )
-  );
-  const [adTrackingSearch, setAdTrackingSearch] = useState<string>(() =>
-    readPref<string>("protohub.adTracking.search", "", (raw) => typeof raw === "string" ? raw : null)
   );
   useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
-  useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
   const [campaignPage, setCampaignPage] = useState(1);
-  const [adTrackingCartPage, setAdTrackingCartPage] = useState(1);
-  const [adTrackingCartStatus, setAdTrackingCartStatus] = useState<CartStatus>(() =>
-    readPref<CartStatus>("protohub.adTracking.abandonedCartStatus", "All statuses", (raw) =>
-      cartStatuses.includes(raw as CartStatus) ? (raw as CartStatus) : null
-    )
-  );
-  const [campaignCardLabels, setCampaignCardLabels] = useState<Record<string, string>>({});
-  const [creativeCardLabels, setCreativeCardLabels] = useState<Record<string, string>>({});
-  const [editingAdTrackingLabel, setEditingAdTrackingLabel] = useState<{ kind: "campaign" | "creative"; id: string } | null>(null);
-  const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
-  const [adTrackingLabelSaving, setAdTrackingLabelSaving] = useState(false);
-  const [adTrackingLabelsLoadedScope, setAdTrackingLabelsLoadedScope] = useState<string | null>(null);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
@@ -5139,47 +4081,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
-  const adTrackingLabelScope = authUser?.orgId ?? "default";
-
-  useEffect(() => {
-    setCampaignPage(1);
-    setAdTrackingCartPage(1);
-  }, [adTrackingSearch]);
-  useEffect(() => { writePref("protohub.adTracking.abandonedCartStatus", adTrackingCartStatus); }, [adTrackingCartStatus]);
-  useEffect(() => {
-    setAdTrackingCartPage(1);
-  }, [adTrackingCartStatus]);
-
-  useEffect(() => {
-    const parseLabelMap = (raw: string): Record<string, string> | null => {
-      try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-        const next: Record<string, string> = {};
-        Object.entries(parsed).forEach(([key, value]) => {
-          if (typeof value === "string" && value.trim()) next[key] = value.trim();
-        });
-        return next;
-      } catch {
-        return null;
-      }
-    };
-    setCampaignCardLabels(readPref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
-    setCreativeCardLabels(readPref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, {}, parseLabelMap));
-    setEditingAdTrackingLabel(null);
-    setAdTrackingLabelDraft("");
-    setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
-  }, [adTrackingLabelScope]);
-
-  useEffect(() => {
-    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
-    writePref(`protohub.adTracking.campaignLabels.${adTrackingLabelScope}`, JSON.stringify(campaignCardLabels));
-  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, campaignCardLabels]);
-
-  useEffect(() => {
-    if (adTrackingLabelsLoadedScope !== adTrackingLabelScope) return;
-    writePref(`protohub.adTracking.creativeLabels.${adTrackingLabelScope}`, JSON.stringify(creativeCardLabels));
-  }, [adTrackingLabelScope, adTrackingLabelsLoadedScope, creativeCardLabels]);
 
   // ── Role + access derivation (must come before any data filter that
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
@@ -5238,7 +4139,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedTab, setEmbedTab] = useState<EmbedTab>("Create Order Form");
   const [embedStateField, setEmbedStateField] = useState("Free-text input");
   const [publicOrderAssignmentMode, setPublicOrderAssignmentMode] = useState<"auto_assign" | "manual_review">("auto_assign");
-  const [publicFormMode, setPublicFormMode] = useState<"classic" | "guided_checkout">("classic");
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
   const [showEmailField, setShowEmailField] = useState(false);
@@ -5306,19 +4206,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       if (typeof res?.workingDayEnd === "string" && res.workingDayEnd) {
         setWorkingDayEnd(res.workingDayEnd);
-      }
-      if (res?.adTrackingLabels) {
-        setCampaignCardLabels(
-          res.adTrackingLabels.campaigns && typeof res.adTrackingLabels.campaigns === "object"
-            ? res.adTrackingLabels.campaigns
-            : {}
-        );
-        setCreativeCardLabels(
-          res.adTrackingLabels.creatives && typeof res.adTrackingLabels.creatives === "object"
-            ? res.adTrackingLabels.creatives
-            : {}
-        );
-        setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
       }
       workingScheduleSyncedRef.current = {
         enabled: !!res?.workingScheduleEnabled,
@@ -5432,7 +4319,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (!s) return;
       if (typeof s.stateFieldMode      === "string")  setEmbedStateField(s.stateFieldMode === "dropdown" ? "Dropdown" : "Free-text input");
       if (typeof s.publicOrderAssignmentMode === "string") setPublicOrderAssignmentMode(s.publicOrderAssignmentMode === "manual_review" ? "manual_review" : "auto_assign");
-      if (typeof s.publicFormMode === "string") setPublicFormMode(s.publicFormMode === "guided_checkout" ? "guided_checkout" : "classic");
       if (typeof s.showEmail           === "boolean") setShowEmailField(s.showEmail);
       if (typeof s.showWhatsapp        === "boolean") setShowWhatsappField(s.showWhatsapp);
       if (typeof s.requireWhatsapp     === "boolean") setRequireWhatsapp(s.requireWhatsapp);
@@ -5535,9 +4421,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 
   const loadAgentBalances = async (options: { quiet?: boolean } = {}) => {
-    if (!options.quiet) {
-      setAgentBalanceLoading(true);
-    }
+    setAgentBalanceLoading(true);
     try {
       const result = await weekendStockSummaryApi.weekly({
         weekStart: agentBalanceWeekStart,
@@ -5556,9 +4440,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setAgentBalanceError(message);
       if (!options.quiet) showToast(`Failed to load weekend stock summary: ${message}`);
     } finally {
-      if (!options.quiet) {
-        setAgentBalanceLoading(false);
-      }
+      setAgentBalanceLoading(false);
     }
   };
 
@@ -5606,47 +4488,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  const loadFinanceSummaryData = async (options: { quiet?: boolean } = {}) => {
-    const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
-    if (!bounds) {
-      setFinanceSummaryData(null);
-      setFinanceSummaryError("");
-      return;
-    }
-
-    setFinanceSummaryLoading(true);
-    try {
-      const result = await financeSummaryApi.summary({
-        dateFrom: bounds.dateFrom,
-        dateTo: bounds.dateTo,
-        ...(financeProductFilter.length > 0 ? { productIds: financeProductFilter.join(",") } : {})
-      });
-      const cohortOrders = Array.isArray(result?.cohortOrders)
-        ? result.cohortOrders
-        : (Array.isArray(result?.cohort_orders) ? result.cohort_orders : []);
-      const deliveredOrders = Array.isArray(result?.deliveredOrders)
-        ? result.deliveredOrders
-        : (Array.isArray(result?.delivered_orders) ? result.delivered_orders : []);
-      setFinanceSummaryData({
-        dateFrom: typeof result?.dateFrom === "string" ? result.dateFrom : bounds.dateFrom,
-        dateTo: typeof result?.dateTo === "string" ? result.dateTo : bounds.dateTo,
-        generatedAt: typeof result?.generatedAt === "string"
-          ? result.generatedAt
-          : (typeof result?.generated_at === "string" ? result.generated_at : ""),
-        cohortOrders: cohortOrders.map((row: any) => normalizeTrackedOrder(row)),
-        deliveredOrders: deliveredOrders.map((row: any) => normalizeTrackedOrder(row))
-      });
-      setFinanceSummaryError("");
-    } catch (err: any) {
-      setFinanceSummaryError(err?.message ?? "please retry.");
-      if (!options.quiet) {
-        showToast(`Failed to load finance summary: ${err?.message ?? "please retry"}.`);
-      }
-    } finally {
-      setFinanceSummaryLoading(false);
-    }
-  };
-
   const loadFinanceRemittanceData = async (options: { quiet?: boolean } = {}) => {
     const bounds = periodBoundsForQuery(financePeriod, financeDateRange);
     if (!bounds) {
@@ -5678,70 +4519,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  const runFinanceRemittanceBackfill = async () => {
-    if (!(authUser?.role === "Owner" || authUser?.role === "Admin")) {
-      showToast("Only Owner or Admin can bootstrap remittance history.");
-      return;
-    }
-    const confirmed = window.confirm(
-      "Bootstrap missing remittance history for older orders? This creates estimated receipt-dated cash entries for orders that already have remitted amounts but no remittance ledger rows yet. Protohub will use each order's last updated time as the best available historical receipt date."
-    );
-    if (!confirmed) return;
-
-    setFinanceRemittanceBackfillLoading(true);
-    try {
-      const result = await remittanceTransactionsApi.backfill({ dateMode: "updated_at" });
-      const insertedCount = Math.max(0, Number(result?.insertedCount ?? 0));
-      const skippedExistingCount = Math.max(0, Number(result?.skippedExistingCount ?? 0));
-      const skippedNoDateCount = Math.max(0, Number(result?.skippedNoDateCount ?? 0));
-      const summary =
-        insertedCount > 0
-          ? `Bootstrapped ${insertedCount} historical remittance ${insertedCount === 1 ? "entry" : "entries"} using estimated last-update receipt dates.`
-          : "No missing historical remittance entries were found to backfill.";
-      const detailParts = [
-        skippedExistingCount > 0 ? `${skippedExistingCount} order${skippedExistingCount === 1 ? "" : "s"} already had ledger history` : "",
-        skippedNoDateCount > 0 ? `${skippedNoDateCount} order${skippedNoDateCount === 1 ? "" : "s"} still need manual review` : ""
-      ].filter(Boolean);
-      const detail = detailParts.length > 0 ? ` ${detailParts.join(" · ")}.` : "";
-      setFinanceRemittanceBackfillSummary(summary + detail);
-      showToast(summary + detail);
-      await Promise.all([
-        loadFinanceSummaryData({ quiet: true }),
-        loadFinanceRemittanceData({ quiet: true }),
-        loadWeeklyAccountingData({ quiet: true })
-      ]);
-    } catch (err: any) {
-      const message = err?.message ?? "please retry.";
-      setFinanceRemittanceBackfillSummary(`Backfill failed: ${message}`);
-      showToast(`Failed to bootstrap remittance history: ${message}`);
-    } finally {
-      setFinanceRemittanceBackfillLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (!isWeekendStockSummaryPage(activePage)) return;
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadSummary = async (silent = false) => {
-      if (cancelled) return;
-      await loadAgentBalances({ quiet: silent || agentBalanceRows.length > 0 });
-    };
-
-    void loadSummary();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadSummary(true);
-    }, WEEKEND_STOCK_SUMMARY_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId, agentBalanceRows.length]);
+    void loadAgentBalances({ quiet: agentBalanceRows.length > 0 });
+  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId]);
 
   const loadSmsBalance = async (options: { quiet?: boolean } = {}) => {
     setSmsBalanceLoading(true);
@@ -5874,7 +4656,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       await embedSettingsApi.patch({
         state_field_mode:             embedStateField === "Dropdown" ? "dropdown" : "freetext",
         public_order_assignment_mode: publicOrderAssignmentMode,
-        public_form_mode:             publicFormMode,
         show_email:                   showEmailField,
         show_whatsapp:                showWhatsappField,
         require_whatsapp:             requireWhatsapp,
@@ -5916,25 +4697,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
   const [trackedOrders, setTrackedOrders] = useState<TrackedOrder[]>([]);
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
-  const [selectedCartJourney, setSelectedCartJourney] = useState<CartJourneyEvent[]>([]);
-  const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
-  const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
-  const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
-  const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
-  const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
-  const [liveFormPulse, setLiveFormPulse] = useState<LiveFormPulseResponse | null>(null);
-  const [liveFormPulseLoading, setLiveFormPulseLoading] = useState(false);
-  const [liveFormPulseEmbedFilter, setLiveFormPulseEmbedFilter] = useState("");
-  const [liveFormPulseEmbedOptions, setLiveFormPulseEmbedOptions] = useState<string[]>([]);
-  const [selectedOrderJourney, setSelectedOrderJourney] = useState<CartJourneyEvent[]>([]);
-  const [selectedOrderJourneyLoading, setSelectedOrderJourneyLoading] = useState(false);
-  const [whatsAppTargetPicker, setWhatsAppTargetPicker] = useState<null | {
-    customerName: string;
-    regularUrl: string;
-    businessUrl: string;
-  }>(null);
-  const [repCartJourneyMap, setRepCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
-  const [repCartJourneyLoading, setRepCartJourneyLoading] = useState(false);
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
@@ -6034,7 +4796,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pushLoading, setPushLoading] = useState(false);
   const [pushTestLoading, setPushTestLoading] = useState(false);
   const browserPushSupported = pushPermission !== "unsupported";
-  const nativePushTroubleshootingDisabled = isNativePushShell;
   const pushBackgroundReady =
     browserPushSupported &&
     pushServerConfigured &&
@@ -6324,6 +5085,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repWorkspaceNavSpan, setRepWorkspaceNavSpan] = useState<NavSpan>("1W");
   const [repWorkspaceProductIds, setRepWorkspaceProductIds] = useState<Set<string>>(new Set());
   const [showRepWorkspaceProductFilter, setShowRepWorkspaceProductFilter] = useState(false);
+  const [repBonusCoach, setRepBonusCoach] = useState<RepBonusCoachResponse | null>(null);
+  const [repBonusCoachLoading, setRepBonusCoachLoading] = useState(false);
+  const [repBonusCoachError, setRepBonusCoachError] = useState("");
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   // Notifications filters + per-row expansion
   const [expandedNotificationId, setExpandedNotificationId] = useState<string | null>(null);
@@ -6389,7 +5153,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFollowUpTime, setOrderFollowUpTime] = useState(() => nextTimeValue());
   const [followUpAttemptChannel, setFollowUpAttemptChannel] = useState<OrderContactAttempt["channel"]>("call");
   const [followUpAttemptType, setFollowUpAttemptType] = useState<OrderContactAttempt["attemptType"]>("scheduled_callback");
-  const [followUpRecoveryBucket, setFollowUpRecoveryBucket] = useState<FollowUpRecoveryBucket | "custom" | "">("");
   const [followUpAttemptOutcome, setFollowUpAttemptOutcome] = useState("");
   const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
   const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
@@ -6420,11 +5183,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
   const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
   const [orderScheduleTime, setOrderScheduleTime] = useState(() => nextTimeValue());
-  const [dateEditTarget, setDateEditTarget] = useState<null | { kind: "cart" | "order"; id: string }>(null);
-  const [dateEditDate, setDateEditDate] = useState("");
-  const [dateEditTime, setDateEditTime] = useState(() => nextTimeValue());
-  const [dateEditReason, setDateEditReason] = useState("");
-  const [dateEditSaving, setDateEditSaving] = useState(false);
   const [showRepFollowUpField, setShowRepFollowUpField] = useState(false);
   const [assignStockProductId, setAssignStockProductId] = useState("");
   const [assignStockQty, setAssignStockQty] = useState("1");
@@ -6445,11 +5203,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
-  const [remittanceReason, setRemittanceReason] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
   const [remittanceBatchAmount, setRemittanceBatchAmount] = useState("");
   const [remittanceBatchReceivedDate, setRemittanceBatchReceivedDate] = useState(todayKey());
-  const [remittanceBatchReason, setRemittanceBatchReason] = useState("");
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
@@ -6463,12 +5219,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (financeTab !== "Weekly Accounting") return;
     void loadWeeklyAccountingData({ quiet: !!weeklyAccountingData });
   }, [activePage, financeTab, weeklyAcctSunday, financeProductFilter.join(","), authUser?.id]);
-  useEffect(() => {
-    if (!auth.getAccessToken()) return;
-    if (activePage !== "Finance & Accounting") return;
-    if (financeTab === "Weekly Accounting") return;
-    void loadFinanceSummaryData({ quiet: !!financeSummaryData });
-  }, [activePage, financeTab, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
@@ -6537,27 +5287,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
-  const availablePackageOfferCopyTargets = selectedProduct?.packages.filter((item) =>
-    item.id !== selectedPackageId && !isTemporaryPackageId(item.id)
-  ) ?? [];
-  const selectedPackageOfferSyncSource =
-    packageOfferSyncEnabled && packageOfferSyncSourceProductId === selectedProduct?.id && packageOfferSyncSourcePackageId
-      ? selectedProduct?.packages.find((item) => item.id === packageOfferSyncSourcePackageId)
-      : undefined;
-  const linkedOfferTargetCount =
-    modal === "editPackage" && selectedProduct && selectedPackage
-      ? selectedProduct.packages.filter((item) => {
-          const syncEnabled = ((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled) === true;
-          const syncSourceProductId = (item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null;
-          const syncSourcePackageId = (item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null;
-          return (
-            item.id !== selectedPackage.id &&
-            syncEnabled &&
-            syncSourceProductId === selectedProduct.id &&
-            syncSourcePackageId === selectedPackage.id
-          );
-        }).length
-      : 0;
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
@@ -6565,168 +5294,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
   const selectedOrderLatestAttempt = latestContactAttemptForOrder(selectedOrderContactAttempts);
   const selectedCart = abandonedCarts.find((cart) => cart.id === selectedCartId);
-  const isOwnerOrAdmin = realRole === "Owner" || realRole === "Admin";
-  const isEditingSelectedCartDate = dateEditTarget?.kind === "cart" && dateEditTarget.id === selectedCart?.id;
-  const isEditingSelectedOrderDate = dateEditTarget?.kind === "order" && dateEditTarget.id === selectedOrder?.id;
   const canDeleteAbandonedCarts = (() => {
     const role = auth.getUser()?.role;
     return role === "Owner" || role === "Admin";
   })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
-  const resetDateEditor = () => {
-    setDateEditTarget(null);
-    setDateEditDate("");
-    setDateEditTime(nextTimeValue());
-    setDateEditReason("");
-    setDateEditSaving(false);
-  };
-  const openCartDateEditor = (cart: AbandonedCartRecord) => {
-    const parts = splitMomentForInput(cart.createdAt);
-    setDateEditTarget({ kind: "cart", id: cart.id });
-    setDateEditDate(parts.date || todayKey());
-    setDateEditTime(parts.time || nextTimeValue());
-    setDateEditReason("");
-  };
-  const openOrderDateEditor = (order: TrackedOrder) => {
-    const parts = splitMomentForInput(order.createdAt ?? order.date);
-    setDateEditTarget({ kind: "order", id: order.id });
-    setDateEditDate(parts.date || todayKey());
-    setDateEditTime(parts.time || nextTimeValue());
-    setDateEditReason("");
-  };
-  const sortOrdersByCreatedAtDesc = (rows: TrackedOrder[]) =>
-    rows.slice().sort((left, right) => (orderCreatedTimestamp(right) ?? 0) - (orderCreatedTimestamp(left) ?? 0));
-  const sortCartsByCreatedAtDesc = (rows: AbandonedCartRecord[]) =>
-    rows.slice().sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-  const saveDateEditor = async () => {
-    if (!dateEditTarget) return;
-    const planned = combinePlannedMoment(dateEditDate, dateEditTime);
-    if (!planned.iso) {
-      showToast("Choose a valid date and time first.");
-      return;
-    }
-    const reason = dateEditReason.trim();
-    if (reason.length < 3) {
-      showToast("Give a clear reason before saving the date change.");
-      return;
-    }
-
-    setDateEditSaving(true);
-    try {
-      if (dateEditTarget.kind === "cart") {
-        const updated = normalizeRealtimeCart(await cartsApi.changeDate(dateEditTarget.id, { createdAt: planned.iso, reason }));
-        setAbandonedCarts((value) => sortCartsByCreatedAtDesc(value.map((cart) => cart.id === updated.id ? updated : cart)));
-        showToast(`Cart ${updated.id} date updated.`);
-      } else {
-        const updated = normalizeTrackedOrder(await ordersApi.changeDate(dateEditTarget.id, { createdAt: planned.iso, reason }));
-        setTrackedOrders((value) => sortOrdersByCreatedAtDesc(value.map((order) => order.id === updated.id ? updated : order)));
-        showToast(`Order ${updated.id} date updated.`);
-      }
-      resetDateEditor();
-    } catch (err: any) {
-      showToast(err?.message ?? "Could not update the date right now.");
-    } finally {
-      setDateEditSaving(false);
-    }
-  };
-  useEffect(() => {
-    if (modal !== "cartDetails" || !selectedCart?.id) {
-      setSelectedCartJourney([]);
-      setSelectedCartJourneyLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadJourney = async (silent = false) => {
-      if (!silent) {
-        setSelectedCartJourneyLoading(true);
-      }
-      try {
-        const events = await cartsApi.journey(selectedCart.id);
-        if (cancelled) return;
-        setSelectedCartJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
-      } catch {
-        if (cancelled) return;
-        if (!silent) {
-          setSelectedCartJourney([]);
-        }
-      } finally {
-        if (cancelled || silent) return;
-        setSelectedCartJourneyLoading(false);
-      }
-    };
-
-    void loadJourney();
-    pollingHandle = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void loadJourney(true);
-    }, CART_JOURNEY_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [modal, selectedCart?.id]);
-
-  useEffect(() => {
-    const canViewSubmittedOrderJourney = realRole === "Owner" || realRole === "Admin";
-    if (modal !== "orderDetails" || !selectedOrder?.sourceCartId || !canViewSubmittedOrderJourney) {
-      setSelectedOrderJourney([]);
-      setSelectedOrderJourneyLoading(false);
-      return;
-    }
-
-    const sourceCartId = selectedOrder.sourceCartId;
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadJourney = async (silent = false) => {
-      if (!silent) {
-        setSelectedOrderJourneyLoading(true);
-      }
-      try {
-        const events = await cartsApi.journey(sourceCartId);
-        if (cancelled) return;
-        setSelectedOrderJourney(Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : []);
-      } catch {
-        if (cancelled) return;
-        if (!silent) {
-          setSelectedOrderJourney([]);
-        }
-      } finally {
-        if (cancelled || silent) return;
-        setSelectedOrderJourneyLoading(false);
-      }
-    };
-
-    void loadJourney();
-    pollingHandle = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void loadJourney(true);
-    }, CART_JOURNEY_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [modal, realRole, selectedOrder?.sourceCartId]);
-  const selectedOrderJourneyAnalytics = useMemo(
-    () =>
-      summarizeCartJourneyAnalytics(
-        selectedOrder?.sourceCartId
-          ? {
-              [selectedOrder.sourceCartId]: selectedOrderJourney
-            }
-          : {}
-      ),
-    [selectedOrder?.sourceCartId, selectedOrderJourney]
-  );
-
   useEffect(() => {
     if (!selectedOrderId) {
       return;
@@ -6750,47 +5323,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    const orderId = selectedOrderId;
     let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadFollowUpData = async (silent = false) => {
-      if (!silent) {
-        setOrderFollowUpLoading(true);
-      }
-      try {
-        const [tasks, attempts] = await Promise.all([
-          ordersApi.followUpTasks(orderId),
-          ordersApi.contactAttempts(orderId)
-        ]);
+    setOrderFollowUpLoading(true);
+    Promise.all([
+      ordersApi.followUpTasks(selectedOrderId),
+      ordersApi.contactAttempts(selectedOrderId)
+    ])
+      .then(([tasks, attempts]) => {
         if (cancelled) return;
         setOrderFollowUpTasksByOrder((value) => ({
           ...value,
-          [orderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
+          [selectedOrderId]: (tasks as any[]).map((task) => normalizeFollowUpTask(task))
         }));
         setOrderContactAttemptsByOrder((value) => ({
           ...value,
-          [orderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
+          [selectedOrderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
         }));
-      } catch {
-        if (cancelled || silent) return;
-        setOrderFollowUpTasksByOrder((value) => ({ ...value, [orderId]: [] }));
-        setOrderContactAttemptsByOrder((value) => ({ ...value, [orderId]: [] }));
-      } finally {
-        if (!cancelled && !silent) setOrderFollowUpLoading(false);
-      }
-    };
-
-    void loadFollowUpData();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadFollowUpData(true);
-    }, ORDER_DETAILS_POLL_MS);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOrderFollowUpTasksByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
+        setOrderContactAttemptsByOrder((value) => ({ ...value, [selectedOrderId]: [] }));
+      })
+      .finally(() => {
+        if (!cancelled) setOrderFollowUpLoading(false);
+      });
 
     return () => {
       cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
     };
   }, [selectedOrderId, modal, repOrderDetailId]);
   useEffect(() => {
@@ -7092,36 +5652,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetPackageForm();
   }, [modal]);
   useEffect(() => {
-    if (modal !== "editPackage") return;
-    if (!selectedProduct || !selectedPackage) {
+    if (modal !== "editPackage" || !selectedPackage) {
       return;
     }
-    const hydrationKey = `${selectedProduct.id}:${selectedPackage.id}`;
-    if (packageEditorDraftKeyRef.current === hydrationKey && packageEditorDirtyRef.current) {
-      return;
-    }
-    if (packageEditorHydrationKeyRef.current === hydrationKey) {
-      return;
-    }
-    packageEditorHydrationKeyRef.current = hydrationKey;
-    packageEditorDraftKeyRef.current = hydrationKey;
-    packageEditorDirtyRef.current = false;
     setPackageName(selectedPackage.name);
     setPackageDescription(selectedPackage.description);
     setPackageQuantity(String(selectedPackage.quantity));
     setPackagePrice(String(selectedPackage.price));
     setPackageCurrency(selectedPackage.currency);
     setPackageDisplayOrder(String(selectedPackage.displayOrder));
-    setPackageComponents((selectedPackage.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((selectedPackage.companionProducts ?? []).map(normalisePackageCompanion));
-    setShowPackageOfferCopyPanel(false);
-    setPackageOfferCopyTargetIds([]);
-    setPackageOfferCopyBusy(false);
-    setPackageOfferCopyKeepSynced(false);
-    setPackageOfferSyncEnabled(Boolean((selectedPackage as any).offerSyncEnabled ?? (selectedPackage as any).offer_sync_enabled));
-    setPackageOfferSyncSourceProductId((selectedPackage as any).offerSyncSourceProductId ?? (selectedPackage as any).offer_sync_source_product_id ?? null);
-    setPackageOfferSyncSourcePackageId((selectedPackage as any).offerSyncSourcePackageId ?? (selectedPackage as any).offer_sync_source_package_id ?? null);
-  }, [modal, selectedProduct, selectedPackage]);
+  }, [modal, selectedPackage]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
       return;
@@ -7191,14 +5732,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
   const previewPackages = previewProduct ? persistedActiveProductPackages(previewProduct) : [];
-  const publicEmbedParams = useMemo(
-    () => (
-      hashRoute.startsWith("#/order-form/embed")
-        ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
-        : null
-    ),
-    [hashRoute]
-  );
+  const publicEmbedParams = hashRoute.startsWith("#/order-form/embed")
+    ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
+    : null;
   const publicProductId = publicEmbedParams?.get("product") ?? "";
   // Clamp the currency param to the allowed enum so a hostile URL can't smuggle
   // an arbitrary string into the order record.
@@ -7210,7 +5746,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicUtmMedium   = (publicEmbedParams?.get("utm_medium")   ?? "").slice(0, 100);
   const publicUtmContent  = (publicEmbedParams?.get("utm_content")  ?? "").slice(0, 100);
   const publicUtmTerm     = (publicEmbedParams?.get("utm_term")     ?? "").slice(0, 100);
-  const publicEmbedIsPreview = publicEmbedParams?.get("preview") === "1";
   // Only http(s) redirect targets are honored — defends against `javascript:` /
   // `data:` smuggling that would execute in the parent window after submit.
   const rawPublicRedirect = publicEmbedParams?.get("redirect_url") ?? "";
@@ -7225,20 +5760,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [publicOrderSubmitted, setPublicOrderSubmitted] = useState<{ orderId: string; customer: string } | null>(null);
   const [showPublicEmbedLoading, setShowPublicEmbedLoading] = useState(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
-  const publicProduct = useMemo(
-    () => products.find((product) => product.id === publicProductId),
-    [products, publicProductId]
-  );
-  const publicPackages = useMemo(
-    () => (publicProduct ? activeProductPackages(publicProduct) : []),
-    [publicProduct]
-  );
+  const publicProduct = products.find((product) => product.id === publicProductId);
+  const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
 const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
-  useEffect(() => {
-    if (publicEmbedIsPreview) {
-      setAbandonedDraftCartId("");
-    }
-  }, [publicEmbedIsPreview, publicProductId]);
   useEffect(() => {
     if (!publicEmbedParams || !dataLoading || publicProduct) {
       setShowPublicEmbedLoading(false);
@@ -7327,72 +5851,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     );
     return matchesProduct && matchesType && matchesAgent && matchesStart && matchesEnd && matchesDrill;
   });
-  const inventoryStateHubRows = agents.flatMap((agent) =>
-    agentLocationRows(agent).map((location) => ({
-      agentId: agent.id,
-      agentName: agent.name,
-      location
-    }))
-  );
-  const stateStockStateOptions = Array.from(
-    new Set(
-      inventoryStateHubRows
-        .map((row) => normalizeAgentState(row.location.state))
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
-  const stateStockSearchTerm = stateStockSearch.trim().toLowerCase();
-  const inventoryStateStockGroups = catalogProducts
-    .filter((product) => !stateStockProductId || product.id === stateStockProductId)
-    .map((product) => {
-      const productMatchesSearch = !stateStockSearchTerm
-        || `${product.name} ${product.sku}`.toLowerCase().includes(stateStockSearchTerm);
-      const rows = stateStockStateOptions
-        .map((state) => {
-          const stateHubs = inventoryStateHubRows.filter(
-            (row) => normalizeAgentState(row.location.state) === state
-          );
-          const quantity = stateHubs.reduce(
-            (sum, row) => sum + Number(row.location.stock.find((stock) => stock.productId === product.id)?.quantity ?? 0),
-            0
-          );
-          return {
-            state,
-            quantity,
-            hubCount: stateHubs.length,
-            status: stateStockStatusMeta(quantity)
-          };
-        })
-        .filter((row) => {
-          if (stateStockStateFilter && row.state !== stateStockStateFilter) {
-            return false;
-          }
-          if (!stateStockSearchTerm) {
-            return true;
-          }
-          return productMatchesSearch || row.state.toLowerCase().includes(stateStockSearchTerm);
-        })
-        .sort((a, b) => b.quantity - a.quantity || a.state.localeCompare(b.state));
-
-      if (rows.length === 0) {
-        return null;
-      }
-
-      return {
-        product,
-        rows,
-        totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
-        stockedStates: rows.filter((row) => row.quantity > 0).length,
-        noStockStates: rows.filter((row) => row.quantity <= 0).length
-      };
-    })
-    .filter((group): group is NonNullable<typeof group> => group !== null);
-  const visibleStateStockCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.stockedStates, 0);
-  const visibleStateNoStockCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.noStockStates, 0);
-  const visibleStateRowCount = inventoryStateStockGroups.reduce((sum, group) => sum + group.rows.length, 0);
-  const visibleStateOptionCount = new Set(
-    inventoryStateStockGroups.flatMap((group) => group.rows.map((row) => row.state))
-  ).size;
 
   const formatMoney = (amount: number) =>
     new Intl.NumberFormat(selectedCurrency.locale, {
@@ -7430,12 +5888,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
   ];
 
-  const buildEmbedUrl = (
-    product: Product | undefined = generatedProduct,
-    currencyOverride?: ProductCurrencyCode,
-    redirectOverride?: string,
-    previewMode = false
-  ) => {
+  const buildEmbedUrl = (product: Product | undefined = generatedProduct, currencyOverride?: ProductCurrencyCode, redirectOverride?: string) => {
     if (!product) {
       return "";
     }
@@ -7447,9 +5900,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
-    }
-    if (previewMode) {
-      params.set("preview", "1");
     }
 
     return `${window.location.origin}${window.location.pathname}#/order-form/embed?${params.toString()}`;
@@ -7587,312 +6037,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         return "Not set";
     }
   };
-  function quantityForOrder(order: TrackedOrder) {
+  const quantityForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
     const packageRecord = product?.packages.find((item) => item.id === order.packageId);
     return order.quantity ?? packageRecord?.quantity ?? 1;
-  }
-  const quantityForOfferLine = (line: CrossSellLine) => {
-    const selectedBundles = Math.max(1, Number(line.quantity ?? 1) || 1);
-    const bundleUnits = Math.max(0, Number(line.packageQuantity ?? 0) || 0);
-    return bundleUnits > 1 ? selectedBundles * bundleUnits : selectedBundles;
-  };
-  const quantityLabelForOfferLine = (line: CrossSellLine) => {
-    const selectedBundles = Math.max(1, Number(line.quantity ?? 1) || 1);
-    const bundleUnits = Math.max(0, Number(line.packageQuantity ?? 0) || 0);
-    if (bundleUnits > 1) {
-      const totalUnits = selectedBundles * bundleUnits;
-      return `${totalUnits}pc${totalUnits === 1 ? "" : "s"}`;
-    }
-    if (line.packageName && /\bset\b/i.test(line.packageName)) {
-      return `${selectedBundles} set${selectedBundles === 1 ? "" : "s"}`;
-    }
-    return `${selectedBundles}pc${selectedBundles === 1 ? "" : "s"}`;
-  };
-  const preferredPackageLineForOrder = (order: TrackedOrder) => {
-    const qty = Math.max(1, quantityForOrder(order));
-    const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
-    const packageName = (order.packageName ?? "").trim();
-    const productName = (order.productName ?? "").trim();
-    if (packageName) {
-      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
-        return `${qtyLabel} Of ${packageName}`;
-      }
-      return `${qtyLabel} Of ${packageName} of ${productName}`;
-    }
-    return `${qtyLabel} Of ${productName}`;
-  };
-  const preferredPackageLineForAdditionalItem = (line: CrossSellLine) => {
-    const qtyLabel = quantityLabelForOfferLine(line);
-    const packageName = (line.packageName ?? "").trim();
-    const productName = (line.productName ?? "").trim();
-    if (packageName) {
-      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
-        return `${qtyLabel} Of ${packageName}`;
-      }
-      return `${qtyLabel} Of ${packageName} of ${productName}`;
-    }
-    return `${qtyLabel} Of ${productName}`;
-  };
-  const fullDeliveryLabelForOrder = (order: TrackedOrder) => {
-    const parts = [order.address, order.city, order.state]
-      .map((value) => (value ?? "").trim())
-      .filter(Boolean);
-    return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
-  };
-  type CapturedCartOfferLine = {
-    name: string;
-    detail?: string;
-    qty: number;
-    total: number;
-  };
-  type JourneyDerivedCartSelection = {
-    productId: string;
-    packageId?: string;
-    quantity: number;
-    productName?: string;
-  };
-  const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
-    const payload = cart.capturePayload;
-    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
-  };
-  const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
-    const next: AbandonedCartAttribution = {};
-    const assign = (key: keyof AbandonedCartAttribution, value: unknown) => {
-      if (next[key]) return;
-      if (typeof value === "string" && value.trim()) {
-        next[key] = value.trim();
-      }
-    };
-    for (const event of [...journeyEvents].reverse()) {
-      const metadata = event.metadata ?? {};
-      assign("utmSource", metadata.utmSource);
-      assign("utmCampaign", metadata.utmCampaign);
-      assign("utmMedium", metadata.utmMedium);
-      assign("utmContent", metadata.utmContent);
-      assign("utmTerm", metadata.utmTerm);
-      assign("referrer", metadata.referrer);
-    }
-    return next;
-  };
-  const cartAttributionFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
-    const payload = cartCapturePayloadFor(cart);
-    const read = (key: keyof AbandonedCartAttribution) => {
-      const value = payload?.[key];
-      return typeof value === "string" && value.trim() ? value.trim() : undefined;
-    };
-    const journeyAttribution = cartJourneyAttributionFor(journeyEvents);
-    return {
-      utmSource: read("utmSource") ?? journeyAttribution.utmSource,
-      utmCampaign: read("utmCampaign") ?? journeyAttribution.utmCampaign,
-      utmMedium: read("utmMedium") ?? journeyAttribution.utmMedium,
-      utmContent: read("utmContent") ?? journeyAttribution.utmContent,
-      utmTerm: read("utmTerm") ?? journeyAttribution.utmTerm,
-      referrer: read("referrer") ?? journeyAttribution.referrer
-    };
-  };
-  const cartAttributionSourceFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmSource?.trim() || "";
-  const cartAttributionCampaignFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmCampaign?.trim() || "Unlabelled";
-  const cartAttributionCreativeFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => cartAttributionFor(cart, journeyEvents).utmContent?.trim() || "";
-  const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
-    const attribution = cartAttributionFor(cart, journeyEvents);
-    return Boolean(
-      (attribution.utmSource && attribution.utmSource.toLowerCase() !== "direct")
-      || attribution.utmCampaign
-      || attribution.utmContent
-    );
-  };
-  const capturedOfferLinesFrom = (raw: unknown): CapturedCartOfferLine[] => {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") return null;
-        const line = entry as Record<string, unknown>;
-        const name = String(line.name ?? line.productName ?? "").trim();
-        if (!name) return null;
-        const detailSource = typeof line.detail === "string"
-          ? line.detail
-          : typeof line.packageName === "string"
-            ? line.packageName
-            : "";
-        const detail = detailSource.trim() || undefined;
-        const qtyValue = Math.floor(Number(line.qty ?? line.quantity ?? 1) || 1);
-        const totalValue = Number(line.total ?? line.amount ?? 0) || 0;
-        return {
-          name,
-          detail,
-          qty: Math.max(1, qtyValue),
-          total: Math.max(0, totalValue)
-        };
-      })
-      .filter(Boolean) as CapturedCartOfferLine[];
-  };
-  const additionalPackageSelectionsFromJourney = (events: CartJourneyEvent[]): JourneyDerivedCartSelection[] => {
-    const selections = new Map<string, JourneyDerivedCartSelection>();
-    events.forEach((event) => {
-      const key = `${event.companionProductId ?? ""}:${event.companionPackageId ?? ""}`;
-      if (!key || key === ":") return;
-      if (event.eventType === "additional_item_removed") {
-        selections.delete(key);
-        return;
-      }
-      if (event.eventType !== "additional_item_added") {
-        return;
-      }
-      const quantity = Math.max(1, Math.floor(Number(event.metadata?.quantity ?? 1) || 1));
-      selections.set(key, {
-        productId: event.companionProductId ?? "",
-        packageId: event.companionPackageId ?? undefined,
-        quantity,
-        productName: typeof event.metadata?.productName === "string" ? event.metadata.productName : undefined
-      });
-    });
-    return Array.from(selections.values()).filter((entry) => entry.productId);
-  };
-  const additionalPackageLinesFromJourney = (
-    cart: AbandonedCartRecord,
-    events: CartJourneyEvent[]
-  ): CapturedCartOfferLine[] => {
-    if (!events.length) return [];
-    const mainProduct = products.find((item) => item.id === cart.productId);
-    const mainPackage = mainProduct?.packages.find((item) => item.id === cart.packageId);
-    return additionalPackageSelectionsFromJourney(events)
-      .map((selection) => {
-        const product = products.find((item) => item.id === selection.productId);
-        if (!product && !selection.productName) return null;
-        const targetPackage = selection.packageId
-          ? product?.packages.find((item) => item.id === selection.packageId)
-          : undefined;
-        const companion = (mainPackage?.companionProducts ?? []).find((entry) =>
-          entry.productId === selection.productId
-          && ((selection.packageId ?? "") ? (entry.packageId ?? "") === (selection.packageId ?? "") : true)
-        );
-        if (companion && product) {
-          const standard = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-          const unit = companion.pricingMode === "free"
-            ? 0
-            : companion.pricingMode === "fixed"
-              ? Number(companion.fixedPrice ?? 0)
-              : standard;
-          const qty = Math.max(1, Number(companion.quantity) || selection.quantity || 1);
-          return {
-            name: targetPackage ? `${product.name} · ${targetPackage.name}` : product.name,
-            detail: targetPackage?.description?.trim()
-              ? targetPackage.description.trim()
-              : targetPackage
-                ? `${qty} ${qty === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`
-                : `${qty} ${qty === 1 ? "pc" : "pcs"} in this add-on`,
-            qty,
-            total: Math.max(0, companion.pricingMode === "fixed" ? unit : unit * qty)
-          };
-        }
-        const fallbackQty = Math.max(1, selection.quantity || 1);
-        const unit = mainProduct && product
-          ? crossSellPriceFor(mainProduct, product)
-          : (product ? primaryPricing(product)?.sellingPrice ?? 0 : 0);
-        return {
-          name: selection.productName || product?.name || "Additional item",
-          detail: `${fallbackQty} ${fallbackQty === 1 ? "pc" : "pcs"} in this additional item`,
-          qty: fallbackQty,
-          total: Math.max(0, unit * fallbackQty)
-        };
-      })
-      .filter(Boolean) as CapturedCartOfferLine[];
-  };
-  const additionalPackageLinesForCart = (
-    cart: AbandonedCartRecord,
-    journeyEvents: CartJourneyEvent[] = []
-  ): CapturedCartOfferLine[] => {
-    const payload = cartCapturePayloadFor(cart);
-    const payloadLines = payload ? [
-      ...capturedOfferLinesFrom(payload.selectedCrossSellLines),
-      ...capturedOfferLinesFrom(payload.autoCompanionLines)
-    ] : [];
-    if (payloadLines.length > 0) return payloadLines;
-    return additionalPackageLinesFromJourney(cart, journeyEvents);
-  };
-  const packageQuantityForCart = (cart: AbandonedCartRecord) => {
-    const payload = cartCapturePayloadFor(cart);
-    const payloadQty = Math.floor(Number(payload?.packageQuantity ?? 0) || 0);
-    if (payloadQty > 0) return payloadQty;
-    const product = products.find((item) => item.id === cart.productId);
-    const packageRecord = product?.packages.find((item) => item.id === cart.packageId);
-    return Math.max(1, Number(packageRecord?.quantity ?? 1) || 1);
-  };
-  const preferredPackageLineForCart = (cart: AbandonedCartRecord) => {
-    const qty = packageQuantityForCart(cart);
-    const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
-    const packageName = (cart.packageName ?? "").trim();
-    const productName = (cart.productName ?? "").trim();
-    if (packageName) {
-      if (packageName.toLowerCase().includes(productName.toLowerCase())) {
-        return `${qtyLabel} Of ${packageName}`;
-      }
-      return `${qtyLabel} Of ${packageName} of ${productName}`;
-    }
-    return `${qtyLabel} Of ${productName}`;
-  };
-  const preferredPackageLineForCapturedCartOffer = (line: CapturedCartOfferLine) => {
-    const qtyLabel = `${line.qty}pc${line.qty === 1 ? "" : "s"}`;
-    const cleanedName = line.name.replace(/\s*\(bundled\)\s*$/i, "").trim();
-    return `${qtyLabel} Of ${cleanedName}${line.detail ? ` (${line.detail})` : ""}`;
-  };
-  const fullDeliveryLabelForCart = (cart: AbandonedCartRecord) => {
-    const parts = [cart.address, cart.city, cart.state]
-      .map((value) => (value ?? "").trim())
-      .filter(Boolean);
-    return parts.length > 0 ? parts.join(", ") : "No delivery address provided";
-  };
-  const formatCartForWhatsAppDispatch = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
-    const extraPricedPackages = additionalPackageLinesForCart(cart, journeyEvents);
-    const extraPricedTotal = extraPricedPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
-    const mainOfferTotal = Math.max(0, (cart.amount || 0) - extraPricedTotal);
-    const hasMultiplePricedPackages = extraPricedPackages.length > 0;
-    const lines = [
-      `Full Name:  ${cart.customer || "—"}`,
-      `Active Phone Number:  ${cart.phone || "—"}`,
-      `Whatsapp Number:  ${cart.whatsapp || cart.phone || "—"}`,
-      `State: ${cart.state || "—"}`,
-      `City:  ${cart.city || "—"}`,
-      `Full Delivery: ${fullDeliveryLabelForCart(cart)}`,
-      hasMultiplePricedPackages
-        ? `Preferred Package 1: ${preferredPackageLineForCart(cart)} = ${formatProductMoney(mainOfferTotal, cart.currency)}`
-        : `Preferred Package: ${preferredPackageLineForCart(cart)} = ${formatProductMoney(mainOfferTotal, cart.currency)}`
-    ];
-    extraPricedPackages.forEach((line, index) => {
-      lines.push(`Preferred Package ${index + 2}: ${preferredPackageLineForCapturedCartOffer(line)} = ${formatProductMoney(line.total, cart.currency)}`);
-    });
-    if (hasMultiplePricedPackages) {
-      lines.push(`Total = ${formatProductMoney(cart.amount, cart.currency)}`);
-    }
-    return lines.join("\n\n");
-  };
-  const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
-    const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
-    const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
-    const extraPricedPackages = order.crossSellLines ?? [];
-    const hasMultiplePricedPackages = extraPricedPackages.length > 0;
-    const lines = [
-      `Full Name:  ${order.customer || "—"}`,
-      `Active Phone Number:  ${order.phone || "—"}`,
-      `Whatsapp Number:  ${order.whatsapp || order.phone || "—"}`,
-      `State: ${order.state || "—"}`,
-      `City:  ${order.city || "—"}`,
-      `Full Delivery: ${fullDeliveryLabelForOrder(order)}`,
-      hasMultiplePricedPackages
-        ? `Preferred Package 1: ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
-        : `Preferred Package: ${preferredPackageLineForOrder(order)} = ${formatProductMoney(mainOfferTotal, order.currency)}`
-    ];
-    extraPricedPackages.forEach((line, index) => {
-      lines.push(`Preferred Package ${index + 2}: ${preferredPackageLineForAdditionalItem(line)} = ${formatProductMoney(line.amount, order.currency)}`);
-    });
-    (order.freeGiftLines ?? []).forEach((line, index) => {
-      lines.push(`Free Gift ${index + 1}: ${line.quantity}pc${line.quantity === 1 ? "" : "s"} of ${line.productName}`);
-    });
-    if (hasMultiplePricedPackages) {
-      lines.push(`Total = ${formatProductMoney(order.amount, order.currency)}`);
-    }
-    return lines.join("\n\n");
   };
   const costForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
@@ -7984,275 +6132,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ...row,
     orderCount: row.orders.length
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
-  const campaignCardLabelFor = (id: string) => campaignCardLabels[id]?.trim() || "";
-  const creativeCardLabelFor = (id: string) => creativeCardLabels[id]?.trim() || "";
-  const adTrackingSearchNeedle = adTrackingSearch.trim().toLowerCase();
-  const matchesAdTrackingSearch = (...parts: Array<string | undefined | null>) => {
-    if (!adTrackingSearchNeedle) return true;
-    return parts.some((part) => typeof part === "string" && part.toLowerCase().includes(adTrackingSearchNeedle));
-  };
-  const filteredCampaignGroupedRows = campaignGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(
-      row.id,
-      campaignCardLabelFor(row.id),
-      row.topSource,
-      ...row.orders.map((order) => order.utmSource ?? "")
-    )
-  );
-  const filteredCreativeGroupedRows = creativeGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(
-      row.id,
-      creativeCardLabelFor(row.id),
-      row.campaignId,
-      campaignCardLabelFor(row.campaignId),
-      ...row.orders.map((order) => order.utmSource ?? "")
-    )
-  );
-  const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) => {
-    const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-    const creativeId = order.utmContent?.trim() || "";
-    return matchesAdTrackingSearch(
-      order.id,
-      order.customer,
-      order.phone,
-      order.productName,
-      order.utmCampaign,
-      order.utmSource,
-      order.utmMedium,
-      order.utmContent,
-      campaignCardLabelFor(campaignId),
-      creativeId ? creativeCardLabelFor(creativeId) : ""
-    );
-  });
-  const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
-    if (order.sourceCartId && !map.has(order.sourceCartId)) {
-      map.set(order.sourceCartId, order);
-    }
-    return map;
-  }, new Map<string, TrackedOrder>());
-  const campaignBaseCarts = abandonedCarts
-    .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
-    .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
-  const adTrackingJourneyCartIds = useMemo(
-    () => Array.from(new Set(campaignBaseCarts.map((cart) => cart.id).filter(Boolean))),
-    [campaignBaseCarts]
-  );
-  const adTrackingJourneyCartIdsKey = adTrackingJourneyCartIds.join("|");
-  const filteredCampaignBaseCarts = campaignBaseCarts
-    .map((cart) => ({
-      cart,
-      journeyEvents: adTrackingCartJourneyMap[cart.id] ?? [],
-      attribution: cartAttributionFor(cart, adTrackingCartJourneyMap[cart.id] ?? []),
-      linkedOrder: adTrackingLinkedOrderBySourceCartId.get(cart.id)
-    }))
-    .filter(({ cart }) => adTrackingCartStatus === "All statuses" || cart.status === adTrackingCartStatus)
-    .filter(({ cart, journeyEvents }) => cartHasAdAttribution(cart, journeyEvents));
-  const cartCampaignGroupedRows = Object.values(
-    filteredCampaignBaseCarts.reduce<Record<string, {
-      id: string;
-      carts: typeof filteredCampaignBaseCarts;
-      recoveredCount: number;
-      deliveredCount: number;
-      value: number;
-      topSource: string;
-    }>>((acc, row) => {
-      const key = row.attribution.utmCampaign?.trim() || "Unlabelled";
-      const bucket = acc[key] ?? {
-        id: key,
-        carts: [],
-        recoveredCount: 0,
-        deliveredCount: 0,
-        value: 0,
-        topSource: ""
-      };
-      bucket.carts.push(row);
-      bucket.value += row.cart.amount;
-      if (row.linkedOrder) {
-        bucket.recoveredCount += 1;
-        if ((row.linkedOrder.status ?? "New") === "Delivered") {
-          bucket.deliveredCount += 1;
-        }
-      }
-      acc[key] = bucket;
-      return acc;
-    }, {})
-  ).map((row) => {
-    const sourceCounts: Record<string, number> = {};
-    row.carts.forEach(({ attribution }) => {
-      const src = attribution.utmSource?.trim() || "unknown";
-      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-    });
-    return {
-      ...row,
-      cartCount: row.carts.length,
-      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
-    };
-  }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
-  const cartCreativeGroupedRows = Object.values(
-    filteredCampaignBaseCarts
-      .filter(({ attribution }) => attribution.utmContent?.trim())
-      .reduce<Record<string, {
-        id: string;
-        campaignId: string;
-        carts: typeof filteredCampaignBaseCarts;
-        recoveredCount: number;
-        deliveredCount: number;
-        value: number;
-      }>>((acc, row) => {
-        const key = row.attribution.utmContent!.trim();
-        const bucket = acc[key] ?? {
-          id: key,
-          campaignId: row.attribution.utmCampaign?.trim() || "Unlabelled",
-          carts: [],
-          recoveredCount: 0,
-          deliveredCount: 0,
-          value: 0
-        };
-        bucket.carts.push(row);
-        bucket.value += row.cart.amount;
-        if (row.linkedOrder) {
-          bucket.recoveredCount += 1;
-          if ((row.linkedOrder.status ?? "New") === "Delivered") {
-            bucket.deliveredCount += 1;
-          }
-        }
-        acc[key] = bucket;
-        return acc;
-      }, {})
-  ).map((row) => ({
-    ...row,
-    cartCount: row.carts.length
-  })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
-  const filteredCartCampaignGroupedRows = cartCampaignGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(
-      row.id,
-      campaignCardLabelFor(row.id),
-      row.topSource,
-      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
-    )
-  );
-  const filteredCartCreativeGroupedRows = cartCreativeGroupedRows.filter((row) =>
-    matchesAdTrackingSearch(
-      row.id,
-      creativeCardLabelFor(row.id),
-      row.campaignId,
-      campaignCardLabelFor(row.campaignId),
-      ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
-    )
-  );
-  const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) => {
-    const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-    const creativeId = attribution.utmContent?.trim() || "";
-    return matchesAdTrackingSearch(
-      cart.id,
-      cart.customer,
-      cart.phone,
-      cart.productName,
-      cart.status,
-      attribution.utmCampaign,
-      attribution.utmSource,
-      attribution.utmMedium,
-      attribution.utmContent,
-      campaignCardLabelFor(campaignId),
-      creativeId ? creativeCardLabelFor(creativeId) : "",
-      linkedOrder?.customer ?? "",
-      linkedOrder?.id ?? ""
-    );
-  });
-  useEffect(() => {
-    if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
-      setAdTrackingCartJourneyLoading(false);
-      return;
-    }
-    if (adTrackingJourneyCartIds.length === 0) {
-      setAdTrackingCartJourneyMap({});
-      setAdTrackingCartJourneyLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadJourneys = async (silent = false) => {
-      if (!silent) {
-        setAdTrackingCartJourneyLoading(true);
-      }
-      try {
-        const grouped = await cartsApi.journeyBulk(adTrackingJourneyCartIds);
-        if (cancelled) return;
-        const normalized: Record<string, CartJourneyEvent[]> = {};
-        for (const [cartId, events] of Object.entries(grouped ?? {})) {
-          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
-        }
-        setAdTrackingCartJourneyMap(normalized);
-      } catch {
-        if (cancelled) return;
-        if (!silent) {
-          setAdTrackingCartJourneyMap({});
-        }
-      } finally {
-        if (cancelled || silent) return;
-        setAdTrackingCartJourneyLoading(false);
-      }
-    };
-
-    void loadJourneys();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadJourneys(true);
-    }, CART_JOURNEY_ANALYTICS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [activePage, adTrackingJourneyCartIdsKey, adTrackingTab]);
-  const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
-    setEditingAdTrackingLabel({ kind, id });
-    setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
-  };
-  const cancelAdTrackingLabelEdit = () => {
-    setEditingAdTrackingLabel(null);
-    setAdTrackingLabelDraft("");
-  };
-  const saveAdTrackingLabelEdit = async () => {
-    if (!editingAdTrackingLabel) return;
-    const trimmed = adTrackingLabelDraft.trim().slice(0, 80);
-    const nextCampaignLabels = { ...campaignCardLabels };
-    const nextCreativeLabels = { ...creativeCardLabels };
-    if (editingAdTrackingLabel.kind === "campaign") {
-      if (trimmed) nextCampaignLabels[editingAdTrackingLabel.id] = trimmed;
-      else delete nextCampaignLabels[editingAdTrackingLabel.id];
-    } else {
-      if (trimmed) nextCreativeLabels[editingAdTrackingLabel.id] = trimmed;
-      else delete nextCreativeLabels[editingAdTrackingLabel.id];
-    }
-    setAdTrackingLabelSaving(true);
-    try {
-      const saved = await authApi.saveAdTrackingLabels({
-        campaigns: nextCampaignLabels,
-        creatives: nextCreativeLabels
-      });
-      setCampaignCardLabels(saved?.campaigns && typeof saved.campaigns === "object" ? saved.campaigns : nextCampaignLabels);
-      setCreativeCardLabels(saved?.creatives && typeof saved.creatives === "object" ? saved.creatives : nextCreativeLabels);
-      showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
-      setEditingAdTrackingLabel(null);
-      setAdTrackingLabelDraft("");
-    } catch (err: any) {
-      setCampaignCardLabels(nextCampaignLabels);
-      setCreativeCardLabels(nextCreativeLabels);
-      setEditingAdTrackingLabel(null);
-      setAdTrackingLabelDraft("");
-      if ((err?.message ?? "").toLowerCase().includes("migration 076")) {
-        showToast("Shared labels are not active in the database yet. Saved on this device for now.");
-      } else {
-        showToast(`Could not sync this ${editingAdTrackingLabel.kind} label right now. Saved on this device for now.`);
-      }
-    } finally {
-      setAdTrackingLabelSaving(false);
-    }
-  };
 
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
@@ -8285,134 +6164,43 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const activeProds = catalogProducts.filter((p) => p.active);
     const prevExpenses = expenses;
     try {
-      const entries: Array<{
-        id: string;
-        date: string;
-        productId: string;
-        description: string;
-        amount: number;
-        currency: CurrencyCode;
-      }> = [];
-
       for (const product of activeProds) {
         const productCurrency = (["NGN", "USD", "GBP"].includes(product.pricings?.[0]?.currency) ? product.pricings[0].currency : "NGN") as CurrencyCode;
         for (const day of adSpendWeekDays) {
           const key = `${product.id}-${day}`;
           const draftVal = parseFloat(adSpendDraft[key] ?? "") || 0;
+          const toDelete = expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === product.id && normalizeDateKey(e.date) === day);
+          for (const e of toDelete) {
+            await expensesApi.delete(e.id);
+            setExpenses((prev) => prev.filter((x) => x.id !== e.id));
+          }
           if (draftVal > 0) {
-            entries.push({
-              id: `adspend-${product.id}-${day}`,
-              date: day,
-              productId: product.id,
-              description: `Ad spend – ${product.name} – ${day}`,
-              amount: draftVal,
-              currency: productCurrency
+            const newExp: ExpenseRecord = {
+              id: `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              type: "Ad Spend", amount: draftVal, currency: productCurrency, date: day,
+              productId: product.id, productName: product.name,
+              description: `Ad spend – ${product.name} – ${day}`
+            };
+            await expensesApi.create({
+              id: newExp.id, date: newExp.date, category: "Ad Spend",
+              description: newExp.description, amount: newExp.amount, currency: newExp.currency,
+              productId: product.id
             });
+            setExpenses((prev) => [...prev, newExp]);
           }
         }
       }
-
-      const batchResult = await expensesApi.saveAdSpendBatch({
-        weekStart: adSpendWeekDays[0],
-        weekEnd: adSpendWeekDays[adSpendWeekDays.length - 1],
-        scopeProductIds: activeProds.map((product) => product.id),
-        entries
-      });
-
-      try {
-        const freshExpenses = await expensesApi.list();
-        setExpenses((freshExpenses as any[]).map((expense: any) => normalizeExpenseRecord(expense)));
-      } catch {
-        // Keep the optimistic state if the follow-up refresh fails.
-      }
-      void loadWeeklyAccountingData({ quiet: true });
-      const savedEntries = Number(batchResult?.savedCount ?? entries.length ?? 0);
-      const savedTotal = Number(batchResult?.totalAmount ?? entries.reduce((sum, entry) => sum + entry.amount, 0));
-      showToast(`Ad spend saved. ${savedEntries} entr${savedEntries === 1 ? "y" : "ies"} synced (${formatMoney(savedTotal)}).`);
-    } catch (err: any) {
+      showToast("Ad spend saved.");
+    } catch {
       setExpenses(prevExpenses);
-      showToast(`Save failed — ${err?.message ?? "changes rolled back. Check connection."}`);
+      showToast("Save failed — changes rolled back. Check connection.");
     }
     setAdSpendSaving(false);
-  };
-
-  const weekStartSundayForDateKey = (value?: string | null) => {
-    const key = normalizeDateKey(value ?? "");
-    if (!key) return null;
-    const d = new Date(`${key}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return null;
-    d.setDate(d.getDate() - d.getDay());
-    return formatDateKey(d);
-  };
-  const repWeeklyBonusStats = useMemo(() => {
-    const map = new Map<string, { placed: number; delivered: number }>();
-    trackedOrders.forEach((order) => {
-      const createdKey = orderCreatedKey(order);
-      const weekKey = weekStartSundayForDateKey(createdKey);
-      if (!weekKey) return;
-      const key = `${order.assignedRepId ?? "__none__"}::${weekKey}`;
-      const current = map.get(key) ?? { placed: 0, delivered: 0 };
-      current.placed += 1;
-      if ((order.status ?? "New") === "Delivered") current.delivered += 1;
-      map.set(key, current);
-    });
-    return map;
-  }, [trackedOrders]);
-  const repWeeklyBonusContextForOrder = (order: TrackedOrder) => {
-    const weekKey = weekStartSundayForDateKey(orderCreatedKey(order));
-    const stats = weekKey ? repWeeklyBonusStats.get(`${order.assignedRepId ?? "__none__"}::${weekKey}`) : undefined;
-    if (!stats || stats.placed === 0) {
-      return { rate: 100, count: 0 };
-    }
-    return {
-      rate: Math.round((stats.delivered / stats.placed) * 100),
-      count: stats.placed
-    };
-  };
-  const recognizedBonusTotalForRows = (rows: TrackedOrder[]) =>
-    rows.reduce((sum, order) => {
-      const stats = repWeeklyBonusContextForOrder(order);
-      return sum + (computeOrderBonus(order, stats.rate, 0, stats.count).total ?? 0);
-    }, 0);
-  const summarizeRecognizedProfit = (deliveredRows: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
-    const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
-    const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
-    const recordedDeliveryExpense = periodExpenses
-      .filter((expense) => expense.type === "Delivery")
-      .reduce((sum, expense) => sum + expense.amount, 0);
-    const recognizedLogistics = logisticsFromOrders > 0 ? logisticsFromOrders : recordedDeliveryExpense;
-    const expenseRowsExDelivery = periodExpenses.filter((expense) => expense.type !== "Delivery");
-    const recordedOperatingExpense = expenseRowsExDelivery.reduce((sum, expense) => sum + expense.amount, 0);
-    const bonusEstimate = recognizedBonusTotalForRows(deliveredRows);
-    const operatingExpense = recordedOperatingExpense + bonusEstimate;
-    const grossProfit = revenue - cogs - recognizedLogistics;
-    const netProfit = grossProfit - operatingExpense;
-    return {
-      revenue,
-      cogs,
-      recognizedLogistics,
-      recordedDeliveryExpense,
-      recordedOperatingExpense,
-      bonusEstimate,
-      operatingExpense,
-      grossProfit,
-      netProfit,
-      totalRecognizedExpense: recognizedLogistics + operatingExpense
-    };
   };
 
   const periodOrders = trackedOrders
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
-  const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
-  const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
-  const matchesOrderAssignmentScope = (order: TrackedOrder) =>
-    !canFilterOrdersByAssigner
-    || orderAssignmentScope === "All assignments"
-    || (Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId);
-  const dashboardExpenseMatchesProductFilter = (expense: ExpenseRecord) =>
-    dashboardProductIds.size === 0 || !expense.productId || matchesProductFilter(expense.productId, expense.productName, dashboardProductIds);
   const dashboardOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
@@ -8420,24 +6208,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const ordersRevenue = periodDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
-  const dashboardDeliveredCohortOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
-  const dashboardDeliveredOrders = deliveredOrderRows
-    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
-    .filter((order) => isInPeriod(orderDeliveredKey(order), period, dateRange));
-  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && dashboardExpenseMatchesProductFilter(expense));
-  const dashboardProfitSummary = summarizeRecognizedProfit(dashboardDeliveredOrders, dashboardExpenses);
-  const dashboardRevenue = dashboardProfitSummary.revenue;
-  const dashboardCogs = dashboardProfitSummary.cogs;
-  const dashboardLogistics = dashboardProfitSummary.recognizedLogistics;
-  const dashboardOperatingExpense = dashboardProfitSummary.operatingExpense;
-  const dashboardRecordedExpenseTotal = dashboardExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const dashboardBonusEstimate = dashboardProfitSummary.bonusEstimate;
-  const dashboardGrossProfit = dashboardProfitSummary.grossProfit;
-  const dashboardNetProfit = dashboardProfitSummary.netProfit;
+  const dashboardDeliveredOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
+  const dashboardRevenue = dashboardDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
+  const dashboardCogs = dashboardDeliveredOrders.reduce((sum, order) => sum + costForOrder(order), 0);
+  const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && (matchesProductFilter(expense.productId, expense.productName, dashboardProductIds)));
+  const dashboardExpenseTotal = dashboardExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const dashboardGrossProfit = dashboardRevenue - dashboardCogs;
+  const dashboardNetProfit = dashboardGrossProfit - dashboardExpenseTotal;
   const dashboardCancelledCount = dashboardOrders.filter((order) => (order.status ?? "New") === "Cancelled").length;
   const dashboardCancelledRate = dashboardOrders.length === 0 ? 0 : Math.round((dashboardCancelledCount / dashboardOrders.length) * 100);
   const dashboardCogsRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardCogs / dashboardRevenue) * 100);
-  const dashboardExpenseRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardOperatingExpense / dashboardRevenue) * 100);
+  const dashboardExpenseRate = dashboardRevenue === 0 ? 0 : Math.round((dashboardExpenseTotal / dashboardRevenue) * 100);
   const dashboardNetMargin = dashboardRevenue === 0 ? 0 : Math.round((dashboardNetProfit / dashboardRevenue) * 100);
   const dashboardCarts = abandonedCarts
     .filter(c => matchesProductFilter(c.productId, c.productName, dashboardProductIds))
@@ -8447,16 +6228,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const dashboardPreviousOrders = trackedOrders
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter((order) => isInExplicitRange(orderCreatedKey(order), dashboardPreviousRange));
-  const dashboardPreviousDelivered = deliveredOrderRows
-    .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
-    .filter((order) => isInExplicitRange(orderDeliveredKey(order), dashboardPreviousRange));
+  const dashboardPreviousDelivered = dashboardPreviousOrders.filter((order) => (order.status ?? "New") === "Delivered");
+  const dashboardPreviousRevenue = dashboardPreviousDelivered.reduce((sum, order) => sum + order.amount, 0);
+  const dashboardPreviousCogs = dashboardPreviousDelivered.reduce((sum, order) => sum + costForOrder(order), 0);
   const dashboardPreviousExpenses = expenses
-    .filter((expense) => dashboardExpenseMatchesProductFilter(expense))
-    .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange));
-  const dashboardPreviousProfitSummary = summarizeRecognizedProfit(dashboardPreviousDelivered, dashboardPreviousExpenses);
-  const dashboardPreviousRevenue = dashboardPreviousProfitSummary.revenue;
-  const dashboardPreviousGrossProfit = dashboardPreviousProfitSummary.grossProfit;
-  const dashboardPreviousNetProfit = dashboardPreviousProfitSummary.netProfit;
+    .filter(e => matchesProductFilter(e.productId, e.productName, dashboardProductIds))
+    .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange)).reduce((sum, expense) => sum + expense.amount, 0);
+  const dashboardPreviousGrossProfit = dashboardPreviousRevenue - dashboardPreviousCogs;
+  const dashboardPreviousNetProfit = dashboardPreviousRevenue - dashboardPreviousCogs - dashboardPreviousExpenses;
   const deliveredHourForOrder = (order: TrackedOrder) => {
     const rawDate = order.deliveredDate ?? order.createdAt ?? order.date;
     const parsed = rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(rawDate) : undefined;
@@ -8661,7 +6440,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const ordersDeliveryRateExact = periodOrders.length === 0 ? 0 : (periodDeliveredOrders.length / periodOrders.length) * 100;
   const ordersDeliveryRate = Math.round(ordersDeliveryRateExact);
   const ordersFailedRate = periodOrders.length === 0 ? 0 : Math.round((periodOrders.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New")).length / periodOrders.length) * 100);
-  const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredCohortOrders.length / dashboardOrders.length) * 100;
+  const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
@@ -8696,25 +6475,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return Array.from(acc.values()).sort((a, b) => b.revenue - a.revenue);
   })();
   const projectedRevenue = formatMoney(dashboardProjectedRevenue);
-  const orderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
-  const matchesFollowUpQueuePage = (order: TrackedOrder) => {
-    const status = statusForOrder(order);
-    if (CLOSED_ORDER_STATUSES.has(status)) return false;
-    if (status === "Postponed") return true;
-    if (nextFollowUpForOrder(order)) return true;
-    return followUpInsightsForOrder(order).length > 0;
-  };
-  const matchesOrderWorkspacePage = (order: TrackedOrder) => {
-    if (orderWorkspacePage === "Follow-up Queue") return matchesFollowUpQueuePage(order);
-    if (orderWorkspacePage === "Closed Orders") return CLOSED_ORDER_STATUSES.has(statusForOrder(order));
-    return true;
-  };
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
     const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
-    const scheduleMarker = orderScheduleMarkerForOrder(order);
     const search = orderSearch.trim().toLowerCase();
+    const scheduleMarker = orderScheduleMarkerForOrder(order);
     const matchesSearch =
       !search ||
       `${order.id} ${order.customer} ${order.phone} ${order.productName} ${order.packageName}`.toLowerCase().includes(search);
@@ -8730,115 +6496,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesSource = orderSource === "All Sources" || source === orderSource;
     const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
-    const matchesAssigner = matchesOrderAssignmentScope(order);
-    const matchesWorkspace = matchesOrderWorkspacePage(order);
 
-    return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct && matchesAssigner && matchesWorkspace;
+    return matchesSearch && matchesStatus && matchesScheduleFilter && matchesSource && matchesLocation && matchesProduct;
   });
-  const prioritizedOrderRows = orderWorkspacePage === "Follow-up Queue"
-    ? filteredOrderRows.slice().sort((left, right) => {
-        const leftTasks = orderFollowUpTasksByOrder[left.id] ?? [];
-        const rightTasks = orderFollowUpTasksByOrder[right.id] ?? [];
-        const leftAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[left.id] ?? []);
-        const rightAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[right.id] ?? []);
-        const leftTask = activeFollowUpTaskForOrder(leftTasks);
-        const rightTask = activeFollowUpTaskForOrder(rightTasks);
-        const leftInsight = nextFollowUpForOrder(left);
-        const rightInsight = nextFollowUpForOrder(right);
-        const leftDueAt = leftTask?.dueAt ?? leftInsight?.dueAt ?? left.nextFollowUpAt ?? left.scheduledAt ?? "";
-        const rightDueAt = rightTask?.dueAt ?? rightInsight?.dueAt ?? right.nextFollowUpAt ?? right.scheduledAt ?? "";
-        const leftDueMs = leftDueAt ? new Date(leftDueAt).getTime() : Number.POSITIVE_INFINITY;
-        const rightDueMs = rightDueAt ? new Date(rightDueAt).getTime() : Number.POSITIVE_INFINITY;
-        const leftTimingRank = leftTask?.effectiveStatus === "overdue" || leftInsight?.overdue ? 0 : leftTask?.effectiveStatus === "due" ? 1 : leftInsight?.dueSoon ? 2 : leftDueAt ? 3 : 4;
-        const rightTimingRank = rightTask?.effectiveStatus === "overdue" || rightInsight?.overdue ? 0 : rightTask?.effectiveStatus === "due" ? 1 : rightInsight?.dueSoon ? 2 : rightDueAt ? 3 : 4;
-        const leftOutcome = classifyFrontendFollowUpOutcome({
-          outcomeCode: leftAttempt?.outcomeCode,
-          outcomeGroup: leftAttempt?.outcomeGroup,
-          recoveryBucket: leftAttempt?.recoveryBucket
-        });
-        const rightOutcome = classifyFrontendFollowUpOutcome({
-          outcomeCode: rightAttempt?.outcomeCode,
-          outcomeGroup: rightAttempt?.outcomeGroup,
-          recoveryBucket: rightAttempt?.recoveryBucket
-        });
-        const groupRank = (group?: string | null) => {
-          switch (group) {
-            case "recoverable": return 0;
-            case "unreachable": return 1;
-            case "progress": return 2;
-            case "closed_loss": return 3;
-            default: return 4;
-          }
-        };
-        const bucketRank = (bucket?: string | null) => {
-          switch (bucket) {
-            case "call_tomorrow": return 0;
-            case "call_in_2_3_days": return 1;
-            case "salary_wait":
-            case "spouse_approval":
-            case "wants_discount": return 2;
-            case "asked_for_whatsapp": return 3;
-            case "no_answer":
-            case "line_busy":
-            case "switched_off": return 4;
-            default: return 5;
-          }
-        };
-        return leftTimingRank - rightTimingRank
-          || leftDueMs - rightDueMs
-          || groupRank(leftOutcome?.group) - groupRank(rightOutcome?.group)
-          || bucketRank(leftOutcome?.bucket) - bucketRank(rightOutcome?.bucket)
-          || new Date(right.createdAt ?? right.date).getTime() - new Date(left.createdAt ?? left.date).getTime();
-      })
-    : filteredOrderRows;
   const ORDERS_PAGE_SIZE = 25;
-  const ordersTotalPages = Math.max(1, Math.ceil(prioritizedOrderRows.length / ORDERS_PAGE_SIZE));
+  const ordersTotalPages = Math.max(1, Math.ceil(filteredOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
-  const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
+  const pagedOrderRows = filteredOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
-  const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
-  const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
-  const pfOrders = orderProductIds.size === 0
-    ? assignmentScopedWorkspaceOrders
-    : assignmentScopedWorkspaceOrders.filter((o) => matchesProductFilter(o.productId, o.productName, orderProductIds));
+  const pfOrders = orderProductIds.size === 0 ? periodOrders : periodOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
   const pfDeliveryRate = Math.round(pfDeliveryRateExact);
   const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
-  const pfBonusEstimate = pfDelivered.reduce(
-    (sum, order) => sum + computeOrderBonus(order, pfDeliveryRateExact, pfRevenuePerDelivered, pfOrders.length).total,
-    0
-  );
   const pfConversionLiftMax = Math.max(0, 100 - pfDeliveryRateExact);
   const pfTargetConversion = Math.min(100, pfDeliveryRateExact + ordersConversion);
   const pfProjectedRevenue = pfOrders.length * (pfTargetConversion / 100) * pfRevenuePerDelivered;
-  const pfFollowUpRows = pfOrders
-    .map((order) => ({
-      order,
-      followUp: nextFollowUpForOrder(order),
-      activeTask: activeFollowUpTaskForOrder(orderFollowUpTasksByOrder[order.id] ?? []),
-      latestAttempt: latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? [])
-    }))
-    .filter((entry) => matchesFollowUpQueuePage(entry.order));
-  const pfFollowUpDueNow = pfFollowUpRows.filter((entry) => entry.followUp?.overdue || (entry.activeTask?.effectiveStatus ?? entry.activeTask?.status) === "overdue").length;
-  const pfFollowUpDueSoon = pfFollowUpRows.filter((entry) => entry.followUp?.dueSoon).length;
-  const pfFollowUpRecoverable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
-    outcomeCode: entry.latestAttempt?.outcomeCode,
-    outcomeGroup: entry.latestAttempt?.outcomeGroup,
-    recoveryBucket: entry.latestAttempt?.recoveryBucket
-  })?.group === "recoverable").length;
-  const pfFollowUpUnreachable = pfFollowUpRows.filter((entry) => classifyFrontendFollowUpOutcome({
-    outcomeCode: entry.latestAttempt?.outcomeCode,
-    outcomeGroup: entry.latestAttempt?.outcomeGroup,
-    recoveryBucket: entry.latestAttempt?.recoveryBucket
-  })?.group === "unreachable").length;
-  const pfFollowUpTomorrow = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_tomorrow").length;
-  const pfFollowUpTwoThreeDays = pfFollowUpRows.filter((entry) => entry.latestAttempt?.recoveryBucket === "call_in_2_3_days" || entry.latestAttempt?.recoveryBucket === "salary_wait" || entry.latestAttempt?.recoveryBucket === "spouse_approval").length;
-  const pfFollowUpRecentlyTouched = pfFollowUpRows.filter((entry) => Boolean(entry.latestAttempt?.attemptedAt || entry.order.lastContactAttemptAt)).length;
-  const pfClosedDelivered = pfOrders.filter((order) => statusForOrder(order) === "Delivered").length;
-  const pfClosedCancelled = pfOrders.filter((order) => statusForOrder(order) === "Cancelled").length;
-  const pfClosedFailed = pfOrders.filter((order) => statusForOrder(order) === "Failed").length;
   const ordersByProduct = Object.entries(
     pfOrders.reduce<Record<string, { count: number; revenue: number; units: number }>>((acc, order) => {
       const current = acc[order.productName] ?? { count: 0, revenue: 0, units: 0 };
@@ -8860,50 +6534,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     return next;
   }, [trackedOrders]);
-  const orderWorkspaceMetricCards = orderWorkspacePage === "Follow-up Queue"
-    ? [
-        { label: "Queue Total", value: pfOrders.length, sub: "orders needing follow-up", icon: Headphones, color: "bg-orange-50 text-orange-500" },
-        { label: "Due Now", value: pfFollowUpDueNow, sub: "overdue callbacks or actions", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" },
-        { label: "Recoverable", value: pfFollowUpRecoverable, sub: "buyers who asked for another try", icon: CalendarClock, color: "bg-sky-50 text-sky-500" },
-        { label: "Unreachable", value: pfFollowUpUnreachable, sub: "need another contact attempt", icon: PhoneOff, color: "bg-amber-50 text-amber-500" }
-      ]
-    : orderWorkspacePage === "Closed Orders"
-      ? [
-          { label: "Closed Total", value: pfOrders.length, sub: "terminal outcomes in this period", icon: Archive, color: "bg-slate-100 text-slate-600" },
-          { label: "Delivered", value: pfClosedDelivered, sub: "completed successfully", icon: BadgeCheck, color: "bg-green-50 text-green-500" },
-          { label: "Cancelled", value: pfClosedCancelled, sub: "customer or team cancelled", icon: Ban, color: "bg-amber-50 text-amber-500" },
-          { label: "Failed", value: pfClosedFailed, sub: "dispatch or completion failed", icon: AlertTriangle, color: "bg-rose-50 text-rose-500" }
-        ]
-      : [
-          { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
-          { label: "Bonus est.", value: formatMoney(pfBonusEstimate), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-emerald-50 text-emerald-500" },
-          { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
-        ];
-  const orderWorkspaceInsight = orderWorkspacePage === "Follow-up Queue"
-    ? {
-        icon: Headphones,
-        iconClassName: "bg-amber-50 text-amber-500",
-        title: "Queue Pressure",
-        helper: "Track which callbacks need action now, and how many buyers are waiting for tomorrow or 2-3 day follow-ups.",
-        body: `${pfFollowUpRecentlyTouched}/${pfOrders.length || 0} touched recently · ${pfFollowUpTomorrow} tomorrow · ${pfFollowUpTwoThreeDays} in 2-3 days`
-      }
-    : orderWorkspacePage === "Closed Orders"
-      ? {
-          icon: Archive,
-          iconClassName: "bg-slate-100 text-slate-600",
-          title: "Closed Outcome Mix",
-          helper: "See how much of the archive is delivered versus cancelled or failed.",
-          body: `${pfClosedDelivered} delivered · ${pfClosedCancelled} cancelled · ${pfClosedFailed} failed`
-        }
-      : {
-          icon: TrendingUp,
-          iconClassName: "bg-purple-50 text-purple-500",
-          title: "Revenue Opportunity",
-          helper: "Model the impact of a higher delivery conversion rate.",
-          body: ""
-        };
-  const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
@@ -8923,11 +6553,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer;
   });
-  const abandonedJourneyCartIds = useMemo(
-    () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
-    [filteredAbandonedCarts]
-  );
-  const abandonedJourneyCartIdsKey = abandonedJourneyCartIds.join("|");
   const CARTS_PAGE_SIZE = 25;
   const cartsTotalPages = Math.max(1, Math.ceil(filteredAbandonedCarts.length / CARTS_PAGE_SIZE));
   const cartsPageClamped = Math.min(cartsPage, cartsTotalPages);
@@ -8936,127 +6561,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const periodCarts = abandonedCarts.filter((cart) => isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange));
   // Carts filtered by both period and active product selection — drives stat cards
   const pfCarts = cartProductIds.size === 0 ? periodCarts : periodCarts.filter(c => matchesProductFilter(c.productId, c.productName, cartProductIds));
-  const cartProductIdFilterList = useMemo(() => Array.from(cartProductIds).sort(), [cartProductIds]);
-  const cartProductIdFilterKey = cartProductIdFilterList.join("|");
   const assignedCartCount = pfCarts.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
   const contactedCartCount = pfCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
   const convertedCartCount = pfCarts.filter((cart) => cart.status === "Converted").length;
-  const abandonedCartJourneyAnalytics = useMemo(
-    () => summarizeCartJourneyAnalytics(abandonedCartJourneyMap),
-    [abandonedCartJourneyMap]
-  );
-  const abandonedCartRecoveryById = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(abandonedCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
-      ),
-    [abandonedCartJourneyMap]
-  );
-  useEffect(() => {
-    if (activePage !== "Abandoned Carts") {
-      setAbandonedCartJourneyLoading(false);
-      return;
-    }
-    if (abandonedJourneyCartIds.length === 0) {
-      setAbandonedCartJourneyMap({});
-      setAbandonedCartJourneyLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadJourneys = async (silent = false) => {
-      if (!silent) {
-        setAbandonedCartJourneyLoading(true);
-      }
-      try {
-        const grouped = await cartsApi.journeyBulk(abandonedJourneyCartIds);
-        if (cancelled) return;
-        const normalized: Record<string, CartJourneyEvent[]> = {};
-        for (const [cartId, events] of Object.entries(grouped ?? {})) {
-          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
-        }
-        setAbandonedCartJourneyMap(normalized);
-      } catch {
-        if (cancelled) return;
-        if (!silent) {
-          setAbandonedCartJourneyMap({});
-        }
-      } finally {
-        if (cancelled || silent) return;
-        setAbandonedCartJourneyLoading(false);
-      }
-    };
-
-    void loadJourneys();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadJourneys(true);
-    }, CART_JOURNEY_ANALYTICS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [activePage, abandonedJourneyCartIdsKey]);
-  const liveFormPulseBounds = useMemo(() => periodBoundsForQuery(cartsPeriod, cartsDateRange), [cartsPeriod, cartsDateRange]);
-  const liveFormPulseScope = useMemo(
-    () => liveFormPulseScopeLabel(cartsPeriod, liveFormPulseBounds),
-    [cartsPeriod, liveFormPulseBounds]
-  );
-  useEffect(() => {
-    const canViewLiveFormPulse = realRole === "Owner" || realRole === "Admin";
-    if (activePage !== "Abandoned Carts" || !canViewLiveFormPulse) {
-      setLiveFormPulse(null);
-      setLiveFormPulseLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadPulse = async (silent = false) => {
-      if (!silent) {
-        setLiveFormPulseLoading(true);
-      }
-      try {
-        const pulse = await cartsApi.livePulse({
-          productIds: cartProductIdFilterList,
-          embedLabels: liveFormPulseEmbedFilter ? [liveFormPulseEmbedFilter] : undefined,
-          activeWindowMinutes: 10,
-          dateFrom: liveFormPulseBounds?.dateFrom,
-          dateTo: liveFormPulseBounds?.dateTo
-        });
-        if (cancelled) return;
-        setLiveFormPulse(pulse as LiveFormPulseResponse);
-        setLiveFormPulseEmbedOptions(
-          Array.from(
-            new Set(((pulse as LiveFormPulseResponse).embeds ?? []).map((embed) => embed.embedLabel).filter(Boolean))
-          ).sort((a, b) => a.localeCompare(b))
-        );
-      } catch {
-        if (cancelled || silent) return;
-        setLiveFormPulse(null);
-      } finally {
-        if (cancelled || silent) return;
-        setLiveFormPulseLoading(false);
-      }
-    };
-
-    void loadPulse();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadPulse(true);
-    }, FORM_PULSE_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [activePage, cartProductIdFilterKey, cartProductIdFilterList, cartsDateRange, cartsPeriod, liveFormPulseBounds, liveFormPulseEmbedFilter, realRole]);
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
 
@@ -9368,11 +6875,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`No WhatsApp number saved for ${group.agentName}.`);
       return;
     }
-    openWhatsAppUrl(
-      digits,
-      formatAgentBalanceWeekMessage(group),
-      group.agentName
-    );
+    const text = encodeURIComponent(formatAgentBalanceWeekMessage(group));
+    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener,noreferrer");
   };
   const exportWeekendStockSummaryCsv = () => {
     const rows = [
@@ -9696,13 +7200,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     || abandonedCarts.length > 0
     || salesTeams.length > 0
     || waybillRecords.length > 0;
-  const hasRenderableWeekendStockSummaryData = isWeekendStockSummaryPage(activePage)
-    && !agentBalanceLoading
-    && !agentBalanceError;
-  const hasRenderableCurrentPageData = hasRenderableWorkspaceData || hasRenderableWeekendStockSummaryData;
-  const reconnectFallbackMessage = "Live data is temporarily unavailable. Showing cached data while reconnecting.";
-  const showReconnectFallbackBanner = dataError === reconnectFallbackMessage && !hasRenderableCurrentPageData;
-  const workspacePageBlockingLoad = dataLoading && !hasRenderableCurrentPageData;
+  const workspacePageBlockingLoad = dataLoading && !hasRenderableWorkspaceData;
   const salesTeamsPageBlockingLoad = dataLoading && salesTeams.length === 0 && salesRepUsers.length === 0 && trackedOrders.length === 0;
   const agentRows = agents.map((agent) => {
     const assigned = trackedOrders.filter((order) =>
@@ -9760,41 +7258,31 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const generalExpenses = totalExpenses - productLinkedExpenses;
   const dailyBurnRate = filteredExpenses.length === 0 ? 0 : Math.round(totalExpenses / Math.max(1, new Set(filteredExpenses.map((expense) => expense.date)).size));
   const expenseDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), expensePeriod, expenseDateRange));
-  const expenseProfitSummary = summarizeRecognizedProfit(expenseDeliveredRows, filteredExpenses);
-  const expenseRevenue = expenseProfitSummary.revenue;
-  const expenseCogs = expenseProfitSummary.cogs;
-  const expenseLogistics = expenseProfitSummary.recognizedLogistics;
-  const expenseOperatingExpense = expenseProfitSummary.operatingExpense;
-  const expenseBonusEstimate = expenseProfitSummary.bonusEstimate;
-  const expenseNetProfit = expenseProfitSummary.netProfit;
+  const expenseRevenue = expenseDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+  const expenseCogs = expenseDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
+  const expenseNetProfit = expenseRevenue - expenseCogs - totalExpenses;
   const expenseMargin = expenseRevenue === 0 ? 0 : Math.round((expenseNetProfit / expenseRevenue) * 1000) / 10;
   // Product filter helpers — applied across all finance computations
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
-  const financeOrderSource = financeSummaryData?.cohortOrders ?? trackedOrders;
-  const financeDeliveredSource = financeSummaryData?.deliveredOrders ?? deliveredOrderRows;
-  const financePeriodOrders = financeOrderSource.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeCohortDeliveredRows = financePeriodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const financeExpenses = expenses.filter((expense) => isInPeriod(expense.date, financePeriod, financeDateRange) && expenseMatchesProductFilter(expense));
   const financeExpenseTotal = financeExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const financeProductLinkedExpenses = financeExpenses.filter((expense) => expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeGeneralExpenses = financeExpenseTotal - financeProductLinkedExpenses;
-  const financeDeliveredRows = financeDeliveredSource.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
-  const financeCreatedDateCorrectionCount = financePeriodOrders.filter((order) => orderHasCreatedAtCorrection(order)).length;
-  const financeDeliveredDateCorrectionCount = financeDeliveredRows.filter((order) => orderHasDeliveredDateCorrection(order)).length;
-  const financeProfitSummary = summarizeRecognizedProfit(financeDeliveredRows, financeExpenses);
-  const financeRevenue = financeProfitSummary.revenue;
-  const financeCogs = financeProfitSummary.cogs;
-  const financeLogisticsCost = financeProfitSummary.recognizedLogistics;
-  const financeBonusEstimate = financeProfitSummary.bonusEstimate;
+  const financeDeliveredRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financeRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+  const financeCogs = financeDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
+  const financeLogisticsCost = financeDeliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
   const financeDeliveryExpenses = financeExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
-  const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery");
-  const financeOpex = financeProfitSummary.operatingExpense;
+  const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery" && expense.type !== "Failed Delivery");
+  const financeOpex = financeOpexExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const financeSharedOpex = financeOpexExpenses.filter((expense) => !expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
   const financeAdSpendTotal = financeExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
-  const financeGrossProfit = financeProfitSummary.grossProfit;
-  const financeNetProfit = financeProfitSummary.netProfit;
+  const financeGrossProfit = financeRevenue - financeCogs - financeLogisticsCost;
+  const financeNetProfit = financeGrossProfit - financeOpex;
   const financeGrossMargin = financeRevenue === 0 ? 0 : Math.round((financeGrossProfit / financeRevenue) * 1000) / 10;
   const financeNetMargin = financeRevenue === 0 ? 0 : Math.round((financeNetProfit / financeRevenue) * 1000) / 10;
   const financeDeliveredCount = financeDeliveredRows.length;
@@ -9837,15 +7325,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const financeAgentDeliveredCount = financeAgentRows.reduce((sum, row) => sum + row.deliveries, 0);
 
   // ===== Remittance (Pay-on-Delivery cash reconciliation) =====
-  const roundCash = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-  const orderLogisticsCost = (order: TrackedOrder) => roundCash(order.logisticsCost ?? 0);
-  const orderAmountToRemit = (order: TrackedOrder) => roundCash(Math.max(0, order.amount - orderLogisticsCost(order)));
-  const orderAmountRemitted = (order: TrackedOrder) => roundCash(order.amountRemitted ?? 0);
-  const orderRemittanceOutstanding = (order: TrackedOrder) => roundCash(Math.max(0, orderAmountToRemit(order) - orderAmountRemitted(order)));
+  const orderLogisticsCost = (order: TrackedOrder) => order.logisticsCost ?? 0;
+  const orderAmountToRemit = (order: TrackedOrder) => Math.max(0, order.amount - orderLogisticsCost(order));
+  const orderAmountRemitted = (order: TrackedOrder) => order.amountRemitted ?? 0;
+  const orderRemittanceOutstanding = (order: TrackedOrder) => Math.max(0, orderAmountToRemit(order) - orderAmountRemitted(order));
   const orderRemittanceStatus = (order: TrackedOrder): "Pending" | "Partial" | "Paid" => {
+    if (order.remittanceStatus) return order.remittanceStatus;
     const remitted = orderAmountRemitted(order);
     const expected = orderAmountToRemit(order);
-    if (expected <= 0) return "Paid";
     if (remitted <= 0) return "Pending";
     if (remitted >= expected) return "Paid";
     return "Partial";
@@ -9921,13 +7408,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       current.transactionCount += cashRow.transactionCount;
       partnerMap.set(key, current);
     });
-    return Array.from(partnerMap.values())
-      .filter((row) => row.orderCount > 0 || row.expected > 0 || row.outstanding > 0)
-      .sort((a, b) => {
-        if (b.outstanding !== a.outstanding) return b.outstanding - a.outstanding;
-        if (b.expected !== a.expected) return b.expected - a.expected;
-        return b.orderCount - a.orderCount;
-      });
+    return Array.from(partnerMap.values()).sort((a, b) => b.outstanding - a.outstanding);
   })();
   const totalRemittanceExpected = remittanceRows.reduce((s, r) => s + r.expected, 0);
   const totalRemittanceReceived = financeRemittanceTransactions.reduce((sum, row) => sum + row.deltaAmount, 0);
@@ -9968,7 +7449,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
   })();
   const remittanceBatchUnappliedAmount = Math.max(0, remittanceBatchAmountValue - remittanceBatchOutstandingTotal);
-  const remittanceBatchShortfallAmount = Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue);
 
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
@@ -10058,44 +7538,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!isDateValue(remittanceReceivedDate)) { showToast("Choose a valid remittance received date."); return; }
     const newLogistics = remittanceLogisticsCost.trim() === "" ? (order.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
-    const expected = roundCash(Math.max(0, order.amount - newLogistics));
-    const overpaidExcess = roundCash(Math.max(0, newRemitted - expected));
-    const underpaidBalance = roundCash(Math.max(0, expected - newRemitted));
-    if (overpaidExcess > 0) {
-      showToast(`Cash received cannot exceed the exact expected remittance of ${formatProductMoney(expected, order.currency)}. Remove the excess ${formatProductMoney(overpaidExcess, order.currency)} or book it in the correct batch.`);
-      return;
-    }
-    if (underpaidBalance > 0 && !remittanceReason.trim()) {
-      showToast("Explain why the partner underpaid and what the balance was used for before saving.");
-      return;
-    }
+    const expected = Math.max(0, order.amount - newLogistics);
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
-    const remittanceNote = underpaidBalance > 0
-      ? `Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}. Underpaid by ${formatMoney(underpaidBalance)}. Reason: ${remittanceReason.trim()}.`
-      : `Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`;
     const prevOrders = trackedOrders;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(remittanceNote), ...orderNotesFor(o)]
+      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
     closeModal();
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     setRemittanceReceivedDate(todayKey());
-    setRemittanceReason("");
     showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
-    ordersApi.update(order.id, {
-      logistics_cost: newLogistics,
-      amount_remitted: newRemitted,
-      remittance_status: status,
-      remittance_received_at: remittanceReceivedDate,
-      remittance_reason: underpaidBalance > 0 ? `Underpaid by ${underpaidBalance}: ${remittanceReason.trim()}` : "Manual remittance update"
-    }).then(() => {
-      void loadFinanceSummaryData({ quiet: true });
+    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
     }).catch((err: any) => {
@@ -10109,14 +7568,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
-    setRemittanceReason("");
     openFinanceRemittanceRoute(order.id);
   };
   const openRecordBatchRemittance = (partnerKey: string) => {
     setRemittanceBatchPartnerKeyValue(partnerKey);
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
-    setRemittanceBatchReason("");
     setModal("recordBatchRemittance");
   };
   const recordBatchRemittance = async () => {
@@ -10140,10 +7597,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`The remitted amount cannot exceed ${formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))} for this batch.`);
       return;
     }
-    if (remittanceBatchShortfallAmount > 0 && !remittanceBatchReason.trim()) {
-      showToast("Explain why the logistics partner underpaid this batch and what the remaining balance was used for.");
-      return;
-    }
     const allocations = remittanceBatchAllocationPreview.filter((entry) => entry.applied > 0);
     if (allocations.length === 0) {
       showToast("There is nothing to allocate in this remittance batch.");
@@ -10162,7 +7615,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ...entry.order,
         amountRemitted: nextAmountRemitted,
         remittanceStatus: nextStatus,
-        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.${remittanceBatchShortfallAmount > 0 ? ` Batch still short by ${formatMoney(remittanceBatchShortfallAmount)}. Reason: ${remittanceBatchReason.trim()}.` : ""}`), ...orderNotesFor(entry.order)]
+        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.`), ...orderNotesFor(entry.order)]
       }];
     }));
     setTrackedOrders((prev) => prev.map((order) => optimisticMap.get(order.id) ?? order));
@@ -10170,7 +7623,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRemittanceBatchPartnerKeyValue("");
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
-    setRemittanceBatchReason("");
     showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.`);
     try {
       await Promise.all(allocations.map((entry) => {
@@ -10184,11 +7636,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         return ordersApi.update(entry.order.id, {
           amount_remitted: nextAmountRemitted,
           remittance_status: nextStatus,
-          remittance_received_at: remittanceBatchReceivedDate,
-          remittance_reason: remittanceBatchShortfallAmount > 0 ? `Batch underpaid by ${remittanceBatchShortfallAmount}: ${remittanceBatchReason.trim()}` : `Batch remittance via ${remittanceBatchTargetRow.partnerName}`
+          remittance_received_at: remittanceBatchReceivedDate
         });
       }));
-      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
     } catch (err: any) {
@@ -10199,10 +7649,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const remittanceTargetOrder = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
-  const remittanceTargetExpected = remittanceTargetOrder ? roundCash(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0))) : 0;
-  const remittanceTargetAmountValue = Math.max(0, Number(remittanceAmount) || 0);
-  const remittanceTargetShortfall = Math.max(0, roundCash(remittanceTargetExpected - remittanceTargetAmountValue));
-  const remittanceTargetExcess = Math.max(0, roundCash(remittanceTargetAmountValue - remittanceTargetExpected));
 
   // ===== Customer flags =====
   const normalizePhone = (phone: string) => phone.replace(/\D/g, "");
@@ -10540,10 +7986,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setCrossSellQuantity("1");
     setCrossSellAmount("");
     setModal("addCrossSell");
-    if (isRepOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
-    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-cross-sell`));
+    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-cross-sell`));
+    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-cross-sell`);
     }
   };
   const openFreeGiftModal = (order: TrackedOrder) => {
@@ -10552,10 +7998,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setFreeGiftProductId("");
     setFreeGiftQuantity("1");
     setModal("addFreeGift");
-    if (isRepOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(repOrderWorkspaceHash(`/${order.id}/add-free-gift`));
-    } else if (isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/add-free-gift`));
+    if (hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/add-free-gift`));
+    } else if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/add-free-gift`);
     }
   };
   const openManualBonusModal = (order: TrackedOrder) => {
@@ -10564,8 +8010,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
     setManualBonusReasonText(order.manualBonusReason ?? "");
     setModal("manualBonus");
-    if (isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/manual-bonus`));
+    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(`#/dashboard/admin/orders/${order.id}/manual-bonus`);
     }
   };
   const openAddPenalty = (repId?: string, orderId?: string) => {
@@ -10761,8 +8207,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       productId: product.id,
       productName: product.name,
       quantity: qty,
-      amount: price,
-      selectionSource: "manual_rep"
+      amount: price
     };
     const orderSnapshot = order;
     const nextCrossSellLines = [...(order.crossSellLines ?? []), line];
@@ -11011,19 +8456,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // ===== Bonus engine =====
   // Computes per-order bonus given the rep's weekly delivery rate.
   // Pure compute (no side-effects) — returns components for transparency.
-  function customerSelectedCrossSellBonus(lines: CrossSellLine[] | undefined) {
-    if (!lines?.length) return 0;
-    return lines.filter((line) => line.selectionSource === "public_form" || line.selectionSource === "public_upsell").length * 100;
-  }
-  function repDrivenCrossSellLines(lines: CrossSellLine[] | undefined) {
-    return (lines ?? []).filter((line) => line.selectionSource !== "public_form" && line.selectionSource !== "public_upsell");
-  }
-  function computeOrderBonus(
+  const computeOrderBonus = (
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
     repWeeklyAOV: number,
     repWeeklyOrderCount: number
-  ) {
+  ) => {
     if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
       return { base: 0, upgrade: 0, crossSell: 0, freeGift: 0, manual: order.manualBonusOverride, total: order.manualBonusOverride, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
     }
@@ -11065,13 +8503,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     // Cross-sell bonus
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const selfSelectedBonus = customerSelectedCrossSellBonus(order.crossSellLines);
-      const repLines = repDrivenCrossSellLines(order.crossSellLines);
-      const repCrossSellTotal = repLines.reduce((sum, line) => sum + (line.amount || 0), 0);
-      const repCrossSellBonus = Math.round(repCrossSellTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * repLines.length;
-      crossSell = selfSelectedBonus + repCrossSellBonus;
-      if (selfSelectedBonus > 0) components.push({ label: `Additional items (${selfSelectedBonus / 100})`, amount: selfSelectedBonus });
-      if (repCrossSellBonus > 0) components.push({ label: `Rep cross-sell ${cfg.crossSellPercent}%`, amount: repCrossSellBonus });
+      const xsTotal = order.crossSellLines.reduce((sum, line) => sum + (line.amount || 0), 0);
+      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
+      if (crossSell > 0) components.push({ label: `Cross-sell ${cfg.crossSellPercent}%`, amount: crossSell });
     }
 
     // Free-gift bonus
@@ -11090,7 +8524,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     void repWeeklyAOV;
     const total = base + upgrade + crossSell + freeGift;
     return { base, upgrade, crossSell, freeGift, manual: 0, total, components };
-  }
+  };
 
   // Projected bonus: what the rep would earn IF this order is delivered — ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
@@ -11122,13 +8556,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const selfSelectedBonus = customerSelectedCrossSellBonus(order.crossSellLines);
-      const repLines = repDrivenCrossSellLines(order.crossSellLines);
-      const repCrossSellTotal = repLines.reduce((s, l) => s + (l.amount || 0), 0);
-      const repCrossSellBonus = Math.round(repCrossSellTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * repLines.length;
-      crossSell = selfSelectedBonus + repCrossSellBonus;
-      if (selfSelectedBonus > 0) components.push({ label: `Additional items (${selfSelectedBonus / 100})`, amount: selfSelectedBonus });
-      if (repCrossSellBonus > 0) components.push({ label: `Rep cross-sell`, amount: repCrossSellBonus });
+      const xsTotal = order.crossSellLines.reduce((s, l) => s + (l.amount || 0), 0);
+      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
+      if (crossSell > 0) components.push({ label: `Cross-sell`, amount: crossSell });
     }
     let freeGift = 0;
     if (order.freeGiftLines && order.freeGiftLines.length > 0 && cfg.freeGiftBonus > 0) {
@@ -11150,23 +8580,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     : tier === "Fair" ? "bg-amber-100 text-amber-700 border border-amber-200"
     : "bg-red-100 text-red-700 border border-red-200";
 
-  const financeStateNameForOrder = (order: TrackedOrder) => {
-    const directState = normalizeStateName(order.state);
-    if (directState && (canonicalStateByToken.has(normalizeStateToken(directState)) || directState === "FCT Abuja")) {
-      return directState;
-    }
-    const locationState = normalizeStateName(order.location);
-    if (locationState && (canonicalStateByToken.has(normalizeStateToken(locationState)) || locationState === "FCT Abuja")) {
-      return locationState;
-    }
-    return directState || locationState || "Unknown";
-  };
-
   // ===== State performance — cohort view by created-week/state =====
   const stateRows = (() => {
     const map = new Map<string, { state: string; total: number; delivered: number; cancelled: number; failed: number; pending: number; revenue: number; cogs: number; logistics: number }>();
     financePeriodOrders.forEach((order) => {
-      const stateName = financeStateNameForOrder(order);
+      const stateName = (order.state || order.location || "Unknown").trim() || "Unknown";
       const status = order.status ?? "New";
       const cur = map.get(stateName) ?? { state: stateName, total: 0, delivered: 0, cancelled: 0, failed: 0, pending: 0, revenue: 0, cogs: 0, logistics: 0 };
       cur.total += 1;
@@ -11266,7 +8684,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       remittance_received_at: repRemittanceReceivedDate,
       timeline_notes: nextNotes
     }).then(async () => {
-      void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
       if (newExpenses.length === 0) {
@@ -11348,171 +8765,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
   }).filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
-  const packagePerformanceRows = (() => {
-    const search = financeProductSearch.trim().toLowerCase();
-    const totalDeliveredRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
-    return products
-      .filter((product) => !selectedProductId || product.id === selectedProductId)
-      .flatMap((product) => {
-        type PackageAccumulator = {
-          packageId?: string | null;
-          packageName: string;
-          packageQuantity: number;
-          isFallback: boolean;
-          totalOrders: number;
-          deliveredCount: number;
-          orderedUnits: number;
-          deliveredUnits: number;
-          placedRevenue: number;
-          deliveredRevenue: number;
-          cogs: number;
-          logistics: number;
-        };
-        const packageMap = new Map<string, PackageAccumulator>();
-        const productOrders = financePeriodOrders.filter((order) => order.productId === product.id);
-        const productDelivered = financeDeliveredRows.filter((order) => order.productId === product.id);
-        const productRevenue = productDelivered.reduce((sum, order) => sum + order.amount, 0);
-        const productDirectExpenses = financeOpexExpenses
-          .filter((expense) => expense.productId === product.id)
-          .reduce((sum, expense) => sum + expense.amount, 0);
-        const productAllocatedSharedOpex = proportionalShare(
-          productRevenue,
-          totalDeliveredRevenue,
-          financeSharedOpex,
-          productDelivered.length,
-          financeCohortDeliveredRows.length
-        );
-        const resolveOrderUnits = (order: TrackedOrder) => {
-          const packageRecord = product.packages.find((item) => item.id === order.packageId);
-          return Math.max(1, order.quantity ?? packageRecord?.quantity ?? 1);
-        };
-        const packageLabelForOrder = (order: TrackedOrder) => {
-          const packageRecord = product.packages.find((item) => item.id === order.packageId);
-          if (packageRecord) {
-            return {
-              key: packageRecord.id,
-              packageId: packageRecord.id,
-              packageName: packageRecord.name,
-              packageQuantity: packageRecord.quantity,
-              isFallback: false
-            };
-          }
-          const orderUnits = resolveOrderUnits(order);
-          const manualLabel = (order.packageName ?? "").trim() || `Manual ${formatBundleUnitLabel(orderUnits)}`;
-          return {
-            key: `manual:${manualLabel}:${orderUnits}`,
-            packageId: order.packageId ?? null,
-            packageName: manualLabel,
-            packageQuantity: orderUnits,
-            isFallback: true
-          };
-        };
-
-        productOrders.forEach((order) => {
-          const units = resolveOrderUnits(order);
-          const pkg = packageLabelForOrder(order);
-          const current = packageMap.get(pkg.key) ?? {
-            packageId: pkg.packageId,
-            packageName: pkg.packageName,
-            packageQuantity: pkg.packageQuantity,
-            isFallback: pkg.isFallback,
-            totalOrders: 0,
-            deliveredCount: 0,
-            orderedUnits: 0,
-            deliveredUnits: 0,
-            placedRevenue: 0,
-            deliveredRevenue: 0,
-            cogs: 0,
-            logistics: 0
-          };
-          current.totalOrders += 1;
-          current.orderedUnits += units;
-          current.placedRevenue += order.amount || 0;
-          packageMap.set(pkg.key, current);
-        });
-
-        productDelivered.forEach((order) => {
-          const units = resolveOrderUnits(order);
-          const pkg = packageLabelForOrder(order);
-          const current = packageMap.get(pkg.key) ?? {
-            packageId: pkg.packageId,
-            packageName: pkg.packageName,
-            packageQuantity: pkg.packageQuantity,
-            isFallback: pkg.isFallback,
-            totalOrders: 0,
-            deliveredCount: 0,
-            orderedUnits: 0,
-            deliveredUnits: 0,
-            placedRevenue: 0,
-            deliveredRevenue: 0,
-            cogs: 0,
-            logistics: 0
-          };
-          current.deliveredCount += 1;
-          current.deliveredUnits += units;
-          current.deliveredRevenue += order.amount || 0;
-          current.cogs += costForOrder(order);
-          current.logistics += order.logisticsCost ?? 0;
-          packageMap.set(pkg.key, current);
-        });
-
-        return Array.from(packageMap.entries()).map(([packageKey, row]) => {
-          const hasOrderCohort = row.totalOrders > 0;
-          const deliveryRate = hasOrderCohort ? Math.round((row.deliveredCount / row.totalOrders) * 100) : 0;
-          const allocatedProductOpex = productRevenue === 0
-            ? 0
-            : (row.deliveredRevenue / productRevenue) * (productDirectExpenses + productAllocatedSharedOpex);
-          const netProfit = row.deliveredRevenue - row.cogs - row.logistics - allocatedProductOpex;
-          const shareOfProductOrders = productOrders.length === 0 ? 0 : Math.round((row.totalOrders / productOrders.length) * 100);
-          const shareOfProductDelivered = productDelivered.length === 0 ? 0 : Math.round((row.deliveredCount / productDelivered.length) * 100);
-          return {
-            packageKey,
-            product,
-            packageId: row.packageId ?? undefined,
-            packageName: row.packageName,
-            packageQuantity: row.packageQuantity,
-            isFallback: row.isFallback,
-            hasOrderCohort,
-            totalOrders: row.totalOrders,
-            deliveredCount: row.deliveredCount,
-            deliveryRate,
-            tier: performanceTier(deliveryRate),
-            orderedUnits: row.orderedUnits,
-            deliveredUnits: row.deliveredUnits,
-            placedRevenue: row.placedRevenue,
-            deliveredRevenue: row.deliveredRevenue,
-            cogs: row.cogs,
-            logistics: row.logistics,
-            expenses: allocatedProductOpex,
-            netProfit,
-            margin: row.deliveredRevenue === 0 ? 0 : Math.round((netProfit / row.deliveredRevenue) * 100),
-            shareOfProductOrders,
-            shareOfProductDelivered
-          };
-        });
-      })
-      .filter((row) => {
-        if (!search) return true;
-        return row.product.name.toLowerCase().includes(search)
-          || row.product.sku.toLowerCase().includes(search)
-          || row.packageName.toLowerCase().includes(search)
-          || formatBundleUnitLabel(row.packageQuantity).includes(search);
-      })
-      .sort((a, b) =>
-        b.totalOrders - a.totalOrders
-        || b.deliveredCount - a.deliveredCount
-        || b.deliveredRevenue - a.deliveredRevenue
-      );
-  })();
-  const topOrderedPackageRow = packagePerformanceRows[0] ?? null;
-  const topDeliveredPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredCount - a.deliveredCount || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
-  const topDeliveredUnitsPackageRow = packagePerformanceRows.slice().sort((a, b) => b.deliveredUnits - a.deliveredUnits || b.deliveredRevenue - a.deliveredRevenue)[0] ?? null;
-  const bestPackageDeliveryRateRow = packagePerformanceRows
-    .filter((row) => row.totalOrders > 0)
-    .slice()
-    .sort((a, b) => b.deliveryRate - a.deliveryRate || b.deliveredCount - a.deliveredCount || b.totalOrders - a.totalOrders)[0] ?? null;
-  const trackedPackageRowsCount = packagePerformanceRows.filter((row) => !row.isFallback).length;
-  const legacyPackageRowsCount = packagePerformanceRows.filter((row) => row.isFallback).length;
   const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
@@ -11764,80 +9016,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     contacted: repAssignedCarts.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length,
     needsAttention: repAssignedCarts.filter((cart) => ["Abandoned", "No response", "Open abandoned"].includes(cart.status)).length
   };
-  const repJourneyCartIds = useMemo(
-    () => Array.from(new Set(repAssignedCarts.map((cart) => cart.id).filter(Boolean))),
-    [repAssignedCarts]
-  );
-  const repJourneyCartIdsKey = repJourneyCartIds.join("|");
-  const repCartJourneyAnalytics = useMemo(
-    () => summarizeCartJourneyAnalytics(repCartJourneyMap),
-    [repCartJourneyMap]
-  );
-  const repCartHintById = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(repCartJourneyMap)
-          .map(([cartId, events]) => [cartId, cartJourneyFollowUpHint(events)] as const)
-          .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
-      ),
-    [repCartJourneyMap]
-  );
-  const repCartRecoveryById = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(repCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
-      ),
-    [repCartJourneyMap]
-  );
-  useEffect(() => {
-    if (activePage !== "Sales Rep Workspace") {
-      setRepCartJourneyLoading(false);
-      return;
-    }
-    if (repJourneyCartIds.length === 0) {
-      setRepCartJourneyMap({});
-      setRepCartJourneyLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadJourneys = async (silent = false) => {
-      if (!silent) {
-        setRepCartJourneyLoading(true);
-      }
-      try {
-        const grouped = await cartsApi.journeyBulk(repJourneyCartIds);
-        if (cancelled) return;
-        const normalized: Record<string, CartJourneyEvent[]> = {};
-        for (const [cartId, events] of Object.entries(grouped ?? {})) {
-          normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
-        }
-        setRepCartJourneyMap(normalized);
-      } catch {
-        if (cancelled) return;
-        if (!silent) {
-          setRepCartJourneyMap({});
-        }
-      } finally {
-        if (cancelled || silent) return;
-        setRepCartJourneyLoading(false);
-      }
-    };
-
-    void loadJourneys();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadJourneys(true);
-    }, CART_JOURNEY_ANALYTICS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
-  }, [activePage, repJourneyCartIdsKey]);
   const repStatusFilteredOrders = repOrders.filter((order) => {
     const status = order.status ?? "New";
     if (repOrderStatusTab === "Pending") {
@@ -11917,6 +9095,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const matchedOrderId = notification.link?.match(/\/orders\/([^/?#]+)/)?.[1];
     return matchedOrderId ? repOrderIds.has(decodeURIComponent(matchedOrderId)) : false;
   });
+  const repBonusWeekStart = repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start
+    ? repWorkspaceDateRange.start
+    : repWorkspaceNavStart;
+  const repBonusWeekEnd = weekEndFromStartKey(repBonusWeekStart);
+  const repBonusPrimaryOrder = repBonusCoach?.motivators.find((motivator) => motivator.orderId)?.orderId ?? "";
+
+  useEffect(() => {
+    if (activePage !== "Sales Rep Workspace" || repConsoleTab !== "Dashboard") {
+      return;
+    }
+
+    const ownerLikeViewer = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
+    if (ownerLikeViewer && !selectedRepUser) {
+      setRepBonusCoach(null);
+      setRepBonusCoachLoading(false);
+      setRepBonusCoachError("Select a sales rep above to preview bonus progress.");
+      return;
+    }
+
+    const load = ownerLikeViewer && selectedRepUser
+      ? () => bonusCoachApi.rep(selectedRepUser.id, repBonusWeekStart)
+      : () => bonusCoachApi.me(repBonusWeekStart);
+
+    let cancelled = false;
+    setRepBonusCoachLoading(true);
+    setRepBonusCoachError("");
+
+    load()
+      .then((payload) => {
+        if (cancelled) return;
+        setRepBonusCoach(payload);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setRepBonusCoach(null);
+        setRepBonusCoachError(error?.message ?? "Could not load bonus progress.");
+      })
+      .finally(() => {
+        if (!cancelled) setRepBonusCoachLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, repConsoleTab, currentRole, selectedRepUser?.id, repBonusWeekStart]);
   const repWorkspaceAlertCount = repNotifications.length + repWorkspaceSystemNotifications.filter((notification) => !notification.read).length;
   const repOrderDetail = trackedOrders.find((order) => order.id === repOrderDetailId);
   useEffect(() => {
@@ -11951,49 +9174,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ordersPeriod === "Custom" && ordersDateRange.start && ordersDateRange.end
       ? `${ordersDateRange.start} to ${ordersDateRange.end}`
       : ordersPeriod;
-
-  const orderWorkspaceMeta: Record<OrderWorkspacePage, {
-    title: string;
-    subtitle: string;
-    exportTitle: string;
-    exportFilePrefix: string;
-    tableLabel: string;
-    statusOptions: OrderStatus[];
-    productHeading: string;
-    productHelper: string;
-  }> = {
-    Orders: {
-      title: "Orders Management",
-      subtitle: "Track and manage all customer orders in real-time",
-      exportTitle: "Orders Report",
-      exportFilePrefix: "orders-report",
-      tableLabel: "Orders table",
-      statusOptions: orderStatuses,
-      productHeading: "New Orders by Product",
-      productHelper: "All orders (any status) created in the selected period"
-    },
-    "Follow-up Queue": {
-      title: "Follow-up Queue",
-      subtitle: "Focus on non-terminal orders that still need customer action, callback, or confirmation.",
-      exportTitle: "Follow-up Queue Report",
-      exportFilePrefix: "follow-up-queue-report",
-      tableLabel: "Follow-up queue table",
-      statusOptions: followUpQueueStatuses,
-      productHeading: "Follow-up Queue by Product",
-      productHelper: "Products currently driving open customer follow-up work"
-    },
-    "Closed Orders": {
-      title: "Closed Orders",
-      subtitle: "Review delivered, cancelled, and failed orders without active pipeline noise.",
-      exportTitle: "Closed Orders Report",
-      exportFilePrefix: "closed-orders-report",
-      tableLabel: "Closed orders table",
-      statusOptions: closedOrderStatuses,
-      productHeading: "Closed Orders by Product",
-      productHelper: "Terminal orders closed in the selected period"
-    }
-  };
-  const activeOrderWorkspaceMeta = orderWorkspaceMeta[orderWorkspacePage];
 
   const selectedDeliveriesPeriodLabel =
     deliveriesPeriod === "Custom" && deliveriesDateRange.start && deliveriesDateRange.end
@@ -12031,9 +9211,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     if (card.label === "Net Profit") {
-      const expenseHelper = dashboardOperatingExpense === 0
-        ? "No operating costs counted this period"
-        : `${formatMoney(dashboardRecordedExpenseTotal)} expense rows${dashboardBonusEstimate > 0 ? ` + ${formatMoney(dashboardBonusEstimate)} bonus est.` : ""}`;
+      const expenseHelper = dashboardExpenseTotal === 0 ? "No expenses counted this period" : `${formatMoney(dashboardExpenseTotal)} expenses deducted`;
       return { ...card, value: formatMoney(dashboardNetProfit), trend: formatTrend(percentChange(dashboardNetProfit, dashboardPreviousNetProfit)), helper: expenseHelper };
     }
 
@@ -12080,7 +9258,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ? []
     : [
         `${activePage} view refreshed.`,
-        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Follow-up Queue" ? "Follow-up queue is ready." : activePage === "Closed Orders" ? "Closed orders archive is ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
+        activePage === "Inventory" ? "Inventory stock tools are ready." : activePage === "Scheduled Deliveries" ? "Scheduled delivery ranges are ready." : activePage === "Deliveries" ? "Delivery filters are ready." : activePage === "Sales Reps" ? "Sales representative tools are ready." : activePage === "Sales Teams" ? "Sales team scopes are ready." : activePage === "Sales Rep Workspace" ? "Sales rep workspace is ready." : activePage === "Call Rep Console" ? "Call queue loaded." : activePage === "Weekend Stock Summary" ? "Weekend stock summary is ready." : activePage === "Agents" ? "Agent directory tools are ready." : activePage === "Payroll" ? "Payroll workspace is ready." : activePage === "Customers" ? "Customer directory filters are ready." : activePage === "Expenses" ? "Expense management tools are ready." : activePage === "Finance & Accounting" ? "Financial reports are ready." : activePage === "Ad Tracking" ? "Ad tracking attribution is ready." : activePage === "User Management" ? "User management controls are ready." : activePage === "Round-Robin" ? "Round-robin sequence controls are ready." : activePage === "Embed Form" ? "Embed form settings are ready." : activePage === "Notifications" ? "Notification center is ready." : activePage === "Settings" ? "Settings controls are ready." : activePage === "Orders" ? "Order filters are ready." : activePage === "Abandoned Carts" ? "Captured cart filters are ready." : "Cart follow-up queue is ready."
       ];
 
   useEffect(() => {
@@ -12109,7 +9287,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   // Check push notification status on mount
   useEffect(() => {
     void (async () => {
-      await initializeNativePushBridge().catch(() => null);
       await ensureServiceWorkerRegistration().catch(() => null);
       await ensurePushSubscriptionCurrent().catch(() => false);
       await refreshPushDiagnostics();
@@ -12129,19 +9306,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
+    setActivePage("Sales Rep Workspace");
     const [, rawPath = ""] = hashRoute.split("#");
     const queryParams = new URLSearchParams(rawPath.split("?")[1] ?? "");
     const parts = rawPath.split("?")[0].split("/").filter(Boolean);
     const section = parts[2];
-    const workspaceOrderId = queryParams.get("order") ?? "";
-    const repOrderWorkspaceRoutePage = section === "orders"
-      ? "Orders"
-      : section === "follow-up-queue"
-        ? "Follow-up Queue"
-        : section === "closed-orders"
-          ? "Closed Orders"
-          : null;
-    const isRepOrderSection = Boolean(repOrderWorkspaceRoutePage);
+    const isRepOrderSection = section === "orders";
     const isRepCartSection = section === "abandoned-carts";
     const orderId = isRepOrderSection && parts[3] !== "new" ? parts[3] : "";
     const cartId = isRepCartSection ? parts[3] ?? "" : "";
@@ -12162,22 +9332,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? requestedRepId
       : "all";
 
-    if (workspaceOrderId) {
-      setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
-      if (currentRole === "Owner" || currentRole === "Admin") {
-        if (repConsoleRepId !== resolvedRepId) {
-          setRepConsoleRepId(resolvedRepId);
-        }
-      } else if (repConsoleRepId !== "all") {
-        setRepConsoleRepId("all");
-      }
-      setActivePage("Sales Rep Workspace");
-      setRepOrderDetailId(workspaceOrderId);
-      setSelectedOrderId(workspaceOrderId);
-      return;
-    }
-
-    setRepConsoleTab(repOrderWorkspaceRoutePage ? "Orders" : (routeToTab[section ?? ""] ?? "Dashboard"));
+    setRepConsoleTab(routeToTab[section ?? ""] ?? "Dashboard");
     if (currentRole === "Owner" || currentRole === "Admin") {
       if (repConsoleRepId !== resolvedRepId) {
         setRepConsoleRepId(resolvedRepId);
@@ -12185,8 +9340,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     } else if (repConsoleRepId !== "all") {
       setRepConsoleRepId("all");
     }
-
-    setActivePage(repOrderWorkspaceRoutePage ?? "Sales Rep Workspace");
     setRepOrderDetailId(orderId ?? "");
     if (orderId) {
       setSelectedOrderId(orderId);
@@ -12199,16 +9352,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setModal("changeOrderStatus");
       return;
     }
-    if (repOrderAction === "edit") {
-      setModal("editOrderItems");
-      return;
-    }
     if (repOrderAction === "edit-customer") {
       setModal("editOrderCustomer");
-      return;
-    }
-    if (repOrderAction === "delete") {
-      setModal("deleteOrder");
       return;
     }
     if (repOrderAction === "manual-bonus" && orderId) {
@@ -12240,11 +9385,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (isRepOrderSection && parts[3] !== "new" && modal === "createOrder") {
       setModal(null);
     }
-    if (!isRepOrderSection && modal && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+    if (!isRepOrderSection && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
       setModal(null);
       return;
     }
-    if (isRepOrderSection && !repOrderAction && modal && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
+    if (isRepOrderSection && !repOrderAction && modal && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modal)) {
       setModal(null);
     }
     if (isRepCartSection && !repCartAction && modal && ["assignCart", "convertCart"].includes(modal)) {
@@ -12291,8 +9436,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminRouteToPage: Record<string, ActivePage> = {
       "": "Dashboard",
       orders: "Orders",
-      "follow-up-queue": "Follow-up Queue",
-      "closed-orders": "Closed Orders",
       "abandoned-carts": "Abandoned Carts",
       "scheduled-deliveries": "Scheduled Deliveries",
       deliveries: "Deliveries",
@@ -12320,22 +9463,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       settings: "Settings"
     };
 
-    const adminOrderWorkspaceRoutePage = section === "orders"
-      ? "Orders"
-      : section === "follow-up-queue"
-        ? "Follow-up Queue"
-        : section === "closed-orders"
-          ? "Closed Orders"
-          : null;
-
-    if (adminOrderWorkspaceRoutePage && parts[3] === "new") {
-      setActivePage(adminOrderWorkspaceRoutePage);
+    if (section === "orders" && parts[3] === "new") {
+      setActivePage("Orders");
       openCreateOrderModal();
       return;
     }
 
-    if (adminOrderWorkspaceRoutePage && parts[3]) {
-      setActivePage(adminOrderWorkspaceRoutePage);
+    if (section === "orders" && parts[3]) {
+      // Deep link to a specific admin order — land on the admin Orders page
+      // and open the same details modal the Eye-button uses.
+      setActivePage("Orders");
       setSelectedOrderId(parts[3]);
       if (parts[4] === "edit") {
         setModal("editOrderItems");
@@ -12494,12 +9631,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (section === "inventory" && parts[3] === "history") {
       setActivePage("Inventory");
       setInventoryView("history");
-      return;
-    }
-
-    if (section === "inventory" && parts[3] === "state-stock") {
-      setActivePage("Inventory");
-      setInventoryView("state-stock");
       return;
     }
 
@@ -12808,7 +9939,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   useEffect(() => {
     setOrdersPage(1);
     setSelectedOrderIds(new Set());
-  }, [orderSearch, orderStatus, orderScheduleFilter, orderAssignmentScope, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange, orderWorkspacePage]);
+  }, [orderSearch, orderStatus, orderScheduleFilter, orderSource, orderLocation, orderProductIds, ordersPeriod, ordersDateRange]);
   useEffect(() => {
     setCartsPage(1);
     setSelectedCartIds(new Set());
@@ -12993,7 +10124,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       };
       const hydrateExpenses = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          setExpenses((result.value as any[]).map((e: any) => normalizeExpenseRecord(e)) as any);
+          setExpenses((result.value as any[]).map((e: any) => ({
+            ...e,
+            createdAt: e.createdAt ?? e.created_at ?? "",
+            type: e.type ?? e.category ?? "Other",
+            productName: e.productName ?? e.productName ?? ""
+          })) as any);
         }
       };
       const hydrateWaybills = (result: PromiseSettledResult<any>) => {
@@ -13067,7 +10203,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             phone:        c.phone ?? "",
             whatsapp:     c.whatsapp ?? undefined,
             email:        c.email ?? undefined,
-            address:      c.address ?? undefined,
             city:         c.city ?? undefined,
             state:        c.state ?? undefined,
             productId:    c.productId ?? c.product_id ?? undefined,
@@ -13077,16 +10212,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             amount:       Number(c.amount ?? 0),
             currency:     c.currency ?? "NGN",
             source:       c.source ?? "Website",
-            embedLabel:   c.embedLabel ?? c.embed_label ?? undefined,
             status:       c.status ?? "Open abandoned",
             assignedRepId: c.assignedRepId ?? c.assigned_rep_id ?? undefined,
-            preferredDelivery: c.preferredDelivery ?? c.preferred_delivery ?? undefined,
-            outageCaptured: c.outageCaptured ?? c.outage_captured ?? false,
-            outageCapturedAt: c.outageCapturedAt ?? c.outage_captured_at ?? undefined,
-            capturePayload: (() => {
-              const raw = c.capturePayload ?? c.capture_payload;
-              return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined;
-            })(),
             lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
             createdAt:    c.createdAt ?? c.created_at ?? ""
           })) as any);
@@ -13304,12 +10431,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   useEffect(() => {
     if (!dataLoading) return;
-    if (!hasRenderableCurrentPageData) return;
+    if (!hasRenderableWorkspaceData) return;
     setDataLoading(false);
     setDataRefreshing(true);
     setHasCompletedInitialDataLoad(true);
     hasCompletedInitialDataLoadRef.current = true;
-  }, [dataLoading, hasRenderableCurrentPageData]);
+  }, [dataLoading, hasRenderableWorkspaceData]);
 
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
@@ -13677,37 +10804,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   // Fetch audit log when order details modal opens
   useEffect(() => {
-    if (modal !== "orderDetails" || !selectedOrderId) {
+    if (modal === "orderDetails" && selectedOrderId) {
+      ordersApi.audit(selectedOrderId).then(setOrderAuditLog).catch(() => setOrderAuditLog([]));
+    } else {
       setOrderAuditLog([]);
-      return;
     }
-
-    const orderId = selectedOrderId;
-    let cancelled = false;
-    let pollingHandle: number | undefined;
-    const loadAudit = async (silent = false) => {
-      try {
-        const rows = await ordersApi.audit(orderId);
-        if (cancelled) return;
-        setOrderAuditLog(Array.isArray(rows) ? rows : []);
-      } catch {
-        if (cancelled || silent) return;
-        setOrderAuditLog([]);
-      }
-    };
-
-    void loadAudit();
-    pollingHandle = window.setInterval(() => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      void loadAudit(true);
-    }, ORDER_DETAILS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollingHandle) {
-        window.clearInterval(pollingHandle);
-      }
-    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal, selectedOrderId]);
 
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
@@ -13756,47 +10858,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const capturePackages = publicProduct ? publicPackages : previewPackages;
     const chosenPackage = capturePackages.find((item) => item.id === orderFormPackageId) ?? capturePackages[0];
 
-    if (publicEmbedIsPreview || !formTouched || !captureProduct || !chosenPackage) {
+    if (!formTouched || !captureProduct || !chosenPackage) {
       return;
     }
-
-    const selectedCrossSellLines: CrossSellLine[] = orderFormCrossSells.map((selection) => {
-      const product = products.find((item) => item.id === selection.productId);
-      const companion = chosenPackage.companionProducts?.find((entry) =>
-        entry.productId === selection.productId
-        && companionMatchesState(entry, orderFormState.trim())
-      );
-      let quantity = selection.quantity;
-      let amount = 0;
-      if (companion && product) {
-        const standard = primaryPricing(product)?.sellingPrice ?? 0;
-        quantity = companion.quantity;
-        amount = companionConfiguredTotal(companion, standard);
-      } else if (product) {
-        amount = crossSellPriceFor(captureProduct, product) * selection.quantity;
-      }
-      return {
-        id: makeCrossSellLineId(),
-        productId: selection.productId,
-        productName: product?.name ?? "Add-on",
-        quantity,
-        amount,
-        selectionSource: "public_form"
-      };
-    });
-    const autoCompanionLines = computeAutoCompanionLines(chosenPackage, orderFormState.trim());
-    const cartAdditionalTotal = [...selectedCrossSellLines, ...autoCompanionLines].reduce((sum, line) => sum + line.amount, 0);
-    const cartCapturePayload = {
-      packageQuantity: chosenPackage.quantity,
-      utmSource: publicUtmSource || undefined,
-      utmCampaign: publicUtmCampaign || undefined,
-      utmMedium: publicUtmMedium || undefined,
-      utmContent: publicUtmContent || undefined,
-      utmTerm: publicUtmTerm || undefined,
-      referrer: publicReferrer || undefined,
-      selectedCrossSellLines: selectedCrossSellLines.length > 0 ? selectedCrossSellLines : undefined,
-      autoCompanionLines: autoCompanionLines.length > 0 ? autoCompanionLines : undefined
-    };
 
     const cartPatch: AbandonedCartRecord = {
       id: abandonedDraftCartId || makeCartId(),
@@ -13804,20 +10868,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "No phone yet",
       whatsapp: sanitizePhoneDigitsInput(orderFormWhatsapp),
       email: orderFormEmail.trim(),
-      address: orderFormAddress.trim(),
       city: orderFormCity.trim(),
       state: orderFormState.trim(),
       productId: captureProduct.id,
       packageId: chosenPackage.id,
       productName: captureProduct.name,
       packageName: chosenPackage.name,
-      amount: chosenPackage.price + cartAdditionalTotal,
+      amount: chosenPackage.price,
       currency: chosenPackage.currency,
       source: publicProduct ? orderSourceFromUtm(publicUtmSource) : "Website",
       status: abandonedDraftCartId ? "In progress" : "Open abandoned",
       assignedRepId: abandonedCarts.find((cart) => cart.id === abandonedDraftCartId)?.assignedRepId,
-      preferredDelivery: orderFormDeliveryWindow.trim(),
-      capturePayload: cartCapturePayload,
       lastActivity: nowIso(),
       createdAt: nowIso()
     };
@@ -13845,8 +10906,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           customer:     cartPatch.customer,
           phone:        cartPatch.phone,
           whatsapp:     cartPatch.whatsapp,
-          email:        cartPatch.email,
-          address:      cartPatch.address,
           city:         cartPatch.city,
           state:        cartPatch.state,
           productId:    cartPatch.productId,
@@ -13855,9 +10914,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           packageName:  cartPatch.packageName,
           amount:       cartPatch.amount,
           currency:     cartPatch.currency,
-          source:       cartPatch.source,
-          preferredDelivery: cartPatch.preferredDelivery,
-          capturePayload: cartPatch.capturePayload
+          source:       cartPatch.source
         }).catch(() => { /* swallow — local state already has it */ });
       }, 1500);
     }
@@ -13870,17 +10927,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     orderFormCity,
     orderFormState,
     orderFormPackageId,
-    orderFormCrossSells,
-    orderFormDeliveryWindow,
-    publicEmbedIsPreview,
     publicProduct,
     publicUtmSource,
-    publicUtmCampaign,
-    publicUtmMedium,
-    publicUtmContent,
-    publicUtmTerm,
-    publicReferrer,
-    products,
     previewProduct
   ]);
 
@@ -13909,17 +10957,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const normalized = normalizeWhatsAppPhone(phone);
     if (!normalized) return null;
     return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
-  };
-
-  const buildWhatsAppBusinessUrl = (phone: string | null | undefined, message: string) => {
-    const normalized = normalizeWhatsAppPhone(phone);
-    if (!normalized) return null;
-    const encoded = encodeURIComponent(message);
-    const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent || "");
-    if (isAndroid) {
-      return `intent://send?phone=${normalized}&text=${encoded}#Intent;scheme=whatsapp;package=com.whatsapp.w4b;end`;
-    }
-    return `whatsapp-business://send?phone=${normalized}&text=${encoded}`;
   };
 
   const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
@@ -13954,44 +10991,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     ].join("\n");
   };
 
-  const launchWhatsAppTarget = (url: string | null, customerName: string) => {
+  const openWhatsAppUrl = (url: string | null, customerName: string) => {
     if (!url) {
       showToast(`No valid WhatsApp number for ${customerName}.`);
-      return;
-    }
-    if (/^(intent|whatsapp|whatsapp-business):/i.test(url)) {
-      window.location.href = url;
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  const openWhatsAppUrl = (phone: string | null | undefined, message: string, customerName: string) => {
-    const regularUrl = buildWhatsAppUrl(phone, message);
-    const businessUrl = buildWhatsAppBusinessUrl(phone, message);
-    if (!regularUrl || !businessUrl) {
-      showToast(`No valid WhatsApp number for ${customerName}.`);
-      return;
-    }
-    setWhatsAppTargetPicker({
-      customerName,
-      regularUrl,
-      businessUrl
-    });
-  };
-
   const openWhatsAppForOrder = (order: TrackedOrder) => {
     openWhatsAppUrl(
-      order.whatsapp || order.phone,
-      buildOrderWhatsAppMessage(order),
+      buildWhatsAppUrl(order.whatsapp || order.phone, buildOrderWhatsAppMessage(order)),
       order.customer
     );
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
     openWhatsAppUrl(
-      cart.whatsapp || cart.phone,
-      buildCartWhatsAppMessage(cart),
+      buildWhatsAppUrl(cart.whatsapp || cart.phone, buildCartWhatsAppMessage(cart)),
       cart.customer
     );
   };
@@ -14472,7 +11489,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return (
       <div
-        className="absolute top-full left-0 z-50 mt-1 w-[min(640px,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] max-h-[min(80vh,42rem)] overflow-y-auto bg-white border border-gray-200 rounded-2xl shadow-2xl"
+        className="absolute top-full left-0 z-50 mt-1 w-[640px] max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden"
         data-testid={testId}
       >
         {/* Month grids */}
@@ -14567,30 +11584,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex-1 min-w-0 w-full">
+        <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-4">
+          <div className="flex-1 min-w-0">
             {range.start || range.end ? (
-              <div className="flex flex-wrap items-center gap-1.5 text-sm min-w-0">
-                <span className="font-bold text-[#1F8FE0] break-words">{range.start || "—"}</span>
+              <div className="flex items-center gap-1.5 text-sm min-w-0">
+                <span className="font-bold text-[#1F8FE0] shrink-0">{range.start || "—"}</span>
                 {range.end && <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />}
-                {range.end && <span className="font-bold text-[#1F8FE0] break-words">{range.end}</span>}
+                {range.end && <span className="font-bold text-[#1F8FE0] shrink-0">{range.end}</span>}
               </div>
             ) : (
               <span className="text-sm text-gray-400">Select a start then end date</span>
             )}
           </div>
-          <div className="flex items-center justify-end gap-2 w-full sm:w-auto sm:justify-start">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button
               type="button"
               onClick={onCancel}
-              className="!min-h-0 flex-1 sm:flex-none px-4 py-2 text-sm font-semibold text-gray-600 border border-gray-200 bg-white rounded-xl hover:bg-gray-50 transition-colors"
+              className="!min-h-0 px-4 py-2 text-sm font-semibold text-gray-600 border border-gray-200 bg-white rounded-xl hover:bg-gray-50 transition-colors"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={onApply}
-              className="!min-h-0 flex-1 sm:flex-none px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-xl hover:bg-blue-700 transition-colors"
+              className="!min-h-0 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-xl hover:bg-blue-700 transition-colors"
             >
               Apply
             </button>
@@ -14609,8 +11626,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Total Revenue", formatMoney(dashboardRevenue)],
       ["COGS", formatMoney(dashboardCogs)],
       ["Gross Profit", formatMoney(dashboardGrossProfit)],
-      ["Logistics", formatMoney(dashboardLogistics)],
-      ["Operating Expenses", formatMoney(dashboardOperatingExpense)],
+      ["Expenses", formatMoney(dashboardExpenseTotal)],
       ["Net Profit", formatMoney(dashboardNetProfit)],
       ["Total Orders", String(dashboardOrders.length)],
       ["Fulfillment Rate", `${dashboardDeliveryRate}%`],
@@ -14642,12 +11658,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ? 0
       : Math.round((exportDelivered.length / filteredOrderRows.length) * 100);
     const rows = [
-      [activeOrderWorkspaceMeta.exportTitle],
+      ["Orders Report"],
       ["Period", selectedOrdersPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
       ["Status", orderStatus],
-      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScopeLabel(orderAssignmentScope) : "All assignments"],
       ["Source", orderSource],
       ["Location", orderLocation],
       ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -14655,7 +11670,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Delivery Rate", `${exportDeliveryRate}%`],
       ["Revenue Generated", formatMoney(exportRevenue)],
       [],
-      ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Assigned To", "Assigned By", "Source", "Location", "Amount", "Date"],
+      ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Source", "Location", "Amount", "Date"],
       ...filteredOrderRows.map((order) => [
         order.id,
         order.customer,
@@ -14663,8 +11678,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         order.productName,
         order.packageName,
         order.status ?? "New",
-        users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned",
-        order.assignedByNameSnapshot ?? users.find((u) => u.id === order.assignedByUserId)?.name ?? (order.assignedRepId ? "Legacy / unrecorded" : "Not assigned"),
         order.source ?? orderSourceFromUtm(order.utmSource),
         order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
         formatProductMoney(order.amount, order.currency),
@@ -14679,12 +11692,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${activeOrderWorkspaceMeta.exportFilePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `orders-report-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    showToast(`${activeOrderWorkspaceMeta.title} CSV exported.`);
+    showToast("Orders CSV exported.");
   };
 
   const exportRepOrdersCsv = () => {
@@ -14997,8 +12010,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const adminHashByLabel: Record<string, string> = {
       Dashboard: "#/dashboard/admin",
       Orders: "#/dashboard/admin/orders",
-      "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
-      "Closed Orders": "#/dashboard/admin/closed-orders",
       "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
       "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
       Deliveries: "#/dashboard/admin/deliveries",
@@ -15036,40 +12047,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
 
     if (label === "Orders") {
-      if (currentRole === "Sales Rep") {
-        const nextHash = repOrderWorkspaceHashByPage.Orders;
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
-        setHashRoute(nextHash);
-      } else {
-        syncAdminHash(label);
-      }
+      syncAdminHash(label);
       setActivePage("Orders");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-
-    if (label === "Follow-up Queue") {
-      if (currentRole === "Sales Rep") {
-        const nextHash = repOrderWorkspaceHashByPage["Follow-up Queue"];
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
-        setHashRoute(nextHash);
-      } else {
-        syncAdminHash(label);
-      }
-      setActivePage("Follow-up Queue");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-
-    if (label === "Closed Orders") {
-      if (currentRole === "Sales Rep") {
-        const nextHash = repOrderWorkspaceHashByPage["Closed Orders"];
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
-        setHashRoute(nextHash);
-      } else {
-        syncAdminHash(label);
-      }
-      setActivePage("Closed Orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -15383,17 +12362,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       unitsSold: 0,
       createdAt: nowIso(),
       pricings: source.pricings.map((p) => ({ ...p })),
-      packages: source.packages.map((pkg) => ({
-        ...pkg,
-        id: makePackageId(),
-        offerSyncEnabled: false,
-        offerSyncSourceProductId: null,
-        offerSyncSourcePackageId: null,
-        packageComponents: (pkg.packageComponents ?? []).map((component) =>
-          normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })
-        ),
-        companionProducts: clonePackageCompanions(pkg.companionProducts ?? [])
-      })),
+      packages: source.packages.map((pkg) => ({ ...pkg, id: makePackageId() })),
       availableStates: source.availableStates ? [...source.availableStates] : undefined,
       bonusConfig: source.bonusConfig ? {
         ...source.bonusConfig,
@@ -15434,11 +12403,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           currency: pkg.currency,
           displayOrder: pkg.displayOrder,
           active: pkg.active,
-          packageComponents: pkg.packageComponents ?? [],
-          companionProducts: pkg.companionProducts ?? [],
-          offerSyncEnabled: false,
-          offerSyncSourceProductId: null,
-          offerSyncSourcePackageId: null
+          companionProducts: pkg.companionProducts ?? []
         }).then((savedPackage: any) => ({ tempId: pkg.id, savedPackage: savedPackage as ProductPackage }))
       );
       const settingsPayload = {
@@ -15688,7 +12653,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const resetPackageForm = () => {
-    clearPackageEditorDraftTracking();
     setPackageName("");
     setPackageDescription("");
     setPackageQuantity("1");
@@ -15698,13 +12662,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setPackageComponents([]);
     setPackageCompanions([]);
     setSelectedPackageId("");
-    setShowPackageOfferCopyPanel(false);
-    setPackageOfferCopyTargetIds([]);
-    setPackageOfferCopyBusy(false);
-    setPackageOfferCopyKeepSynced(false);
-    setPackageOfferSyncEnabled(false);
-    setPackageOfferSyncSourceProductId(null);
-    setPackageOfferSyncSourcePackageId(null);
   };
 
   const openAddPackage = () => {
@@ -15715,10 +12672,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const openEditPackage = (item: ProductPackage, sourceProductId?: string) => {
     const productId = sourceProductId ?? selectedProduct?.id;
-    const hydrationKey = productId ? `${productId}:${item.id}` : "";
-    packageEditorHydrationKeyRef.current = hydrationKey;
-    packageEditorDraftKeyRef.current = hydrationKey;
-    packageEditorDirtyRef.current = false;
     if (productId) {
       setSelectedProductId(productId);
     }
@@ -15731,13 +12684,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setPackageDisplayOrder(String(item.displayOrder));
     setPackageComponents((item.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((item.companionProducts ?? []).map(normalisePackageCompanion));
-    setShowPackageOfferCopyPanel(false);
-    setPackageOfferCopyTargetIds([]);
-    setPackageOfferCopyBusy(false);
-    setPackageOfferCopyKeepSynced(false);
-    setPackageOfferSyncEnabled(Boolean((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled));
-    setPackageOfferSyncSourceProductId((item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null);
-    setPackageOfferSyncSourcePackageId((item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null);
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -15798,33 +12744,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
       active: true,
       packageComponents: normalisedComponents,
-      companionProducts: normalisedCompanions,
-      offerSyncEnabled: packageOfferSyncEnabled,
-      offerSyncSourceProductId: packageOfferSyncEnabled ? packageOfferSyncSourceProductId : null,
-      offerSyncSourcePackageId: packageOfferSyncEnabled ? packageOfferSyncSourcePackageId : null
+      companionProducts: normalisedCompanions
     };
 
     const _pkgProdId = selectedProduct.id;
     const productSnapshot = selectedProduct;
-    const linkedOfferTargetIds =
-      modal === "editPackage" && selectedPackage
-        ? selectedProduct.packages
-            .filter((item) => {
-              const syncEnabled = ((item as any).offerSyncEnabled ?? (item as any).offer_sync_enabled) === true;
-              const syncSourceProductId = (item as any).offerSyncSourceProductId ?? (item as any).offer_sync_source_product_id ?? null;
-              const syncSourcePackageId = (item as any).offerSyncSourcePackageId ?? (item as any).offer_sync_source_package_id ?? null;
-              return (
-                item.id !== selectedPackage.id &&
-                syncEnabled &&
-                syncSourceProductId === selectedProduct.id &&
-                syncSourcePackageId === selectedPackage.id
-              );
-            })
-            .map((item) => item.id)
-        : [];
-    const syncedCompanionsByTarget = Object.fromEntries(
-      linkedOfferTargetIds.map((targetId) => [targetId, clonePackageCompanions(normalisedCompanions)])
-    ) as Record<string, PackageCompanion[]>;
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -15832,18 +12756,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               ...product,
               packages:
                 modal === "editPackage"
-                  ? product.packages.map((item) => {
-                      if (item.id === packageRecord.id) {
-                        return packageRecord;
-                      }
-                      if (linkedOfferTargetIds.includes(item.id)) {
-                        return {
-                          ...item,
-                          companionProducts: syncedCompanionsByTarget[item.id] ?? []
-                        };
-                      }
-                      return item;
-                    })
+                  ? product.packages.map((item) => (item.id === packageRecord.id ? packageRecord : item))
                   : [...product.packages, packageRecord]
             }
           : product
@@ -15853,20 +12766,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     closeModal();
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, {
-        name: packageRecord.name,
-        description: packageRecord.description,
-        quantity: packageRecord.quantity,
-        price: packageRecord.price,
-        currency: packageRecord.currency,
-        displayOrder: packageRecord.displayOrder,
-        active: packageRecord.active,
-        packageComponents: normalisedComponents,
-        companionProducts: normalisedCompanions,
-        offerSyncEnabled: packageRecord.offerSyncEnabled,
-        offerSyncSourceProductId: packageRecord.offerSyncSourceProductId,
-        offerSyncSourcePackageId: packageRecord.offerSyncSourcePackageId
-      })
+      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, packageComponents: normalisedComponents, companionProducts: normalisedCompanions })
         .then((savedPackage: any) => {
           replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
         })
@@ -15875,19 +12775,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
         });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, {
-        name: packageRecord.name,
-        description: packageRecord.description,
-        quantity: packageRecord.quantity,
-        price: packageRecord.price,
-        currency: packageRecord.currency,
-        displayOrder: packageRecord.displayOrder,
-        packageComponents: normalisedComponents,
-        companionProducts: normalisedCompanions,
-        offerSyncEnabled: packageRecord.offerSyncEnabled,
-        offerSyncSourceProductId: packageRecord.offerSyncSourceProductId,
-        offerSyncSourcePackageId: packageRecord.offerSyncSourcePackageId
-      }).catch((err: any) => {
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, packageComponents: normalisedComponents, companionProducts: normalisedCompanions }).catch((err: any) => {
         setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
         showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
       });
@@ -15913,9 +12801,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       id: makePackageId(),
       name: `${item.name} (Copy)`,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
-      offerSyncEnabled: false,
-      offerSyncSourceProductId: null,
-      offerSyncSourcePackageId: null,
       packageComponents: item.packageComponents ? item.packageComponents.map((component) => normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })) : [],
       companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
     };
@@ -15958,9 +12843,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       quantity: Math.max(1, item.quantity * multiplier),
       price: Math.round((item.price * multiplier + Number.EPSILON) * 100) / 100,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
-      offerSyncEnabled: false,
-      offerSyncSourceProductId: null,
-      offerSyncSourcePackageId: null,
       packageComponents: scaledComponents,
       companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
     };
@@ -15985,139 +12867,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast(`Failed to create x${multiplier} bundle: ${err?.message ?? "please retry"}.`);
     });
     showToast(`Created "${clone.name}" as an x${multiplier} combo copy. Adjust the price if you want a bundle discount.`);
-  };
-
-  const duplicatePackageOfferRow = (companionId: string) => {
-    markPackageEditorDirty();
-    setPackageCompanions((prev) => {
-      const index = prev.findIndex((row) => row.companionId === companionId);
-      const target = index >= 0 ? prev[index] : undefined;
-      if (!target) return prev;
-      const clone = normalisePackageCompanion({
-        ...target,
-        companionId: makeCompanionId()
-      });
-      return [...prev.slice(0, index + 1), clone, ...prev.slice(index + 1)];
-    });
-    showToast("Offer duplicated.");
-  };
-
-  const applyCurrentPackageOffersToTargets = async () => {
-    if (!selectedProduct || !selectedPackage) {
-      showToast("Open a saved package first.");
-      return;
-    }
-    const targetIds = Array.from(new Set(packageOfferCopyTargetIds.filter((id) => id && id !== selectedPackage.id)));
-    if (targetIds.length === 0) {
-      showToast("Choose at least one package to update.");
-      return;
-    }
-    const draftSourceCompanions = packageCompanions
-      .map(normalisePackageCompanion)
-      .filter((companion) => companion.productId);
-    const savedSourceCompanions = (selectedPackage.companionProducts ?? [])
-      .map(normalisePackageCompanion)
-      .filter((companion) => companion.productId);
-    const sourceCompanions = draftSourceCompanions.length > 0 ? draftSourceCompanions : savedSourceCompanions;
-    if (sourceCompanions.length === 0) {
-      showToast("This package has no saved extra offers to copy yet.");
-      return;
-    }
-    const invalidStateScopedOffer = sourceCompanions.find(
-      (companion) => companion.stateFilterMode === "allow" && companion.stateRestrictions.length === 0
-    );
-    if (invalidStateScopedOffer) {
-      showToast("Pick at least one state for every 'Show only in selected states' offer.");
-      return;
-    }
-
-    const productSnapshot = selectedProduct;
-    const clonedByTarget = Object.fromEntries(
-      targetIds.map((targetId) => [targetId, clonePackageCompanions(sourceCompanions)])
-    ) as Record<string, PackageCompanion[]>;
-    const syncSourceProductId = packageOfferCopyKeepSynced ? selectedProduct.id : null;
-    const syncSourcePackageId = packageOfferCopyKeepSynced ? selectedPackage.id : null;
-
-    setPackageOfferCopyBusy(true);
-    setProducts((value) =>
-      value.map((product) =>
-        product.id !== selectedProduct.id
-          ? product
-          : {
-              ...product,
-              packages: product.packages.map((pkg) =>
-                targetIds.includes(pkg.id)
-                  ? {
-                      ...pkg,
-                      companionProducts: clonedByTarget[pkg.id] ?? [],
-                      offerSyncEnabled: packageOfferCopyKeepSynced,
-                      offerSyncSourceProductId: syncSourceProductId,
-                      offerSyncSourcePackageId: syncSourcePackageId
-                    }
-                  : pkg
-              )
-            }
-      )
-    );
-
-    const results = await Promise.allSettled(
-      targetIds.map((targetId) =>
-        productsApi.updatePackage(selectedProduct.id, targetId, {
-          companionProducts: clonedByTarget[targetId] ?? [],
-          offerSyncEnabled: packageOfferCopyKeepSynced,
-          offerSyncSourceProductId: syncSourceProductId,
-          offerSyncSourcePackageId: syncSourcePackageId
-        })
-      )
-    );
-
-    const failedTargetIds = targetIds.filter((_, index) => results[index]?.status === "rejected");
-    if (failedTargetIds.length > 0) {
-      setProducts((value) =>
-        value.map((product) =>
-          product.id !== selectedProduct.id
-            ? product
-            : {
-                ...product,
-                packages: product.packages.map((pkg) => {
-                  if (!failedTargetIds.includes(pkg.id)) return pkg;
-                  const snapshotPkg = productSnapshot.packages.find((candidate) => candidate.id === pkg.id);
-                  return snapshotPkg
-                    ? {
-                        ...pkg,
-                        companionProducts: snapshotPkg.companionProducts ?? [],
-                        offerSyncEnabled: snapshotPkg.offerSyncEnabled ?? ((snapshotPkg as any).offer_sync_enabled ?? false),
-                        offerSyncSourceProductId: snapshotPkg.offerSyncSourceProductId ?? (snapshotPkg as any).offer_sync_source_product_id ?? null,
-                        offerSyncSourcePackageId: snapshotPkg.offerSyncSourcePackageId ?? (snapshotPkg as any).offer_sync_source_package_id ?? null
-                      }
-                    : pkg;
-                })
-              }
-        )
-      );
-    }
-
-    const successCount = targetIds.length - failedTargetIds.length;
-    if (successCount > 0 && failedTargetIds.length === 0) {
-      showToast(
-        packageOfferCopyKeepSynced
-          ? `Copied and linked this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}. Future source offer changes will flow there too.`
-          : `Copied this package's offers to ${successCount} package${successCount === 1 ? "" : "s"}.`
-      );
-      setShowPackageOfferCopyPanel(false);
-      setPackageOfferCopyTargetIds([]);
-    } else if (successCount > 0) {
-      showToast(
-        packageOfferCopyKeepSynced
-          ? `Linked ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
-          : `Copied offers to ${successCount} package${successCount === 1 ? "" : "s"}, but ${failedTargetIds.length} failed. Please retry those bundles.`
-      );
-    } else {
-      setProducts((value) => value.map((product) => product.id === selectedProduct.id ? productSnapshot : product));
-      showToast("Could not copy offers to the selected packages.");
-    }
-
-    setPackageOfferCopyBusy(false);
   };
 
   // Toggle active/inactive — quick action from the package row.
@@ -16192,14 +12941,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       .map((c) => {
         const product = products.find((p) => p.id === c.productId);
         const standardPrice = product ? (primaryPricing(product)?.sellingPrice ?? 0) : 0;
-        return {
-          id: makeCrossSellLineId(),
-          productId: c.productId,
-          productName: (product?.name ?? "Companion") + " (bundled)",
-          quantity: c.quantity,
-          amount: companionConfiguredTotal(c, standardPrice),
-          selectionSource: "auto_include"
-        };
+        const unit = c.pricingMode === "free" ? 0
+                   : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                   : standardPrice;
+        return { id: makeCrossSellLineId(), productId: c.productId, productName: (product?.name ?? "Companion") + " (bundled)", quantity: c.quantity, amount: unit * c.quantity };
       });
   };
 
@@ -16880,8 +13625,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ...draftOrder,
         id: saved.id,
         assignedRepId: saved.assignedRepId ?? draftOrder.assignedRepId,
-        assignedByUserId: saved.assignedByUserId ?? authUser?.id ?? undefined,
-        assignedByNameSnapshot: saved.assignedByNameSnapshot ?? ownerName,
         createdAt: saved.createdAt ?? draftOrder.createdAt,
         date: saved.date ?? draftOrder.date,
         location: saved.location ?? draftOrder.location
@@ -17060,8 +13803,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       orderTimelineNote("Order details edited."),
       ...orderNotesFor(selectedOrder)
     ];
-    const nextAssignedRepId = createOrderRepId === "auto" ? selectedOrder.assignedRepId : createOrderRepId;
-    const assignmentChanged = nextAssignedRepId !== selectedOrder.assignedRepId;
     setTrackedOrders((value) =>
       value.map((order) =>
         order.id === selectedOrder.id
@@ -17084,9 +13825,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               source: createOrderSource,
               utmSource: createOrderSource.toLowerCase(),
               location: orderLocationFromFields(createOrderCity, createOrderState),
-              assignedRepId: nextAssignedRepId,
-              assignedByUserId: assignmentChanged ? (authUser?.id ?? order.assignedByUserId) : order.assignedByUserId,
-              assignedByNameSnapshot: assignmentChanged ? ownerName : order.assignedByNameSnapshot,
+              assignedRepId: createOrderRepId === "auto" ? order.assignedRepId : createOrderRepId,
               agentId: createOrderAgentId || undefined,
               scheduledDate: createOrderScheduleEnabled ? orderScheduleDate : undefined,
               scheduledAt: createOrderScheduleEnabled ? plannedMoment.iso : undefined,
@@ -17126,8 +13865,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           ? {
               ...order,
               assignedRepId: reassignRepId,
-              assignedByUserId: authUser?.id ?? order.assignedByUserId,
-              assignedByNameSnapshot: ownerName,
               response: nextResponse,
               notes: nextNotes
             }
@@ -17201,7 +13938,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const resetFollowUpAttemptDraft = (task?: FollowUpTask | null) => {
     setFollowUpAttemptChannel("call");
     setFollowUpAttemptType(task?.taskType === "delivery_confirmation" ? "delivery_confirmation" : "scheduled_callback");
-    setFollowUpRecoveryBucket("");
     setFollowUpAttemptOutcome("");
     setFollowUpAttemptNote("");
     setFollowUpAttemptTaskId(task?.id ?? "");
@@ -17210,47 +13946,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setFollowUpNextActionDate(task?.dueAt ? normalizeDateKey(task.dueAt) : todayKey());
     setFollowUpNextActionTime(task?.dueAt ? splitMomentForInput(task.dueAt).time || nextTimeValue() : nextTimeValue());
     setFollowUpNextActionNote("");
-  };
-
-  const recommendedNextActionForRecoveryBucket = (bucket: FollowUpRecoveryBucket) => {
-    const definition = followUpOutcomeDefinitionForBucket(bucket);
-    if (!definition?.requiresNextAction) return null;
-    const base = new Date();
-    if (definition.defaultOffsetDays) {
-      base.setDate(base.getDate() + definition.defaultOffsetDays);
-    }
-    if (definition.defaultOffsetMinutes) {
-      base.setMinutes(base.getMinutes() + definition.defaultOffsetMinutes);
-    }
-    const dateKey = formatDateKey(base);
-    const timeValue = `${String(base.getHours()).padStart(2, "0")}:${String(base.getMinutes()).padStart(2, "0")}`;
-    return {
-      date: dateKey,
-      time: timeValue,
-      taskType: bucket === "asked_for_whatsapp" ? "callback" as FollowUpTask["taskType"] : "callback" as FollowUpTask["taskType"]
-    };
-  };
-
-  const applyFollowUpOutcomePreset = (bucket: FollowUpRecoveryBucket | "custom") => {
-    if (bucket === "custom") {
-      setFollowUpRecoveryBucket("custom");
-      setFollowUpAttemptOutcome("");
-      setFollowUpNextActionEnabled(false);
-      return;
-    }
-    const definition = followUpOutcomeDefinitionForBucket(bucket);
-    if (!definition) return;
-    setFollowUpRecoveryBucket(bucket);
-    setFollowUpAttemptOutcome(definition.label);
-    if (definition.requiresNextAction) {
-      const recommended = recommendedNextActionForRecoveryBucket(bucket);
-      setFollowUpNextActionEnabled(true);
-      setFollowUpNextActionType(recommended?.taskType ?? "callback");
-      setFollowUpNextActionDate(recommended?.date ?? todayKey());
-      setFollowUpNextActionTime(recommended?.time ?? nextTimeValue());
-    } else {
-      setFollowUpNextActionEnabled(false);
-    }
   };
 
   const openFollowUpAttemptModal = (order: TrackedOrder, task?: FollowUpTask | null) => {
@@ -17263,13 +13958,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     if (!selectedOrder) return;
     if (!followUpAttemptOutcome.trim()) {
       showToast("Pick the outcome of the follow-up attempt.");
-      return;
-    }
-    const selectedOutcomeDefinition = followUpRecoveryBucket && followUpRecoveryBucket !== "custom"
-      ? followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)
-      : null;
-    if (selectedOutcomeDefinition?.requiresNextAction && !followUpNextActionEnabled) {
-      showToast("This follow-up reason needs a callback date and time before you can save it.");
       return;
     }
     if (followUpNextActionEnabled && !isDateValue(followUpNextActionDate)) {
@@ -17291,7 +13979,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         channel: followUpAttemptChannel,
         attemptType: followUpAttemptType,
         outcomeCode: followUpAttemptOutcome.trim(),
-        recoveryBucket: followUpRecoveryBucket && followUpRecoveryBucket !== "custom" ? followUpRecoveryBucket : null,
         outcomeNote: followUpAttemptNote.trim() || null,
         nextActionType: followUpNextActionEnabled ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
@@ -17328,10 +14015,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const openRepOrderDetail = (order: TrackedOrder) => {
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
-    const nextTab: RepConsoleTab = activePage === "Sales Rep Workspace" ? repConsoleTab : "Orders";
-    if (!isOrderWorkspacePage(activePage)) {
-      setRepConsoleTab(nextTab);
-    }
+    setRepConsoleTab("Orders");
     setCreateOrderAgentId(order.agentId ?? "");
     const plannedParts = splitMomentForInput(order.scheduledAt);
     setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(order) || todayKey());
@@ -17342,26 +14026,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setRepDeliveryFee(order.logisticsCost != null ? String(order.logisticsCost) : "");
     setRepAmountToRemit(order.amountRemitted != null ? String(order.amountRemitted) : String(Math.max(0, order.amount - (order.logisticsCost ?? 0))));
     setRepExtraExpenses([]);
-    if (activePage === "Sales Rep Workspace") {
-      syncHashRoute(repWorkspaceDetailHash(order.id, nextTab));
-      return;
-    }
-    const nextHash = isOrderWorkspacePage(activePage)
-      ? repOrderWorkspaceHash(`/${order.id}`, activeRepOrderWorkspacePage)
-      : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
+    const nextHash = repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}`);
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
-    if (activePage === "Sales Rep Workspace") {
-      syncHashRoute(repTabRoute(repConsoleTab));
-      return;
-    }
-    const nextHash = isOrderWorkspacePage(activePage)
-      ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
-      : (hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders"));
+    const nextHash = hashRoute.startsWith("#/dashboard/admin/orders") ? "#/dashboard/admin/orders" : repRouteWithScope("#/dashboard/sales-rep/orders");
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
@@ -17372,11 +14044,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(
-      isOrderWorkspacePage(activePage)
-        ? repOrderWorkspaceHash(`/${order.id}/change-status`, activeRepOrderWorkspacePage)
-        : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`)
-    );
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/status`));
   };
 
   const openRepRescheduleModal = (order: TrackedOrder, reason = "", callOutcome?: string) => {
@@ -17447,11 +14115,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setCreateOrderQuantity(String(order.quantity ?? 1));
     setCreateOrderAmount(String(order.amount ?? ""));
     setModal("editOrderCustomer");
-    syncHashRoute(
-      isOrderWorkspacePage(activePage)
-        ? repOrderWorkspaceHash(`/${order.id}/edit-customer`, activeRepOrderWorkspacePage)
-        : repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`)
-    );
+    syncHashRoute(repRouteWithScope(`#/dashboard/sales-rep/orders/${order.id}/edit-customer`));
   };
 
   const saveOrderCustomerEdit = () => {
@@ -17624,12 +14288,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const _doStockDeducted = selectedOrder.stockDeducted;
     setTrackedOrders((value) => value.filter((order) => order.id !== selectedOrder.id));
     setModal(null);
-    if (isAdminOrderWorkspaceHash(hashRoute)) {
+    if (hashRoute.startsWith("#/dashboard/admin/orders/")) {
       setSelectedOrderId("");
-      syncHashRoute(activeOrderWorkspaceBaseHash);
-    } else if (isRepOrderWorkspaceHash(hashRoute)) {
-      setSelectedOrderId("");
-      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+      syncHashRoute("#/dashboard/admin/orders");
     }
     showToast(`${_doId} deleted${_doStockDeducted ? " and stock restored" : ""}.`);
     ordersApi.delete(_doId).catch((err: any) => {
@@ -17720,19 +14381,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       let amount = 0;
       if (companion && p) {
         const standard = primaryPricing(p)?.sellingPrice ?? 0;
+        const unit = companion.pricingMode === "free" ? 0
+                    : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
+                    : standard;
         qty = companion.quantity;
-        amount = companionConfiguredTotal(companion, standard);
+        amount = unit * qty;
       } else if (p) {
         amount = crossSellPriceFor(publicProduct, p) * c.quantity;
       }
-      return {
-        id: makeCrossSellLineId(),
-        productId: c.productId,
-        productName: p?.name ?? "Add-on",
-        quantity: qty,
-        amount,
-        selectionSource: "public_form"
-      };
+      return { id: makeCrossSellLineId(), productId: c.productId, productName: p?.name ?? "Add-on", quantity: qty, amount };
     });
     // Auto-include companions ride along silently — append to xsLines so they
     // count toward total and appear as line items on the order.
@@ -17760,7 +14417,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           productName: publicProduct.name, packageName: chosenPackage.name,
           quantity: chosenPackage.quantity, amount: chosenPackage.price + xsTotal,
           currency: chosenPackage.currency, source,
-          sourceCartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
+          sourceCartId: abandonedDraftCartId || undefined,
           utmSource: publicUtmSource, utmCampaign: publicUtmCampaign,
           utmMedium: publicUtmMedium || undefined,
           utmContent: publicUtmContent || undefined,
@@ -17803,11 +14460,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             location,
             deliveryWindow: orderFormDeliveryWindow.trim() || undefined,
             assignedRepId: saved.assignedRepId ?? repForNewRecord(),
-            sourceCartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
+            sourceCartId: abandonedDraftCartId || undefined,
             crossSellLines: allXsLines.length > 0 ? allXsLines : undefined,
             freeGiftLines: giftLines.length > 0 ? giftLines : undefined,
             notes: [
-              { id: makeNoteId(), text: !publicEmbedIsPreview && abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
+              { id: makeNoteId(), text: abandonedDraftCartId ? `Converted from abandoned cart ${abandonedDraftCartId}.` : "Order submitted from public embed form.", by: "System", date: new Date().toISOString() },
               { id: makeNoteId(), by: "Customer", date: new Date().toISOString(), text: [
                   "Public form submission details:",
                   `Customer name: ${orderFormName.trim()}`,
@@ -17835,7 +14492,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         // Anonymous customer — server recomputes amount from canonical pricing.
         // We send packageId + cross-sell line ids; server handles the math.
         const saved = await publicOrdersApi.create({
-          cartId: publicEmbedIsPreview ? undefined : (abandonedDraftCartId || undefined),
+          cartId: abandonedDraftCartId || undefined,
           customer: orderFormName.trim(),
           phone: orderFormPhone.trim(),
           whatsapp: whatsappDigits || undefined,
@@ -19265,7 +15922,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       phone: selectedCart.phone,
       whatsapp: selectedCart.whatsapp,
       email: selectedCart.email,
-      address: selectedCart.address,
       city: selectedCart.city,
       state: selectedCart.state,
       productName: selectedCart.productName,
@@ -19279,8 +15935,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       status: "New",
       response: "Converted from abandoned cart",
       location: orderLocationFromFields(selectedCart.city ?? "", selectedCart.state ?? ""),
-      preferredDelivery: selectedCart.preferredDelivery,
-      deliveryWindow: selectedCart.preferredDelivery,
       assignedRepId: selectedCart.assignedRepId ?? repForNewRecord(),
       createdAt: nowIso(),
       date: displayDateFromKey(todayKey()),
@@ -19541,25 +16195,47 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
   };
 
-  const previewPayroll = () => {
-    setPayrollLabel(`${payrollMonth} Payroll`);
-    payrollApi.preview({ period: payrollMonth.trim() }).then((preview: any) => {
-      const rows = Array.isArray(preview?.rows) ? preview.rows : [];
-      setPayrollPreviewData({
-        period: preview?.period ?? payrollMonth.trim(),
+  const previewPayroll = async () => {
+    const period = payrollMonth.trim();
+    if (!period) {
+      showToast("Enter a payroll month first.");
+      return;
+    }
+    setPayrollLabel(`${period} Payroll`);
+    setPayrollPreviewLoading(true);
+    try {
+      const preview = await payrollApi.preview({ period });
+      const rows = Array.isArray(preview?.rows)
+        ? preview.rows.map((row: any) => ({
+            userId: row.userId ?? row.user_id ?? "",
+            name: row.name ?? "Unknown",
+            delivered: Number(row.delivered ?? 0),
+            fixedSalary: Number(row.fixedSalary ?? row.fixed_salary ?? 0),
+            commission: Number(row.commission ?? 0),
+            autoBonus: Number(row.autoBonus ?? row.auto_bonus ?? 0),
+            deductions: Number(row.deductions ?? 0),
+            total: Number(row.total ?? 0)
+          }))
+        : [];
+      const topPerformer = preview?.topPerformer ?? preview?.top_performer ?? null;
+      const nextPreview: PayrollPreviewData = {
+        period,
         rows,
         total: Number(preview?.total ?? 0),
-        topPerformer: preview?.topPerformer ?? preview?.top_performer ?? undefined
-      });
+        topPerformer
+      };
+      setPayrollPreviewData(nextPreview);
       if (rows.length === 0) {
-        showToast("No pay rates set yet. Use Pay Rates tab to configure pay structures.");
+        showToast("No pay rates or delivered orders found for that payroll month.");
       } else {
-        showToast(`${rows.length} team member${rows.length === 1 ? "" : "s"} included in ${payrollMonth} preview.`);
+        showToast(`${rows.length} team member${rows.length === 1 ? "" : "s"} included in ${period} preview.`);
       }
-    }).catch((err: any) => {
+    } catch (err: any) {
       setPayrollPreviewData(null);
-      showToast(`Failed to preview payroll: ${err.message}`);
-    });
+      showToast(`Failed to preview payroll: ${err?.message ?? "Unknown error"}`);
+    } finally {
+      setPayrollPreviewLoading(false);
+    }
   };
 
   const savePayrollDraft = () => {
@@ -19567,31 +16243,26 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       showToast("Set at least one pay rate before saving payroll.");
       return;
     }
-    if (!payrollPreviewData || payrollPreviewData.period !== payrollMonth.trim()) {
-      showToast("Preview this payroll first so the saved draft matches the latest calculation.");
-      return;
-    }
 
-    payrollApi.generate({
-      period: payrollMonth.trim(),
+    const localId = makePayrollRunId();
+    const run: PayrollRun = {
+      id: localId,
+      month: payrollMonth,
       label: payrollLabel || `${payrollMonth} Payroll`,
-      notes: payrollNotes
-    }).then((saved: any) => {
-      const run: PayrollRun = {
-        id: saved?.id ?? makePayrollRunId(),
-        month: saved?.month ?? saved?.period ?? payrollMonth.trim(),
-        label: saved?.label ?? (payrollLabel || `${payrollMonth} Payroll`),
-        notes: saved?.notes ?? payrollNotes,
-        total: Number(saved?.total ?? payrollGrandTotal),
-        status: saved?.status ?? "Draft",
-        createdAt: saved?.createdAt ?? saved?.created_at ?? new Date().toISOString(),
-        rows: Array.isArray(saved?.rows ?? saved?.entries) ? (saved?.rows ?? saved?.entries) : payrollPreviewRows,
-        topPerformer: saved?.topPerformer ?? saved?.top_performer ?? topPerformerInfo ?? undefined
-      };
-      setPayrollRuns((value) => [run, ...value.filter((item) => item.id !== run.id)]);
-      setPayrollTab("History");
-      showToast(`${run.label} saved as a draft.`);
+      notes: payrollNotes,
+      total: payrollGrandTotal,
+      status: "Draft",
+      createdAt: new Date().toISOString(),
+      rows: payrollPreviewRows,
+      topPerformer: topPerformerInfo ?? undefined
+    };
+    setPayrollRuns((value) => [run, ...value]);
+    setPayrollTab("History");
+    showToast(`${run.label} saved as a draft.`);
+    payrollApi.generate({ period: payrollMonth }).then((saved: any) => {
+      if (saved?.id) setPayrollRuns((prev) => prev.map((r) => r.id === localId ? { ...r, id: saved.id } : r));
     }).catch((err: any) => {
+      setPayrollRuns((prev) => prev.filter((r) => r.id !== localId));
       showToast(`Failed to save payroll: ${err.message}`);
     });
   };
@@ -19898,41 +16569,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       tab === "Dashboard" ? "#/dashboard/sales-rep" : `#/dashboard/sales-rep/${slugify(tab)}`,
       repIdOverride
     );
-  const repWorkspaceDetailHash = (orderId: string, tab: RepConsoleTab = repConsoleTab, repIdOverride = repConsoleRepId) => {
-    const baseHash = repTabRoute(tab, repIdOverride);
-    const [path, rawQuery = ""] = baseHash.split("?");
-    const params = new URLSearchParams(rawQuery);
-    params.set("order", orderId);
-    const query = params.toString();
-    return query ? `${path}?${query}` : path;
-  };
 
   const syncHashRoute = (nextHash: string) => {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
-
-  const activeRepOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
-  const repOrderWorkspaceHashByPage: Record<OrderWorkspacePage, string> = {
-    Orders: "#/dashboard/sales-rep/orders",
-    "Follow-up Queue": "#/dashboard/sales-rep/follow-up-queue",
-    "Closed Orders": "#/dashboard/sales-rep/closed-orders"
-  };
-  const repOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeRepOrderWorkspacePage) =>
-    repRouteWithScope(`${repOrderWorkspaceHashByPage[page]}${suffix}`);
-  const isRepOrderWorkspaceHash = (value: string) =>
-    value.startsWith("#/dashboard/sales-rep/orders")
-    || value.startsWith("#/dashboard/sales-rep/follow-up-queue")
-    || value.startsWith("#/dashboard/sales-rep/closed-orders");
-
-  const activeOrderWorkspacePage: OrderWorkspacePage = isOrderWorkspacePage(activePage) ? activePage : "Orders";
-  const activeOrderWorkspaceBaseHash = orderWorkspaceHashByPage[activeOrderWorkspacePage];
-  const adminOrderWorkspaceHash = (suffix = "", page: OrderWorkspacePage = activeOrderWorkspacePage) =>
-    `${orderWorkspaceHashByPage[page]}${suffix}`;
-  const isAdminOrderWorkspaceHash = (value: string) =>
-    value.startsWith("#/dashboard/admin/orders")
-    || value.startsWith("#/dashboard/admin/follow-up-queue")
-    || value.startsWith("#/dashboard/admin/closed-orders");
 
   const openRepTab = (tab: RepConsoleTab) => {
     setRepConsoleTab(tab);
@@ -19970,61 +16611,33 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const openAdminOrderDetail = (orderId: string) => {
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-      setSelectedOrderId(orderId);
-      setModal("orderDetails");
-      syncHashRoute(repOrderWorkspaceHash(`/${orderId}`));
-      return;
-    }
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     setModal("orderDetails");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}`));
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}`);
   };
 
   const openAdminCreateOrderRoute = () => {
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-      openRepCreateOrderModal();
-      syncHashRoute(repOrderWorkspaceHash("/new"));
-      return;
-    }
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     openCreateOrderModal();
-    syncHashRoute(adminOrderWorkspaceHash("/new"));
+    syncHashRoute("#/dashboard/admin/orders/new");
   };
 
   const openAdminOrderEditRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-      setSelectedOrderId(orderId);
-      if (order) {
-        openOrderModal(order, "editOrderItems");
-      } else {
-        setModal("editOrderItems");
-      }
-      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/edit`));
-      return;
-    }
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     if (order) {
       openOrderModal(order, "editOrderItems");
     } else {
       setModal("editOrderItems");
     }
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/edit`));
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit`);
   };
 
   const openAdminOrderEditCustomerRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-    } else {
-      setActivePage(activeOrderWorkspacePage);
-    }
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     if (order) {
       setCreateOrderCustomer(order.customer);
@@ -20038,61 +16651,34 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setCreateOrderAmount(String(order.amount ?? ""));
     }
     setModal("editOrderCustomer");
-    syncHashRoute(
-      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
-        ? repOrderWorkspaceHash(`/${orderId}/edit-customer`)
-        : adminOrderWorkspaceHash(`/${orderId}/edit-customer`)
-    );
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/edit-customer`);
   };
 
   const openAdminOrderReassignRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     setReassignRepId(order?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
     setHandoverReason("");
     setModal("reassignOrder");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/reassign`));
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/reassign`);
   };
 
   const openAdminOrderSendToAgentRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     setCreateOrderAgentId(order?.agentId ?? "");
     setSendToAgentShowAllStates(false);
     setModal("sendToAgent");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/send-to-agent`));
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/send-to-agent`);
   };
 
   const openAdminOrderDeleteRoute = (orderId: string) => {
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-      setSelectedOrderId(orderId);
-      setModal("deleteOrder");
-      syncHashRoute(repOrderWorkspaceHash(`/${orderId}/delete`));
-      return;
-    }
-    setActivePage(activeOrderWorkspacePage);
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     setModal("deleteOrder");
-    syncHashRoute(adminOrderWorkspaceHash(`/${orderId}/delete`));
-  };
-
-  const openScopedOrderDetail = (order: TrackedOrder) => {
-    if (currentRole === "Sales Rep") {
-      openRepOrderDetail(order);
-      return;
-    }
-    openAdminOrderDetailPage(order);
-  };
-
-  const openScopedOrderEdit = (order: TrackedOrder) => {
-    if (currentRole === "Sales Rep") {
-      openRepEditOrderCustomer(order);
-      return;
-    }
-    openAdminOrderEditRoute(order.id);
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/delete`);
   };
 
   const openAdminOrderStatusRoute = (
@@ -20101,21 +16687,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
-    if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
-      setActivePage(activeRepOrderWorkspacePage);
-    } else {
-      setActivePage(activeOrderWorkspacePage);
-    }
+    setActivePage("Orders");
     setSelectedOrderId(orderId);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
     setStatusChangeOutcomePreset(options?.callOutcome ?? order?.callOutcome ?? "");
     setModal("changeOrderStatus");
-    syncHashRoute(
-      currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)
-        ? repOrderWorkspaceHash(`/${orderId}/change-status`)
-        : adminOrderWorkspaceHash(`/${orderId}/change-status`)
-    );
+    syncHashRoute(`#/dashboard/admin/orders/${orderId}/change-status`);
   };
 
   const openAdminOrderRescheduleRoute = (orderId: string, reason = "", callOutcome?: string) => {
@@ -20405,12 +16983,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory/history");
   };
-  const openInventoryStateStockRoute = () => {
-    setActivePage("Inventory");
-    setInventoryView("state-stock");
-    setModal(null);
-    syncHashRoute("#/dashboard/admin/inventory/state-stock");
-  };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
     agentId?: string;
@@ -20653,15 +17225,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {humanizeFollowUpTaskType(activeTask.taskType)} · {activeTask.effectiveStatus ?? activeTask.status}
                 </span>
                 <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(activeTask.dueAt)}</p>
-                {activeTask.note ? (
-                  renderOrderNoteBubble(activeTask.note, {
-                    compact: true,
-                    className: "mt-1.5",
-                    textClassName: "text-[12px] leading-5"
-                  })
-                ) : (
-                  <p className={`m-0 text-xs ${orderMutedTextClass}`}>No task note saved yet.</p>
-                )}
+                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{activeTask.note || "No task note saved yet."}</p>
               </div>
             ) : (
               <p className={`m-0 mt-2 text-sm ${orderMutedTextClass}`}>No active follow-up task.</p>
@@ -20672,26 +17236,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             <p className={`text-[11px] font-bold uppercase tracking-[0.16em] m-0 ${orderFaintTextClass}`}>Latest Attempt</p>
             {latestAttempt ? (
               <div className="mt-2 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
-                    {followUpReasonBadgeText(latestAttempt)}
-                  </span>
-                  {followUpReasonGroupLabel(latestAttempt) && (
-                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                      {followUpReasonGroupLabel(latestAttempt)}
-                    </span>
-                  )}
-                </div>
+                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
+                  {latestAttempt.outcomeCode}
+                </span>
                 <p className={`m-0 text-sm font-semibold ${orderTitleTextClass}`}>{formatMoment(latestAttempt.attemptedAt)}</p>
-                {latestAttempt.outcomeNote ? (
-                  renderOrderNoteBubble(latestAttempt.outcomeNote, {
-                    compact: true,
-                    className: "mt-1.5",
-                    textClassName: "text-[12px] leading-5"
-                  })
-                ) : (
-                  <p className={`m-0 text-xs ${orderMutedTextClass}`}>{`${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
-                )}
+                <p className={`m-0 text-xs ${orderMutedTextClass}`}>{latestAttempt.outcomeNote || `${latestAttempt.channel} · ${latestAttempt.attemptType.replace(/_/g, " ")}`}</p>
                 {latestAttempt.nextActionAt && (
                   <p className={`m-0 text-[11px] ${orderFaintTextClass}`}>Next {humanizeFollowUpTaskType(latestAttempt.nextActionType)} · {formatMoment(latestAttempt.nextActionAt)}</p>
                 )}
@@ -20725,24 +17274,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div key={attempt.id} className={`rounded-xl border ${orderBorderClass} px-3 py-2.5`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpReasonBadgeClass(attempt)}`}>
-                        {followUpReasonBadgeText(attempt)}
-                      </span>
-                      {followUpReasonGroupLabel(attempt) && (
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                          {followUpReasonGroupLabel(attempt)}
-                        </span>
-                      )}
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${orderSecondaryButtonClass}`}>{attempt.outcomeCode}</span>
                       <span className={`text-[11px] ${orderMutedTextClass}`}>{attempt.channel} · {attempt.attemptType.replace(/_/g, " ")}</span>
                     </div>
                     <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(attempt.attemptedAt)}</span>
                   </div>
-                  {attempt.outcomeNote &&
-                    renderOrderNoteBubble(attempt.outcomeNote, {
-                      compact: true,
-                      className: "mt-2",
-                      textClassName: "text-[12px] leading-5"
-                    })}
+                  {attempt.outcomeNote && (
+                    <p className={`m-0 mt-2 text-sm ${orderBodyTextClass}`}>{attempt.outcomeNote}</p>
+                  )}
                   {attempt.nextActionAt && (
                     <p className={`m-0 mt-2 text-[11px] ${orderMutedTextClass}`}>Next {humanizeFollowUpTaskType(attempt.nextActionType)} · {formatMoment(attempt.nextActionAt)}</p>
                   )}
@@ -20797,18 +17336,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                   <div className="col-span-2">
                     <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Latest Feedback</p>
-                    {latestNote ? (
-                      renderOrderNoteBubble(noteSnippet(latestNote.text), {
-                        compact: true,
-                        className: "mt-1.5",
-                        textClassName: "text-[13px] leading-6"
-                      })
-                    ) : (
-                      <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>No saved note yet</p>
-                    )}
-                    {latestNote ? (
+                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{latestNote ? noteSnippet(latestNote.text) : "No saved note yet"}</p>
+                    {latestNote && (
                       <p className={`mt-1 text-[11px] ${orderMutedTextClass}`}>{latestNote.by} · {formatMoment(latestNote.date)}</p>
-                    ) : null}
+                    )}
                   </div>
                   <div className="col-span-2">
                     <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Next Follow-up</p>
@@ -20816,14 +17347,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
                         {followUpHeadline(nextFollowUp)}
                       </span>
+                      {nextFollowUp?.noteText && (
+                        <span className={`text-[11px] ${orderMutedTextClass}`}>{noteSnippet(nextFollowUp.noteText, 72)}</span>
+                      )}
                     </div>
-                    {nextFollowUp?.noteText
-                      ? renderOrderNoteBubble(noteSnippet(nextFollowUp.noteText, 120), {
-                          compact: true,
-                          className: "mt-2",
-                          textClassName: "text-[12px] leading-5"
-                        })
-                      : null}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -20875,16 +17402,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
                     <div className={`mt-1 text-[11px] ${orderMutedTextClass}`}>
                       <span className={`font-semibold ${orderBodyTextClass}`}>Latest:</span>{" "}
-                      {latestNote ? (
-                        <div className="mt-1">
-                          {renderOrderNoteBubble(noteSnippet(latestNote.text, 120), {
-                            compact: true,
-                            textClassName: "text-[12px] leading-5"
-                          })}
-                        </div>
-                      ) : (
-                        "No saved note yet"
-                      )}
+                      {latestNote ? noteSnippet(latestNote.text, 76) : "No saved note yet"}
                     </div>
                   </td>
                   <td className={`px-4 py-4 text-center text-xs font-medium ${orderMutedTextClass}`}>
@@ -20901,12 +17419,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
-                    {nextFollowUp?.noteText ? (
-                      <div className={`${followUpNoteBubbleCompactClass} mx-auto max-w-[260px] text-left`}>
-                        <span className={followUpNoteBubbleDotClass} />
-                        <span className="min-w-0 flex-1">{nextFollowUp.noteText}</span>
-                      </div>
-                    ) : null}
                   </td>
                   <td className={`px-4 py-4 text-xs ${orderMutedTextClass}`}>
                     {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}
@@ -20945,28 +17457,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {/* Header & Breadcrumbs */}
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <nav className={`flex items-center gap-2 text-sm font-medium mb-2 ${orderMutedTextClass}`}>
-            <button className="hover:text-[#1F8FE0] dark:hover:text-sky-300 transition-colors" onClick={closeRepOrderDetail}>Orders</button>
+          <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-2">
+            <button className="hover:text-[#1F8FE0] transition-colors" onClick={closeRepOrderDetail}>Orders</button>
             <ArrowRight className="w-4 h-4" />
-            <span className={orderTitleTextClass}>{order.id}</span>
+            <span className="text-gray-900">{order.id}</span>
           </nav>
           <h1 className="text-2xl font-bold text-[#1F8FE0]">{order.customer}</h1>
-          <p className={`text-sm font-medium mt-1 ${orderMutedTextClass}`}>
+          <p className="text-sm font-medium text-gray-500 mt-1">
             {order.phone} · {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")} · {repScopeDescription}
           </p>
         </div>
         <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
-          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => openRepStatusChangeModal(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
             <Repeat2 className="w-4 h-4" /> Change Status
           </button>
-          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => printInvoiceForOrder(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(order)}>
             <BookOpen className="w-4 h-4" /> Print Invoice
           </button>
-          <button className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors ${orderSecondaryButtonClass}`} onClick={() => downloadInvoiceForOrder(order)}>
+          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
             <Download className="w-4 h-4" /> Download Invoice
-          </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors dark:border-emerald-500/35 dark:bg-[#16212c] dark:text-emerald-300 dark:hover:bg-emerald-500/10" onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}>
-            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
           </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
             <Pencil className="w-4 h-4" /> Edit Order
@@ -21007,14 +17516,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Customer Info Card */}
         <article className={`${orderPanelClass} overflow-hidden`}>
-          <div className={`px-5 py-4 border-b ${orderBorderClass} flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between`}>
+          <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
             <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Customer Info</h2>
-            <button
-              className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-              onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
-            >
-              <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-            </button>
           </div>
           <div className="p-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
@@ -21047,152 +17550,69 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
             <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Order Items</h2>
           </div>
-          {(() => {
-            const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
-            const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
-            const hasAdditionalItems = (order.crossSellLines?.length ?? 0) > 0;
-            const hasFreeGifts = (order.freeGiftLines?.length ?? 0) > 0;
-            const offerLabel = (line: CrossSellLine) =>
-              line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
-                ? "Additional item"
-                : "Cross-sell";
-            const offerDetail = (line: CrossSellLine) => {
-              const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
-              return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
-            };
-            return (
-              <div className={`mx-4 sm:mx-5 mt-4 rounded-2xl border px-4 sm:px-5 py-4 ${orderPanelInfoClass}`}>
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div>
-                    <h3 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h3>
-                    <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
-                      Main offer plus any additional items saved with this order.
-                    </p>
-                  </div>
-                  <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
-                    {formatProductMoney(order.amount, order.currency)}
-                  </div>
-                </div>
-                <div className={`mt-4 border-t ${orderBorderClass} pt-4 grid gap-3`}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
-                        {order.productName} · {order.packageName}
-                      </p>
-                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
-                    </div>
-                    <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
-                      {formatProductMoney(mainOfferTotal, order.currency)}
-                    </div>
-                  </div>
-                  {(order.crossSellLines ?? []).map((line) => (
-                    <div key={`breakdown-${line.id}`} className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-3`}>
-                      <div className="min-w-0">
-                        <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
-                          {offerLabel(line)} · {line.productName}
-                        </p>
-                        <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
-                      </div>
-                      <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
-                        {formatProductMoney(line.amount, order.currency)}
-                      </div>
-                    </div>
-                  ))}
-                  {(order.freeGiftLines ?? []).map((line) => (
-                    <div key={`breakdown-gift-${line.id}`} className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-3`}>
-                      <div className="min-w-0">
-                        <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
-                          Free gift · {line.productName}
-                        </p>
-                        <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                          {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
-                        </p>
-                      </div>
-                      <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
-                        FREE
-                      </div>
-                    </div>
-                  ))}
-                  <div className={`flex items-start justify-between gap-4 border-t ${orderBorderClass} pt-4`}>
-                    <div className="min-w-0">
-                      <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
-                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                        {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
-                      </p>
-                    </div>
-                    <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
-                      {formatProductMoney(order.amount, order.currency)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
           <div className="sm:hidden divide-y divide-gray-100">
             <article className="px-4 py-4 space-y-3">
               <div>
-                <p className={`text-sm font-semibold ${orderTitleTextClass}`}>{order.productName}</p>
-                <p className={`text-xs ${orderFaintTextClass}`}>{order.packageName}</p>
+                <p className="text-sm font-semibold text-gray-900">{order.productName}</p>
+                <p className="text-xs text-gray-400">{order.packageName}</p>
               </div>
               <div className="grid grid-cols-3 gap-3 text-xs">
                 <div>
-                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
-                  <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{quantityForOrder(order)}</p>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                  <p className="mt-1 font-semibold text-gray-800">{quantityForOrder(order)}</p>
                 </div>
                 <div>
-                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Unit</p>
-                  <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatProductMoney(Math.round(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(order))), order.currency)}</p>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
+                  <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</p>
                 </div>
                 <div>
-                  <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
-                  <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>{formatProductMoney(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), order.currency)}</p>
+                  <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                  <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</p>
                 </div>
               </div>
             </article>
             {(order.crossSellLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40 dark:bg-amber-500/10">
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
-                      {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}
-                    </p>
-                    <p className={`mt-1 text-sm font-semibold ${orderTitleTextClass}`}>{line.productName}</p>
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Cross-sell</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
                   </div>
                   <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
                 </div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div className="grid grid-cols-3 gap-3 text-xs">
                   <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{line.quantity}</p>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
                   </div>
                   <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Unit</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
+                    <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
                   </div>
                   <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
-                    <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>{formatProductMoney(line.amount, order.currency)}</p>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                    <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</p>
                   </div>
                 </div>
               </article>
             ))}
             {(order.freeGiftLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40 dark:bg-emerald-500/10">
+              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Free Gift</p>
-                    <p className={`mt-1 text-sm font-semibold ${orderTitleTextClass}`}>{line.productName}</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
                   </div>
                   <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Qty</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{line.quantity}</p>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
+                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
                   </div>
                   <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Total</p>
-                    <p className={`mt-1 font-semibold ${orderTitleTextClass}`}>FREE</p>
+                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
+                    <p className="mt-1 font-semibold text-gray-900">FREE</p>
                   </div>
                 </div>
               </article>
@@ -21201,41 +17621,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className={`${orderTableHeaderClass} text-left`}>
-                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider">Product</th>
-                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-center">Qty</th>
-                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider">Price per unit</th>
-                  <th className="px-4 py-3 font-semibold uppercase text-[10px] tracking-wider text-right">Total Amount</th>
+                <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Product</th>
+                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Qty</th>
+                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Price per unit</th>
+                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right">Total Amount</th>
                 </tr>
               </thead>
-              <tbody className={`divide-y ${orderBorderClass}`}>
-                <tr className="hover:bg-gray-50 transition-colors dark:hover:bg-[#16212c]">
+              <tbody className="divide-y divide-gray-100">
+                <tr className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4">
-                    <div className={`font-medium ${orderTitleTextClass}`}>{order.productName}</div>
-                    <div className={`text-xs ${orderFaintTextClass}`}>{order.packageName}</div>
+                    <div className="font-medium text-gray-900">{order.productName}</div>
+                    <div className="text-xs text-gray-400">{order.packageName}</div>
                   </td>
-                  <td className={`px-4 py-4 text-center ${orderBodyTextClass}`}>{quantityForOrder(order)}</td>
-                  <td className={`px-4 py-4 ${orderBodyTextClass}`}>{formatProductMoney(Math.round(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(order))), order.currency)}</td>
-                  <td className={`px-4 py-4 text-right font-semibold ${orderTitleTextClass}`}>{formatProductMoney(Math.max(0, (order.amount || 0) - (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), order.currency)}</td>
+                  <td className="px-4 py-4 text-center text-gray-700">{quantityForOrder(order)}</td>
+                  <td className="px-4 py-4 text-gray-700">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</td>
+                  <td className="px-4 py-4 text-right font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</td>
                 </tr>
                 {(order.crossSellLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-amber-50/40 dark:bg-amber-500/10">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800 dark:text-amber-300">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"}</span><div className={orderBodyTextClass}>{line.productName}</div></td>
-                    <td className={`px-4 py-3 text-center text-xs ${orderBodyTextClass}`}>{line.quantity}</td>
-                    <td className={`px-4 py-3 text-xs ${orderBodyTextClass}`}>{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
+                  <tr key={line.id} className="bg-amber-50/40">
+                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800">↳ Cross-sell</span><div className="text-gray-700">{line.productName}</div></td>
+                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
+                    <td className="px-4 py-3 text-xs text-gray-700">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
                     <td className="px-4 py-3 text-right text-xs">
-                      <span className={`font-semibold ${orderTitleTextClass}`}>{formatProductMoney(line.amount, order.currency)}</span>
+                      <span className="font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</span>
                       <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
                     </td>
                   </tr>
                 ))}
                 {(order.freeGiftLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-emerald-50/40 dark:bg-emerald-500/10">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-emerald-800 dark:text-emerald-300">🎁 Free Gift</span><div className={orderBodyTextClass}>{line.productName}</div></td>
-                    <td className={`px-4 py-3 text-center text-xs ${orderBodyTextClass}`}>{line.quantity}</td>
-                    <td className={`px-4 py-3 text-xs italic ${orderMutedTextClass}`}>FREE</td>
+                  <tr key={line.id} className="bg-emerald-50/40">
+                    <td className="px-4 py-3 text-xs"><span className="font-medium text-emerald-800">🎁 Free Gift</span><div className="text-gray-700">{line.productName}</div></td>
+                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500 italic">FREE</td>
                     <td className="px-4 py-3 text-right text-xs">
-                      <span className={orderMutedTextClass}>—</span>
+                      <span className="text-gray-500">—</span>
                       <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
                     </td>
                   </tr>
@@ -21251,29 +17671,29 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </div>
 
       {/* Bonus & Upsell Tracking */}
-      <section className={`${orderPanelClass} overflow-hidden`}>
-        <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
-          <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Bonus &amp; Upsell Tracking</h2>
-          <p className={`text-xs mt-0.5 ${orderMutedTextClass}`}>Record when you upgraded the customer's pack. The bonus is computed automatically using the product's bonus rules.</p>
+      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">Bonus &amp; Upsell Tracking</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Record when you upgraded the customer's pack. The bonus is computed automatically using the product's bonus rules.</p>
         </div>
         <div className="p-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <label className="flex flex-col gap-1">
-            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Upsell from (qty)</span>
-            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell from (qty)</span>
+            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 3" value={order.upsellFromQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
               updateOrderUpsellFields(order, { upsellFromQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Upsell to (qty)</span>
-            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upsell to (qty)</span>
+            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" inputMode="numeric" placeholder="e.g. 5" value={order.upsellToQty ?? ""} onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
               updateOrderUpsellFields(order, { upsellToQty: v });
             }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={`text-xs font-semibold uppercase tracking-wide ${orderMutedTextClass}`}>Note</span>
-            <input className={`rounded-lg px-3 py-2 text-sm ${orderInputClass}`} placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</span>
+            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Yes/Upgraded" value={order.upsellNote ?? ""} onChange={(e) => {
               updateOrderUpsellFields(order, { upsellNote: e.target.value });
             }} />
           </label>
@@ -21283,25 +17703,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           const earned = isDelivered ? computeOrderBonus(order, 100, 0, 0) : null;
           const projected = projectedOrderBonus(order);
           return (
-            <div className={`mx-5 mb-5 p-3 border rounded-lg flex flex-col gap-1.5 ${isDelivered ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/25" : "bg-gray-50 border-gray-200 dark:bg-[#16212c] dark:border-slate-800/80"}`}>
+            <div className={`mx-5 mb-5 p-3 border rounded-lg flex flex-col gap-1.5 ${isDelivered ? "bg-emerald-50 border-emerald-200" : "bg-gray-50 border-gray-200"}`}>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
-                  <strong className={`text-sm ${orderTitleTextClass}`}>{isDelivered ? "Earned Bonus" : "Projected Bonus"}</strong>
-                  {!isDelivered && <span className={`text-xs ${orderFaintTextClass}`}>Estimated if order is delivered</span>}
+                  <strong className="text-sm text-gray-900">{isDelivered ? "Earned Bonus" : "Projected Bonus"}</strong>
+                  {!isDelivered && <span className="text-xs text-gray-400">Estimated if order is delivered</span>}
                 </div>
                 <span className={`text-lg font-extrabold ${isDelivered ? "text-emerald-700" : "text-gray-500"}`}>
                   {formatProductMoney(isDelivered ? (earned?.total ?? 0) : projected.total, order.currency)}
                 </span>
               </div>
               {(isDelivered ? earned?.components ?? [] : projected.components).length > 0 && (
-                <ul className={`text-xs list-disc pl-5 ${orderBodyTextClass}`}>
+                <ul className="text-xs text-gray-600 list-disc pl-5">
                   {(isDelivered ? earned?.components ?? [] : projected.components).map((c, i) => (
                     <li key={i}>{c.label}: <span className="font-semibold">{formatProductMoney(c.amount, order.currency)}</span></li>
                   ))}
                 </ul>
               )}
               {(isDelivered ? earned?.components ?? [] : projected.components).length === 0 && (
-                <p className={`text-xs ${orderFaintTextClass}`}>No bonus rules matched — check product bonus settings.</p>
+                <p className="text-xs text-gray-400">No bonus rules matched — check product bonus settings.</p>
               )}
               {order.bonusManuallyAdjusted && (
                 <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` — ${order.manualBonusReason}` : ""}</p>
@@ -21312,9 +17732,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
 
       {/* Status Workflow Panel */}
-      <section className={`${orderPanelClass} overflow-hidden`}>
-        <div className={`px-5 py-4 border-b ${orderBorderClass} flex items-center justify-between`}>
-          <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Status Workflow</h2>
+      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-base font-bold text-gray-900">Status Workflow</h2>
           {renderOrderStatusSummary(order, "right")}
         </div>
           <div className="p-6">
@@ -21409,14 +17829,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <article className={`${orderPanelMutedClass} rounded-[20px] p-4`}>
                     <p className={`text-[10px] font-bold uppercase tracking-[0.18em] m-0 ${orderFaintTextClass}`}>Latest Feedback</p>
-                    {latestNote ? (
-                      renderOrderNoteBubble(noteSnippet(latestNote.text, 180), {
-                        className: "mt-2",
-                        textClassName: "text-[14px] sm:text-[15px] leading-6"
-                      })
-                    ) : (
-                      <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>No saved note yet.</p>
-                    )}
+                    <p className={`mt-2 text-[15px] font-semibold m-0 leading-6 ${orderTitleTextClass}`}>
+                      {latestNote ? noteSnippet(latestNote.text, 120) : "No saved note yet."}
+                    </p>
                     <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
                       {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Add a note after every customer call so the next rep sees the context."}
                     </p>
@@ -21428,17 +17843,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {followUpHeadline(nextFollowUp)}
                       </span>
                     </div>
-                    {nextFollowUp?.noteText ? (
-                      renderOrderNoteBubble(noteSnippet(nextFollowUp.noteText, 160), {
-                        compact: true,
-                        className: "mt-2",
-                        textClassName: "text-[12px] leading-5"
-                      })
-                    ) : (
-                      <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
-                        Set a follow-up date and time on any note that needs a callback reminder.
-                      </p>
-                    )}
+                    <p className={`mt-2 text-[11px] m-0 ${orderMutedTextClass}`}>
+                      {nextFollowUp?.noteText
+                        ? noteSnippet(nextFollowUp.noteText, 120)
+                        : "Set a follow-up date and time on any note that needs a callback reminder."}
+                    </p>
                   </article>
                 </div>
               );
@@ -21667,13 +18076,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   >
                     <WhatsAppIcon className="w-4 h-4" /> WhatsApp
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openRepOrderDetail(order)}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm"
-                  >
-                    <Eye className="w-4 h-4" /> Details
-                  </button>
                 </div>
               </div>
 
@@ -21876,6 +18278,148 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           <div className="space-y-6">
             {renderRepWorkspaceFilters()}
 
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-gray-900 m-0">Bonus Coach</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Track what is already earned, what unlocks next, and which live order can move your bonus fastest.</p>
+                </div>
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
+                </span>
+              </div>
+              {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && !selectedRepUser ? (
+                <div className="px-5 py-8 text-sm text-gray-500">
+                  Select a sales rep above to preview their bonus progress for this week.
+                </div>
+              ) : repBonusCoachLoading ? (
+                <div className="px-5 py-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div key={`rep-bonus-skeleton-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4 animate-pulse">
+                      <div className="h-3 w-24 bg-gray-200 rounded mb-3" />
+                      <div className="h-8 w-32 bg-gray-200 rounded mb-2" />
+                      <div className="h-3 w-40 bg-gray-200 rounded" />
+                    </div>
+                  ))}
+                </div>
+              ) : repBonusCoachError ? (
+                <div className="px-5 py-8 text-sm text-amber-700 bg-amber-50/80 border-t border-amber-100">
+                  {repBonusCoachError}
+                </div>
+              ) : repBonusCoach ? (
+                <div className="p-5 space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <article className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Bonus earned</span>
+                      <strong className="block mt-2 text-2xl font-bold text-emerald-900">{formatProductMoney(repBonusCoach.snapshot.currentBonusEarned, "NGN")}</strong>
+                      <p className="mt-1 text-xs text-emerald-800">From {repBonusCoach.snapshot.deliveredCount} delivered orders this week.</p>
+                    </article>
+                    <article className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Open pipeline</span>
+                      <strong className="block mt-2 text-2xl font-bold text-blue-900">{formatProductMoney(repBonusCoach.snapshot.projectedBonusOpenPipeline, "NGN")}</strong>
+                      <p className="mt-1 text-xs text-blue-800">Projected if your open bonus opportunities close.</p>
+                    </article>
+                    <article className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">Delivery rate</span>
+                      <strong className="block mt-2 text-2xl font-bold text-amber-900">{repBonusCoach.snapshot.deliveryRate}%</strong>
+                      <p className="mt-1 text-xs text-amber-800">
+                        {repBonusCoach.snapshot.nextDeliveryRateTarget
+                          ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
+                          : "No higher delivery-rate gate blocking bonus right now."}
+                      </p>
+                    </article>
+                    <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">Next unlock</span>
+                      <strong className="block mt-2 text-xl font-bold text-violet-900">
+                        {repBonusCoach.snapshot.ordersNeededForNextTier
+                          ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more`
+                          : repBonusCoach.snapshot.topPerformerRank
+                            ? `#${repBonusCoach.snapshot.topPerformerRank}`
+                            : "On track"}
+                      </strong>
+                      <p className="mt-1 text-xs text-violet-800">
+                        {repBonusCoach.snapshot.nextTierTarget
+                          ? `${repBonusCoach.snapshot.nextTierTarget} delivered orders unlock the next tier.`
+                          : repBonusCoach.snapshot.topPerformerGap
+                            ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
+                            : "No higher tier is waiting right now."}
+                      </p>
+                    </article>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900">Best actions right now</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">These are the clearest bonus moves available in the current week window.</p>
+                      </div>
+                      {repBonusPrimaryOrder && (
+                        <button
+                          type="button"
+                          className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors"
+                          onClick={() => {
+                            const target = trackedOrders.find((order) => order.id === repBonusPrimaryOrder);
+                            if (target) {
+                              openRepOrderDetail(target);
+                            } else {
+                              showToast("That bonus order is no longer in the current workspace filter.");
+                            }
+                          }}
+                        >
+                          Open best order
+                        </button>
+                      )}
+                    </div>
+                    {repBonusCoach.motivators.length === 0 ? (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-500">
+                        No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                        {repBonusCoach.motivators.map((motivator) => (
+                          <article
+                            key={`${motivator.type}-${motivator.orderId ?? motivator.title}`}
+                            className={`rounded-xl border p-4 ${
+                              motivator.type === "bonus_at_risk"
+                                ? "border-rose-100 bg-rose-50"
+                                : motivator.type === "top_performer_race"
+                                  ? "border-blue-100 bg-blue-50"
+                                  : motivator.type === "delivery_rate_unlock"
+                                    ? "border-amber-100 bg-amber-50"
+                                    : "border-emerald-100 bg-emerald-50"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                                  {motivator.type === "bonus_at_risk"
+                                    ? "At risk"
+                                    : motivator.type === "top_performer_race"
+                                      ? "Leaderboard"
+                                      : motivator.type === "delivery_rate_unlock"
+                                        ? "Rate target"
+                                        : motivator.type === "next_delivered_unlock"
+                                          ? "Next unlock"
+                                          : "Named opportunity"}
+                                </span>
+                                <h4 className="mt-2 text-sm font-bold text-gray-900 leading-6">{motivator.title}</h4>
+                                {motivator.subtitle && <p className="mt-1 text-xs text-gray-600 leading-5">{motivator.subtitle}</p>}
+                              </div>
+                              {typeof motivator.amount === "number" && motivator.amount > 0 && (
+                                <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold bg-white text-gray-900 border border-gray-200 whitespace-nowrap">
+                                  {formatProductMoney(motivator.amount, "NGN")}
+                                </span>
+                              )}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
             <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Call rep summary">
               {([
                 // Revenue card removed — sales reps shouldn't see org-wide revenue.
@@ -21936,15 +18480,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>
                               <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
                             </div>
-                            {latestNote ? (
-                              renderOrderNoteBubble(noteSnippet(latestNote.text, 160), {
-                                compact: true,
-                                className: "mt-2 max-w-[26rem]",
-                                textClassName: "text-[12px] leading-5"
-                              })
-                            ) : (
-                              <p className="mt-1 text-sm text-gray-600 m-0">No saved feedback note yet.</p>
-                            )}
+                            <p className="mt-1 text-sm text-gray-600 m-0">
+                              {latestNote ? noteSnippet(latestNote.text, 120) : "No saved feedback note yet."}
+                            </p>
                             <p className="mt-1 text-[11px] text-gray-400 m-0">
                               {latestNote ? `${latestNote.by} · ${formatMoment(latestNote.date)}` : "Open the order and post a note after each customer call."}
                             </p>
@@ -21953,13 +18491,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${followUpBadgeClass(followUp ?? null)}`}>
                               {followUpHeadline(followUp ?? null)}
                             </span>
-                            {followUp?.noteText
-                              ? renderOrderNoteBubble(noteSnippet(followUp.noteText, 96), {
-                                  compact: true,
-                                  className: "mt-1.5 max-w-[18rem]",
-                                  textClassName: "text-[11px] leading-5"
-                                })
-                              : null}
+                            {followUp?.noteText && (
+                              <span className="text-[11px] text-gray-500">{noteSnippet(followUp.noteText, 64)}</span>
+                            )}
                           </div>
                         </div>
                       </button>
@@ -21993,16 +18527,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Abandoned Carts Assigned</h2>
                 <p className="text-xs text-gray-400 font-medium mt-0.5">{repScopeName} follow-up queue only.</p>
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                  {repCartJourneyAnalytics.blocked[0] ? (
-                    <span className="inline-flex items-center rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-                      Top blocker: {repCartJourneyAnalytics.blocked[0].label}
-                    </span>
-                  ) : null}
-                  {repCartJourneyLoading ? (
-                    <span className="text-[11px] font-semibold text-gray-400">Loading journey hints…</span>
-                  ) : null}
-                </div>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-gray-100 border-b border-gray-100">
                 {[
@@ -22215,11 +18739,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className="sm:hidden divide-y divide-gray-100">
                 {filteredRepCarts.map((cart) => (
                   <article key={cart.id} className="px-4 py-4 space-y-3">
-                    {(() => {
-                      const followUpHint = repCartHintById[cart.id];
-                      const recovery = repCartRecoveryById[cart.id];
-                      return (
-                        <>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="text-sm font-bold text-gray-900">{cart.id}</h3>
@@ -22240,24 +18759,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Product</p>
                         <p className="mt-1 font-semibold text-gray-800">{cart.productName}</p>
                         <p className="text-[11px] text-gray-500">{cart.packageName}</p>
-                        {recovery ? (
-                          <div className="mt-2 flex items-center gap-2 flex-wrap">
-                            <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
-                            <span className="text-[11px] text-gray-500">{recovery.summary}</span>
-                          </div>
-                        ) : null}
                       </div>
                       <div>
                         <p className="font-semibold uppercase tracking-wide text-gray-400">Last Activity</p>
                         <p className="mt-1 font-semibold text-gray-800">{formatMoment(cart.lastActivity)}</p>
                       </div>
                     </div>
-                    {followUpHint ? (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
-                        <p className="text-xs font-medium text-amber-900 mt-1 mb-0">{followUpHint}</p>
-                      </div>
-                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <button className="!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openRepCartAssignRoute(cart.id)}>
                         <UserPlus className="w-3 h-3" /> Assign
@@ -22266,9 +18773,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <ShoppingCart className="w-3 h-3" /> Convert
                       </button>
                     </div>
-                        </>
-                      );
-                    })()}
                   </article>
                 ))}
               </div>
@@ -22299,18 +18803,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <td className="px-4 py-4">
                           <div className="font-medium text-gray-900">{cart.productName}</div>
                           <div className="text-xs text-gray-400">{cart.packageName}</div>
-                          {repCartRecoveryById[cart.id] ? (
-                            <div className="mt-2 flex items-center gap-2 flex-wrap">
-                              <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(repCartRecoveryById[cart.id].band)}`}>{repCartRecoveryById[cart.id].band} · {repCartRecoveryById[cart.id].score}</span>
-                              <span className="text-[11px] text-gray-500">{repCartRecoveryById[cart.id].summary}</span>
-                            </div>
-                          ) : null}
-                          {repCartHintById[cart.id] ? (
-                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
-                              <p className="text-[11px] font-medium text-amber-900 mt-1 mb-0 leading-5">{repCartHintById[cart.id]}</p>
-                            </div>
-                          ) : null}
                         </td>
                         <td className="px-4 py-4">
                           <select
@@ -22908,10 +19400,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const dismissModal = () => {
     const modalBeforeClose = modal;
-    if (modalBeforeClose && ["addPackage", "editPackage", "deletePackage"].includes(modalBeforeClose)) {
-      clearPackageEditorDraftTracking();
-    }
-    resetDateEditor();
     setModal(null);
     setCreateOrderContext("admin");
     setUserPassword("");
@@ -22921,23 +19409,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
-    if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(activeOrderWorkspaceBaseHash);
+    if (modalBeforeClose === "orderDetails" && hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute("#/dashboard/admin/orders");
     }
-    if (modalBeforeClose === "orderDetails" && isRepOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+    if (modalBeforeClose === "createOrder" && hashRoute === "#/dashboard/admin/orders/new") {
+      syncHashRoute("#/dashboard/admin/orders");
     }
-    if (modalBeforeClose === "createOrder" && hashRoute === adminOrderWorkspaceHash("/new")) {
-      syncHashRoute(activeOrderWorkspaceBaseHash);
+    if (modalBeforeClose === "createOrder" && hashRoute.startsWith("#/dashboard/sales-rep/orders/new")) {
+      syncHashRoute(repRouteWithScope("#/dashboard/sales-rep/orders"));
     }
-    if (modalBeforeClose === "createOrder" && isRepOrderWorkspaceHash(hashRoute) && hashRoute.endsWith("/new")) {
-      syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/orders/")) {
+      syncHashRoute(selectedOrderId ? `#/dashboard/admin/orders/${selectedOrderId}` : "#/dashboard/admin/orders");
     }
-    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
-    }
-    if (modalBeforeClose && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isRepOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(selectedOrderId ? repOrderWorkspaceHash(`/${selectedOrderId}`, activeRepOrderWorkspacePage) : repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+    if (modalBeforeClose && ["changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/sales-rep/orders/")) {
+      syncHashRoute(selectedOrderId ? repRouteWithScope(`#/dashboard/sales-rep/orders/${selectedOrderId}`) : repRouteWithScope("#/dashboard/sales-rep/orders"));
     }
     if (modalBeforeClose && ["cartDetails", "assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/abandoned-carts/")) {
       syncHashRoute(modalBeforeClose === "cartDetails" ? "#/dashboard/admin/abandoned-carts" : (selectedCartId ? `#/dashboard/admin/abandoned-carts/${selectedCartId}` : "#/dashboard/admin/abandoned-carts"));
@@ -23024,23 +19509,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return (
       <main className="public-order-page" data-theme={theme}>
         <section className="public-order-shell">
-          {publicEmbedIsPreview ? (
-            <div
-              className="panel"
-              style={{
-                marginBottom: 12,
-                padding: "10px 12px",
-                background: "#eff6ff",
-                border: "1px solid #bfdbfe",
-                borderRadius: 12,
-                fontSize: 13,
-                color: "#1e3a8a",
-                lineHeight: 1.45
-              }}
-            >
-              <strong>Preview mode</strong> · This form is open for testing only. Abandoned-cart capture is disabled here.
-            </div>
-          ) : null}
           {dataLoading && !publicProduct ? (
             showPublicEmbedLoading ? (
             <article className="panel public-order-empty" aria-busy="true" aria-live="polite">
@@ -23079,7 +19547,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               const companion = companionForProductId(c.productId);
               if (companion) {
                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
-                return { name: cp.name, qty: companion.quantity, total: companionConfiguredTotal(companion, standard) };
+                const unit = companion.pricingMode === "free" ? 0
+                           : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
+                           : standard;
+                return { name: cp.name, qty: companion.quantity, total: unit * companion.quantity };
               }
               const unit = crossSellPriceFor(publicProduct, cp);
               return { name: cp.name, qty: c.quantity, total: unit * c.quantity };
@@ -23092,7 +19563,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 const cp = products.find((pp) => pp.id === c.productId);
                 if (!cp) return null;
                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
-                return { name: `${cp.name} (bundled)`, qty: c.quantity, total: companionConfiguredTotal(c, standard) };
+                const unit = c.pricingMode === "free" ? 0
+                           : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                           : standard;
+                return { name: `${cp.name} (bundled)`, qty: c.quantity, total: unit * c.quantity };
               }).filter(Boolean) as { name: string; qty: number; total: number }[];
             const summaryGiftLines = (publicProduct.freeGiftProductIds ?? []).map((gid) => products.find((p) => p.id === gid)).filter((g) => g && freeGiftVisibleInState(publicProduct, g, orderFormState)) as Product[];
             const summaryTotal = chosenPkg
@@ -23299,7 +19773,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               if (!cp) return null;
                               const productPrice = primaryPricing(cp)?.sellingPrice ?? 0;
                               const currency     = primaryPricing(cp)?.currency ?? "NGN";
-                              const total = companionConfiguredTotal(c, productPrice);
+                              const unit = c.pricingMode === "free" ? 0
+                                         : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                                         : productPrice;
+                              const total = unit * c.quantity;
                               const sel = orderFormCrossSells.find((s) => s.productId === c.productId);
                               return (
                                 <label key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
@@ -23325,7 +19802,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 if (!cp) return null;
                                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                                 const currency = primaryPricing(cp)?.currency ?? "NGN";
-                                const total = companionConfiguredTotal(c, standard);
+                                const unit = c.pricingMode === "free" ? 0
+                                           : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                                           : standard;
+                                const total = unit * c.quantity;
                                 return (
                                   <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#047857" }}>
                                     <span>+ {cp.name} × {c.quantity}</span>
@@ -23411,7 +19891,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           if (!cp) return null;
                           const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                           const currency = primaryPricing(cp)?.currency ?? "NGN";
-                          const total    = companionConfiguredTotal(c, standard);
+                          const unit = c.pricingMode === "free" ? 0
+                                     : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                                     : standard;
+                          const total    = unit * c.quantity;
                           const savings  = Math.max(0, standard * c.quantity - total);
                           const sel      = Boolean(orderFormCrossSells.find((s) => s.productId === c.productId));
                           const badge    = (c.badgeText && c.badgeText.trim()) || "🎁 Add to your order?";
@@ -23523,7 +20006,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
   const DataErrorBanner = () => (
     <>
-      {dataError && (showReconnectFallbackBanner || dataError !== reconnectFallbackMessage) && (
+      {dataError && (
         <div className="flex items-center gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-xl text-sm">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
           <span className="font-medium text-red-800 flex-1">{dataError}</span>
@@ -23668,7 +20151,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
-        <header className="app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:static lg:z-auto">
+        <header className="app-topbar h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible">
           <div className="flex items-center lg:hidden">
             <button
               className="topbar-icon-button p-2 -ml-2 text-gray-600 hover:text-gray-900"
@@ -23792,7 +20275,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8">
+        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-2 sm:pb-3 lg:p-8">
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
@@ -24056,27 +20539,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-gray-900 m-0">Dashboard Math Rules</h2>
-                    <p className="text-xs text-gray-400 m-0">Revenue and profit use delivered-date recognition. Total orders and fulfillment still track the orders created in this period.</p>
+                    <p className="text-xs text-gray-400 m-0">Revenue and profit count only after delivery — total orders counts all created orders.</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {[
-                    { label: "Revenue",       color: "blue",    formula: "SUM(grand total) for orders delivered in this period" },
+                    { label: "Revenue",       color: "blue",    formula: "SUM(grand total) where status = Delivered" },
                     { label: "COGS",          color: "orange",  formula: "Unit cost × delivered quantity" },
-                    { label: "Logistics",     color: "amber",   formula: `${formatMoney(dashboardLogistics)} recognized delivery cost${dashboardLogistics > 0 && dashboardProfitSummary.recordedDeliveryExpense > 0 && dashboardLogistics === dashboardProfitSummary.recordedDeliveryExpense ? " (expense fallback)" : ""}` },
-                    { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} − ${formatMoney(dashboardLogistics)} = ${formatMoney(dashboardGrossProfit)}` },
-                    { label: "Operating",     color: "violet",  formula: `${formatMoney(dashboardOperatingExpense)} expenses${dashboardBonusEstimate > 0 ? ` incl. ${formatMoney(dashboardBonusEstimate)} bonus est.` : ""}` },
-                    { label: "Net Profit",    color: "rose",    formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardOperatingExpense)} = ${formatMoney(dashboardNetProfit)}` },
-                    { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredCohortOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
+                    { label: "Gross Profit",  color: "emerald", formula: `${formatMoney(dashboardRevenue)} − ${formatMoney(dashboardCogs)} = ${formatMoney(dashboardGrossProfit)}` },
+                    { label: "Net Profit",    color: "violet",  formula: `${formatMoney(dashboardGrossProfit)} − ${formatMoney(dashboardExpenseTotal)} = ${formatMoney(dashboardNetProfit)}` },
+                    { label: "Fulfillment",   color: "teal",    formula: `${dashboardDeliveredOrders.length} delivered / ${dashboardOrders.length} orders = ${dashboardDeliveryRateExact.toFixed(1)}%` },
                     { label: "Net Margin",    color: "rose",    formula: `Net profit / revenue = ${dashboardNetMargin}%` },
                   ].map(({ label, formula, color }) => {
                     const dotMap: Record<string, string> = {
                       blue: "bg-blue-500", orange: "bg-orange-500", emerald: "bg-emerald-500",
-                      violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500", amber: "bg-amber-500"
+                      violet: "bg-violet-500", teal: "bg-teal-500", rose: "bg-rose-500"
                     };
                     const labelMap: Record<string, string> = {
                       blue: "text-blue-700", orange: "text-orange-700", emerald: "text-emerald-700",
-                      violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700", amber: "text-amber-700"
+                      violet: "text-violet-700", teal: "text-teal-700", rose: "text-rose-700"
                     };
                     return (
                       <div key={label} className="flex flex-col gap-1.5 p-3.5 bg-gray-50 rounded-xl border border-gray-100">
@@ -24093,8 +20574,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span className="font-semibold text-gray-700">Customer pays</span><ArrowRight className="w-3 h-3" />
                   <span>Revenue</span><ArrowRight className="w-3 h-3" />
                   <span>− COGS ({dashboardCogsRate}%)</span><ArrowRight className="w-3 h-3" />
-                  <span>− Logistics</span><ArrowRight className="w-3 h-3" />
-                  <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
+                  <span>− Expenses ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
                   <strong className="text-gray-900">Net Profit</strong>
                 </div>
               </section>
@@ -24363,23 +20843,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               </div>
             </>
-          ) : isOrderWorkspacePage(activePage) ? (
-            repOrderDetail && isRepOrderWorkspaceHash(hashRoute) ? (
-            renderRepOrderDetail(repOrderDetail)
-            ) : (
+          ) : activePage === "Orders" ? (
             <div className="space-y-6">
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h1 className="text-2xl font-bold text-[#1F8FE0]">{activeOrderWorkspaceMeta.title}</h1>
-                    {orderWorkspacePage !== "Orders" && (
-                      <span className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700">
-                        Order workspace
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm font-medium text-gray-500">{activeOrderWorkspaceMeta.subtitle}</p>
+                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Orders Management</h1>
+                  <p className="text-sm font-medium text-gray-500">Track and manage all customer orders in real-time</p>
                 </div>
                 {/* Desktop-only action buttons — on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -24443,18 +20913,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs font-semibold text-gray-600">
                     {currency} · {selectedCurrency.label}
                   </span>
-                  {canFilterOrdersByAssigner && orderAssignmentScope === "Assigned by me" && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-xs font-semibold text-amber-700">
-                      <UserPlus className="w-3 h-3" /> My orders
-                    </span>
-                  )}
                 </div>
                 <span className="text-xs text-gray-400"><span className="hidden sm:inline">· </span>All amounts in this currency</span>
               </div>
 
               {/* Metric cards */}
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Orders summary">
-                {orderWorkspaceMetricCards.map(({ label, value, sub, icon: Icon, color }) => (
+                {[
+                  { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
+                  { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
+                  { label: "Revenue", value: formatMoney(pfRevenue), sub: "delivered orders only", icon: CircleDollarSign, color: "bg-purple-50 text-purple-500" },
+                  { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" },
+                ].map(({ label, value, sub, icon: Icon, color }) => (
                   <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
                     <span className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${color}`}><Icon className="w-5 h-5" /></span>
                     <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</h2>
@@ -24472,18 +20942,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
                     <span className="w-8 h-8 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><BookOpen className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">{activeOrderWorkspaceMeta.productHeading}</h2>
-                      <p className="text-xs text-gray-400">{activeOrderWorkspaceMeta.productHelper}</p>
+                      <h2 className="text-sm font-bold text-gray-900">New Orders by Product</h2>
+                      <p className="text-xs text-gray-400">All orders (any status) created in the selected period</p>
                     </div>
                   </div>
                   {ordersByProduct.length === 0 ? (
-                    <div className="px-5 py-10 text-center text-sm text-gray-400">
-                      {orderWorkspacePage === "Follow-up Queue"
-                        ? "No follow-up queue orders in this period."
-                        : orderWorkspacePage === "Closed Orders"
-                          ? "No closed orders in this period."
-                          : "No orders in this period."}
-                    </div>
+                    <div className="px-5 py-10 text-center text-sm text-gray-400">No orders in this period.</div>
                   ) : (
                     <div className="divide-y divide-gray-100">
                       {ordersByProduct.map(([productName, item], idx) => (
@@ -24498,62 +20962,48 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   )}
                 </section>
 
-                {/* Secondary workspace insight */}
+                {/* Revenue Opportunity */}
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
-                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${orderWorkspaceInsight.iconClassName}`}><OrderWorkspaceInsightIcon className="w-4 h-4" /></span>
+                    <span className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
                     <div>
-                      <h2 className="text-sm font-bold text-gray-900">{orderWorkspaceInsight.title}</h2>
-                      <p className="text-xs text-gray-400">{orderWorkspaceInsight.helper}</p>
+                      <h2 className="text-sm font-bold text-gray-900">Revenue Opportunity</h2>
+                      <p className="text-xs text-gray-400">Model the impact of a higher delivery conversion rate.</p>
                     </div>
                   </div>
-                  {orderWorkspacePage === "Orders" ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
-                          <strong className="text-xl font-bold text-gray-900">{pfDeliveryRateExact.toFixed(1)}%</strong>
-                        </div>
-                        <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current revenue</span>
-                          <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
-                        </div>
-                      </div>
-                      <label className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-gray-600">Conversion lift</span>
-                          <span className="font-bold text-[#1F8FE0]">+{ordersConversion}pp → {pfTargetConversion.toFixed(1)}%</span>
-                        </div>
-                        <input type="range" className="w-full accent-[#1F8FE0]" min="0" max={pfConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
-                        <div className="flex items-center gap-1.5">
-                          {[10, 20, 30, 100].map((rate) => (
-                            <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, pfConversionLiftMax))}>
-                              {rate === 100 ? "Max" : `+${rate}pp`}
-                            </button>
-                          ))}
-                        </div>
-                      </label>
-                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                        <span className="text-xs font-medium text-gray-500">Projected revenue</span>
-                        <strong className="text-lg font-bold text-[#1F8FE0]">{formatMoney(pfProjectedRevenue)}</strong>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="admin-tone-panel admin-tone-panel--cool rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
-                      <p className="admin-tone-kicker text-[11px] font-semibold uppercase tracking-wider text-[#1F8FE0] m-0">{orderWorkspaceInsight.title}</p>
-                      <strong className="admin-tone-title text-2xl font-bold text-gray-900 block mt-2">{orderWorkspaceInsight.body}</strong>
-                      <p className="admin-tone-body text-xs text-gray-500 mt-2 mb-0">
-                        {orderWorkspacePage === "Follow-up Queue"
-                          ? "Use this page to keep callbacks and pending customer actions from getting buried inside the full order list."
-                          : "Use this archive to review closed outcomes without active pipeline noise from open orders."}
-                      </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
+                      <strong className="text-xl font-bold text-gray-900">{pfDeliveryRateExact.toFixed(1)}%</strong>
                     </div>
-                  )}
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current revenue</span>
+                      <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
+                    </div>
+                  </div>
+                  <label className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-gray-600">Conversion lift</span>
+                      <span className="font-bold text-[#1F8FE0]">+{ordersConversion}pp → {pfTargetConversion.toFixed(1)}%</span>
+                    </div>
+                    <input type="range" className="w-full accent-[#1F8FE0]" min="0" max={pfConversionLiftMax} value={ordersConversion} onChange={(e) => setOrdersConversion(Number(e.target.value))} />
+                    <div className="flex items-center gap-1.5">
+                      {[10, 20, 30, 100].map((rate) => (
+                        <button key={rate} className="!min-h-0 px-2.5 py-1 text-[10px] font-bold border border-gray-200 bg-white text-gray-600 rounded-md hover:bg-gray-50 hover:border-[#1F8FE0] hover:text-[#1F8FE0] transition-colors" onClick={() => setOrdersConversion(Math.min(rate, pfConversionLiftMax))}>
+                          {rate === 100 ? "Max" : `+${rate}pp`}
+                        </button>
+                      ))}
+                    </div>
+                  </label>
+                  <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                    <span className="text-xs font-medium text-gray-500">Projected revenue</span>
+                    <strong className="text-lg font-bold text-[#1F8FE0]">{formatMoney(pfProjectedRevenue)}</strong>
+                  </div>
                 </section>
               </div>
 
               {/* Orders table */}
-              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label={activeOrderWorkspaceMeta.tableLabel}>
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Orders table">
                 {/* Toolbar */}
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
                   <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[180px]">
@@ -24567,15 +21017,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     />
                   </label>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
-                    {activeOrderWorkspaceMeta.statusOptions.map((s) => <option key={s}>{s}</option>)}
+                    {orderStatuses.map((s) => <option key={s}>{s}</option>)}
                   </select>
-                  <select
-                    className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                    aria-label="Order schedule marker"
-                    value={orderScheduleFilter}
-                    onChange={(e) => setOrderScheduleFilter(e.target.value as OrderScheduleFilter)}
-                  >
-                    {orderScheduleFilters.map((filter) => <option key={filter}>{filter}</option>)}
+                  <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order schedule marker" value={orderScheduleFilter} onChange={(e) => setOrderScheduleFilter(e.target.value as OrderScheduleFilter)}>
+                    {orderScheduleFilters.map((s) => <option key={s}>{s}</option>)}
                   </select>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order source" value={orderSource} onChange={(e) => setOrderSource(e.target.value as OrderSource)}>
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
@@ -24583,17 +21028,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
                     {orderLocations.map((l) => <option key={l}>{l}</option>)}
                   </select>
-                  {canFilterOrdersByAssigner && (
-                    <select
-                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                      aria-label="Order assignment scope"
-                      value={orderAssignmentScope}
-                      onChange={(e) => setOrderAssignmentScope(e.target.value as OrderAssignmentScope)}
-                    >
-                      <option value="All assignments">All assignments</option>
-                      <option value="Assigned by me">My orders</option>
-                    </select>
-                  )}
                   {/* Product multi-select filter */}
                   <div className="relative w-full sm:w-auto">
                     <button
@@ -24640,7 +21074,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
 
                 {/* Bulk action bar */}
-                {selectedOrderIds.size > 0 && currentRole !== "Sales Rep" && (
+                {selectedOrderIds.size > 0 && (
                   <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-5 py-2 bg-blue-50 border-b border-blue-100 text-sm">
                     <span className="font-semibold text-blue-800">{selectedOrderIds.size} selected</span>
                     <span className="hidden sm:inline text-blue-300">·</span>
@@ -24655,21 +21089,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 {/* Mobile card list (sm and below) */}
                 <div className="block sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
                   {filteredOrderRows.length === 0 ? (
-                    <div className="px-5 py-12 text-center text-sm text-gray-400">
-                      {orderWorkspacePage === "Follow-up Queue"
-                        ? "No follow-up orders match this filter."
-                        : orderWorkspacePage === "Closed Orders"
-                          ? "No closed orders match this filter."
-                          : "No orders found"}
-                    </div>
+                    <div className="px-5 py-12 text-center text-sm text-gray-400">No orders found</div>
                   ) : (
                     pagedOrderRows.map((order) => {
                       const source = order.source ?? orderSourceFromUtm(order.utmSource);
                       const status = order.status ?? "New";
-                      const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
+                      const isTerminal = status === "Delivered" || status === "Cancelled";
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                       const scheduleMarker = orderScheduleMarkerForOrder(order);
-                      const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       return (
                         <article key={order.id} className="p-4 flex flex-col gap-3 bg-white dark:bg-[#101a24]">
@@ -24698,18 +21125,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <span className="inline-flex items-center gap-1"><CalendarDays className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{formatOrderCreatedAt(order)}</span>
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
                           </div>
-                          {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
-                                {followUpReasonBadgeText(latestAttempt)}
-                              </span>
-                              {followUpReasonGroupLabel(latestAttempt) && (
-                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                                  {followUpReasonGroupLabel(latestAttempt)}
-                                </span>
-                              )}
-                            </div>
-                          )}
                           <div className="grid grid-cols-2 gap-2 pt-1">
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe57] transition-colors"
@@ -24719,11 +21134,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </button>
                             <button
                               className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
-                              onClick={() => openScopedOrderDetail(order)}
+                              onClick={() => openAdminOrderDetailPage(order)}
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
-                            {!isTerminal && currentRole !== "Sales Rep" && (
+                            {!isTerminal && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
@@ -24731,14 +21146,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
-                            {currentRole !== "Sales Rep" && (
-                              <button
-                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
-                                onClick={() => openAdminOrderDeleteRoute(order.id)}
-                              >
-                                <Trash2 className="w-4 h-4" /> Delete
-                              </button>
-                            )}
+                            <button
+                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
+                              onClick={() => openAdminOrderDeleteRoute(order.id)}
+                            >
+                              <Trash2 className="w-4 h-4" /> Delete
+                            </button>
                           </div>
                         </article>
                       );
@@ -24748,29 +21161,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                 {/* Table (sm and above) */}
                 <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
+                  <table className="w-full text-sm sticky-col-first">
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
-                        {currentRole !== "Sales Rep" && (
-                          <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
-                            <input
-                              type="checkbox"
-                              className="rounded border-gray-300"
-                              checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
-                                } else {
-                                  setSelectedOrderIds((prev) => {
-                                    const next = new Set(prev);
-                                    pagedOrderRows.forEach((o) => next.delete(o.id));
-                                    return next;
-                                  });
-                                }
-                              }}
-                            />
-                          </th>
-                        )}
+                        <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300"
+                            checked={pagedOrderRows.length > 0 && pagedOrderRows.every((o) => selectedOrderIds.has(o.id))}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedOrderIds((prev) => new Set([...prev, ...pagedOrderRows.map((o) => o.id)]));
+                              } else {
+                                setSelectedOrderIds((prev) => {
+                                  const next = new Set(prev);
+                                  pagedOrderRows.forEach((o) => next.delete(o.id));
+                                  return next;
+                                });
+                              }
+                            }}
+                          />
+                        </th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
@@ -24783,33 +21194,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={currentRole === "Sales Rep" ? 8 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400">No orders found</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const source = order.source ?? orderSourceFromUtm(order.utmSource);
                           const status = order.status ?? "New";
-                          const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
+                          const isTerminal = status === "Delivered" || status === "Cancelled";
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           const scheduleMarker = orderScheduleMarkerForOrder(order);
-                          const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
-                              {currentRole !== "Sales Rep" && (
-                                <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
-                                  <input
-                                    type="checkbox"
-                                    className="rounded border-gray-300"
-                                    checked={selectedOrderIds.has(order.id)}
-                                    onChange={(e) => {
-                                      setSelectedOrderIds((prev) => {
-                                        const next = new Set(prev);
-                                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
-                                        return next;
-                                      });
-                                    }}
-                                  />
-                                </td>
-                              )}
+                              <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-gray-300"
+                                  checked={selectedOrderIds.has(order.id)}
+                                  onChange={(e) => {
+                                    setSelectedOrderIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </td>
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
                               <td className="px-4 py-3.5">
@@ -24831,18 +21239,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
                                   </div>
                                 ) : null}
-                                {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
-                                  <div className="mt-1 flex flex-wrap items-center gap-1">
-                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
-                                      {followUpReasonBadgeText(latestAttempt)}
-                                    </span>
-                                    {followUpReasonGroupLabel(latestAttempt) && (
-                                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${orderSecondaryButtonClass}`}>
-                                        {followUpReasonGroupLabel(latestAttempt)}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
                               </td>
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 {(() => {
@@ -24866,11 +21262,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   </button>
                                   <button
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
-                                    onClick={() => openScopedOrderDetail(order)}
+                                    onClick={() => openAdminOrderDetailPage(order)}
                                   >
                                     <Eye className="w-3.5 h-3.5" /> Details
                                   </button>
-                                  {!isTerminal && currentRole !== "Sales Rep" && (
+                                  {!isTerminal && (
                                     <button
                                       className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
@@ -24879,15 +21275,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                   )}
-                                  {currentRole !== "Sales Rep" && (
-                                    <button
-                                      className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
-                                      title="Delete"
-                                      onClick={() => openAdminOrderDeleteRoute(order.id)}
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  )}
+                                  <button
+                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
+                                    title="Delete"
+                                    onClick={() => openAdminOrderDeleteRoute(order.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -24943,7 +21337,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </section>
               </div>
             </div>
-            )
           ) : activePage === "Abandoned Carts" ? (
             <>
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
@@ -25028,301 +21421,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 ))}
               </section>
 
-              {(realRole === "Owner" || realRole === "Admin") && (
-                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4" aria-label="Live form pulse">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h2 className="text-base font-bold text-gray-900 m-0">Live Form Pulse</h2>
-                        {liveFormPulse?.health ? (
-                          <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${liveFormPulseHealthBadgeClass(liveFormPulse.health.status)}`}>
-                            {liveFormPulse.health.status}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1 mb-0">
-                        Live traffic, interaction, submit, redirect, and recovery signals from the customer order form.
-                      </p>
-                    </div>
-                    <div className="flex items-start gap-3 flex-wrap justify-end">
-                      <label className="flex flex-col gap-1 text-left">
-                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Embed label</span>
-                        <select
-                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 min-w-[220px]"
-                          value={liveFormPulseEmbedFilter}
-                          onChange={(e) => setLiveFormPulseEmbedFilter(e.target.value)}
-                        >
-                          <option value="">All embeds</option>
-                          {liveFormPulseEmbedOptions.map((label) => (
-                            <option key={label} value={label}>{label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="text-right">
-                        {liveFormPulseLoading ? <p className="text-[11px] font-semibold text-gray-400 m-0">Refreshing live pulse…</p> : null}
-                        <p className="text-[11px] text-gray-400 mt-1 mb-0">
-                          {liveFormPulse?.generatedAt ? `Updated ${relativeMinutesLabel(liveFormPulse.generatedAt)}` : "Waiting for pulse data"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="admin-tone-panel admin-tone-panel--cool rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 via-white to-emerald-50 px-4 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                    <div>
-                      <p className="admin-tone-kicker text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">Current health</p>
-                      <p className="admin-tone-body text-sm text-gray-700 mt-2 mb-0">
-                        {liveFormPulse?.health?.message ?? "Once fresh traffic hits the form, Protohub will show the live health signal here."}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 w-full lg:w-auto">
-                      {[
-                        { label: "Active now", value: liveFormPulse?.summary.activeNow ?? 0, sub: `${liveFormPulse?.activeWindowMinutes ?? 10}m window` },
-                        { label: "Views", value: liveFormPulse?.summary.viewedLiveWindow ?? 0, sub: "live window" },
-                        { label: "Clicks", value: liveFormPulse?.summary.interactedLiveWindow ?? 0, sub: "live window" },
-                        { label: "Submits", value: liveFormPulse?.summary.submitAttemptsLiveWindow ?? 0, sub: "live window" },
-                        { label: "Orders", value: liveFormPulse?.summary.conversionsLiveWindow ?? 0, sub: "live window" }
-                      ].map((item) => (
-                        <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3 min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
-                          <p className="text-xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
-                          <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="admin-tone-panel admin-tone-panel--cyan rounded-2xl border border-cyan-100 bg-cyan-50/70 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <p className="admin-tone-kicker text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-700 m-0">Last seen live</p>
-                      <p className="admin-tone-title text-lg font-bold text-slate-900 mt-1 mb-0">
-                        {relativeMinutesLabel(liveFormPulseLastSeenAt(liveFormPulse))}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="admin-tone-body text-[11px] text-slate-500 mt-0 mb-0">
-                        {liveFormPulseLastSeenAt(liveFormPulse)
-                          ? `Freshest pulse at ${formatMoment(liveFormPulseLastSeenAt(liveFormPulse))}`
-                          : "No live signal has been captured yet"}
-                      </p>
-                      <p className="admin-tone-meta text-[11px] text-slate-400 mt-1 mb-0">
-                        Combines views, interactions, submit attempts, orders, and redirects.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-[1.15fr,0.85fr] gap-4">
-                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                          <h3 className="text-sm font-bold text-gray-900 m-0">
-                            {cartsPeriod === "Today" ? "Today’s conversion pulse" : `${liveFormPulseScope.charAt(0).toUpperCase()}${liveFormPulseScope.slice(1)} conversion pulse`}
-                          </h3>
-                          <p className="text-xs text-gray-500 mt-1 mb-0">
-                            Use this to spot if traffic is reaching the form but not turning into submitted orders across {liveFormPulseScope}.
-                            {liveFormPulseEmbedFilter ? ` Showing ${liveFormPulseEmbedFilter} only.` : " Showing all embeds."}
-                          </p>
-                        </div>
-                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1">
-                          {liveFormPulse?.summary.conversionRate ?? 0}% view → order
-                        </span>
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-3">
-                        {[
-                          { label: liveFormPulseMetricLabel("Views", cartsPeriod), value: liveFormPulse?.summary.viewedToday ?? 0, sub: liveFormPulse?.summary.lastViewedAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastViewedAt)}` : "No view yet" },
-                          { label: liveFormPulseMetricLabel("Clicks", cartsPeriod), value: liveFormPulse?.summary.interactedToday ?? 0, sub: `${liveFormPulse?.summary.interactionRate ?? 0}% of views` },
-                          { label: liveFormPulseMetricLabel("Submit tries", cartsPeriod), value: liveFormPulse?.summary.submitAttemptsToday ?? 0, sub: liveFormPulse?.summary.lastSubmitAttemptAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastSubmitAttemptAt)}` : "No attempt yet" },
-                          { label: liveFormPulseMetricLabel("Orders", cartsPeriod), value: liveFormPulse?.summary.conversionsToday ?? 0, sub: liveFormPulse?.summary.lastConversionAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastConversionAt)}` : "No order yet" },
-                          { label: liveFormPulseMetricLabel("Redirects", cartsPeriod), value: liveFormPulse?.summary.redirectsToday ?? 0, sub: liveFormPulse?.summary.lastRedirectAt ? `Last ${relativeMinutesLabel(liveFormPulse.summary.lastRedirectAt)}` : "No redirect yet" }
-                        ].map((item) => (
-                          <div key={item.label} className="rounded-xl border border-gray-100 bg-white px-3 py-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
-                            <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
-                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{item.sub}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </article>
-
-                    <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                          <h3 className="text-sm font-bold text-gray-900 m-0">
-                            {cartsPeriod === "Today" ? "Traffic sources live" : "Traffic sources in range"}
-                          </h3>
-                          <p className="text-xs text-gray-500 mt-1 mb-0">
-                            This helps you see whether Facebook, WhatsApp, or other sources are actually reaching the form across {liveFormPulseScope}.
-                          </p>
-                        </div>
-                      </div>
-                      {liveFormPulse && liveFormPulse.sources.length > 0 ? (
-                        <div className="mt-4 space-y-2">
-                          {liveFormPulse.sources.slice(0, 5).map((source) => (
-                            <div key={source.source} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-sm font-semibold text-gray-900 m-0 truncate">{source.source}</p>
-                                <p className="text-[11px] text-gray-500 mt-1 mb-0">
-                                  {source.viewed} views · {source.interacted} clicks · {source.submitted} orders
-                                </p>
-                              </div>
-                              <span className="text-[11px] text-gray-500 whitespace-nowrap">
-                                {source.lastSeenAt ? relativeMinutesLabel(source.lastSeenAt) : "Never"}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="mt-4 text-sm text-gray-500">No source activity captured across {liveFormPulseScope} yet.</p>
-                      )}
-
-                      <div className="mt-5 pt-4 border-t border-gray-200">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div>
-                            <h4 className="text-sm font-bold text-gray-900 m-0">Landing pages / embeds</h4>
-                            <p className="text-xs text-gray-500 mt-1 mb-0">Add <code>embed_label</code> to each iframe URL so Protohub can separate LP A, LP B, and combo pages cleanly.</p>
-                          </div>
-                        </div>
-                        {liveFormPulse && liveFormPulse.embeds.length > 0 ? (
-                          <div className="mt-4 space-y-2">
-                            {liveFormPulse.embeds.slice(0, 6).map((embed) => (
-                              <div key={embed.embedLabel} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-gray-900 m-0 truncate">{embed.embedLabel}</p>
-                                  <p className="text-[11px] text-gray-500 mt-1 mb-0">
-                                    {embed.viewed} views · {embed.interacted} clicks · {embed.submitted} orders
-                                  </p>
-                                </div>
-                                <span className="text-[11px] text-gray-500 whitespace-nowrap">
-                                  {embed.lastSeenAt ? relativeMinutesLabel(embed.lastSeenAt) : "Never"}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="mt-4 text-sm text-gray-500">No embed label activity across {liveFormPulseScope} yet. Add <code>embed_label=your_lp_name</code> to each landing-page iframe URL.</p>
-                        )}
-                      </div>
-                    </article>
-                  </div>
-
-                  <article className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div>
-                        <h3 className="text-sm font-bold text-gray-900 m-0">
-                          {cartsPeriod === "Today" ? "Live activity feed" : "Range activity feed"}
-                        </h3>
-                        <p className="text-xs text-gray-500 mt-1 mb-0">
-                          Latest view, click, submit, and redirect signals captured across {liveFormPulseScope}.
-                        </p>
-                      </div>
-                    </div>
-                    {liveFormPulse && liveFormPulse.recentEvents.length > 0 ? (
-                      <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-3">
-                        {liveFormPulse.recentEvents.map((event, index) => (
-                          <div key={`${event.cartId}:${event.eventType}:${event.createdAt}:${index}`} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-semibold text-gray-900 m-0">{liveFormPulseEventLabel(event.eventType)}</p>
-                                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 bg-gray-100 rounded-full px-2 py-1">
-                                  {event.source}
-                                </span>
-                                <span className="text-[11px] font-bold tracking-[0.04em] text-blue-700 bg-blue-50 rounded-full px-2 py-1 border border-blue-100">
-                                  {event.embedLabel}
-                                </span>
-                              </div>
-                              <p className="text-xs text-gray-500 mt-1 mb-0">
-                                {event.productName}{event.packageName ? ` · ${event.packageName}` : ""}
-                              </p>
-                              <p className="text-[11px] text-gray-400 mt-1 mb-0">Cart {event.cartId}</p>
-                            </div>
-                            <span className="text-[11px] text-gray-500 whitespace-nowrap">
-                              {relativeMinutesLabel(event.createdAt)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-4 text-sm text-gray-500">No activity has been captured across {liveFormPulseScope} yet.</p>
-                    )}
-                  </article>
-                </section>
-              )}
-
-              <section className="grid grid-cols-1 xl:grid-cols-[1.25fr,0.9fr,1fr] gap-4" aria-label="Journey analytics">
-                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h2 className="text-base font-bold text-gray-900 m-0">Journey Funnel</h2>
-                      <p className="text-xs text-gray-500 mt-1">Based on the currently visible carts in this filter.</p>
-                    </div>
-                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    {[
-                      { label: "Opened", value: abandonedCartJourneyAnalytics.funnel.opened },
-                      { label: "Reached state", value: abandonedCartJourneyAnalytics.funnel.stateSelected },
-                      { label: "Tried submit", value: abandonedCartJourneyAnalytics.funnel.submitAttempted },
-                      { label: "Submitted", value: abandonedCartJourneyAnalytics.funnel.submitted }
-                    ].map((item) => (
-                      <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400 m-0">{item.label}</p>
-                        <p className="text-2xl font-bold text-gray-900 mt-2 mb-0">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-
-                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h2 className="text-base font-bold text-gray-900 m-0">Top Submit Blocks</h2>
-                      <p className="text-xs text-gray-500 mt-1">What most often stopped customers from submitting.</p>
-                    </div>
-                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
-                  </div>
-                  {abandonedCartJourneyAnalytics.blocked.length === 0 && !abandonedCartJourneyLoading ? (
-                    <p className="mt-4 text-sm text-gray-500">No blocked-submit reasons captured in this filter yet.</p>
-                  ) : (
-                    <div className="mt-4 space-y-2">
-                      {abandonedCartJourneyAnalytics.blocked.slice(0, 4).map((item) => (
-                        <div key={item.eventType} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                          <span className="text-sm font-medium text-gray-700">{item.label}</span>
-                          <span className="text-sm font-bold text-gray-900">{item.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h2 className="text-base font-bold text-gray-900 m-0">Additional Item Interest</h2>
-                      <p className="text-xs text-gray-500 mt-1">What customers previewed, added, removed, and carried into submit.</p>
-                    </div>
-                    {abandonedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400">Loading…</span> : null}
-                  </div>
-                  {abandonedCartJourneyAnalytics.additionalItems.length === 0 && !abandonedCartJourneyLoading ? (
-                    <p className="mt-4 text-sm text-gray-500">No additional-item journey activity captured in this filter yet.</p>
-                  ) : (
-                    <div className="mt-4 space-y-3">
-                      {abandonedCartJourneyAnalytics.additionalItems.slice(0, 4).map((item) => (
-                        <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-semibold text-gray-900 m-0">{item.name}</p>
-                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-1">
-                              {item.submittedWithItem} submitted
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-2 mb-0">
-                            {item.previewed} viewed · {item.added} added · {item.removed} removed
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              </section>
-
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-200">
                   <h2 className="text-base font-bold text-gray-900 m-0">Captured abandoned carts</h2>
@@ -25383,7 +21481,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   ) : (
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
-                      const recovery = abandonedCartRecoveryById[cart.id];
                       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                       const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                       return (
@@ -25410,12 +21507,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Product</span>
                               <span className="text-gray-700">{cart.productName}</span>
                               <span className="text-gray-500">{cart.packageName}</span>
-                              {recovery ? (
-                                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
-                                  <span className="text-[11px] text-gray-500">{recovery.summary}</span>
-                                </div>
-                              ) : null}
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Rep</span>
@@ -25529,12 +21620,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.productName}</div>
                               <div className="text-xs text-gray-400">{cart.packageName} · {formatProductMoney(cart.amount, cart.currency)}</div>
-                              {abandonedCartRecoveryById[cart.id] ? (
-                                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                  <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold ${cartJourneyRecoveryBadgeClass(abandonedCartRecoveryById[cart.id].band)}`}>{abandonedCartRecoveryById[cart.id].band} · {abandonedCartRecoveryById[cart.id].score}</span>
-                                  <span className="text-[11px] text-gray-500">{abandonedCartRecoveryById[cart.id].summary}</span>
-                                </div>
-                              ) : null}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
@@ -25623,7 +21708,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   { title: "Active Queue", value: String(activeScheduledRows.length), helper: "still pending or in progress", icon: Clock, tone: "cyan" },
                   { title: "Delivered On Time", value: String(deliveredOnTimeScheduledRows.length), helper: "met the promised date", icon: CheckCircle2, tone: "green" },
                   { title: "Delivered Late", value: String(deliveredLateScheduledRows.length), helper: "completed after the promise", icon: AlertTriangle, tone: "amber" },
-                  { title: "Missed / Overdue", value: String(overdueScheduledRows.length), helper: "promise date passed without delivery", icon: AlertTriangle, tone: "rose" }
+                  { title: "Missed / Overdue", value: String(overdueScheduledRows.length), helper: "promise date passed without delivery", icon: Siren, tone: "rose" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -25745,7 +21830,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 
                 <div className="overflow-x-auto">
                   <div className="px-4 pt-4 text-xs font-medium text-gray-500">
-                    Showing <span className="font-bold text-gray-900">{scheduleAuditMode}</span> scheduled orders for <span className="font-bold text-gray-900">{displayDateFromKey(scheduleTargetKey)}</span> · {scheduleModeHelperText(scheduleAuditMode)}.
+                    Showing <span className="font-bold text-gray-900">{scheduleAuditMode}</span> scheduled orders for{" "}
+                    <span className="font-bold text-gray-900">{displayDateFromKey(scheduleTargetKey)}</span> · {scheduleModeHelperText(scheduleAuditMode)}.
                   </div>
                   <table className="w-full text-sm">
                     <thead>
@@ -28603,23 +24689,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const base = waybillRecords.filter((w) =>
                   (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
-                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
                 const inTransit = base.filter((w) => w.status === "In Transit");
                 const received = base.filter((w) => w.status === "Received");
-                const customerDeliveries = base.filter((w) => isCustomerDeliveryWaybill(w));
-                const manualTransfers = base.filter((w) => !isCustomerDeliveryWaybill(w));
                 const totalFees = base.filter((w) => w.status !== "Cancelled").reduce((s, w) => s + w.waybillFee, 0);
                 const inTransitUnits = inTransit.reduce((s, w) => s + w.quantity, 0);
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                       { label: "In Transit", value: inTransit.length, sub: `${inTransitUnits} units`, color: "text-blue-700 bg-blue-50 border-blue-200" },
                       { label: "Received", value: received.length, sub: `${received.reduce((s,w)=>s+w.quantity,0)} units`, color: "text-green-700 bg-green-50 border-green-200" },
-                      { label: "Manual Transfers", value: manualTransfers.length, sub: "stock transfer records", color: "text-slate-700 bg-slate-50 border-slate-200" },
-                      { label: "Customer Deliveries", value: customerDeliveries.length, sub: "auto-waybills from delivered orders", color: "text-amber-700 bg-amber-50 border-amber-200" },
                       { label: "Total Waybill Fees", value: formatMoney(totalFees), sub: "filtered", color: "text-purple-700 bg-purple-50 border-purple-200" },
+                      { label: "Total Transfers", value: base.length, sub: "filtered", color: "text-gray-700 bg-gray-50 border-gray-200" },
                     ].map((card) => (
                       <div key={card.label} className={`rounded-xl border p-4 ${card.color}`}>
                         <p className="text-xs font-bold uppercase tracking-wide opacity-70">{card.label}</p>
@@ -28680,16 +24762,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="Defective">Defective</option>
                     <option value="Missing">Missing</option>
                   </select>
-                  <select
-                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                    aria-label="Waybill flow"
-                    value={waybillFlowFilter}
-                    onChange={(e) => setWaybillFlowFilter(e.target.value as WaybillFlowFilter)}
-                  >
-                    <option value="All">Flow: All</option>
-                    <option value="Manual Transfer">Manual Transfer</option>
-                    <option value="Customer Delivery">Customer Delivery</option>
-                  </select>
                   {/* Mobile-only: New Waybill stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
@@ -28702,7 +24774,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {(() => {
                 const filtered = waybillRecords.filter((w) =>
                   (waybillStatusFilter === "All" || w.status === waybillStatusFilter)
-                  && matchesWaybillFlow(w, waybillFlowFilter)
                   && (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
@@ -28736,18 +24807,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Waybill</div>
                             <div className="font-mono text-xs text-gray-500 break-all">{w.id}</div>
                             <div className="font-semibold text-sm text-gray-900 mt-1">{w.productName}</div>
-                            <div className="mt-1">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
-                                {getWaybillFlowLabel(w)}
-                              </span>
-                            </div>
                           </div>
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${statusColors[w.status]}`}>{w.status}</span>
                         </div>
                         <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Route</span>
-                            <span className="text-gray-700">{w.sendingState} → {getWaybillDestinationLabel(w)}</span>
+                            <span className="text-gray-700">{w.sendingState} → {w.receivingState}</span>
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Quantity</span>
@@ -28788,7 +24854,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <table className="w-full text-sm sticky-col-first">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          {["ID", "Product", "Flow", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
+                          {["ID", "Product", "Qty", "Route", "Logistics Partner", "Fee", "Date Sent", "Status", "Actions"].map((h) => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -28798,16 +24864,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{w.id}</td>
                             <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{w.productName}</td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
-                                {getWaybillFlowLabel(w)}
-                              </span>
-                            </td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.quantity} units</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className="text-gray-600">{w.sendingState}</span>
                               <span className="mx-1 text-gray-400">→</span>
-                              <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
+                              <span className="text-gray-900 font-medium">{w.receivingState}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
                             <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</td>
@@ -28993,12 +25054,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         <input className="bg-transparent outline-none text-sm text-gray-700 w-full sm:w-32" value={payrollMonth} onChange={(event) => {
                           setPayrollMonth(event.target.value);
                           setPayrollLabel(`${event.target.value || "Monthly"} Payroll`);
+                          setPayrollPreviewData(null);
                         }} />
                         <CalendarDays className="w-4 h-4 text-gray-400" />
                       </div>
                     </label>
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={previewPayroll}>
-                      <Eye className="w-4 h-4" /> Preview
+                    <button
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={previewPayroll}
+                      disabled={payrollPreviewLoading}
+                    >
+                      <Eye className="w-4 h-4" /> {payrollPreviewLoading ? "Previewing..." : "Preview"}
                     </button>
                   </div>
                   <p className="text-sm text-gray-500">Select a month and click Preview to calculate payroll.</p>
@@ -29560,30 +25626,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={6} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
-              {(() => {
-                const tabMeta = financeTabMeta[financeTab];
-                return (
-                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Finance tab guide">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <h2 className="text-sm font-bold text-gray-900 m-0">{financeTab}</h2>
-                          {tabMeta.lenses.map((lens) => (
-                            <span key={`${financeTab}-${lens}`} className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold border ${financeLensToneClasses[lens]}`}>
-                              {lens}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-sm text-gray-600">{tabMeta.summary}</p>
-                      </div>
-                      <div className="sm:max-w-sm">
-                        <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Read It As</p>
-                        <p className="text-xs text-gray-500">{tabMeta.caution}</p>
-                      </div>
-                    </div>
-                  </section>
-                );
-              })()}
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                   {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
@@ -29647,8 +25689,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {[
                     { label: "Gross Revenue", value: formatMoney(expenseRevenue), color: "text-green-600" },
                     { label: "Cost of Goods", value: formatMoney(expenseCogs), color: "text-red-500", op: "-" },
-                    { label: "Logistics", value: formatMoney(expenseLogistics), color: "text-red-500", op: "-" },
-                    { label: "Operating Expenses", value: formatMoney(expenseOperatingExpense), color: "text-red-500", op: "-" },
+                    { label: "Total Expenses", value: formatMoney(totalExpenses), color: "text-red-500", op: "-" },
                     { label: "Net Profit", value: formatMoney(expenseNetProfit), color: "text-[#1F8FE0]", op: "=" },
                   ].map(({ label, value, color, op }, idx) => (
                     <div key={label} className="flex items-center gap-3">
@@ -29662,8 +25703,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 <div className="flex flex-wrap gap-4 text-xs text-gray-500">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> COGS ({expenseRevenue === 0 ? 0 : Math.round((expenseCogs / expenseRevenue) * 100)}%)</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Logistics ({expenseRevenue === 0 ? 0 : Math.round((expenseLogistics / expenseRevenue) * 100)}%)</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Operating Expenses ({expenseRevenue === 0 ? 0 : Math.round((expenseOperatingExpense / expenseRevenue) * 100)}%{expenseBonusEstimate > 0 ? ` · incl. ${formatMoney(expenseBonusEstimate)} bonus est.` : ""})</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Operating Expenses ({expenseRevenue === 0 ? 0 : Math.round((totalExpenses / expenseRevenue) * 100)}%)</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Profit Margin ({expenseMargin}%)</span>
                 </div>
               </section>
@@ -29854,34 +25894,25 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                  {financeTab !== "Weekly Accounting" && (
-                    <>
-                      {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
-                      <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                        {periods.map((item) => (
-                          <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
-                        ))}
-                      </div>
-                      {/* Date range — full width on mobile */}
-                      <div className="relative w-full sm:w-auto">
-                        <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
-                          <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                        </button>
-                        {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
-                      </div>
-                    </>
-                  )}
+                  {/* Period pills — 4-column grid on mobile, inline strip on desktop */}
+                  <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                    {periods.map((item) => (
+                      <button className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${financePeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleFinancePeriodChange(item)} key={item}>{item}</button>
+                    ))}
+                  </div>
+                  {/* Date range — full width on mobile */}
+                  <div className="relative w-full sm:w-auto">
+                    <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowFinanceDateRange((value) => !value)}>
+                      <CalendarDays className="w-4 h-4" /> {financePeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                    </button>
+                    {showFinanceDateRange && renderDateRangeCalendar("finance-date-range-panel", financeDateRange, setFinanceDateRange, applyFinanceDateRange, () => setShowFinanceDateRange(false))}
+                  </div>
                   {/* Currency — full width on mobile */}
                   <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Currency" value={currency} onChange={(event) => { const nextCurrency = event.target.value as CurrencyCode; setCurrency(nextCurrency); showToast(`Currency changed to ${currencies[nextCurrency].label}.`); }}>
                     <option value="NGN">₦ Nigerian Naira</option>
                     <option value="USD">$ US Dollar</option>
                     <option value="GBP">£ British Pound</option>
                   </select>
-                  {financeTab === "Weekly Accounting" && (
-                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
-                      Weekly Accounting uses the week selector inside the report below.
-                    </div>
-                  )}
                   {/* Mobile-only: Export Report stacked full-width */}
                   <div className="flex flex-col gap-2 w-full sm:hidden">
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportFinancialReport}>
@@ -29889,7 +25920,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </button>
                   </div>
                 </div>
-                {financeTab !== "Weekly Accounting" && renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
+                {renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
@@ -29901,10 +25932,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     onClick={() => openFinanceTab(tab)}
                     key={tab}
                   >
-                    <span className="block">{tab}</span>
-                    <span className="block mt-1 text-[10px] font-semibold uppercase tracking-wider opacity-70">
-                      {financeTabMeta[tab].primaryLens}
-                    </span>
+                    {tab}
                   </button>
                 ))}
               </div>
@@ -29918,10 +25946,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       onClick={() => openFinanceTab(tab)}
                       key={tab}
                     >
-                      <span className="block">{tab}</span>
-                      <span className="block mt-0.5 text-[10px] font-semibold uppercase tracking-wider opacity-70">
-                        {financeTabMeta[tab].primaryLens}
-                      </span>
+                      {tab}
                     </button>
                   ))}
                 </nav>
@@ -29963,20 +25988,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
               </section>
 
-              {financeTab !== "Weekly Accounting" && (financeSummaryLoading || financeSummaryError || financeSummaryData?.generatedAt) && (
-                <section className={`rounded-xl border px-4 py-3 text-xs ${
-                  financeSummaryError
-                    ? "border-amber-200 bg-amber-50 text-amber-800"
-                    : "border-emerald-200 bg-emerald-50 text-emerald-800"
-                }`}>
-                  {financeSummaryError
-                    ? `Dedicated finance summary could not fully refresh, so Protohub is falling back to cached order data for now: ${financeSummaryError}`
-                    : financeSummaryLoading
-                      ? "Refreshing full finance summary from the order book…"
-                      : `Dedicated finance summary updated ${formatMoment(financeSummaryData?.generatedAt ?? "")}.`}
-                </section>
-              )}
-
               {financeTab === "Financial Overview" && (
                 <div className="space-y-4">
                   <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Financial overview summary">
@@ -29984,7 +25995,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       { title: "Revenue", value: formatMoney(financeRevenue), helper: `${financeDeliveredCount} delivered orders`, tone: "green" },
                       { title: "Gross Profit", value: formatMoney(financeGrossProfit), helper: `${financeGrossMargin}% gross margin`, tone: "blue" },
                       { title: "Net Profit", value: formatMoney(financeNetProfit), helper: `${financeNetMargin}% net margin`, tone: "blue" },
-                      { title: "Operating Expenses", value: formatMoney(financeOpex), helper: `${financeExpenses.length} expense rows${financeBonusEstimate > 0 ? ` · incl. ${formatMoney(financeBonusEstimate)} bonus est.` : ""}`, tone: "red" }
+                      { title: "Total Expenses", value: formatMoney(financeExpenseTotal), helper: `${financeExpenses.length} expense records`, tone: "red" }
                     ].map((metric) => (
                       <article key={metric.title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                         <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
@@ -30080,13 +26091,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
               {financeTab === "Weekly Accounting" && (() => {
                 // Sun→Sat range driven by weeklyAcctSunday
-                const startKey = weeklyAcctSunday;
-                const start = new Date(`${startKey}T00:00:00`);
+                const start = new Date(`${weeklyAcctSunday}T00:00:00`);
                 const end   = new Date(start); end.setDate(end.getDate() + 6); end.setHours(23, 59, 59, 999);
-                const endKey   = formatDateKey(end);
+                const startKey = start.toISOString().slice(0, 10);
+                const endKey   = end.toISOString().slice(0, 10);
                 const inWeek = (iso: string | undefined) => {
                   if (!iso) return false;
-                  const k = normalizeDateKey(iso);
+                  const k = String(iso).slice(0, 10);
                   return k >= startKey && k <= endKey;
                 };
                 // Honour the page-level Finance Product filter (string[] of product ids).
@@ -30096,45 +26107,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 // Expense rule: when a product filter is active, include only expenses
                 // for those products PLUS general (no productId) expenses — they're shared overhead.
                 const expenseMatchesPF = (e: ExpenseRecord) => productFilterIds.size === 0 || !e.productId || matchesProductFilter(e.productId, e.productName, productFilterIds);
-                const placedThisWeek = (
-                  weeklyAccountingData?.cohortOrders
-                  ?? trackedOrders.filter((o) => inWeek(orderCreatedKey(o)) && matchesPF(o.productId, o.productName))
-                ).filter((o) => matchesPF(o.productId, o.productName));
 
-                // Delivered-week view: orders DELIVERED inside the week
-                const deliveredCash = (
-                  weeklyAccountingData?.deliveredOrders
-                  ?? trackedOrders.filter((o) =>
-                    (o.status ?? "New") === "Delivered"
-                    && inWeek(orderDeliveredKey(o))
-                    && matchesPF(o.productId, o.productName)
-                  )
-                ).filter((o) => (o.status ?? "New") === "Delivered" && matchesPF(o.productId, o.productName));
-                const weeklyExpenses = (
-                  weeklyAccountingData?.expenses
-                  ?? expenses.filter((e) => inWeek(e.date) && expenseMatchesPF(e))
-                ).filter(expenseMatchesPF);
-                const weeklyRemittanceTransactions = weeklyAccountingData?.remittanceTransactions ?? [];
-                const cashProfitSummary = summarizeRecognizedProfit(deliveredCash, weeklyExpenses);
-                const cashRevenue   = cashProfitSummary.revenue;
-                const cashAdSpend   = weeklyExpenses.filter((e) => e.type === "Ad Spend").reduce((s, e) => s + e.amount, 0);
-                const cashWaybill   = weeklyExpenses.filter((e) => e.type === "Waybill").reduce((s, e) => s + e.amount, 0);
-                const cashDelivery  = cashProfitSummary.recognizedLogistics + weeklyExpenses.filter((e) => e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
-                const cashOther     = weeklyExpenses.filter((e) => !["Ad Spend", "Waybill", "Delivery", "Failed Delivery"].includes(e.type)).reduce((s, e) => s + e.amount, 0);
-                const cashCogs      = cashProfitSummary.cogs;
-                // Cash delivery rate = delivered this week / orders placed this week
+                // CASH view: orders DELIVERED inside the week
+                const deliveredCash = trackedOrders.filter((o) =>
+                  (o.status ?? "New") === "Delivered"
+                  && inWeek(o.deliveredDate ?? o.createdAt ?? o.date)
+                  && matchesPF(o.productId, o.productName)
+                );
+                const cashRevenue   = deliveredCash.reduce((s, o) => s + (o.amount || 0), 0);
+                const cashAdSpend   = expenses.filter((e) => e.type === "Ad Spend" && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                const cashWaybill   = expenses.filter((e) => e.type === "Waybill" && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                const cashDelivery  = expenses.filter((e) => (e.type === "Delivery" || e.type === "Failed Delivery") && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                const cashOther     = expenses.filter((e) => !["Ad Spend", "Waybill", "Delivery", "Failed Delivery"].includes(e.type) && inWeek(e.date) && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                const cashCogs      = deliveredCash.reduce((s, o) => s + costForOrder(o), 0);
+                // Cash delivery rate = delivered / orders that REACHED a terminal state in the week
                 const finalizedCashDenom = trackedOrders.filter((o) => {
                   const s = o.status ?? "New";
                   if (!["Delivered", "Cancelled", "Failed"].includes(s)) return false;
-                  const k = s === "Delivered"
-                    ? orderDeliveredKey(o)
-                    : normalizeDateKey((o as any).updatedAt ?? o.createdAt ?? o.date);
+                  const k = String(o.deliveredDate ?? o.createdAt ?? o.date ?? "").slice(0, 10);
                   return k >= startKey && k <= endKey && matchesPF(o.productId, o.productName);
                 });
-                const cashDeliveryRate = placedThisWeek.length === 0 ? 0 : Math.round((deliveredCash.length / placedThisWeek.length) * 100);
+                const cashDeliveryRate = finalizedCashDenom.length === 0 ? 0 : Math.round((deliveredCash.length / finalizedCashDenom.length) * 100);
 
                 // COHORT view: orders PLACED inside the week (revenue/delivery rate against THIS WEEK'S cohort)
-                const cohort         = placedThisWeek;
+                const cohort         = trackedOrders.filter((o) => inWeek(o.createdAt ?? o.date) && matchesPF(o.productId, o.productName));
                 const cohortDelivered = cohort.filter((o) => (o.status ?? "New") === "Delivered");
                 const cohortFinalized = cohort.filter((o) => ["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
                 const cohortPending   = cohort.length - cohortFinalized.length;
@@ -30163,105 +26159,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   return { rate: Math.round((g.delivered / g.placed) * 100), count: g.placed };
                 };
 
-                const cashBonuses   = cashProfitSummary.bonusEstimate;
+                const cashBonuses   = deliveredCash.reduce((s, o) => { const rs = getRepCohortStats(o.assignedRepId); return s + (computeOrderBonus(o, rs.rate, 0, rs.count).total ?? 0); }, 0);
                 const cashExpenses  = cashAdSpend + cashWaybill + cashDelivery + cashOther + cashCogs + cashBonuses;
-                const cashProfit    = cashProfitSummary.netProfit;
+                const cashProfit    = cashRevenue - cashExpenses;
                 const cohortBonuses = cohortDelivered.reduce((s, o) => { const rs = getRepCohortStats(o.assignedRepId); return s + (computeOrderBonus(o, rs.rate, 0, rs.count).total ?? 0); }, 0);
                 const cohortProfit  = cohortRevenue - (cohortAdSpend + cohortCogs + cohortBonuses);
-                const prevWeekStart = addDaysToDateKey(startKey, -7);
-                const prevWeekEnd = addDaysToDateKey(startKey, -1);
-                const deliveriesFromThisWeekCohort = deliveredCash.filter((o) => {
-                  const createdKey = orderCreatedKey(o);
-                  return createdKey >= startKey && createdKey <= endKey;
-                });
-                const deliveriesFromLastWeekCohort = deliveredCash.filter((o) => {
-                  const createdKey = orderCreatedKey(o);
-                  return createdKey >= prevWeekStart && createdKey <= prevWeekEnd;
-                });
-                const deliveriesFromOlderCohorts = deliveredCash.filter((o) => {
-                  const createdKey = orderCreatedKey(o);
-                  return !!createdKey && createdKey < prevWeekStart;
-                });
-                const cohortDeliveredSameWeek = cohort.filter((o) => {
-                  if ((o.status ?? "New") !== "Delivered") return false;
-                  const deliveredKey = orderDeliveredKey(o);
-                  return deliveredKey >= startKey && deliveredKey <= endKey;
-                });
-                const cohortDeliveredLater = cohort.filter((o) => {
-                  if ((o.status ?? "New") !== "Delivered") return false;
-                  const deliveredKey = orderDeliveredKey(o);
-                  return !!deliveredKey && deliveredKey > endKey;
-                });
-                const cohortFailedOrCancelled = cohort.filter((o) => ["Cancelled", "Failed"].includes(o.status ?? "New"));
-                const cohortStillPending = cohort.filter((o) => !["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"));
-                const cashReceivedThisWeek = weeklyRemittanceTransactions.reduce((sum, row) => sum + Number(row.deltaAmount ?? 0), 0);
-                const cashReceivedOrderCount = new Set(weeklyRemittanceTransactions.map((row) => row.orderId).filter(Boolean)).size;
-                const cohortCreatedDateCorrectionCount = cohort.filter((order) => orderHasCreatedAtCorrection(order)).length;
-                const deliveredDateCorrectionCount = deliveredCash.filter((order) => orderHasDeliveredDateCorrection(order)).length;
-                const deliveriesBySourceRows = [
-                  {
-                    label: "From this week's orders",
-                    helper: "Orders created between this Sunday and Saturday and already delivered this week.",
-                    orders: deliveriesFromThisWeekCohort,
-                    tone: "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  },
-                  {
-                    label: "From last week's orders",
-                    helper: "Orders placed last week that landed as deliveries this week.",
-                    orders: deliveriesFromLastWeekCohort,
-                    tone: "bg-blue-50 text-blue-700 border-blue-200"
-                  },
-                  {
-                    label: "From older orders",
-                    helper: "Deliveries this week coming from cohorts older than last week.",
-                    orders: deliveriesFromOlderCohorts,
-                    tone: "bg-violet-50 text-violet-700 border-violet-200"
-                  }
-                ].map((row) => ({
-                  ...row,
-                  count: row.orders.length,
-                  revenue: row.orders.reduce((sum, order) => sum + (order.amount || 0), 0)
-                }));
-                const cohortOutcomeRows = [
-                  {
-                    label: "Placed this week",
-                    value: cohort.length,
-                    helper: "All orders received between Sunday and Saturday."
-                  },
-                  {
-                    label: "Delivered same week",
-                    value: cohortDeliveredSameWeek.length,
-                    helper: "Cohort orders that already delivered before the week closed."
-                  },
-                  {
-                    label: "Delivered after week",
-                    value: cohortDeliveredLater.length,
-                    helper: "Cohort orders that delivered later, after this accounting week ended."
-                  },
-                  {
-                    label: "Pending now",
-                    value: cohortStillPending.length,
-                    helper: "Cohort orders still not finalized yet."
-                  },
-                  {
-                    label: "Failed / Cancelled",
-                    value: cohortFailedOrCancelled.length,
-                    helper: "Cohort orders that are already lost."
-                  },
-                  {
-                    label: "Final delivery rate",
-                    value: cohortFinalizedRate,
-                    helper: cohortFinalized.length === 0 ? "No finalized orders yet." : `${cohortDelivered.length} delivered of ${cohortFinalized.length} finalized`
-                  }
-                ];
 
                 // Per-day breakdown
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
                 const days = Array.from({ length: 7 }, (_, i) => {
                   const d = new Date(start); d.setDate(d.getDate() + i);
-                  const key = formatDateKey(d);
-                  const adSpend  = weeklyExpenses.filter((e) => e.type === "Ad Spend" && normalizeDateKey(e.date) === key).reduce((s, e) => s + e.amount, 0);
-                  const placed   = placedThisWeek.filter((o) => orderCreatedKey(o) === key);
+                  const key = d.toISOString().slice(0, 10);
+                  const adSpend  = expenses.filter((e) => e.type === "Ad Spend" && String(e.date).slice(0, 10) === key && expenseMatchesPF(e)).reduce((s, e) => s + e.amount, 0);
+                  const placed   = trackedOrders.filter((o) => String(o.createdAt ?? o.date ?? "").slice(0, 10) === key && matchesPF(o.productId, o.productName));
                   const delivered = placed.filter((o) => (o.status ?? "New") === "Delivered");
                   const revenue  = delivered.reduce((s, o) => s + o.amount, 0);
                   const roi      = adSpend === 0 ? null : Math.round((revenue / adSpend) * 100);
@@ -30276,75 +26186,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center justify-between gap-3 flex-wrap">
                       <div>
                         <p className="text-xs font-bold uppercase tracking-wider text-gray-400 m-0">Accounting week (Sun → Sat)</p>
-                        <p className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{formatDateWithWeekday(start)} → {formatDateWithWeekday(end)}</p>
-                        {weeklyAccountingData?.generatedAt && (
-                          <p className="text-[11px] text-gray-500 mt-1">Server snapshot: {formatMoment(weeklyAccountingData.generatedAt)}</p>
-                        )}
+                        <p className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{formatDateOnly(start)} – {formatDateOnly(end)}</p>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() - 7); setWeeklyAcctSunday(formatDateKey(d)); }}>
+                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() - 7); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>
                           <ChevronLeft className="w-4 h-4" />
                         </button>
-                        <button className="!min-h-0 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50" onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0); setWeeklyAcctSunday(formatDateKey(d)); }}>This week</button>
-                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() + 7); setWeeklyAcctSunday(formatDateKey(d)); }}>
+                        <button className="!min-h-0 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50" onClick={() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>This week</button>
+                        <button className="!min-h-0 p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => { const d = new Date(start); d.setDate(d.getDate() + 7); setWeeklyAcctSunday(d.toISOString().slice(0, 10)); }}>
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
-
-                    {(weeklyAccountingLoading || weeklyAccountingError) && (
-                      <div className={`rounded-xl border px-4 py-3 text-sm ${weeklyAccountingError ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
-                        {weeklyAccountingError
-                          ? `Weekly accounting is using the current workspace data because the server summary could not load: ${weeklyAccountingError}`
-                          : "Refreshing weekly accounting from the server..."}
-                      </div>
-                    )}
-
-                    {(cohortCreatedDateCorrectionCount > 0 || deliveredDateCorrectionCount > 0) && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                        <p className="m-0 font-bold">Date correction audit is active for this week</p>
-                        <p className="m-0 mt-1 text-xs text-amber-800">
-                          {cohortCreatedDateCorrectionCount > 0 ? `${cohortCreatedDateCorrectionCount} order${cohortCreatedDateCorrectionCount === 1 ? "" : "s"} in this cohort use corrected order dates.` : "No corrected order dates in this cohort."}{" "}
-                          {deliveredDateCorrectionCount > 0 ? `${deliveredDateCorrectionCount} delivered order${deliveredDateCorrectionCount === 1 ? "" : "s"} in this week use corrected delivered dates.` : "No corrected delivered dates in this delivered week."}{" "}
-                          Remittance cash stays frozen to the receipt-time snapshot, so later date edits should no longer rewrite old cashflow.
-                        </p>
-                      </div>
-                    )}
-
-                    <section className="grid grid-cols-1 md:grid-cols-3 gap-4" aria-label="Weekly accounting overview">
-                      {[
-                        {
-                          title: "Orders Placed This Week",
-                          value: String(placedThisWeek.length),
-                          helper: `${cohortPending} still pending · ${cohortFailedOrCancelled.length} failed/cancelled`,
-                          tone: "blue",
-                          icon: Package
-                        },
-                        {
-                          title: "Delivered This Week",
-                          value: String(deliveredCash.length),
-                          helper: `${formatMoney(cashRevenue)} revenue recognized on delivery week`,
-                          tone: "emerald",
-                          icon: BadgeCheck
-                        },
-                        {
-                          title: "Cash Received This Week",
-                          value: formatMoney(cashReceivedThisWeek),
-                          helper: weeklyRemittanceTransactions.length === 0 ? "No remittance entries logged in this week yet" : `${cashReceivedOrderCount} order${cashReceivedOrderCount === 1 ? "" : "s"} touched by remittance updates`,
-                          tone: "amber",
-                          icon: HandCoins
-                        }
-                      ].map(({ title, value, helper, tone, icon: Icon }) => (
-                        <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className={`w-9 h-9 rounded-full flex items-center justify-center ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "emerald" ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"}`}><Icon className="w-4 h-4" /></span>
-                          </div>
-                          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h2>
-                          <strong className="text-xl font-bold text-gray-900 block my-1">{value}</strong>
-                          <p className="text-[11px] text-gray-500">{helper}</p>
-                        </article>
-                      ))}
-                    </section>
 
                     {/* Cash vs Cohort side-by-side */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -30352,27 +26205,24 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <section className="bg-white rounded-xl border-2 border-emerald-200 shadow-sm p-5 space-y-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-sm font-extrabold text-emerald-700 m-0 uppercase tracking-wider">💵 Delivered week P&amp;L</h3>
-                            <p className="text-xs text-gray-500 mt-0.5">Revenue, COGS, delivery costs, and bonuses recognized from orders delivered in this week.</p>
+                            <h3 className="text-sm font-extrabold text-emerald-700 m-0 uppercase tracking-wider">💵 Cash week</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">Money that actually came in & went out this week. Use for payroll, cash-flow, weekly P&L.</p>
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><p className="text-[11px] text-gray-400 m-0">Revenue (delivered)</p><p className="text-lg font-extrabold text-gray-900 m-0">{formatMoney(cashRevenue)}</p><p className="text-[11px] text-gray-500 m-0">{deliveredCash.length} delivered this week · {placedThisWeek.length} placed this week</p></div>
+                          <div><p className="text-[11px] text-gray-400 m-0">Revenue (delivered)</p><p className="text-lg font-extrabold text-gray-900 m-0">{formatMoney(cashRevenue)}</p><p className="text-[11px] text-gray-500 m-0">{deliveredCash.length} order{deliveredCash.length === 1 ? "" : "s"}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Net profit</p><p className={`text-lg font-extrabold m-0 ${cashProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(cashProfit)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Ad spend</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashAdSpend)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Bonuses paid</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashBonuses)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">COGS</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashCogs)}</p></div>
                           <div><p className="text-[11px] text-gray-400 m-0">Delivery + Waybill</p><p className="text-sm font-bold text-gray-900 m-0">{formatMoney(cashDelivery + cashWaybill)}</p></div>
                           <div className="col-span-2 mt-1 pt-2 border-t border-gray-100">
-                            <p className="text-[11px] text-gray-400 m-0">Delivery rate (delivered this week vs orders placed this week)</p>
+                            <p className="text-[11px] text-gray-400 m-0">Delivery rate (orders that finalized this week)</p>
                             <div className="flex items-center gap-2 mt-0.5">
                               <p className={`text-2xl font-extrabold m-0 ${cashDeliveryRate >= target ? "text-emerald-700" : "text-rose-700"}`}>{cashDeliveryRate}%</p>
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cashDeliveryRate >= target ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>target {target}%</span>
                             </div>
-                            <p className="text-[11px] text-gray-500 m-0 mt-0.5">{deliveredCash.length} delivered this week of {placedThisWeek.length} orders placed this week</p>
-                            {finalizedCashDenom.length > 0 && (
-                              <p className="text-[10px] text-gray-400 m-0 mt-0.5">Finalized in week: {finalizedCashDenom.length}</p>
-                            )}
+                            <p className="text-[11px] text-gray-500 m-0 mt-0.5">{deliveredCash.length} of {finalizedCashDenom.length} finalized in week were delivered</p>
                           </div>
                         </div>
                       </section>
@@ -30410,50 +26260,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </section>
                     </div>
 
-                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                      <div>
-                        <h3 className="text-base font-bold text-gray-900 m-0">Delivered this week by source cohort</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">This is the missing bridge between the orders you received this week and the deliveries that actually landed this week.</p>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {deliveriesBySourceRows.map((row) => (
-                          <article key={row.label} className={`rounded-xl border p-4 ${row.tone}`}>
-                            <p className="text-[11px] font-bold uppercase tracking-wider m-0">{row.label}</p>
-                            <strong className="text-2xl font-extrabold block mt-1">{row.count}</strong>
-                            <p className="text-sm font-semibold mt-1 mb-0">{formatMoney(row.revenue)}</p>
-                            <p className="text-[11px] mt-2 mb-0 opacity-80">{row.helper}</p>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                      <div>
-                        <h3 className="text-base font-bold text-gray-900 m-0">Cohort week outcome split</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">This shows what happened to the orders received in this week, split by whether they delivered inside the same week or later.</p>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        {cohortOutcomeRows.map((row) => (
-                          <article key={row.label} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">{row.label}</p>
-                            <strong className="text-2xl font-extrabold text-gray-900 block mt-1">
-                              {row.label === "Final delivery rate" ? `${row.value}%` : row.value}
-                            </strong>
-                            <p className="text-[11px] text-gray-500 mt-2 mb-0">{row.helper}</p>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-
                     {/* Top performers — per-rep stats for the week */}
                     {(() => {
-                      // Build per-rep stats. This block intentionally mixes:
-                      // - delivered-this-week output (deliveries, revenue, AOV)
-                      // - cohort-week quality (rate against this week's order cohort)
-                      // The bonus shown here is the per-order estimate for this week's delivered
-                      // orders using the cohort gate, not the final payroll preview total.
+                      // Build per-rep stats. We use CASH week for deliveries, revenue and bonus
+                      // (= what the rep gets paid this Saturday), and COHORT for the
+                      // delivery-rate against target (= quality of orders they brought in).
                       const cashWeekRange = { start: startKey, end: endKey };
-                      const repStats = users.filter((u) => u.role === "Sales Rep").map((u) => {
+                      const repStats = users.filter((u) => u.role === "Sales Rep" || u.role === "Owner" || u.role === "Admin").map((u) => {
                         const cashOrders   = deliveredCash.filter((o) => o.assignedRepId === u.id);
                         const carryoverOrders = cashOrders.filter((o) => !isInExplicitRange(orderCreatedKey(o), cashWeekRange));
                         const cohortOrders = cohort.filter((o) => o.assignedRepId === u.id);
@@ -30461,7 +26274,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
                         const repRs   = getRepCohortStats(u.id);
-                        const bonusEstimate = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
+                        const bonus   = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
@@ -30470,7 +26283,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           delivered: cashOrders.length,
                           carryoverDelivered: carryoverOrders.length,
                           revenue,
-                          bonusEstimate,
+                          bonus,
                           aov,
                           cohortPlaced: cohortOrders.length,
                           cohortDelivered: cohortDeliveredOrders.length,
@@ -30483,7 +26296,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       .sort((a, b) => b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
-                      const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
+                      const totalBonus = repStats.reduce((s, r) => s + r.bonus, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
                       const totalCarryoverDelivered = repStats.reduce((s, r) => s + r.carryoverDelivered, 0);
 
@@ -30492,20 +26305,18 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
                             <div>
                               <h3 className="text-base font-bold text-gray-900 m-0">Top performers · Sales Reps</h3>
-                              <p className="text-xs text-gray-500 mt-0.5">Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below.</p>
+                              <p className="text-xs text-gray-500 mt-0.5">Cash-week delivery & bonus. Orders delivered this week count this week, even if they were placed earlier. Cohort-week delivery rate still tracks this week&apos;s placed orders against the {target}% target.</p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
                               {totalCarryoverDelivered > 0 && (
                                 <div className="text-right">
                                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Carry-over delivered</p>
                                   <p className="text-base font-extrabold text-amber-700 m-0">{totalCarryoverDelivered}</p>
-                                  <p className="text-[10px] text-gray-400 mt-0.5">Placed before this week</p>
                                 </div>
                               )}
                               <div className="text-right">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
-                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
-                                <p className="text-[10px] text-gray-400 mt-0.5">Per-order only · final payroll may differ</p>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus payable</p>
+                                <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonus)}</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Avg AOV</p>
@@ -30542,7 +26353,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       </td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
-                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonusEstimate)}</td>
+                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonus)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
                                         <span className="font-semibold text-gray-900">{r.cohortDelivered}</span>
                                         <span className="text-gray-400"> / {r.cohortPlaced}</span>
@@ -30614,7 +26425,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-xs text-blue-900 leading-relaxed">
                       <strong className="block mb-1">📖 How to read this view</strong>
                       <ul className="list-disc pl-5 m-0 space-y-1">
-                        <li><strong>Delivered week P&amp;L</strong> recognizes revenue, COGS, logistics, and operating costs on the week the orders were actually delivered. If your Finance period is set to this same week, the net profit should now reconcile to the accounting tabs.</li>
+                        <li><strong>Delivered week P&amp;L</strong> recognizes revenue, COGS, logistics, and bonuses on the week the orders were actually delivered.</li>
                         <li><strong>Cash received</strong> comes from remittance entries logged during this week, not just the total remitted sitting on the order now.</li>
                         <li><strong>Cohort week</strong> tells you whether the ads <em>this week</em> paid back. The number keeps rising until pending orders finalize, so a Monday review will show a lower delivery rate than a Friday review of the same week.</li>
                         <li><strong>Delivered by source cohort</strong> explains why the number of orders placed this week and the number delivered this week are usually different.</li>
@@ -30632,7 +26443,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     {[
                       { title: "Total Team ROI", value: `${financeRoi}%`, helper: "Net Profit / (COGS + Expenses)", icon: CircleDollarSign, tone: "blue" },
                       { title: "Avg CPA", value: formatMoney(financeAvgCpa), helper: "SUM(Expenses) / Delivered Orders", icon: CircleDollarSign, tone: "gray" },
-                      { title: "Top Performer", value: topFinanceRep?.user.name ?? "N/A", helper: `${formatMoney(topFinanceRep?.netProfit ?? 0)} approx net profit`, icon: BadgeCheck, tone: "green" },
+                      { title: "Top Performer", value: topFinanceRep?.user.name ?? "N/A", helper: `${formatMoney(topFinanceRep?.netProfit ?? 0)} Net Profit`, icon: BadgeCheck, tone: "green" },
                     ].map(({ title, value, helper, icon: Icon, tone }) => (
                       <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-2">
@@ -30674,7 +26485,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Approx Net Profit</span>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Net Profit</span>
                                 <div className="font-semibold text-gray-900">{formatMoney(row.netProfit)}</div>
                               </div>
                               <div>
@@ -30694,7 +26505,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Sales Rep Name", "Revenue", "Delivered", "Approx Net Profit", "CPA", "ROI %"].map((h) => (
+                            {["Sales Rep Name", "Revenue", "Delivered", "Net Profit", "CPA", "ROI %"].map((h) => (
                               <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                             ))}
                           </tr>
@@ -30836,37 +26647,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         : financeRemittanceLoading
                           ? "Refreshing receipt-dated remittance cash…"
                           : `Receipt-dated remittance cash updated ${formatMoment(financeRemittanceGeneratedAt)}.`}
-                    </div>
-                  )}
-                  {(financeCreatedDateCorrectionCount > 0 || financeDeliveredDateCorrectionCount > 0) && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                      <p className="m-0 font-bold">Finance date-correction protection is on</p>
-                      <p className="m-0 mt-1 text-xs text-amber-800">
-                        {financeCreatedDateCorrectionCount > 0 ? `${financeCreatedDateCorrectionCount} order${financeCreatedDateCorrectionCount === 1 ? "" : "s"} in this finance period use corrected order dates.` : "No corrected order dates in this finance period."}{" "}
-                        {financeDeliveredDateCorrectionCount > 0 ? `${financeDeliveredDateCorrectionCount} delivered order${financeDeliveredDateCorrectionCount === 1 ? "" : "s"} use corrected delivered dates.` : "No corrected delivered dates in this delivered period."}{" "}
-                        Receipt-dated cash entries now keep their own snapshots, so later date edits should not rewrite older remittance history.
-                      </p>
-                    </div>
-                  )}
-                  {(currentRole === "Owner" || currentRole === "Admin") && (
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="space-y-1">
-                        <p className="m-0 text-sm font-bold text-blue-900">Historical cash bootstrap</p>
-                        <p className="m-0 text-xs text-blue-800">
-                          Older cash weeks before the new remittance ledger may still be incomplete. Run this once to create estimated historical receipt entries for past remitted orders that never had ledger rows. Protohub uses each order&apos;s last updated time as the best available historical receipt date.
-                        </p>
-                        {financeRemittanceBackfillSummary && (
-                          <p className="m-0 text-[11px] text-blue-900">{financeRemittanceBackfillSummary}</p>
-                        )}
-                      </div>
-                      <button
-                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-300 bg-white text-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors disabled:opacity-50"
-                        disabled={financeRemittanceBackfillLoading}
-                        onClick={runFinanceRemittanceBackfill}
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${financeRemittanceBackfillLoading ? "animate-spin" : ""}`} />
-                        {financeRemittanceBackfillLoading ? "Bootstrapping..." : "Backfill history"}
-                      </button>
                     </div>
                   )}
                   {/* Top metric cards */}
@@ -31105,7 +26885,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           {pagedOutstanding.map((order) => {
                             const status = orderRemittanceStatus(order);
                             const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-                            const auditStack = renderOrderDateAuditStack(order, { compact: true });
                             return (
                               <article key={order.id} className="px-5 py-4 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -31113,7 +26892,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <div className="font-bold text-[#1F8FE0]">{order.id}</div>
                                     <div className="text-sm font-medium text-gray-900">{order.customer}</div>
                                     <div className="text-xs text-gray-400">{order.phone}</div>
-                                    {auditStack}
                                   </div>
                                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${statusTone}`}>{status}</span>
                                 </div>
@@ -31166,15 +26944,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             return pagedOutstanding.map((order) => {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-                              const auditStack = renderOrderDateAuditStack(order, { compact: true });
                               return (
                                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-3 font-bold text-[#1F8FE0]">{order.id}</td>
-                                  <td className="px-4 py-3">
-                                    <div className="font-medium text-gray-900">{order.customer}</div>
-                                    <div className="text-xs text-gray-400">{order.phone}</div>
-                                    {auditStack}
-                                  </td>
+                                  <td className="px-4 py-3"><div className="font-medium text-gray-900">{order.customer}</div><div className="text-xs text-gray-400">{order.phone}</div></td>
                                   <td className="px-4 py-3 text-gray-700">{agents.find((a) => a.id === order.agentId)?.name ?? "Unassigned"}</td>
                                   <td className="px-4 py-3 text-gray-700">{formatProductMoney(order.amount, order.currency)}</td>
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
@@ -31216,14 +26989,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               {financeTab === "Profit & Loss" && (() => {
                 const prevRange = explicitPeriodRange(financePeriod, financeDateRange, true);
                 const prevDelivered = deliveredOrderRows.filter((o) => isInExplicitRange(orderDeliveredKey(o), prevRange) && orderMatchesProductFilter(o));
+                const prevRevenue = prevDelivered.reduce((s, o) => s + o.amount, 0);
+                const prevCogs = prevDelivered.reduce((s, o) => s + costForOrder(o), 0);
+                const prevLogistics = prevDelivered.reduce((s, o) => s + orderLogisticsCost(o), 0);
                 const prevAllExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange) && expenseMatchesProductFilter(e));
-                const prevProfitSummary = summarizeRecognizedProfit(prevDelivered, prevAllExpenses);
-                const prevRevenue = prevProfitSummary.revenue;
-                const prevCogs = prevProfitSummary.cogs;
-                const prevLogistics = prevProfitSummary.recognizedLogistics;
-                const prevOpex = prevProfitSummary.operatingExpense;
-                const prevGross = prevProfitSummary.grossProfit;
-                const prevNet = prevProfitSummary.netProfit;
+                const prevExpenseTotal = prevAllExpenses.reduce((s, e) => s + e.amount, 0);
+                const prevDeliveryExp = prevAllExpenses.filter((e) => e.type === "Delivery" || e.type === "Failed Delivery").reduce((s, e) => s + e.amount, 0);
+                const prevOpex = prevExpenseTotal - prevDeliveryExp;
+                const prevGross = prevRevenue - prevCogs - prevLogistics;
+                const prevNet = prevGross - prevOpex;
                 const chg = (cur: number, prev: number) => {
                   const pct = percentChange(cur, prev);
                   const cls = pct >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
@@ -31262,7 +27036,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {
                           heading: "Operating Expenses",
                           rows: [
-                            { label: financeBonusEstimate > 0 || prevProfitSummary.bonusEstimate > 0 ? "Expenses + bonus estimate" : "Expenses", current: `(${formatMoney(financeOpex)})`, previous: `(${formatMoney(prevOpex)})`, change: chg(financeOpex, prevOpex), tone: "text-red-500" },
+                            { label: "Expenses", current: `(${formatMoney(financeOpex)})`, previous: `(${formatMoney(prevOpex)})`, change: chg(financeOpex, prevOpex), tone: "text-red-500" },
                           ],
                           headingClass: "text-red-600",
                           bgClass: "bg-red-50",
@@ -31319,7 +27093,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Logistics / Delivery Fees</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeLogisticsCost)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevLogistics)})</td><td className="px-4 py-3">{chg(financeLogisticsCost, prevLogistics)}</td></tr>
                           <tr className="bg-green-50"><td className="px-4 py-3 font-bold text-green-700">Gross Profit</td><td className="px-4 py-3 font-bold text-green-700">{formatMoney(financeGrossProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevGross)}</td><td className="px-4 py-3">{chg(financeGrossProfit, prevGross)}</td></tr>
                           <tr className="bg-red-50"><td className="px-4 py-2 font-bold text-red-600 text-xs uppercase tracking-wide" colSpan={4}>Operating Expenses</td></tr>
-                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">{financeBonusEstimate > 0 || prevProfitSummary.bonusEstimate > 0 ? "Expenses + Bonus Estimate" : "Expenses"}</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeOpex)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevOpex)})</td><td className="px-4 py-3">{chg(financeOpex, prevOpex)}</td></tr>
+                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Expenses</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeOpex)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevOpex)})</td><td className="px-4 py-3">{chg(financeOpex, prevOpex)}</td></tr>
                           <tr className="bg-blue-50"><td className="px-4 py-3 font-bold text-[#1F8FE0]">Net Profit</td><td className="px-4 py-3 font-bold text-[#1F8FE0]">{formatMoney(financeNetProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevNet)}</td><td className="px-4 py-3">{chg(financeNetProfit, prevNet)}</td></tr>
                         </tbody>
                       </table>
@@ -31405,7 +27179,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Approx Net Profit</span>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Net Profit</span>
                                 <div className="font-bold text-gray-900">{formatMoney(row.netProfit)}</div>
                               </div>
                               <div>
@@ -31434,7 +27208,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Product Name", "Total Orders", "Delivered", "Delivery Rate", "Performance", "Units Sold", "Revenue", "COGS", "Logistics", "Opex", "Approx Net Profit", "Margin %", "ROI", "ROAS"].map((h) => (
+                            {["Product Name", "Total Orders", "Delivered", "Delivery Rate", "Performance", "Units Sold", "Revenue", "COGS", "Logistics", "Opex", "Net Profit", "Margin %", "ROI", "ROAS"].map((h) => (
                               <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -31462,174 +27236,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">{row.margin}%</span></td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}%</span></td>
                                 <td className="px-4 py-4 font-semibold text-gray-900">{row.adSpend === 0 ? (row.revenue > 0 ? "Uncapped" : "N/A") : `${(row.revenue / row.adSpend).toFixed(2)}x`}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {financeTab === "Package Performance" && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                    {[
-                      {
-                        title: "Most Ordered",
-                        row: topOrderedPackageRow,
-                        helper: topOrderedPackageRow ? `${topOrderedPackageRow.totalOrders} orders · ${topOrderedPackageRow.orderedUnits} pcs ordered` : "No package orders yet",
-                        tone: "blue"
-                      },
-                      {
-                        title: "Most Delivered",
-                        row: topDeliveredPackageRow,
-                        helper: topDeliveredPackageRow ? `${topDeliveredPackageRow.deliveredCount} delivered · ${topDeliveredPackageRow.deliveredUnits} pcs delivered` : "No delivered packages yet",
-                        tone: "green"
-                      },
-                      {
-                        title: "Most Delivered PCS",
-                        row: topDeliveredUnitsPackageRow,
-                        helper: topDeliveredUnitsPackageRow ? `${topDeliveredUnitsPackageRow.deliveredUnits} pcs · ${topDeliveredUnitsPackageRow.deliveredCount} delivered orders` : "No delivered units yet",
-                        tone: "violet"
-                      },
-                      {
-                        title: "Best Delivery Rate",
-                        row: bestPackageDeliveryRateRow,
-                        helper: bestPackageDeliveryRateRow ? `${bestPackageDeliveryRateRow.deliveryRate}% · ${bestPackageDeliveryRateRow.deliveredCount}/${bestPackageDeliveryRateRow.totalOrders}` : "No package cohort yet",
-                        tone: "amber"
-                      }
-                    ].map((metric) => (
-                      <article key={metric.title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
-                        {metric.row ? (
-                          <>
-                            <strong className="text-lg font-bold text-gray-900 block mt-2">{metric.row.product.name}</strong>
-                            <p className="text-sm font-semibold text-[#1F8FE0] mt-1 mb-0">{metric.row.packageName} · {formatBundleUnitLabel(metric.row.packageQuantity)}</p>
-                            <p className="text-[11px] text-gray-400 font-medium mt-2">{metric.helper}</p>
-                          </>
-                        ) : (
-                          <p className="text-sm text-gray-400 italic mt-3">No package activity in this period.</p>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-                    <label className="flex flex-col gap-1 w-full sm:flex-1 sm:max-w-xs">
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Product for Analysis</span>
-                      <select className="h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Package product for analysis" value={selectedProductId} onChange={(event) => { const p = products.find((pr) => pr.id === event.target.value); setSelectedProductId(event.target.value); setFinanceProductSearch(p?.name ?? ""); }}>
-                        <option value="">All products</option>
-                        {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-                      </select>
-                    </label>
-                    <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0 self-end">
-                      <Search className="w-4 h-4 text-gray-400 shrink-0" />
-                      <input className="bg-transparent outline-none text-sm w-full min-w-0" value={financeProductSearch} onChange={(event) => setFinanceProductSearch(event.target.value)} placeholder="Search by product, package, or pcs..." />
-                    </label>
-                    <div className="self-end flex flex-wrap items-center gap-2 sm:pb-2">
-                      <span className="text-xs text-gray-400">{packagePerformanceRows.length} package rows</span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">Tracked {trackedPackageRowsCount}</span>
-                      {legacyPackageRowsCount > 0 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-700">Manual / legacy {legacyPackageRowsCount}</span>
-                      )}
-                    </div>
-                  </div>
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/70 text-xs text-gray-600">
-                      <span className="font-semibold text-gray-800">Tracked package</span> rows are tied to a real saved package. <span className="font-semibold text-gray-800">Manual / legacy</span> rows come from older orders or fallback package text where the original package link was missing. <span className="font-semibold text-gray-800">Ordered</span> uses the selected created-date period, while <span className="font-semibold text-gray-800">Delivered</span> and delivered profit use the selected delivered-date period.
-                    </div>
-                    <div className="sm:hidden divide-y divide-gray-100">
-                      {packagePerformanceRows.length === 0 ? (
-                        <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</div>
-                      ) : (
-                        packagePerformanceRows.map((row) => (
-                          <article key={row.packageKey} className="px-4 py-4 space-y-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <div className="font-bold text-gray-900">{row.product.name}</div>
-                                <div className="text-sm font-semibold text-[#1F8FE0]">{row.packageName} · {formatBundleUnitLabel(row.packageQuantity)}</div>
-                              </div>
-                              <div className="flex flex-col items-end gap-1 shrink-0">
-                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? row.tier : "Carry-over only"}</span>
-                                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
-                                <div className="text-gray-700">{row.totalOrders}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span>
-                                <div className="text-green-700 font-semibold">{row.deliveredCount}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Ordered PCS</span>
-                                <div className="text-gray-700">{row.orderedUnits}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered PCS</span>
-                                <div className="text-gray-700">{row.deliveredUnits}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivery Rate</span>
-                                <div className="font-bold text-gray-900">{row.hasOrderCohort ? `${row.deliveryRate}%` : "—"}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Share of Product</span>
-                                <div className="text-gray-700">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Revenue Delivered</span>
-                                <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</div>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Approx Net Profit</span>
-                                <div className="font-bold text-gray-900">{formatMoney(row.netProfit)}</div>
-                              </div>
-                            </div>
-                          </article>
-                        ))
-                      )}
-                    </div>
-                    <div className="hidden sm:block overflow-x-auto">
-                      <table className="w-full text-sm sticky-col-first">
-                        <thead>
-                          <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Product", "Package / PCS", "Orders", "Delivered", "Delivery Rate", "Ordered PCS", "Delivered PCS", "Placed Revenue", "Delivered Revenue", "Approx Net Profit", "Share of Product"].map((h) => (
-                              <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {packagePerformanceRows.length === 0 ? (
-                            <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 font-medium italic">No package rows found for this period</td></tr>
-                          ) : (
-                            packagePerformanceRows.map((row) => (
-                              <tr key={row.packageKey} className="hover:bg-gray-50 transition-colors">
-                                <td className="px-4 py-4">
-                                  <div className="font-bold text-gray-900">{row.product.name}</div>
-                                  <div className="text-xs text-gray-400 font-mono">{row.product.sku}</div>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <div className="font-semibold text-gray-900">{row.packageName}</div>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-xs text-gray-500">{formatBundleUnitLabel(row.packageQuantity)}</span>
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${row.isFallback ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{row.isFallback ? "Manual / legacy" : "Tracked package"}</span>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-4 text-gray-700">{row.totalOrders}</td>
-                                <td className="px-4 py-4 text-green-700 font-semibold">{row.deliveredCount}</td>
-                                <td className="px-4 py-4">
-                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.hasOrderCohort ? performanceTone(row.tier) : "bg-slate-100 text-slate-600 border border-slate-200"}`}>{row.hasOrderCohort ? `${row.deliveryRate}%` : "Carry-over only"}</span>
-                                </td>
-                                <td className="px-4 py-4 text-gray-700">{row.orderedUnits}</td>
-                                <td className="px-4 py-4 text-gray-700">{row.deliveredUnits}</td>
-                                <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.placedRevenue)}</td>
-                                <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.deliveredRevenue)}</td>
-                                <td className="px-4 py-4 font-bold text-gray-900">{formatMoney(row.netProfit)}</td>
-                                <td className="px-4 py-4 text-gray-700 whitespace-nowrap">{row.shareOfProductOrders}% ordered · {row.shareOfProductDelivered}% delivered</td>
                               </tr>
                             ))
                           )}
@@ -31808,8 +27414,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </header>
 
               {/* Tabs */}
-              <div className="grid grid-cols-3 gap-2 sm:hidden">
-                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
+              <div className="grid grid-cols-2 gap-2 sm:hidden">
+                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-3 rounded-xl border text-left text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] border-[#1F8FE0] shadow-sm" : "bg-gray-50 text-gray-500 border-gray-200 hover:text-gray-700"}`}>
                     {tab}
@@ -31817,7 +27423,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 ))}
               </div>
               <div className="hidden sm:flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-                {(["Campaign Orders", "Abandoned Carts", "Daily Ad Spend"] as const).map((tab) => (
+                {(["Campaign Orders", "Daily Ad Spend"] as const).map((tab) => (
                   <button key={tab} onClick={() => setAdTrackingTab(tab)}
                     className={`!min-h-0 px-4 py-2 rounded-md text-sm font-semibold transition-colors ${adTrackingTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
                     {tab}
@@ -31852,24 +27458,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
-                  <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={adTrackingSearch}
-                      onChange={(event) => setAdTrackingSearch(event.target.value)}
-                      placeholder="Search campaign, creative, or label..."
-                      className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                    />
-                  </label>
                 </div>
                 {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
               </div>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
                 {[
-                  { title: "Tracked Orders", value: String(filteredAdTrackingOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
-                  { title: "Active Campaigns", value: String(filteredCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
-                  { title: "Unique Creatives", value: String(filteredCreativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
-                  { title: "Attributed Revenue", value: formatMoney(filteredAdTrackingOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
+                  { title: "Tracked Orders", value: String(filteredCampaignOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
+                  { title: "Active Campaigns", value: String(campaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
+                  { title: "Unique Creatives", value: String(creativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
+                  { title: "Attributed Revenue", value: formatMoney(filteredCampaignOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
@@ -31900,61 +27497,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Campaigns</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_campaign` from tracked orders in this period.</p>
                 </div>
-                {filteredCampaignGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
-                    {adTrackingSearchNeedle ? "No campaigns matched this search yet." : "No campaign-tagged tracked orders in this period yet."}
-                  </div>
+                {campaignGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No campaign-tagged tracked orders in this period yet.</div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    {filteredCampaignGroupedRows.map((row) => (
+                    {campaignGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              {editingAdTrackingLabel?.kind === "campaign" && editingAdTrackingLabel.id === row.id ? (
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    autoFocus
-                                    value={adTrackingLabelDraft}
-                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
-                                    disabled={adTrackingLabelSaving}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        void saveAdTrackingLabelEdit();
-                                      } else if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        cancelAdTrackingLabelEdit();
-                                      }
-                                    }}
-                                    placeholder="Add label..."
-                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
-                                    maxLength={80}
-                                  />
-                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save campaign label" disabled={adTrackingLabelSaving}>
-                                    <Check className="w-4 h-4" />
-                                  </button>
-                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel campaign label edit" disabled={adTrackingLabelSaving}>
-                                    <X className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => beginAdTrackingLabelEdit("campaign", row.id)}
-                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${campaignCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
-                                  >
-                                    <span className={`truncate text-base font-semibold ${campaignCardLabelFor(row.id) ? "" : "italic"}`}>
-                                      {campaignCardLabelFor(row.id) || "Add label..."}
-                                    </span>
-                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
-                                      <Pencil className="w-4 h-4" />
-                                    </span>
-                                  </button>
-                                </div>
-                              )}
-                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
+                            <div className="min-w-0">
+                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Campaign</div>
+                              <div className="text-lg font-bold text-gray-900 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-purple-50 text-purple-700 px-2.5 py-1 text-xs font-semibold">Campaign</span>
                           </div>
@@ -31984,65 +27537,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <h2 className="text-sm font-bold text-gray-800">Ad Creatives</h2>
                   <p className="text-xs text-gray-400">Grouped by `utm_content` from tracked orders in this period.</p>
                 </div>
-                {filteredCreativeGroupedRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
-                    {adTrackingSearchNeedle ? "No creatives matched this search yet." : "No creative-tagged tracked orders in this period yet."}
-                  </div>
+                {creativeGroupedRows.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">No creative-tagged tracked orders in this period yet.</div>
                 ) : (
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                    {filteredCreativeGroupedRows.map((row) => (
+                    {creativeGroupedRows.map((row) => (
                       <article key={row.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-5 space-y-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              {editingAdTrackingLabel?.kind === "creative" && editingAdTrackingLabel.id === row.id ? (
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    autoFocus
-                                    value={adTrackingLabelDraft}
-                                    onChange={(event) => setAdTrackingLabelDraft(event.target.value)}
-                                    disabled={adTrackingLabelSaving}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        void saveAdTrackingLabelEdit();
-                                      } else if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        cancelAdTrackingLabelEdit();
-                                      }
-                                    }}
-                                    placeholder="Add label..."
-                                    className="flex-1 min-w-0 h-10 rounded-xl border border-[#1F8FE0] bg-blue-50/60 px-3 text-sm font-semibold text-gray-900 outline-none ring-2 ring-[#1F8FE0]/30"
-                                    maxLength={80}
-                                  />
-                                  <button type="button" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50" onClick={() => void saveAdTrackingLabelEdit()} aria-label="Save creative label" disabled={adTrackingLabelSaving}>
-                                    <Check className="w-4 h-4" />
-                                  </button>
-                                  <button type="button" className="text-rose-500 hover:text-rose-600 disabled:opacity-50" onClick={cancelAdTrackingLabelEdit} aria-label="Cancel creative label edit" disabled={adTrackingLabelSaving}>
-                                    <X className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => beginAdTrackingLabelEdit("creative", row.id)}
-                                    className={`inline-flex min-w-0 items-center gap-2 rounded-lg px-0 py-0 text-left transition-colors ${creativeCardLabelFor(row.id) ? "text-gray-900 hover:text-[#1F8FE0]" : "text-gray-400 hover:text-gray-500"}`}
-                                  >
-                                    <span className={`truncate text-base font-semibold ${creativeCardLabelFor(row.id) ? "" : "italic"}`}>
-                                      {creativeCardLabelFor(row.id) || "Add label..."}
-                                    </span>
-                                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
-                                      <Pencil className="w-4 h-4" />
-                                    </span>
-                                  </button>
-                                </div>
-                              )}
-                              <div className="mt-1 text-sm text-gray-500 break-all">{row.id}</div>
+                            <div className="min-w-0">
+                              <div className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Creative</div>
+                              <div className="text-base font-bold text-gray-900 break-all">{row.id}</div>
                             </div>
                             <span className="inline-flex shrink-0 items-center rounded-full bg-green-50 text-green-700 px-2.5 py-1 text-xs font-semibold">Creative</span>
                           </div>
-                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{campaignCardLabelFor(row.campaignId) || row.campaignId}</span></div>
+                          <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{row.campaignId}</span></div>
                           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
@@ -32063,472 +27572,125 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                 )}
               </section>
-              {(() => {
-                const CAMP_PAGE = 25;
-                const campTotalPages = Math.max(1, Math.ceil(filteredAdTrackingOrders.length / CAMP_PAGE));
-                const campPageClamped = Math.min(campaignPage, campTotalPages);
-                const pagedTrackedOrders = filteredAdTrackingOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE);
-
-                return (
-                  <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
-                    <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <h2 className="text-lg font-bold text-gray-900 dark:text-slate-100">Orders</h2>
-                          <p className="text-sm text-gray-500 dark:text-slate-400">All orders placed via tracked links.</p>
-                        </div>
-                        <span className="inline-flex w-fit items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:bg-slate-800 dark:text-slate-300">
-                          {filteredAdTrackingOrders.length} attributed
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="divide-y divide-gray-100 dark:divide-slate-800/80 sm:hidden">
-                      {filteredAdTrackingOrders.length === 0 ? (
-                        <div className="px-4 py-12 text-center text-sm font-medium italic text-gray-400 dark:text-slate-500">
-                          {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
-                        </div>
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <h2 className="text-sm font-bold text-gray-800">Tracked Orders</h2>
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{filteredCampaignOrders.length} attributed</span>
+                </div>
+                <div className="sm:hidden divide-y divide-gray-100">
+                  {filteredCampaignOrders.length === 0 ? (
+                    <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</div>
+                  ) : (
+                    (() => {
+                      const CAMP_PAGE = 25;
+                      const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                      const campPageClamped = Math.min(campaignPage, campTotalPages);
+                      return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                        <article key={order.id} className="p-4 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-bold text-gray-900">{order.id}</div>
+                              <div className="text-sm font-semibold text-gray-900">{order.customer}</div>
+                              <div className="text-xs text-gray-400">{order.phone}</div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</div>
+                              <div className="text-xs text-gray-500">{formatOrderCreatedAt(order)}</div>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5 text-sm">
+                            <div className="font-medium text-gray-700">{order.productName}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 break-all">{order.utmCampaign}</span>
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 break-all">{order.utmSource}</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Medium</span>
+                              <div className="text-gray-600 break-words">{order.utmMedium || "—"}</div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-gray-400">Content</span>
+                              <div className="text-gray-600 break-words">{order.utmContent || "—"}</div>
+                            </div>
+                          </div>
+                        </article>
+                      ));
+                    })()
+                  )}
+                </div>
+                <div className="hidden sm:block overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                        {["Order", "Customer", "Product", "Campaign", "Source", "Medium", "Content", "Amount", "Date"].map((h) => (
+                          <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredCampaignOrders.length === 0 ? (
+                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters.</td></tr>
                       ) : (
-                        pagedTrackedOrders.map((order) => {
-                          const status = order.status ?? "New";
-                          const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-                          const creativeId = order.utmContent?.trim() || "";
-                          const campaignLabel = campaignCardLabelFor(campaignId);
-                          const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-
-                          return (
-                            <article key={order.id} className="space-y-3 px-4 py-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="text-sm font-bold text-gray-500 dark:text-slate-400">{order.id}</div>
-                                  <div className="truncate text-base font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
-                                  <div className="truncate text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
-                                </div>
-                                <div className="shrink-0 text-right">
-                                  <div className="text-base font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</div>
-                                  <div className="text-xs text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</div>
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
-                                  {status}
-                                </span>
-                                <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                  {order.utmSource}
-                                </span>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-3 text-sm">
-                                <div className="min-w-0">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Campaign</div>
-                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
-                                  {campaignLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Creative</div>
-                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
-                                  {creativeLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
-                                </div>
-                              </div>
-                            </article>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    <div className="hidden overflow-x-auto sm:block">
-                      <table className="w-full min-w-[980px] text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-200 bg-gray-50/70 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
-                            {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((heading) => (
-                              <th key={heading} className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
-                                {heading}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
-                          {filteredAdTrackingOrders.length === 0 ? (
-                            <tr>
-                              <td colSpan={8} className="px-5 py-12 text-center text-sm font-medium italic text-gray-400 dark:text-slate-500">
-                                {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
+                        (() => {
+                          const CAMP_PAGE = 25;
+                          const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                          const campPageClamped = Math.min(campaignPage, campTotalPages);
+                          return filteredCampaignOrders.slice((campPageClamped - 1) * CAMP_PAGE, campPageClamped * CAMP_PAGE).map((order) => (
+                            <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-4 font-bold text-gray-900">{order.id}</td>
+                              <td className="px-4 py-4">
+                                <div className="font-semibold text-gray-900">{order.customer}</div>
+                                <div className="text-xs text-gray-400">{order.phone}</div>
                               </td>
+                              <td className="px-4 py-4 text-gray-700">{order.productName}</td>
+                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">{order.utmCampaign}</span></td>
+                              <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{order.utmSource}</span></td>
+                              <td className="px-4 py-4 text-gray-600">{order.utmMedium || "—"}</td>
+                              <td className="px-4 py-4 text-gray-600">{order.utmContent || "—"}</td>
+                              <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
+                              <td className="px-4 py-4 text-gray-500">{formatOrderCreatedAt(order)}</td>
                             </tr>
-                          ) : (
-                            pagedTrackedOrders.map((order) => {
-                              const status = order.status ?? "New";
-                              const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-                              const creativeId = order.utmContent?.trim() || "";
-                              const campaignLabel = campaignCardLabelFor(campaignId);
-                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-
-                              return (
-                                <tr key={order.id} className="transition-colors hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
-                                  <td className="px-5 py-4 font-semibold text-gray-500 dark:text-slate-400">{order.id}</td>
-                                  <td className="px-5 py-4">
-                                    <div className="font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
-                                    <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
-                                  </td>
-                                  <td className="px-5 py-4">
-                                    <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
-                                      {status}
-                                    </span>
-                                  </td>
-                                  <td className="px-5 py-4">
-                                    <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                      {order.utmSource}
-                                    </span>
-                                  </td>
-                                  <td className="px-5 py-4">
-                                    <div className="font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
-                                    {campaignLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
-                                  </td>
-                                  <td className="px-5 py-4">
-                                    <div className="font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
-                                    {creativeLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
-                                  </td>
-                                  <td className="px-5 py-4 text-right font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</td>
-                                  <td className="px-5 py-4 text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {campTotalPages > 1 && (
-                      <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-slate-800/80 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-                        <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredAdTrackingOrders.length)} of {filteredAdTrackingOrders.length}</span>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-900/40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
-                          {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (
-                            <Fragment key={p}>
-                              {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1">…</span>}
-                              <button className={`rounded border px-2 py-1 ${p === campPageClamped ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-900/40"}`} onClick={() => setCampaignPage(p)}>{p}</button>
-                            </Fragment>
-                          ))}
-                          <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-900/40" disabled={campPageClamped >= campTotalPages} onClick={() => setCampaignPage(campPageClamped + 1)}>Next</button>
-                        </div>
+                          ));
+                        })()
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {(() => {
+                  const CAMP_PAGE = 25;
+                  const campTotalPages = Math.ceil(filteredCampaignOrders.length / CAMP_PAGE);
+                  if (campTotalPages <= 1) return null;
+                  const campPageClamped = Math.min(campaignPage, campTotalPages);
+                  return (
+                    <div className="flex flex-col gap-3 px-5 py-3 border-t border-gray-100 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                      <span>Showing {(campPageClamped - 1) * CAMP_PAGE + 1}–{Math.min(campPageClamped * CAMP_PAGE, filteredCampaignOrders.length)} of {filteredCampaignOrders.length}</span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped <= 1} onClick={() => setCampaignPage(campPageClamped - 1)}>Prev</button>
+                        {Array.from({ length: campTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === campTotalPages || Math.abs(p - campPageClamped) <= 1).map((p, idx, arr) => (<>
+                          {idx > 0 && arr[idx - 1] !== p - 1 && <span key={`e${p}`} className="px-1">…</span>}
+                          <button key={p} className={`px-2 py-1 rounded border ${p === campPageClamped ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setCampaignPage(p)}>{p}</button>
+                        </>))}
+                        <button className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" disabled={campPageClamped >= campTotalPages} onClick={() => setCampaignPage(campPageClamped + 1)}>Next</button>
                       </div>
-                    )}
-                  </section>
-                );
-              })()}
+                    </div>
+                  );
+                })()}
+              </section>
               </>)}
-
-              {adTrackingTab === "Abandoned Carts" && (() => {
-                const CART_PAGE = 25;
-                const cartTotalPages = Math.max(1, Math.ceil(filteredAdTrackingCarts.length / CART_PAGE));
-                const cartPageClamped = Math.min(adTrackingCartPage, cartTotalPages);
-                const pagedTrackedCarts = filteredAdTrackingCarts.slice((cartPageClamped - 1) * CART_PAGE, cartPageClamped * CART_PAGE);
-                return (
-                  <>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-                        <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                          {periods.map((item) => (
-                            <button key={item} className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
-                          ))}
-                        </div>
-                        <div className="relative w-full sm:w-auto">
-                          <button className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={() => setShowCampaignDateRange(v => !v)}>
-                            <CalendarDays className="w-4 h-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-                          </button>
-                          {showCampaignDateRange && renderDateRangeCalendar("campaign-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
-                        </div>
-                        {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
-                        <label className="w-full sm:w-auto">
-                          <span className="sr-only">Filter tracked carts by status</span>
-                          <select
-                            value={adTrackingCartStatus}
-                            onChange={(event) => setAdTrackingCartStatus(event.target.value as CartStatus)}
-                            className="h-10 sm:h-9 w-full sm:min-w-[180px] rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                          >
-                            {cartStatuses.map((status) => (
-                              <option key={status} value={status}>{status}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
-                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                          <input
-                            value={adTrackingSearch}
-                            onChange={(event) => setAdTrackingSearch(event.target.value)}
-                            placeholder="Search cart, campaign, creative, or label..."
-                            className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-                          />
-                        </label>
-                      </div>
-                      {adTrackingCartJourneyLoading && (
-                        <p className="m-0 text-xs text-gray-400">Refreshing abandoned-cart attribution…</p>
-                      )}
-                      {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
-                    </div>
-
-                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracked abandoned cart summary">
-                      {[
-                        { title: "Tracked Carts", value: String(filteredAdTrackingCarts.length), helper: "abandoned carts with UTM attribution", icon: ShoppingBag, tone: "blue" },
-                        { title: "Recovered", value: String(filteredAdTrackingCarts.filter((row) => row.linkedOrder).length), helper: "later converted to orders", icon: ArrowRight, tone: "purple" },
-                        { title: "Unique Campaigns", value: String(filteredCartCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "campaigns behind abandoned carts", icon: Zap, tone: "green" },
-                        { title: "Captured Value", value: formatMoney(filteredAdTrackingCarts.reduce((sum, row) => sum + row.cart.amount, 0)), helper: "value of abandoned tracked carts", icon: CircleDollarSign, tone: "orange" }
-                      ].map((metric) => {
-                        const Icon = metric.icon;
-                        return (
-                          <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm" key={metric.title}>
-                            <div className="flex items-center justify-between mb-3">
-                              <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "purple" ? "bg-purple-50 text-purple-500" : metric.tone === "green" ? "bg-green-50 text-green-500" : "bg-orange-50 text-orange-500"}`}>
-                                <Icon className="w-5 h-5" />
-                              </span>
-                            </div>
-                            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
-                            <strong className="text-2xl font-bold text-gray-900 block my-1">{metric.value}</strong>
-                            <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
-                          </article>
-                        );
-                      })}
-                    </section>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-4 border-b border-gray-100">
-                          <h2 className="text-sm font-bold text-gray-800">Campaigns behind abandoned carts</h2>
-                          <p className="text-xs text-gray-400">Grouped by `utm_campaign` from abandoned carts in this period.</p>
-                        </div>
-                        {filteredCartCampaignGroupedRows.length === 0 ? (
-                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
-                            {adTrackingSearchNeedle ? "No abandoned-cart campaigns matched this search yet." : "No campaign-tagged abandoned carts in this period yet."}
-                          </div>
-                        ) : (
-                          <div className="divide-y divide-gray-100">
-                            {filteredCartCampaignGroupedRows.slice(0, 8).map((row) => {
-                              const label = campaignCardLabelFor(row.id);
-                              return (
-                                <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                  <div className="min-w-0">
-                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
-                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
-                                    <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
-                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </section>
-
-                      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="px-5 py-4 border-b border-gray-100">
-                          <h2 className="text-sm font-bold text-gray-800">Creatives behind abandoned carts</h2>
-                          <p className="text-xs text-gray-400">Grouped by `utm_content` from abandoned carts in this period.</p>
-                        </div>
-                        {filteredCartCreativeGroupedRows.length === 0 ? (
-                          <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
-                            {adTrackingSearchNeedle ? "No abandoned-cart creatives matched this search yet." : "No creative-tagged abandoned carts in this period yet."}
-                          </div>
-                        ) : (
-                          <div className="divide-y divide-gray-100">
-                            {filteredCartCreativeGroupedRows.slice(0, 8).map((row) => {
-                              const label = creativeCardLabelFor(row.id);
-                              const campaignLabel = campaignCardLabelFor(row.campaignId);
-                              return (
-                                <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                  <div className="min-w-0">
-                                    <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
-                                    {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
-                                    <p className="m-0 mt-1 text-xs text-gray-400 truncate">{campaignLabel || row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
-                                    <p className="m-0 mt-0.5 text-xs text-gray-500">{formatMoney(row.value)}</p>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </section>
-                    </div>
-
-                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
-                        <div>
-                          <h2 className="text-sm font-bold text-gray-800">Abandoned Carts</h2>
-                          <p className="text-xs text-gray-400">All abandoned carts captured via tracked links.</p>
-                        </div>
-                        <span className="text-xs font-semibold text-gray-500">{filteredAdTrackingCarts.length} tracked</span>
-                      </div>
-
-                      {filteredAdTrackingCarts.length === 0 ? (
-                        <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
-                          {adTrackingSearchNeedle ? "No tracked abandoned carts matched this search." : "No abandoned carts with UTM attribution in this period yet."}
-                        </div>
-                      ) : (
-                        <>
-                          <div className="sm:hidden divide-y divide-gray-100">
-                            {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
-                              const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-                              const creativeId = attribution.utmContent?.trim() || "";
-                              const campaignLabel = campaignCardLabelFor(campaignId);
-                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-                              const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
-                              const statusTone = cart.status === "Converted"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : cart.status === "Contacted"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : cart.status === "Assigned"
-                                    ? "bg-violet-100 text-violet-700"
-                                    : "bg-amber-100 text-amber-700";
-                              return (
-                                <article
-                                  key={`tracked-cart-mobile-${cart.id}`}
-                                  className="px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 transition-colors"
-                                  onClick={() => openCartModal(cart, "cartDetails")}
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className="text-[11px] font-semibold text-gray-400">#{(cartPageClamped - 1) * CART_PAGE + index + 1} · {cart.id}</div>
-                                      <div className="text-base font-bold text-gray-900 truncate">{cart.customer || "Partial lead"}</div>
-                                      <div className="text-xs text-gray-500 truncate">{cart.phone || "No phone yet"}</div>
-                                    </div>
-                                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold shrink-0 ${statusTone}`}>{cart.status}</span>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-3 text-sm">
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
-                                      <div className="font-semibold text-gray-900">{attribution.utmSource || cart.source}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
-                                      <div className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</div>
-                                    </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
-                                      <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
-                                      {campaignLabel && campaignLabel !== campaignId && <div className="text-[11px] text-gray-500">{campaignId}</div>}
-                                    </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
-                                      <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
-                                      {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
-                                    <span>{formatMoment(cart.createdAt || cart.lastActivity)}</span>
-                                    <span>{conversionStatus || (linkedOrder ? `Linked order ${linkedOrder.status ?? "New"}` : "Tap to view cart details")}</span>
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-
-                          <div className="hidden sm:block overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                                  {["#", "Customer", "Status", "Source", "Campaign", "Creative", "Amount", "Date"].map((heading) => (
-                                    <th key={heading} className="px-5 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{heading}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100">
-                                {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
-                                  const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-                                  const creativeId = attribution.utmContent?.trim() || "";
-                                  const campaignLabel = campaignCardLabelFor(campaignId);
-                                  const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-                                  const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
-                                  const statusTone = cart.status === "Converted"
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : cart.status === "Contacted"
-                                      ? "bg-blue-100 text-blue-700"
-                                      : cart.status === "Assigned"
-                                        ? "bg-violet-100 text-violet-700"
-                                        : "bg-amber-100 text-amber-700";
-                                  return (
-                                    <tr
-                                      key={`tracked-cart-${cart.id}`}
-                                      className="hover:bg-gray-50 transition-colors cursor-pointer"
-                                      onClick={() => openCartModal(cart, "cartDetails")}
-                                    >
-                                      <td className="px-5 py-4 font-semibold text-gray-500">#{(cartPageClamped - 1) * CART_PAGE + index + 1}</td>
-                                      <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{cart.customer || "Partial lead"}</div>
-                                        <div className="mt-0.5 text-xs text-gray-500">{cart.id}</div>
-                                      </td>
-                                      <td className="px-5 py-4 min-w-[170px]">
-                                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${statusTone}`}>{cart.status}</span>
-                                        {conversionStatus && <div className="mt-1 text-[11px] text-gray-500">{conversionStatus}</div>}
-                                      </td>
-                                      <td className="px-5 py-4 min-w-[150px]">
-                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{attribution.utmSource || cart.source}</span>
-                                      </td>
-                                      <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
-                                        {campaignLabel && campaignLabel !== campaignId && <div className="mt-0.5 text-xs text-gray-500">{campaignId}</div>}
-                                      </td>
-                                      <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
-                                        {creativeLabel && creativeLabel !== creativeId && <div className="mt-0.5 text-xs text-gray-500">{creativeId}</div>}
-                                      </td>
-                                      <td className="px-5 py-4 text-right font-bold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</td>
-                                      <td className="px-5 py-4 text-gray-500 whitespace-nowrap">{formatMoment(cart.createdAt || cart.lastActivity)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-
-                          {cartTotalPages > 1 && (
-                            <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-                              <span>Showing {(cartPageClamped - 1) * CART_PAGE + 1}–{Math.min(cartPageClamped * CART_PAGE, filteredAdTrackingCarts.length)} of {filteredAdTrackingCarts.length}</span>
-                              <div className="flex flex-wrap items-center gap-1">
-                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped <= 1} onClick={() => setAdTrackingCartPage(cartPageClamped - 1)}>Prev</button>
-                                {Array.from({ length: cartTotalPages }, (_, i) => i + 1).filter((page) => page === 1 || page === cartTotalPages || Math.abs(page - cartPageClamped) <= 1).map((page, idx, arr) => (
-                                  <Fragment key={`cart-page-${page}`}>
-                                    {idx > 0 && arr[idx - 1] !== page - 1 && <span className="px-1">…</span>}
-                                    <button className={`rounded border px-2 py-1 ${page === cartPageClamped ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 hover:bg-gray-50"}`} onClick={() => setAdTrackingCartPage(page)}>{page}</button>
-                                  </Fragment>
-                                ))}
-                                <button className="rounded border border-gray-200 px-2 py-1 hover:bg-gray-50 disabled:opacity-40" disabled={cartPageClamped >= cartTotalPages} onClick={() => setAdTrackingCartPage(cartPageClamped + 1)}>Next</button>
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </section>
-                  </>
-                );
-              })()}
 
               {adTrackingTab === "Daily Ad Spend" && (() => {
                 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-                const activeProdRows = catalogProducts
-                  .filter((p) => p.active)
-                  .map((product) => {
-                    const weeklySpend = adSpendWeekDays.reduce((sum, day) => sum + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
-                    const weeklyRevenue = adSpendWeekDays.reduce((sum, day) => sum + revenueForProductDay(product.id, day), 0);
-                    const weeklyOrders = adSpendWeekDays.reduce((sum, day) => sum + ordersForProductDay(product.id, day), 0);
-                    return { product, weeklySpend, weeklyRevenue, weeklyOrders };
-                  })
-                  .sort((a, b) =>
-                    b.weeklyOrders - a.weeklyOrders
-                    || b.weeklyRevenue - a.weeklyRevenue
-                    || b.weeklySpend - a.weeklySpend
-                    || a.product.name.localeCompare(b.product.name)
-                  );
+                const activeProds = catalogProducts.filter((p) => p.active);
                 const weekLabel = `${displayDateFromKey(adSpendWeekDays[0])} – ${displayDateFromKey(adSpendWeekDays[6])}`;
                 const todayKey2 = todayKey();
 
                 // Week totals
-                const weekTotalSpend = activeProdRows.reduce((sum, row) => sum + row.weeklySpend, 0);
-                const weekTotalRevenue = activeProdRows.reduce((sum, row) => sum + row.weeklyRevenue, 0);
+                const weekTotalSpend = adSpendWeekDays.reduce((s, day) =>
+                  s + activeProds.reduce((ps, p) => ps + (parseFloat(adSpendDraft[`${p.id}-${day}`] ?? "") || 0), 0), 0);
+                const weekTotalRevenue = adSpendWeekDays.reduce((s, day) =>
+                  s + activeProds.reduce((ps, p) => ps + revenueForProductDay(p.id, day), 0), 0);
 
                 return (
                   <div className="space-y-4">
@@ -32569,19 +27731,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ))}
                     </div>
 
-                    {activeProdRows.length === 0 ? (
+                    {activeProds.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 italic">No active products. Add a product first.</div>
                     ) : (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="sm:hidden divide-y divide-gray-100">
-                          {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }) => {
+                          {activeProds.map((product) => {
+                            const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                            const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
                             const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
                             return (
                               <article key={product.id} className="p-4 space-y-4">
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="text-sm font-semibold text-gray-800">{product.name}</div>
-                                    <div className="text-xs text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders this week yet"}</div>
+                                    <div className="text-xs text-gray-400">Weekly ad spend and revenue breakdown</div>
                                   </div>
                                   {rowRoas !== null && (
                                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
@@ -32668,7 +27832,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               </tr>
                             </thead>
                             <tbody>
-                              {activeProdRows.map(({ product, weeklySpend: rowSpend, weeklyRevenue: rowRevenue, weeklyOrders }, pi) => {
+                              {activeProds.map((product, pi) => {
+                                const rowSpend = adSpendWeekDays.reduce((s, day) => s + (parseFloat(adSpendDraft[`${product.id}-${day}`] ?? "") || 0), 0);
+                                const rowRevenue = adSpendWeekDays.reduce((s, day) => s + revenueForProductDay(product.id, day), 0);
                                 const rowRoas = rowSpend === 0 ? null : rowRevenue / rowSpend;
 
                                 return (
@@ -32677,7 +27843,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                     <tr className={pi % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
                                       <td className="px-4 py-2 font-semibold text-gray-800 align-middle" rowSpan={3}>
                                         <div className="text-sm">{product.name}</div>
-                                        <div className="mt-1 text-[10px] font-medium text-gray-400">{weeklyOrders > 0 ? `${weeklyOrders} order${weeklyOrders === 1 ? "" : "s"} this week` : "No orders yet"}</div>
                                         {rowRoas !== null && (
                                           <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${rowRoas >= 2 ? "bg-green-100 text-green-700" : rowRoas >= 1 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
                                             {rowRoas.toFixed(2)}x ROAS
@@ -33339,11 +28504,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {/* Extra offers & free gifts moved to per-package offer setup.
                       One source of truth, with state restrictions and pricing modes per package. */}
                   {previewProduct && (
-                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
+                    <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-4 flex items-start gap-3">
                       <ShoppingBag className="w-5 h-5 text-[#1F8FE0] mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="admin-tone-title text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
-                        <p className="admin-tone-body text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
+                        <p className="text-sm font-semibold text-gray-900 m-0">Extra offers and free gifts live with the package now</p>
+                        <p className="text-xs text-gray-600 mt-1 mb-2 leading-5">Add extra items and free gifts under <strong>Promote This Package</strong> on each package. That is where you pin them to states, set prices, or bundle them silently.</p>
                         <button
                           className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#1F8FE0] rounded-md hover:opacity-90"
                           onClick={() => { openPackagesView(previewProduct); }}
@@ -33352,12 +28517,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </div>
                   )}
                   {previewProduct && (
-                    <div className="admin-tone-panel admin-tone-panel--blue border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
+                    <div className="border border-blue-200 bg-blue-50/30 rounded-xl p-4 space-y-2">
                       <div>
-                        <p className="admin-tone-title text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
-                        <p className="admin-tone-body text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
+                        <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
+                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
 
@@ -33434,41 +28599,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           </label>
                         </div>
                       )}
-                    </div>
-
-                    <div className="border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="px-4 pt-3.5 pb-1.5">
-                        <p className="text-sm font-semibold text-gray-800">Checkout experience</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Choose whether customers see the current classic layout or a guided checkout with clearer final-step prompts.</p>
-                      </div>
-                      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
-                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "classic" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
-                          <input
-                            type="radio"
-                            name="public-form-mode"
-                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
-                            checked={publicFormMode === "classic"}
-                            onChange={() => setPublicFormMode("classic")}
-                          />
-                          <span className="min-w-0">
-                            <span className="block text-sm font-semibold text-gray-800">Classic form</span>
-                            <span className="block text-xs text-gray-500 mt-0.5">Keep the familiar long-form checkout with the standard submit flow.</span>
-                          </span>
-                        </label>
-                        <label className={`flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors ${publicFormMode === "guided_checkout" ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
-                          <input
-                            type="radio"
-                            name="public-form-mode"
-                            className="mt-1 w-4 h-4 accent-[#1F8FE0]"
-                            checked={publicFormMode === "guided_checkout"}
-                            onChange={() => setPublicFormMode("guided_checkout")}
-                          />
-                          <span className="min-w-0">
-                            <span className="block text-sm font-semibold text-gray-800">Guided checkout</span>
-                            <span className="block text-xs text-gray-500 mt-0.5">Adds a step indicator, review-and-place section, and a stronger Place My Order handoff for mobile buyers.</span>
-                          </span>
-                        </label>
-                      </div>
                     </div>
 
                     {/* Required fields group */}
@@ -33643,7 +28773,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors"
                           onClick={() => {
                             if (!previewProduct) return;
-                            window.open(buildEmbedUrl(previewProduct, undefined, undefined, true), "_blank", "noopener,noreferrer");
+                            window.open(buildEmbedUrl(previewProduct), "_blank", "noopener,noreferrer");
                           }}
                         >
                           <ExternalLink className="w-4 h-4" /> Preview form
@@ -33899,7 +29029,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       <div className="flex items-center gap-2">
                                         <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={embedUrl} aria-label={`${product.name} direct embed URL`} />
                                         <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(buildEmbedUrl(product, productEmbedCurrency(product), productEmbedRedirect(product), true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(embedUrl, "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
                                       </div>
                                     </div>
                                   ) : (
@@ -34258,19 +29388,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : null}
                       {pushPermission === "denied" ? (
                         <p className="text-xs text-red-500 font-medium">Notifications blocked. Please enable them in your browser settings.</p>
-                      ) : nativePushTroubleshootingDisabled ? (
-                        <p className="text-xs text-amber-600 font-medium">This mobile app build does not support the browser re-register flow yet, so those web push controls are disabled here.</p>
                       ) : !pushServerConfigured ? (
                         <p className="text-xs text-amber-600 font-medium">This environment cannot send real web push until the backend has valid VAPID keys configured.</p>
                       ) : pushSubscribed ? (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-200 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
-                          disabled={pushLoading || nativePushTroubleshootingDisabled}
+                          disabled={pushLoading}
                           onClick={async () => {
-                            if (nativePushTroubleshootingDisabled) {
-                              showToast("Notification controls are not available inside the mobile app yet.");
-                              return;
-                            }
                             setPushLoading(true);
                             try {
                               await unsubscribeFromPush();
@@ -34289,12 +29413,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       ) : (
                         <button
                           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                          disabled={pushLoading || !pushServerConfigured || nativePushTroubleshootingDisabled}
+                          disabled={pushLoading || !pushServerConfigured}
                           onClick={async () => {
-                            if (nativePushTroubleshootingDisabled) {
-                              showToast("Notification controls are not available inside the mobile app yet.");
-                              return;
-                            }
                             setPushLoading(true);
                             try {
                               await subscribeToPush();
@@ -34318,13 +29438,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Troubleshooting</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
-                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={nativePushTroubleshootingDisabled}
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50"
                         onClick={async () => {
-                          if (nativePushTroubleshootingDisabled) {
-                            showToast("Service worker tools are not available inside the mobile app.");
-                            return;
-                          }
                           if ("serviceWorker" in navigator) {
                             const reg = await navigator.serviceWorker.getRegistration();
                             if (reg) { await reg.update(); await refreshPushDiagnostics(false); showToast("Service worker updated."); }
@@ -34334,12 +29449,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Update Service Worker</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushLoading || nativePushTroubleshootingDisabled}
+                        disabled={pushLoading}
                         onClick={async () => {
-                          if (nativePushTroubleshootingDisabled) {
-                            showToast("Force re-subscribe is not available inside the mobile app yet.");
-                            return;
-                          }
                           setPushLoading(true);
                           try {
                             await unsubscribeFromPush();
@@ -34356,12 +29467,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       >Force Re-subscribe</button>
                       <button
                         className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#1F8FE0] font-medium hover:bg-gray-50 disabled:opacity-50"
-                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted" || nativePushTroubleshootingDisabled}
+                        disabled={pushTestLoading || !pushServerConfigured || !pushSubscribed || pushPermission !== "granted"}
                         onClick={async () => {
-                          if (nativePushTroubleshootingDisabled) {
-                            showToast("Web push test tools are not available inside the mobile app yet.");
-                            return;
-                          }
                           setPushTestLoading(true);
                           try {
                             await sendTestPush();
@@ -36077,157 +31184,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </div>
                 </section>
               </div>
-            ) : inventoryView === "state-stock" ? (
-              <div className="space-y-6">
-                <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                  <div className="flex flex-col gap-1">
-                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
-                    <h1 className="text-2xl font-bold text-[#1F8FE0]">State Stock</h1>
-                    <p className="text-sm font-medium text-gray-500">See which states currently hold the most stock for each product. Sorted highest to lowest, with simple no-stock, low-stock, and enough labels.</p>
-                  </div>
-                </header>
-
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                  <strong className="block">Simple stock guide</strong>
-                  <span className="text-xs leading-5 text-blue-900">No stock = <strong>0</strong> unit. Low stock = <strong>1 to {STATE_STOCK_LOW_THRESHOLD}</strong> units. Enough = <strong>{STATE_STOCK_LOW_THRESHOLD + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</span>
-                </div>
-
-                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                    <label className="space-y-1">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
-                      <select
-                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
-                        value={stateStockProductId}
-                        onChange={(event) => setStateStockProductId(event.target.value)}
-                      >
-                        <option value="">All products</option>
-                        {catalogProducts
-                          .slice()
-                          .sort((a, b) => a.name.localeCompare(b.name))
-                          .map((product) => (
-                            <option key={product.id} value={product.id}>{product.name}</option>
-                          ))}
-                      </select>
-                    </label>
-                    <label className="space-y-1">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">State</span>
-                      <select
-                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
-                        value={stateStockStateFilter}
-                        onChange={(event) => setStateStockStateFilter(event.target.value)}
-                      >
-                        <option value="">All states</option>
-                        {stateStockStateOptions.map((state) => (
-                          <option key={state} value={state}>{state}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="space-y-1">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
-                      <div className="relative">
-                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          value={stateStockSearch}
-                          onChange={(event) => setStateStockSearch(event.target.value)}
-                          placeholder="Search product or state"
-                          className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
-                        />
-                      </div>
-                    </label>
-                    <div className="space-y-1">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Actions</span>
-                      <button
-                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                        onClick={() => {
-                          setStateStockProductId("");
-                          setStateStockStateFilter("");
-                          setStateStockSearch("");
-                        }}
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                        Clear filters
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                {dataLoading ? (
-                  <TableSkeleton cols={4} rows={5} />
-                ) : inventoryStateStockGroups.length === 0 ? (
-                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
-                    <MapPin className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-                    <p className="text-sm font-bold text-gray-700">No state stock rows found</p>
-                    <p className="text-xs text-gray-500 mt-1">Try another product, remove the state filter, or wait for agent hub stock to be assigned.</p>
-                  </section>
-                ) : (
-                  <>
-                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="State stock summary">
-                      {[
-                        { label: "Products in View", value: inventoryStateStockGroups.length, helper: "products currently listed" },
-                        { label: "States in View", value: visibleStateOptionCount, helper: "states currently visible" },
-                        { label: "States with Stock", value: visibleStateStockCount, helper: "rows above zero units" },
-                        { label: "No-stock Rows", value: visibleStateNoStockCount, helper: `${visibleStateRowCount} total visible rows` }
-                      ].map((card) => (
-                        <article key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{card.label}</p>
-                          <strong className="text-2xl font-bold text-gray-900 block my-1">{card.value}</strong>
-                          <p className="text-[10px] text-gray-400 font-medium">{card.helper}</p>
-                        </article>
-                      ))}
-                    </section>
-
-                    <div className="space-y-4">
-                      {inventoryStateStockGroups
-                        .slice()
-                        .sort((a, b) => b.totalQuantity - a.totalQuantity || a.product.name.localeCompare(b.product.name))
-                        .map((group) => (
-                          <section key={group.product.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                            <div className="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center gap-4">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h2 className="text-lg font-bold text-gray-900 m-0">{group.product.name}</h2>
-                                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">{group.product.sku}</span>
-                                </div>
-                                <p className="text-sm text-gray-500 mt-1 mb-0">{group.product.description || "Current state-by-state stock spread for this product."}</p>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 text-xs">
-                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
-                                  Warehouse <strong>{group.product.warehouseStock}</strong>
-                                </span>
-                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
-                                  With agents <strong>{group.totalQuantity}</strong>
-                                </span>
-                                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-700">
-                                  Stocked states <strong>{group.stockedStates}</strong>
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="divide-y divide-gray-100">
-                              {group.rows.map((row) => (
-                                <div key={`${group.product.id}-${row.state}`} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
-                                  <div className="min-w-0">
-                                    <div className="font-semibold text-gray-900">{row.state}</div>
-                                    <div className="text-[11px] text-gray-400">
-                                      {row.hubCount} hub{row.hubCount === 1 ? "" : "s"} tracked
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2 sm:gap-3">
-                                    <span className="text-sm font-bold text-gray-900 whitespace-nowrap">{row.quantity} unit{row.quantity === 1 ? "" : "s"}</span>
-                                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${row.status.className}`}>
-                                      {row.status.label}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        ))}
-                    </div>
-                  </>
-                )}
-              </div>
             ) : inventoryView === "pricing" && selectedProduct ? (
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -36565,7 +31521,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openInventoryAddProductRoute}><Plus className="w-4 h-4" /> Add Product</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-violet-200 text-violet-700 text-sm font-semibold hover:bg-violet-50 transition-colors" onClick={openInventoryCombosRoute}><Boxes className="w-4 h-4" /> Combo Library</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
-                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryStateStockRoute}><MapPin className="w-4 h-4" /> State Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryUpdateStockRoute()}><RefreshCw className="w-4 h-4" /> Update Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                     </div>
@@ -36612,15 +31567,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </article>
                 </section>
 
-                <div className={`admin-tone-panel ${lowStockProducts.length === 0 ? "admin-tone-panel--green" : "admin-tone-panel--amber"} flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
+                <div className={`flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
                   <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${lowStockProducts.length === 0 ? "bg-green-100 text-green-600" : "bg-amber-100 text-amber-600"}`}><AlertTriangle className="w-4 h-4" /></span>
                   <div className="flex-1 min-w-0">
-                    <h2 className={`admin-tone-title text-sm font-bold ${lowStockProducts.length === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
-                    <p className={`admin-tone-body text-xs mt-0.5 ${lowStockProducts.length === 0 ? "text-green-600" : "text-amber-600"}`}>{lowStockProducts.length === 0 ? "All products are currently above reorder point." : `${lowStockProducts.length} product${lowStockProducts.length === 1 ? "" : "s"} at or below reorder point.`}</p>
+                    <h2 className={`text-sm font-bold ${lowStockProducts.length === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
+                    <p className={`text-xs mt-0.5 ${lowStockProducts.length === 0 ? "text-green-600" : "text-amber-600"}`}>{lowStockProducts.length === 0 ? "All products are currently above reorder point." : `${lowStockProducts.length} product${lowStockProducts.length === 1 ? "" : "s"} at or below reorder point.`}</p>
                     {lowStockProducts.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {lowStockProducts.map((product) => (
-                          <span key={product.id} className="admin-tone-chip admin-tone-chip--amber inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">{product.name}: {product.warehouseStock}/{product.reorderPoint}</span>
+                          <span key={product.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">{product.name}: {product.warehouseStock}/{product.reorderPoint}</span>
                         ))}
                       </div>
                     )}
@@ -36842,80 +31797,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </main>
       </div>
 
-      {whatsAppTargetPicker && (
-        <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
-          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-picker-title">
-            <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
-              <div>
-                <h3 id="whatsapp-picker-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">
-                  Open in WhatsApp
-                </h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Choose the app you want to use for {whatsAppTargetPicker.customerName}.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100"
-                aria-label="Close WhatsApp app chooser"
-                onClick={() => setWhatsAppTargetPicker(null)}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-3 px-5 py-4">
-              <button
-                type="button"
-                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
-                onClick={() => {
-                  const target = whatsAppTargetPicker.regularUrl;
-                  setWhatsAppTargetPicker(null);
-                  launchWhatsAppTarget(target, whatsAppTargetPicker.customerName);
-                }}
-              >
-                <span className="inline-flex items-center gap-3">
-                  <WhatsAppIcon className="h-5 w-5" />
-                  <span className="flex flex-col">
-                    <span>Normal WhatsApp</span>
-                    <span className="text-xs font-medium text-emerald-600/80 dark:text-emerald-200/80">Use your standard WhatsApp app</span>
-                  </span>
-                </span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
-                onClick={() => {
-                  const target = whatsAppTargetPicker.businessUrl;
-                  setWhatsAppTargetPicker(null);
-                  launchWhatsAppTarget(target, whatsAppTargetPicker.customerName);
-                }}
-              >
-                <span className="inline-flex items-center gap-3">
-                  <Smartphone className="h-5 w-5" />
-                  <span className="flex flex-col">
-                    <span>WhatsApp Business</span>
-                    <span className="text-xs font-medium text-blue-600/80 dark:text-blue-200/80">Best when your Business app is installed</span>
-                  </span>
-                </span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
-
-              <div className="pt-1">
-                <button
-                  type="button"
-                  className="!min-h-0 inline-flex w-full items-center justify-center rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-[#16212c]"
-                  onClick={() => setWhatsAppTargetPicker(null)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
-
       {managerActionDialog && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
           <section className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="manager-action-dialog-title">
@@ -37031,7 +31912,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-            <div className="sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0 bg-white/95 dark:bg-[#0f1822]/95 backdrop-blur">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
@@ -37628,12 +32509,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-600 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}>
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
-                      <button
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
-                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-                      >
-                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-                      </button>
                     </div>
 	                </div>
 
@@ -37676,15 +32551,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                {/* Section 1: Customer Information */}
 	                  <section>
-	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-2 mb-3 ${orderBorderClass}`}>
-	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Customer Information</h3>
-	                      <button
-	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-	                      >
-	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-	                      </button>
-	                    </div>
+	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Customer Information</h3>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Name</p>
@@ -37705,74 +32572,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	
 	                {/* Section 2: Order Information */}
 	                  <section>
-                      <div className={`flex items-center justify-between gap-3 border-b pb-2 mb-3 ${orderBorderClass}`}>
-	                    <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Order Information</h3>
-                        {isOwnerOrAdmin && selectedOrder.sourceCartId && (
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-200 text-amber-700 text-xs font-bold hover:bg-amber-50 transition-colors"
-                            onClick={() => openOrderDateEditor(selectedOrder)}
-                          >
-                            <CalendarDays className="w-3.5 h-3.5" /> Change order date
-                          </button>
-                        )}
-                      </div>
-                      {isEditingSelectedOrderDate && (
-                        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 grid gap-3">
-                          <div>
-                            <p className={`m-0 text-xs font-bold uppercase tracking-wider ${orderFaintTextClass}`}>Adjust converted order date</p>
-                            <p className={`m-0 mt-1 text-sm ${orderMutedTextClass}`}>Set the corrected order date and explain why this converted abandoned-cart order needs to move.</p>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <label className="grid gap-1">
-                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Date</span>
-                              <input
-                                type="date"
-                                value={dateEditDate}
-                                onChange={(event) => setDateEditDate(event.target.value)}
-                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Time</span>
-                              <input
-                                type="time"
-                                value={dateEditTime}
-                                onChange={(event) => setDateEditTime(event.target.value)}
-                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                              />
-                            </label>
-                          </div>
-                          <label className="grid gap-1">
-                            <span className={`text-xs font-semibold ${orderFaintTextClass}`}>Reason for date change</span>
-                            <textarea
-                              rows={3}
-                              value={dateEditReason}
-                              onChange={(event) => setDateEditReason(event.target.value)}
-                              placeholder="Explain why this order date needs correction."
-                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100 resize-none"
-                            />
-                          </label>
-                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-                              onClick={resetDateEditor}
-                              disabled={dateEditSaving}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                              onClick={saveDateEditor}
-                              disabled={dateEditSaving}
-                            >
-                              <CalendarDays className="w-4 h-4" /> {dateEditSaving ? "Saving..." : "Save order date"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+	                    <h3 className={`font-semibold text-base border-b pb-2 mb-3 ${orderBorderClass} ${orderTitleTextClass}`}>Order Information</h3>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Status</p>
@@ -37835,16 +32635,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned To</p>
 	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{users.find((u) => u.id === selectedOrder.assignedRepId)?.name ?? "Unassigned"}</p>
-	                    </div>
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Assigned By</p>
-	                      <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>
-                          {selectedOrder.assignedByNameSnapshot
-                            ?? users.find((u) => u.id === selectedOrder.assignedByUserId)?.name
-                            ?? (selectedOrder.assignedRepId
-                              ? (selectedOrder.sourceCartId ? "Round-robin / system" : "Legacy / unrecorded")
-                              : "Not assigned yet")}
-                        </p>
 	                    </div>
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Agent</p>
@@ -37929,87 +32719,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {/* Section 4: Order Items */}
 	                <section>
 	                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Items</h3>
-                    {(() => {
-                      const additionalItemTotal = (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
-                      const mainOfferTotal = Math.max(0, (selectedOrder.amount || 0) - additionalItemTotal);
-                      const hasAdditionalItems = (selectedOrder.crossSellLines?.length ?? 0) > 0;
-                      const hasFreeGifts = (selectedOrder.freeGiftLines?.length ?? 0) > 0;
-                      const offerLabel = (line: CrossSellLine) =>
-                        line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
-                          ? "Additional item"
-                          : "Cross-sell";
-                      const offerDetail = (line: CrossSellLine) => {
-                        const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
-                        return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
-                      };
-                      return (
-                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-4 sm:px-5">
-                          <div className="flex items-start justify-between gap-4 flex-wrap">
-                            <div>
-                              <h4 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h4>
-                              <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
-                                Main offer plus any additional items saved with this order.
-                              </p>
-                            </div>
-                            <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
-                              {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
-                            </div>
-                          </div>
-                          <div className="mt-4 grid gap-3 border-t border-blue-100 pt-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
-                                  {selectedOrder.productName} · {selectedOrder.packageName}
-                                </p>
-                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
-                              </div>
-                              <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
-                                {formatProductMoney(mainOfferTotal, selectedOrder.currency)}
-                              </div>
-                            </div>
-                            {(selectedOrder.crossSellLines ?? []).map((line) => (
-                              <div key={`selected-breakdown-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
-                                    {offerLabel(line)} · {line.productName}
-                                  </p>
-                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
-                                </div>
-                                <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
-                                  {formatProductMoney(line.amount, selectedOrder.currency)}
-                                </div>
-                              </div>
-                            ))}
-                            {(selectedOrder.freeGiftLines ?? []).map((line) => (
-                              <div key={`selected-breakdown-gift-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
-                                    Free gift · {line.productName}
-                                  </p>
-                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                                    {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
-                                  </p>
-                                </div>
-                                <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
-                                  FREE
-                                </div>
-                              </div>
-                            ))}
-                            <div className="flex items-start justify-between gap-4 border-t border-blue-100 pt-4">
-                              <div className="min-w-0">
-                                <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
-                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                                  {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
-                                </p>
-                              </div>
-                              <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
-                                {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
 	                  <div className="overflow-x-auto rounded-lg border border-gray-200">
 	                    <table className="w-full text-sm">
 	                      <thead>
@@ -38029,12 +32738,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                            )}
 	                            {quantityForOrder(selectedOrder)}
 	                          </td>
-	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(selectedOrder))), selectedOrder.currency)}</td>
-	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), selectedOrder.currency)}</td>
+	                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(selectedOrder.amount / quantityForOrder(selectedOrder)), selectedOrder.currency)}</td>
+	                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
 	                        </tr>
 	                        {(selectedOrder.crossSellLines ?? []).map((line) => (
 	                          <tr key={line.id} className="bg-amber-50/40">
-	                            <td className="px-4 py-2 text-gray-800 text-xs">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"} · {line.productName}</td>
+	                            <td className="px-4 py-2 text-gray-800 text-xs">↳ Cross-sell · {line.productName}</td>
 	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
 	                            <td className="px-4 py-2 text-right text-gray-700 text-xs">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), selectedOrder.currency)}</td>
 	                            <td className="px-4 py-2 text-right text-xs">
@@ -38288,131 +32997,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {/* Section 7: Form Submission Details */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
-	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
-	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission Details</h3>
-	                      <button
-	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-	                      >
-	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-	                      </button>
-	                    </div>
+	                    <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Form Submission Details</h3>
 	                    {renderPublicFormSubmissionDetails(selectedOrder)}
 	                  </section>
 	                )}
-
-                  {(realRole === "Owner" || realRole === "Admin") && selectedOrder.sourceCartId && (
-                    <section>
-                      <h3 className={`font-semibold text-base border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Customer Journey</h3>
-                      <div className={`rounded-[28px] px-5 py-5 ${orderPanelClass}`}>
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <div>
-                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Source form timeline</p>
-                            <p className={`m-0 mt-2 text-[15px] sm:text-[16px] ${orderMutedTextClass}`}>
-                              What the customer did before this order was submitted from the form.
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Journey events</p>
-                            <p className={`m-0 mt-2 text-[18px] font-semibold ${orderTitleTextClass}`}>{selectedOrderJourney.length}</p>
-                          </div>
-                        </div>
-	                        <div className={`mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
-	                          <div>
-	                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Linked form session</p>
-	                            <p className={`m-0 mt-2 text-[15px] font-semibold break-all ${orderTitleTextClass}`}>{selectedOrder.sourceCartId}</p>
-	                          </div>
-                          <div>
-                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Last step reached</p>
-                            <p className={`m-0 mt-2 text-[15px] font-semibold ${orderTitleTextClass}`}>
-                              {selectedOrderJourney.length > 0 ? cartJourneyTitle(selectedOrderJourney[selectedOrderJourney.length - 1]) : "No tracked steps yet"}
-	                            </p>
-	                          </div>
-	                        </div>
-	                        {selectedOrderJourneyAnalytics.additionalItems.length > 0 ? (
-	                          <div className={`mt-4 rounded-2xl border px-4 py-4 ${orderPanelInfoClass}`}>
-	                            <div className="flex items-start justify-between gap-3 flex-wrap">
-	                              <div>
-	                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Additional item path</p>
-	                                <p className={`m-0 mt-2 text-[14px] leading-6 ${orderMutedTextClass}`}>
-	                                  {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0
-	                                    ? `Customer submitted this order with ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem} additional item${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem === 1 ? "" : "s"} still attached.`
-	                                    : "Customer explored additional items during the form but submitted without carrying one into the order."}
-	                                </p>
-	                              </div>
-	                              <div className="flex items-center gap-2 flex-wrap">
-	                                <span className={`text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-	                                  {selectedOrderJourneyAnalytics.funnel.submittedWithAdditionalItem > 0 ? "Submitted with additional item" : "Submitted without additional item"}
-	                                </span>
-	                              </div>
-	                            </div>
-	                            <div className="mt-3 grid gap-3">
-	                              {selectedOrderJourneyAnalytics.additionalItems.map((item) => (
-	                                <div key={item.key} className={`rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
-	                                  <div className="flex items-start justify-between gap-3 flex-wrap">
-	                                    <div>
-	                                      <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{item.name}</p>
-	                                      <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-	                                        {item.previewed} previewed · {item.added} added · {item.removed} removed · {item.submittedWithItem} carried into submit
-	                                      </p>
-	                                    </div>
-	                                    <div className="flex items-center gap-2 flex-wrap justify-end">
-	                                      {item.previewed > 0 ? (
-	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-blue-200 bg-blue-50 text-blue-700">
-	                                          Previewed
-	                                        </span>
-	                                      ) : null}
-	                                      {item.added > 0 ? (
-	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-emerald-200 bg-emerald-50 text-emerald-700">
-	                                          Added
-	                                        </span>
-	                                      ) : null}
-	                                      {item.removed > 0 ? (
-	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-amber-200 bg-amber-50 text-amber-700">
-	                                          Removed before submit
-	                                        </span>
-	                                      ) : null}
-	                                      {item.submittedWithItem > 0 ? (
-	                                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-violet-200 bg-violet-50 text-violet-700">
-	                                          In submitted order
-	                                        </span>
-	                                      ) : null}
-	                                    </div>
-	                                  </div>
-	                                </div>
-	                              ))}
-	                            </div>
-	                          </div>
-	                        ) : null}
-	                        <div className="mt-4 flex items-center justify-between gap-2">
-	                          <p className={`m-0 text-[12px] ${orderMutedTextClass}`}>Owner/Admin only. Useful for seeing what they viewed, added, removed, and when they submitted.</p>
-	                          {selectedOrderJourneyLoading ? <span className={`text-[11px] font-semibold ${orderFaintTextClass}`}>Loading...</span> : null}
-	                        </div>
-                        {selectedOrderJourney.length === 0 && !selectedOrderJourneyLoading ? (
-                          <p className={`m-0 mt-4 text-sm ${orderMutedTextClass}`}>No journey timeline has been captured for this submitted order yet.</p>
-                        ) : (
-                          <div className="mt-4 grid gap-2">
-                            {selectedOrderJourney.map((event, index) => (
-                              <div key={event.id} className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${orderPanelMutedClass}`}>
-                                <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-50 text-[#1F8FE0] text-xs font-extrabold flex items-center justify-center">
-                                  {index + 1}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                                    <p className={`m-0 text-[15px] font-semibold ${orderTitleTextClass}`}>{cartJourneyTitle(event)}</p>
-                                    <span className={`text-[11px] ${orderFaintTextClass}`}>{formatMoment(event.createdAt)}</span>
-                                  </div>
-                                  {cartJourneyDetail(event) ? (
-                                    <p className={`m-0 mt-1 text-[13px] leading-6 ${orderMutedTextClass}`}>{cartJourneyDetail(event)}</p>
-                                  ) : null}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  )}
 
 	                {/* Footer */}
 	                <div className="flex justify-end pt-2 border-t border-gray-100">
@@ -38439,7 +33027,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id)}><Repeat2 /> Change Status</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(selectedOrder)}><BookOpen /> Print Invoice</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(selectedOrder)}><Download /> Download Invoice</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy /> Copy Order To WhatsApp Group</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Send to Agent</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}><UserPlus /> Reassign Rep</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderEditRoute(selectedOrder.id)}><Pencil /> Edit Order</button>
@@ -38678,7 +33265,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </span>
                     </div>
                     {selectedOrderLatestAttempt && (
-                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {followUpReasonBadgeText(selectedOrderLatestAttempt)} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
+                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {selectedOrderLatestAttempt.outcomeCode} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
                     )}
                   </div>
 
@@ -38704,58 +33291,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     </label>
                   </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <span className={`block text-sm font-medium ${orderTitleTextClass}`}>Outcome *</span>
-                      <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>Pick the real reason so Protohub can bring the order back at the right time.</p>
-                    </div>
-                    <div className="space-y-3">
-                      {FOLLOW_UP_OUTCOME_GROUPS.filter((group) => group !== "other").map((group) => {
-                        const options = FOLLOW_UP_OUTCOME_DEFINITIONS.filter((definition) => definition.group === group);
-                        if (options.length === 0) return null;
-                        return (
-                          <div key={group} className="space-y-2">
-                            <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>{FOLLOW_UP_OUTCOME_GROUP_LABELS[group]}</p>
-                            <div className="flex flex-wrap gap-2">
-                              {options.map((definition) => {
-                                const selected = followUpRecoveryBucket === definition.bucket;
-                                return (
-                                  <button
-                                    key={definition.bucket}
-                                    type="button"
-                                    className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${selected ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : orderSecondaryButtonClass}`}
-                                    onClick={() => applyFollowUpOutcomePreset(definition.bucket)}
-                                  >
-                                    {definition.label}
-                                  </button>
-                                );
-                              })}
-                              <button
-                                type="button"
-                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${followUpRecoveryBucket === "custom" ? "border-blue-200 bg-blue-50 text-[#1F8FE0]" : orderSecondaryButtonClass}`}
-                                onClick={() => applyFollowUpOutcomePreset("custom")}
-                              >
-                                Custom outcome
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {followUpRecoveryBucket === "custom" ? (
-                      <input
-                        value={followUpAttemptOutcome}
-                        onChange={(event) => setFollowUpAttemptOutcome(event.target.value)}
-                        placeholder="Type the exact outcome if it does not fit the presets"
-                      />
-                    ) : (
-                      followUpRecoveryBucket && (
-                        <p className={`m-0 rounded-xl ${orderPanelMutedClass} px-3 py-2 text-xs ${orderMutedTextClass}`}>
-                          {followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.helper}
-                        </p>
-                      )
-                    )}
-                  </div>
+                  <label>
+                    <span>Outcome *</span>
+                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpAttemptOutcome(event.target.value)} placeholder="e.g. No Answer, Confirmed, Not Ready, Will Call Back..." />
+                  </label>
 
                   <label>
                     <span>What happened?</span>
@@ -38771,14 +33310,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <input
                         type="checkbox"
                         checked={followUpNextActionEnabled}
-                        disabled={Boolean(followUpRecoveryBucket && followUpRecoveryBucket !== "custom" && followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.requiresNextAction)}
                         onChange={(event) => setFollowUpNextActionEnabled(event.target.checked)}
                       />
-                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>
-                        {followUpRecoveryBucket && followUpRecoveryBucket !== "custom" && followUpOutcomeDefinitionForBucket(followUpRecoveryBucket)?.requiresNextAction
-                          ? "Next callback required for this outcome"
-                          : "Set the next follow-up action now"}
-                      </span>
+                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>Set the next follow-up action now</span>
                     </label>
                     {followUpNextActionEnabled && (
                       <>
@@ -38999,7 +33533,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  )}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors" onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}><Copy className="w-4 h-4" /> Copy Order To WhatsApp Group</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
 	                  </div>
 	                </div>
@@ -39013,30 +33546,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	            {modal === "cartDetails" && selectedCart && (() => {
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
-                const cartAdditionalPackages = additionalPackageLinesForCart(selectedCart, selectedCartJourney);
-                const cartAdditionalTotal = cartAdditionalPackages.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
-                const cartMainOfferTotal = Math.max(0, (selectedCart.amount || 0) - cartAdditionalTotal);
-                const cartPackageQuantity = packageQuantityForCart(selectedCart);
 	              const linkedOrder = linkedOrderBySourceCartId.get(selectedCart.id);
 	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder);
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
-	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
-	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
-                const selectedCartAttribution = cartAttributionFor(selectedCart, selectedCartJourney);
-                const selectedCartCampaignId = selectedCartAttribution.utmCampaign?.trim() || "";
-                const selectedCartCreativeId = selectedCartAttribution.utmContent?.trim() || "";
-                const selectedCartCampaignLabel = selectedCartCampaignId ? campaignCardLabelFor(selectedCartCampaignId) : "";
-                const selectedCartCreativeLabel = selectedCartCreativeId ? creativeCardLabelFor(selectedCartCreativeId) : "";
-                const showCartAttribution = Boolean(
-                  selectedCartAttribution.utmSource
-                  || selectedCartCampaignId
-                  || selectedCartAttribution.utmMedium
-                  || selectedCartCreativeId
-                  || selectedCartAttribution.referrer
-                );
 	              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -39050,13 +33565,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  {/* Header */}
 	                  <div className="flex items-start justify-between gap-3 flex-wrap">
 	                    <div className="min-w-0">
-	                      <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">Abandoned cart · {selectedCart.id}</p>
-	                      <h3 className="text-lg font-extrabold text-gray-900 dark:text-slate-100 m-0 mt-0.5">{selectedCart.customer || "Partial lead"}</h3>
+	                      <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Abandoned cart · {selectedCart.id}</p>
+	                      <h3 className="text-lg font-extrabold text-gray-900 m-0 mt-0.5">{selectedCart.customer || "Partial lead"}</h3>
 	                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
 	                        <StatusBadge s={selectedCart.status} />
-	                        <span className="text-xs text-gray-500 dark:text-slate-400">{selectedCart.source}</span>
-	                        {selectedCart.outageCaptured && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-bold dark:bg-amber-500/12 dark:text-amber-300">Saved during outage</span>}
-	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold dark:bg-rose-500/12 dark:text-rose-300">⚠ {Math.floor(stale)}d stale</span>}
+	                        <span className="text-xs text-gray-500">{selectedCart.source}</span>
+	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">⚠ {Math.floor(stale)}d stale</span>}
 	                      </div>
 	                    </div>
 	                    {/* Quick contact */}
@@ -39069,15 +33583,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
 	                        </button>
 	                      )}
-                        <button
-                          type="button"
-                          onClick={() => copyText(formatCartForWhatsAppDispatch(selectedCart, selectedCartJourney), `${selectedCart.id} WhatsApp group copy`)}
-                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-200 bg-white text-emerald-700 text-xs font-bold hover:bg-emerald-50 transition-colors dark:border-emerald-500/35 dark:bg-[#16212c] dark:text-emerald-300 dark:hover:bg-emerald-500/10">
-                          <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
-                        </button>
 	                      {phoneClean && (
 	                        <a href={`tel:${phoneClean}`}
-	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50 dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-200 dark:hover:bg-[#1a2834]">
+	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
 	                          <Phone className="w-3.5 h-3.5" /> Call
 	                        </a>
 	                      )}
@@ -39086,242 +33594,58 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
 	                  {/* Customer */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Customer</h4>
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer</h4>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Name</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.customer || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Phone</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.phone || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">WhatsApp</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.whatsapp || "—"}</p></div>
-	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Email</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.email}</p></div>}
-	                      {selectedCart.preferredDelivery && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Preferred Delivery</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.preferredDelivery}</p></div>}
-	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Location</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
-	                      {selectedCart.address && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Address</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.address}</p></div>}
+	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "—"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "—"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "—"}</p></div>
+	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className="font-semibold text-gray-900 m-0">{selectedCart.email}</p></div>}
+	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
 	                    </div>
 	                  </section>
-
-                    {showCartAttribution && (
-	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Ad Attribution</h4>
-	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                          {selectedCartAttribution.utmSource && (
-                            <div>
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">UTM Source</p>
-                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartAttribution.utmSource}</p>
-                            </div>
-                          )}
-                          {(selectedCartCampaignId || selectedCartCampaignLabel) && (
-                            <div>
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Campaign</p>
-                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartCampaignLabel || selectedCartCampaignId}</p>
-                              {selectedCartCampaignLabel && selectedCartCampaignLabel !== selectedCartCampaignId && (
-                                <p className="text-[11px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">{selectedCartCampaignId}</p>
-                              )}
-                            </div>
-                          )}
-                          {selectedCartAttribution.utmMedium && (
-                            <div>
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">UTM Medium</p>
-                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartAttribution.utmMedium}</p>
-                            </div>
-                          )}
-                          {(selectedCartCreativeId || selectedCartCreativeLabel) && (
-                            <div>
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Creative</p>
-                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartCreativeLabel || selectedCartCreativeId}</p>
-                              {selectedCartCreativeLabel && selectedCartCreativeLabel !== selectedCartCreativeId && (
-                                <p className="text-[11px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">{selectedCartCreativeId}</p>
-                              )}
-                            </div>
-                          )}
-                          {selectedCartAttribution.referrer && (
-                            <div className="sm:col-span-2">
-                              <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Referrer</p>
-                              <p className="font-semibold text-gray-900 dark:text-slate-100 m-0 break-all">{selectedCartAttribution.referrer}</p>
-                            </div>
-                          )}
-	                    </div>
-	                  </section>
-                    )}
 
 	                  {/* Product / package */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Selected package(s)</h4>
-	                    <div className="rounded-xl border border-gray-200 dark:border-slate-800/80 bg-white dark:bg-[#101a24] p-3 flex flex-col gap-3">
-	                      <div className="flex items-start gap-3">
-	                        <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
-	                        <div className="flex-1 min-w-0">
-	                          <p className="text-sm font-bold text-gray-900 dark:text-slate-100 m-0">{selectedCart.productName}</p>
-	                          {selectedCart.packageName && (
-	                            <p className="text-xs text-gray-600 dark:text-slate-300 m-0 mt-0.5">{selectedCart.packageName} · {cartPackageQuantity} unit{cartPackageQuantity === 1 ? "" : "s"}</p>
-	                          )}
-	                          {pkg?.description && <p className="text-xs text-gray-500 dark:text-slate-400 italic m-0 mt-1 leading-snug">{pkg.description}</p>}
-	                        </div>
-	                        <div className="text-right shrink-0">
-	                          <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Amount</p>
-	                          <p className="text-base font-extrabold text-[#1F8FE0] dark:text-sky-300 m-0">{formatProductMoney(cartMainOfferTotal, selectedCart.currency)}</p>
-	                        </div>
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Selected package</h4>
+	                    <div className="rounded-xl border border-gray-200 p-3 flex items-start gap-3">
+	                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
+	                      <div className="flex-1 min-w-0">
+	                        <p className="text-sm font-bold text-gray-900 m-0">{selectedCart.productName}</p>
+	                        {selectedCart.packageName && (
+	                          <p className="text-xs text-gray-600 m-0 mt-0.5">{selectedCart.packageName}{pkg ? ` · ${pkg.quantity} unit${pkg.quantity === 1 ? "" : "s"}` : ""}</p>
+	                        )}
+	                        {pkg?.description && <p className="text-xs text-gray-500 italic m-0 mt-1 leading-snug">{pkg.description}</p>}
 	                      </div>
-                        {cartAdditionalPackages.length > 0 && (
-                          <div className="grid gap-2 border-t border-gray-100 dark:border-slate-800/80 pt-3">
-                            {cartAdditionalPackages.map((line, index) => (
-                              <div key={`cart-breakdown-${index}-${line.name}`} className="rounded-lg border border-amber-100 bg-amber-50/50 px-3 py-2 dark:border-amber-500/20 dark:bg-amber-500/10">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="m-0 text-xs font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-                                      Additional package {index + 1}
-                                    </p>
-                                    <p className="m-0 mt-1 text-sm font-semibold text-gray-900 dark:text-slate-100">{line.name.replace(/\s*\(bundled\)\s*$/i, "")}</p>
-                                    {line.detail && <p className="m-0 mt-0.5 text-xs text-gray-600 dark:text-slate-300">{line.detail}</p>}
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">Amount</p>
-                                    <p className="m-0 text-sm font-bold text-amber-800 dark:text-amber-300">{formatProductMoney(line.total, selectedCart.currency)}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                            <div className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] px-3 py-2">
-                              <div>
-                                <p className="m-0 text-sm font-bold text-gray-900 dark:text-slate-100">Total</p>
-                                <p className="m-0 mt-0.5 text-xs text-gray-500 dark:text-slate-400">Main package plus all added packages.</p>
-                              </div>
-                              <p className="m-0 text-base font-extrabold text-[#1F8FE0] dark:text-sky-300">{formatProductMoney(selectedCart.amount, selectedCart.currency)}</p>
-                            </div>
-                          </div>
-                        )}
+	                      <div className="text-right shrink-0">
+	                        <p className="text-[11px] text-gray-400 m-0">Amount</p>
+	                        <p className="text-base font-extrabold text-[#1F8FE0] m-0">{formatProductMoney(selectedCart.amount, selectedCart.currency)}</p>
+	                      </div>
 	                    </div>
 	                  </section>
 
 	                  {/* Workflow + timeline */}
 	                  <section>
-                      <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Workflow</h4>
-                        {isOwnerOrAdmin && (
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50 transition-colors dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
-                            onClick={() => openCartDateEditor(selectedCart)}
-                          >
-                            <CalendarDays className="w-3.5 h-3.5" /> Change cart date
-                          </button>
-                        )}
-                      </div>
-                      {isEditingSelectedCartDate && (
-                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3 grid gap-3">
-                          <div>
-                            <p className="m-0 text-xs font-bold uppercase tracking-wider text-amber-800">Adjust abandoned cart date</p>
-                            <p className="m-0 mt-1 text-xs text-amber-900/80">Set the corrected cart date and give a reason before saving.</p>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <label className="grid gap-1">
-                              <span className="text-[11px] font-semibold text-amber-800">Date</span>
-                              <input
-                                type="date"
-                                value={dateEditDate}
-                                onChange={(event) => setDateEditDate(event.target.value)}
-                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span className="text-[11px] font-semibold text-amber-800">Time</span>
-                              <input
-                                type="time"
-                                value={dateEditTime}
-                                onChange={(event) => setDateEditTime(event.target.value)}
-                                className="!min-h-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
-                              />
-                            </label>
-                          </div>
-                          <label className="grid gap-1">
-                            <span className="text-[11px] font-semibold text-amber-800">Reason for date change</span>
-                            <textarea
-                              rows={3}
-                              value={dateEditReason}
-                              onChange={(event) => setDateEditReason(event.target.value)}
-                              placeholder="Explain why this abandoned cart date needs correction."
-                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100 resize-none"
-                            />
-                          </label>
-                          <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-                              onClick={resetDateEditor}
-                              disabled={dateEditSaving}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                              onClick={saveDateEditor}
-                              disabled={dateEditSaving}
-                            >
-                              <CalendarDays className="w-4 h-4" /> {dateEditSaving ? "Saving..." : "Save cart date"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Workflow</h4>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Sales Rep</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{repName}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Source</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCart.source}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Created</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last activity</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
-	                      {selectedCart.outageCaptured && <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Outage capture</p><p className="font-semibold text-amber-700 dark:text-amber-300 m-0">{formatMoment(selectedCart.outageCapturedAt ?? selectedCart.createdAt)}</p></div>}
+	                      <div><p className="text-[11px] text-gray-400 m-0">Sales Rep</p><p className="font-semibold text-gray-900 m-0">{repName}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Source</p><p className="font-semibold text-gray-900 m-0">{selectedCart.source}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Created</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.createdAt)}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Last activity</p><p className="font-semibold text-gray-900 m-0">{formatMoment(selectedCart.lastActivity)}</p></div>
                         {linkedOrder && (
                           <>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Linked order</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Conversion path</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{conversionPathLabel ?? "Converted"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Linked order</p><p className="font-semibold text-gray-900 m-0">{linkedOrder.id} · {linkedOrder.status ?? "New"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Conversion path</p><p className="font-semibold text-gray-900 m-0">{conversionPathLabel ?? "Converted"}</p></div>
                           </>
                         )}
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last step reached</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Journey events</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartJourney.length}</p></div>
-	                      <div className="sm:col-span-2">
-	                        <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Recovery priority</p>
-	                        <div className="mt-1 flex items-center gap-2 flex-wrap">
-	                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
-	                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
-	                        </div>
-	                      </div>
-	                    </div>
-	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
-	                      <div className="flex items-center justify-between gap-2 mb-2">
-	                        <div>
-	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Customer journey</p>
-	                          <p className="text-[12px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
-	                        </div>
-	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Loading...</span> : null}
-	                      </div>
-	                      {selectedCartJourney.length === 0 && !selectedCartJourneyLoading ? (
-	                        <p className="text-sm text-gray-500 dark:text-slate-400 m-0">No journey timeline has been captured for this cart yet.</p>
-	                      ) : (
-	                        <div className="grid gap-2">
-	                          {selectedCartJourney.map((event, index) => (
-	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 dark:bg-[#101a24] dark:border-slate-800/80 px-3 py-2">
-	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 text-xs font-extrabold flex items-center justify-center">
-	                                {index + 1}
-	                              </div>
-	                              <div className="min-w-0 flex-1">
-	                                <div className="flex items-start justify-between gap-3 flex-wrap">
-	                                  <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 m-0">{cartJourneyTitle(event)}</p>
-	                                  <span className="text-[11px] text-gray-400 dark:text-slate-500">{formatMoment(event.createdAt)}</span>
-	                                </div>
-	                                {cartJourneyDetail(event) ? (
-	                                  <p className="text-xs text-gray-600 dark:text-slate-300 m-0 mt-0.5">{cartJourneyDetail(event)}</p>
-	                                ) : null}
-	                              </div>
-	                            </div>
-	                          ))}
-	                        </div>
-	                      )}
 	                    </div>
 	                  </section>
 
 	                  {/* Actions */}
-	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100 dark:border-slate-800/80">
+	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
 	                    {canDeleteAbandonedCarts && (
 	                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors" onClick={() => deleteCartRecord(selectedCart)}><Trash2 className="w-4 h-4" /> Delete cart</button>
 	                    )}
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:bg-[#16212c] dark:text-slate-200 dark:hover:bg-[#1a2834]" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openAdminCartAssignRoute(selectedCart.id)}><UserPlus className="w-4 h-4" /> Assign rep</button>
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openAdminCartConvertRoute(selectedCart.id)}><CheckCircle2 className="w-4 h-4" /> Convert to Order</button>
 	                  </div>
 	                </div>
@@ -39762,16 +34086,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             )}
 
             {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (
-              <div
-                className="modal-form"
-                onChangeCapture={() => markPackageEditorDirty()}
-                onClickCapture={(event) => {
-                  const target = event.target as HTMLElement | null;
-                  if (target?.closest("button, input, textarea, select, label")) {
-                    markPackageEditorDirty();
-                  }
-                }}
-              >
+              <div className="modal-form">
                 <p>{selectedProduct.name}</p>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
@@ -39924,191 +34239,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         Use this package as a <strong>quick add-on</strong> inside the order form or as an <strong>after-submit offer</strong>. Set it up once here, then the embed link picks it up automatically.
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {modal === "editPackage" && availablePackageOfferCopyTargets.length > 0 && (
-                        <button
-                          type="button"
-                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-blue-200 text-[#1F8FE0] rounded-md hover:bg-blue-50"
-                          onClick={() => setShowPackageOfferCopyPanel((prev) => !prev)}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          {showPackageOfferCopyPanel ? "Hide copy to other packages" : "Copy offers to other packages"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-md hover:bg-gray-50"
-                        onClick={() => setPackageCompanions((prev) => [...prev, normalisePackageCompanion({ productId: "", packageId: undefined, quantity: 1, pricingMode: "free", stateFilterMode: "all", stateRestrictions: [], autoInclude: false })])}
-                      >+ Add extra offer</button>
-                    </div>
+                    <button
+                      type="button"
+                      className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-gray-200 rounded-md hover:bg-gray-50"
+                      onClick={() => setPackageCompanions((prev) => [...prev, normalisePackageCompanion({ productId: "", packageId: undefined, quantity: 1, pricingMode: "free", stateFilterMode: "all", stateRestrictions: [], autoInclude: false })])}
+                    >+ Add extra offer</button>
                   </div>
-                  {modal === "editPackage" && packageOfferSyncEnabled && (
-                    <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 space-y-2">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                          <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-emerald-700">Linked offer sync</p>
-                          <p className="m-0 text-xs text-emerald-900">
-                            {selectedPackageOfferSyncSource
-                              ? `This package is linked to ${selectedPackageOfferSyncSource.name}. When that source package's offers change and get saved, this bundle will inherit the same offer setup automatically.`
-                              : "This package is linked to another source package. Future source offer saves will continue to flow here automatically."}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {selectedPackageOfferSyncSource && (
-                            <button
-                              type="button"
-                              className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-100"
-                              onClick={() => {
-                                setPackageCompanions(clonePackageCompanions(selectedPackageOfferSyncSource.companionProducts ?? []));
-                                markPackageEditorDirty();
-                                showToast(`Loaded the latest offers from ${selectedPackageOfferSyncSource.name}.`);
-                              }}
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              Load source offers now
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-                            onClick={() => {
-                              setPackageOfferSyncEnabled(false);
-                              setPackageOfferSyncSourceProductId(null);
-                              setPackageOfferSyncSourcePackageId(null);
-                              markPackageEditorDirty();
-                              showToast("Offer sync removed for this package.");
-                            }}
-                          >
-                            Stop syncing
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {modal === "editPackage" && linkedOfferTargetCount > 0 && (
-                    <div className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
-                      <p className="m-0 text-xs text-blue-900">
-                        Saving this package&apos;s offers will also update <strong>{linkedOfferTargetCount}</strong> linked package{linkedOfferTargetCount === 1 ? "" : "s"} automatically.
-                      </p>
-                    </div>
-                  )}
-                  {showPackageOfferCopyPanel && modal === "editPackage" && availablePackageOfferCopyTargets.length > 0 && (
-                    <div className="rounded-lg border border-blue-100 bg-blue-50/70 p-3 space-y-3">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                          <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-[#1F8FE0]">Copy current offer setup</p>
-                          <p className="m-0 text-xs text-blue-900">
-                            Apply everything under <strong>Promote This Package</strong> from <strong>{packageName || selectedPackage?.name || "this package"}</strong> to other existing bundles. This replaces the target package&apos;s current extra offers so you don&apos;t have to rebuild them one by one.
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-blue-200 bg-white text-[#1F8FE0] hover:bg-blue-50"
-                            onClick={() => setPackageOfferCopyTargetIds(availablePackageOfferCopyTargets.map((pkg) => pkg.id))}
-                          >
-                            Select all
-                          </button>
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-                            onClick={() => setPackageOfferCopyTargetIds([])}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                      <label className="flex items-start gap-3 rounded-md border border-blue-100 bg-white px-3 py-2">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={packageOfferCopyKeepSynced}
-                          onChange={(event) => setPackageOfferCopyKeepSynced(event.target.checked)}
-                        />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-sm font-semibold text-gray-900">Keep selected packages synced with this source</span>
-                          <span className="block text-[11px] text-gray-500">
-                            Later offer edits on <strong>{packageName || selectedPackage?.name || "this package"}</strong> will automatically flow to linked targets when you save the source package again.
-                          </span>
-                        </span>
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {availablePackageOfferCopyTargets.map((pkg) => {
-                          const checked = packageOfferCopyTargetIds.includes(pkg.id);
-                          const offerCount = pkg.companionProducts?.length ?? 0;
-                          const isAlreadyLinked =
-                            (((pkg as any).offerSyncEnabled ?? (pkg as any).offer_sync_enabled) === true) &&
-                            (((pkg as any).offerSyncSourceProductId ?? (pkg as any).offer_sync_source_product_id ?? null) === selectedProduct?.id) &&
-                            (((pkg as any).offerSyncSourcePackageId ?? (pkg as any).offer_sync_source_package_id ?? null) === selectedPackage?.id);
-                          return (
-                            <label
-                              key={pkg.id}
-                              className={`flex items-start gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors ${checked ? "border-[#1F8FE0] bg-white" : "border-blue-100 bg-white/80 hover:bg-white"}`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setPackageOfferCopyTargetIds((prev) =>
-                                    checked ? prev.filter((id) => id !== pkg.id) : [...prev, pkg.id]
-                                  )
-                                }
-                                className="mt-0.5"
-                              />
-                              <span className="flex-1 min-w-0">
-                                <span className="block text-sm font-semibold text-gray-900">
-                                  {pkg.name}
-                                  {isAlreadyLinked && (
-                                    <span className="ml-2 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                                      Linked already
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="block text-[11px] text-gray-500">
-                                  {pkg.quantity} pcs · {formatProductMoney(pkg.price, pkg.currency)} · currently {offerCount} offer{offerCount === 1 ? "" : "s"}
-                                </span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
-                        <p className="m-0 text-[11px] text-blue-900">
-                          {packageOfferCopyTargetIds.length === 0
-                            ? packageOfferCopyKeepSynced
-                              ? "Choose the bundles that should inherit and stay linked to this offer setup."
-                              : "Choose the bundles that should inherit this same offer setup."
-                            : packageOfferCopyKeepSynced
-                              ? `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected for copy + sync.`
-                              : `${packageOfferCopyTargetIds.length} package${packageOfferCopyTargetIds.length === 1 ? "" : "s"} selected.`}
-                        </p>
-                        <button
-                          type="button"
-                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-[#1F8FE0] text-white text-xs font-bold hover:bg-[#1560a8] transition-colors disabled:opacity-50"
-                          disabled={packageOfferCopyBusy || packageOfferCopyTargetIds.length === 0}
-                          onClick={applyCurrentPackageOffersToTargets}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          {packageOfferCopyBusy ? "Applying..." : packageOfferCopyKeepSynced ? "Apply and keep synced" : "Apply to selected packages"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
                   {packageCompanions.length === 0 ? (
                     <p className="text-xs text-gray-400 italic m-0">No extra offers added yet.</p>
                   ) : (
                     <div className="space-y-3">
                       {packageCompanions.map((c, idx) => {
                         const update = (patch: Partial<PackageCompanion>) =>
-                          setPackageCompanions((prev) =>
-                            prev.map((row) => (row.companionId === c.companionId ? { ...row, ...patch } : row))
-                          );
-                        const remove = () =>
-                          setPackageCompanions((prev) => prev.filter((row) => row.companionId !== c.companionId));
+                          setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, ...patch } : row));
+                        const remove = () => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx));
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
-                        const previousCompanion = idx > 0 ? packageCompanions[idx - 1] : null;
                         const stateRuleMode = c.stateFilterMode ?? "all";
                         const stateSummary =
                           stateRuleMode === "all"
@@ -40121,24 +34268,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                 ? "No states are hidden right now."
                                 : `All states except ${c.stateRestrictions.length} selected state${c.stateRestrictions.length === 1 ? "" : "s"} can see this offer.`;
                         return (
-                          <div key={c.companionId} className="border border-gray-100 rounded-lg p-3 bg-gray-50/50 space-y-2.5">
+                          <div key={idx} className="border border-gray-100 rounded-lg p-3 bg-gray-50/50 space-y-2.5">
                             <div className="flex items-center justify-between gap-3 pb-1 border-b border-gray-100">
                               <div>
                                 <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
                                 <p className="m-0 text-xs text-gray-500">What is the offer, who should see it, and how should it look?</p>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-[#1F8FE0] hover:bg-blue-50 rounded"
-                                  onClick={() => duplicatePackageOfferRow(c.companionId)}
-                                ><Copy className="w-3 h-3" /> Duplicate</button>
-                                <button
-                                  type="button"
-                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
-                                  onClick={remove}
-                                ><Trash2 className="w-3 h-3" /> Remove</button>
-                              </div>
+                              <button
+                                type="button"
+                                className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
+                                onClick={remove}
+                              ><Trash2 className="w-3 h-3" /> Remove</button>
                             </div>
                             <div className="space-y-2">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">1. What customers can buy</p>
@@ -40245,20 +34385,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   <p className="m-0 border border-gray-100 rounded-md bg-white px-2.5 py-2 text-[11px] text-gray-500">
                                     Add more than one offer here if you want two or more quick add-ons on the same order form, or one quick add-on plus one after-submit offer.
                                   </p>
-                                  {previousCompanion && (
-                                    <button
-                                      type="button"
-                                      className="!min-h-0 mt-1 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold rounded-md border border-blue-200 bg-blue-50 text-[#1F8FE0] hover:bg-blue-100"
-                                      onClick={() =>
-                                        update({
-                                          stateFilterMode: previousCompanion.stateFilterMode ?? "all",
-                                          stateRestrictions: [...(previousCompanion.stateRestrictions ?? [])]
-                                        })
-                                      }
-                                    >
-                                      Copy state setup from Offer {idx}
-                                    </button>
-                                  )}
                                 </div>
                               </div>
                               {stateRuleMode !== "all" && (
@@ -40378,92 +34504,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       onChange={(e) => update({ pitch: e.target.value })}
                                     />
                                   </label>
-                                  {c.displayMode === "card" && (
-                                    <>
-                                      <label className="flex flex-col gap-1">
-                                        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Proof mode</span>
-                                        <select
-                                          className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                          value={c.proofMode ?? "real"}
-                                          onChange={(e) => update({ proofMode: e.target.value as "real" | "promo_copy" | "hidden" })}
-                                        >
-                                          <option value="real">Real proof only</option>
-                                          <option value="promo_copy">Promo copy only</option>
-                                          <option value="hidden">Hide proof row</option>
-                                        </select>
-                                        <span className="text-[10px] text-gray-400">Real proof uses true buyer data when it is strong enough. Promo copy lets you type the numbers buyers will see.</span>
-                                      </label>
-                                      {(c.proofMode ?? "real") === "promo_copy" && (
-                                        <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-3 rounded-md bg-amber-50 border border-amber-200">
-                                          <p className="sm:col-span-2 text-[11px] text-amber-800 font-medium m-0">Promo numbers shown on the buyer card. Leave any field blank or 0 to hide that line.</p>
-                                          <label className="flex flex-col gap-1">
-                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Cumulative buyers</span>
-                                            <input
-                                              type="number"
-                                              min={0}
-                                              max={10000000}
-                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                              placeholder="1247"
-                                              value={typeof c.promoAllTimeBuyerCount === "number" ? c.promoAllTimeBuyerCount : ""}
-                                              onChange={(e) => {
-                                                const v = e.target.value.trim();
-                                                update({ promoAllTimeBuyerCount: v === "" ? undefined : Math.max(0, Math.floor(Number(v) || 0)) });
-                                              }}
-                                            />
-                                            <span className="text-[10px] text-gray-400">Buyer sees “Added to {(c.promoAllTimeBuyerCount ?? 1247).toLocaleString()} orders”</span>
-                                          </label>
-                                          <label className="flex flex-col gap-1">
-                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Added in last 24h</span>
-                                            <input
-                                              type="number"
-                                              min={0}
-                                              max={10000}
-                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                              placeholder="12"
-                                              value={typeof c.promoBuyersLast24HoursCount === "number" ? c.promoBuyersLast24HoursCount : ""}
-                                              onChange={(e) => {
-                                                const v = e.target.value.trim();
-                                                update({ promoBuyersLast24HoursCount: v === "" ? undefined : Math.max(0, Math.floor(Number(v) || 0)) });
-                                              }}
-                                            />
-                                            <span className="text-[10px] text-gray-400">Buyer sees “{(c.promoBuyersLast24HoursCount ?? 12).toLocaleString()} buyers added this in the last 24 hours”</span>
-                                          </label>
-                                          <label className="flex flex-col gap-1 sm:col-span-2">
-                                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Last added label</span>
-                                            <input
-                                              type="text"
-                                              maxLength={60}
-                                              className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                              placeholder="2 hours ago"
-                                              value={c.promoLastAddedRelative ?? ""}
-                                              onChange={(e) => update({ promoLastAddedRelative: e.target.value })}
-                                            />
-                                          </label>
-                                          <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
-                                            <input
-                                              type="checkbox"
-                                              className="rounded border-gray-300 text-[#1F8FE0] focus:ring-[#1F8FE0]"
-                                              checked={!!c.promoIsMostAdded}
-                                              onChange={(e) => update({ promoIsMostAdded: e.target.checked })}
-                                            />
-                                            <span>Show “Most buyers add this” badge</span>
-                                          </label>
-                                        </div>
-                                      )}
-                                      <label className="flex flex-col gap-1">
-                                        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Urgency mode</span>
-                                        <select
-                                          className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                          value={c.urgencyMode ?? "standard"}
-                                          onChange={(e) => update({ urgencyMode: e.target.value as "standard" | "price_loss" })}
-                                        >
-                                          <option value="standard">Standard price note</option>
-                                          <option value="price_loss">Price-loss copy</option>
-                                        </select>
-                                        <span className="text-[10px] text-gray-400">Price-loss copy tells buyers the discounted add-on price disappears after they submit.</span>
-                                      </label>
-                                    </>
-                                  )}
                                 </div>
                               ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -40528,7 +34568,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                       <p className="m-0 text-sm font-semibold text-gray-900">Upload image from desktop</p>
-                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Supports any browser-readable image format. Keep it under 600 KB for faster form loading.</p>
+                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Keep it under 600 KB for faster form loading.</p>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                       <label className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer">
@@ -40536,7 +34576,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                         Upload image
                                         <input
                                           type="file"
-                                          accept="image/*"
+                                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
                                           className="hidden"
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
@@ -42196,7 +36236,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
                 </div>
-                {renderOrderDateAuditStack(remittanceTargetOrder)}
                 <label>
                   <span>Logistics Cost (paid to partner)</span>
                   <input value={remittanceLogisticsCost} onChange={(e) => setRemittanceLogisticsCost(e.target.value)} inputMode="decimal" placeholder="e.g. 4000" />
@@ -42209,21 +36248,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span>Cash Received Date</span>
                   <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
                 </label>
-                <label>
-                  <span>{remittanceTargetShortfall > 0 ? "Why was this underpaid? What was the balance used for?" : "Remittance note (optional)"}</span>
-                  <textarea value={remittanceReason} onChange={(e) => setRemittanceReason(e.target.value)} rows={3} placeholder={remittanceTargetShortfall > 0 ? "e.g. ₦4,000 held back for failed-delivery settlement / rider dispute / return leg..." : "Optional internal note"} />
-                </label>
                 <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <strong>Expected exact remittance:</strong> {formatProductMoney(remittanceTargetExpected, remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
-                  <strong>Underpaid balance:</strong> {formatProductMoney(remittanceTargetShortfall, remittanceTargetOrder.currency)}<br />
-                  <strong>Overpaid excess:</strong> {formatProductMoney(remittanceTargetExcess, remittanceTargetOrder.currency)}<br />
+                  <strong>Expected to receive:</strong> {formatProductMoney(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)), remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
+                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}<br />
                   <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
                 </p>
-                {remittanceTargetExcess > 0 && (
-                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                    This amount is above the exact expected cash for this order. Protohub will not save overpaid remittance into this order.
-                  </p>
-                )}
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
@@ -42250,15 +36279,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <span>Cash Received Date</span>
                   <input type="date" value={remittanceBatchReceivedDate} onChange={(e) => setRemittanceBatchReceivedDate(e.target.value)} />
                 </label>
-                <label>
-                  <span>{remittanceBatchShortfallAmount > 0 ? "Why was this batch underpaid? What was the balance used for?" : "Batch note (optional)"}</span>
-                  <textarea value={remittanceBatchReason} onChange={(e) => setRemittanceBatchReason(e.target.value)} rows={3} placeholder={remittanceBatchShortfallAmount > 0 ? "e.g. ₦8,500 held back for returns / damaged parcel / manual settlement..." : "Optional internal note"} />
-                </label>
                 <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                   <strong>Already received:</strong> {formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
                   <strong>Outstanding before this:</strong> {formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Underpaid balance:</strong> {formatProductMoney(remittanceBatchShortfallAmount, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Overpaid excess:</strong> {formatProductMoney(remittanceBatchUnappliedAmount, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
+                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue), remittanceRowCurrency(remittanceBatchTargetRow))}<br />
                   <strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.
                 </p>
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -42682,7 +36706,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <label><span>Quantity</span><input value={crossSellQuantity} onChange={(e) => setCrossSellQuantity(e.target.value)} inputMode="numeric" /></label>
                     <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><input value={crossSellAmount} onChange={(e) => setCrossSellAmount(e.target.value)} inputMode="decimal" placeholder={String(suggested)} /></label>
                   </div>
-                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Manual rep-added cross-sells keep using this product&apos;s normal bonus rule.</p>
+                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Bonus is applied automatically based on this product's cross-sell %.</p>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveCrossSell}>Add Cross-sell</button>

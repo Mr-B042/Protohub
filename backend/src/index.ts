@@ -8,6 +8,8 @@ import { logger } from "./lib/logger.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
+import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
+import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -17,8 +19,9 @@ import productRoutes  from "./routes/products.js";
 import orderRoutes    from "./routes/orders.js";
 import agentRoutes    from "./routes/agents.js";
 import weekendStockSummaryRoutes from "./routes/weekend-stock-summary.js";
-import weeklyAccountingRoutes from "./routes/weekly-accounting.js";
 import financeSummaryRoutes from "./routes/finance-summary.js";
+import weeklyAccountingRoutes from "./routes/weekly-accounting.js";
+import bonusCoachRoutes from "./routes/bonus-coach.js";
 import remittanceTransactionRoutes from "./routes/remittance-transactions.js";
 import stockRoutes    from "./routes/stock.js";
 import expenseRoutes  from "./routes/expenses.js";
@@ -29,6 +32,7 @@ import waybillRoutes       from "./routes/waybills.js";
 import emailSettingsRoutes from "./routes/email-settings.js";
 import emailReportsRoutes  from "./routes/email-reports.js";
 import smsSettingsRoutes   from "./routes/sms-settings.js";
+import whatsappSettingsRoutes from "./routes/whatsapp-settings.js";
 import cartRoutes          from "./routes/carts.js";
 import publicCartRoutes    from "./routes/public-carts.js";
 import publicOrderRoutes   from "./routes/public-orders.js";
@@ -47,6 +51,7 @@ import userRoutes          from "./routes/users.js";
 const app = express();
 const PORT = process.env.PORT ?? 4000;
 const ENABLE_BACKGROUND_JOBS = !["0", "false", "no", "off"].includes((process.env.ENABLE_BACKGROUND_JOBS ?? "true").trim().toLowerCase());
+const ENABLE_WHATSAPP_RUNTIME = !["0", "false", "no", "off"].includes((process.env.ENABLE_WHATSAPP_RUNTIME ?? "true").trim().toLowerCase());
 
 const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -193,7 +198,8 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
-    backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS
+    backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
+    whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
   });
 });
 
@@ -204,8 +210,9 @@ app.use("/api/auth/refresh",  authRateLimit);
 app.use("/api/auth",          authRoutes);
 app.use("/api/products",      productRoutes);
 app.use("/api/orders",        orderRoutes);
-app.use("/api/weekly-accounting", weeklyAccountingRoutes);
 app.use("/api/finance-summary", financeSummaryRoutes);
+app.use("/api/weekly-accounting", weeklyAccountingRoutes);
+app.use("/api/bonus-coach", bonusCoachRoutes);
 app.use("/api/agents",        agentRoutes);
 app.use("/api/weekend-stock-summary", weekendStockSummaryRoutes);
 app.use("/api/remittance-transactions", remittanceTransactionRoutes);
@@ -218,6 +225,7 @@ app.use("/api/waybills",       waybillRoutes);
 app.use("/api/email-settings", emailSettingsRoutes);
 app.use("/api/email",          emailReportsRoutes);
 app.use("/api/sms-settings",   smsSettingsRoutes);
+app.use("/api/whatsapp-settings", whatsappSettingsRoutes);
 app.use("/api/public/carts",           publicCartRoutes);
 app.use("/api/public/orders",          publicOrderRoutes);
 app.use("/api/public/products",        publicProductRoutes);
@@ -240,7 +248,18 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 app.listen(PORT, () => {
-  logger.info("server started", { port: PORT, backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS });
+  logger.info("server started", {
+    port: PORT,
+    backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
+    whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
+  });
+  if (ENABLE_WHATSAPP_RUNTIME) {
+    void startWhatsAppRuntime().catch((error) => {
+      logger.warn("whatsapp runtime bootstrap failed", { error: error instanceof Error ? error.message : String(error) });
+    });
+  } else {
+    logger.info("whatsapp runtime disabled by env");
+  }
 });
 
 // ── SMS delivery-report sync — every 10 minutes ──────────
@@ -264,6 +283,16 @@ cron.schedule("*/15 * * * *", async () => {
   }
 });
 
+// ── WhatsApp follow-up reminders — every 15 minutes ──────
+cron.schedule("*/15 * * * *", async () => {
+  logger.info("cron: syncing due whatsapp follow-up reminders");
+  try {
+    await syncDueFollowUpWhatsApp();
+  } catch (e) {
+    logger.error("cron: whatsapp follow-up reminder sync crashed", { error: (e as Error).message });
+  }
+});
+
 // ── Rep/order follow-up notifications — every 5 minutes ──
 cron.schedule("*/5 * * * *", async () => {
   logger.info("cron: syncing due order follow-up notifications");
@@ -281,6 +310,16 @@ cron.schedule("*/10 * * * *", async () => {
     await processQueuedSms();
   } catch (e) {
     logger.error("cron: sms queue processor crashed", { error: (e as Error).message });
+  }
+});
+
+// ── WhatsApp retry / deferred queue — every 10 minutes ───
+cron.schedule("*/10 * * * *", async () => {
+  logger.info("cron: processing queued whatsapp");
+  try {
+    await processQueuedWhatsApp();
+  } catch (e) {
+    logger.error("cron: whatsapp queue processor crashed", { error: (e as Error).message });
   }
 });
 

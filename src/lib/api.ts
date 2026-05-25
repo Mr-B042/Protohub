@@ -44,6 +44,13 @@ const normalizeSmsSettingsResponse = (value: any) => ({
   templates: normalizeTemplateMapKeys<{ body: string }>(value?.templates)
 });
 
+const normalizeWhatsappSettingsResponse = (value: any) => ({
+  ...value,
+  assistantOutcomeAutofillEnabled: value?.assistantOutcomeAutofillEnabled !== false && value?.assistant_outcome_autofill_enabled !== false,
+  triggers: normalizeBooleanMapKeys(value?.triggers),
+  templates: normalizeTemplateMapKeys<{ body: string }>(value?.templates)
+});
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -204,10 +211,6 @@ export const authApi = {
     workingDays?: string[];
     workingDayStart?: string;
     workingDayEnd?: string;
-    adTrackingLabels?: {
-      campaigns: Record<string, string>;
-      creatives: Record<string, string>;
-    };
   }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
   updateBranding: (body: {
@@ -234,14 +237,6 @@ export const authApi = {
       workingDayStart: string;
       workingDayEnd: string;
     }>("/api/auth/org-branding", body),
-  saveAdTrackingLabels: (body: {
-    campaigns?: Record<string, string>;
-    creatives?: Record<string, string>;
-  }) =>
-    patch<{
-      campaigns: Record<string, string>;
-      creatives: Record<string, string>;
-    }>("/api/auth/ad-tracking-labels", body),
 
   invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),
@@ -383,19 +378,6 @@ export const expensesApi = {
     return get<any[]>(`/api/expenses${qs}`);
   },
   create: (body: unknown) => post<any>("/api/expenses", body),
-  saveAdSpendBatch: (body: {
-    weekStart: string;
-    weekEnd: string;
-    scopeProductIds: string[];
-    entries: Array<{
-      id: string;
-      date: string;
-      productId: string;
-      description?: string;
-      amount: number;
-      currency: "NGN" | "USD" | "GBP";
-    }>;
-  }) => post<{ savedCount: number; totalAmount: number; rows: any[] }>("/api/expenses/batch-ad-spend", body),
   delete: (id: string) => del<void>(`/api/expenses/${id}`)
 };
 
@@ -406,6 +388,11 @@ export const payrollApi = {
   generate: (body: { period: string; label?: string; notes?: string }) => post<any>("/api/payroll/generate", body),
   approve: (id: string) => patch<any>(`/api/payroll/${id}/approve`, {}),
   markPaid: (id: string) => patch<any>(`/api/payroll/${id}/mark-paid`, {})
+};
+
+export const bonusCoachApi = {
+  me: (weekStart: string) => get<any>(`/api/bonus-coach/me?${new URLSearchParams({ weekStart }).toString()}`),
+  rep: (repId: string, weekStart: string) => get<any>(`/api/bonus-coach/rep/${repId}?${new URLSearchParams({ weekStart }).toString()}`)
 };
 
 // ── Customers ─────────────────────────────────────────────
@@ -486,6 +473,37 @@ export const smsSettingsApi = {
   removeOptOut: (phone: string) => del<{ normalizedPhone: string }>(`/api/sms-settings/opt-outs/${encodeURIComponent(phone)}`),
   inbound: (limit = 50) => get<any[]>(`/api/sms-settings/inbound?limit=${limit}`),
   rotateWebhookSecret: () => post<{ inboundWebhookSecret: string; inboundWebhookUrl: string }>("/api/sms-settings/webhook-secret/rotate", {})
+};
+
+export const whatsappSettingsApi = {
+  get: async () => normalizeWhatsappSettingsResponse(await get<any>("/api/whatsapp-settings")),
+  save: async (body: any) => normalizeWhatsappSettingsResponse(await request<any>("PUT", "/api/whatsapp-settings", {
+    ...body,
+    assistant_outcome_autofill_enabled: body?.assistantOutcomeAutofillEnabled,
+    triggers: normalizeBooleanMapKeys(body?.triggers),
+    templates: normalizeTemplateMapKeys<{ body: string }>(body?.templates)
+  })),
+  connect: async (body: { mode: "qr" | "pairing_code"; phone?: string }) =>
+    normalizeWhatsappSettingsResponse(await post<any>("/api/whatsapp-settings/connect", body)),
+  disconnect: async () => normalizeWhatsappSettingsResponse(await post<any>("/api/whatsapp-settings/disconnect", {})),
+  test: (phone: string) =>
+    post<{ message: string; provider?: string; providerMessageId?: string | null }>(
+      "/api/whatsapp-settings/test",
+      { phone }
+    ),
+  customSend: (body: { phone: string; body: string; recipientName?: string; orderId?: string }) =>
+    post<{ message: string; provider?: string; providerMessageId?: string | null }>("/api/whatsapp-settings/custom-send", {
+      phone: body.phone,
+      body: body.body,
+      recipient_name: body.recipientName,
+      order_id: body.orderId
+    }),
+  summary: () => get<any>("/api/whatsapp-settings/summary"),
+  inbox: (limit = 50) => get<any[]>(`/api/whatsapp-settings/inbox?limit=${limit}`),
+  optOuts: () => get<any[]>("/api/whatsapp-settings/opt-outs"),
+  addOptOut: (body: { phone: string; note?: string }) => post<any>("/api/whatsapp-settings/opt-outs", body),
+  removeOptOut: (phone: string) => del<{ normalizedPhone: string }>(`/api/whatsapp-settings/opt-outs/${encodeURIComponent(phone)}`),
+  messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/whatsapp-settings/messages?page=${page}&limit=${limit}`)
 };
 
 export const emailReportsApi = {
