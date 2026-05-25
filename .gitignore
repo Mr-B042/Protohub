@@ -6,6 +6,7 @@ vite.config.d.ts
 .DS_Store
 .env
 .env.local
+.local/
 backend/node_modules/
 backend/dist/
 playwright-report/

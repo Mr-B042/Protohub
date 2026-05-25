@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "dev:local": "npm run guard:live-ui && vite --host 127.0.0.1 --port 5174",
+    "backend:dev:local": "npm --prefix backend run dev:local",
+    "local:sandbox:check": "node scripts/local-sandbox-check.mjs",
     "guard:live-ui": "node scripts/live-ux-guard.mjs",
     "build": "npm run guard:live-ui && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",

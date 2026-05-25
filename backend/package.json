@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:local": "ENABLE_BACKGROUND_JOBS=0 ENABLE_WHATSAPP_RUNTIME=0 node ../scripts/local-sandbox-check.mjs && ENABLE_BACKGROUND_JOBS=0 ENABLE_WHATSAPP_RUNTIME=0 tsx watch src/index.ts",
     "build": "tsc",
     "test": "node --import tsx --test src/lib/**/*.test.ts",
     "start": "tsx src/index.ts",

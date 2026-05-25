@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cron from "node-cron";
 import { logger } from "./lib/logger.js";
+import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
@@ -52,6 +53,7 @@ const app = express();
 const PORT = process.env.PORT ?? 4000;
 const ENABLE_BACKGROUND_JOBS = !["0", "false", "no", "off"].includes((process.env.ENABLE_BACKGROUND_JOBS ?? "true").trim().toLowerCase());
 const ENABLE_WHATSAPP_RUNTIME = !["0", "false", "no", "off"].includes((process.env.ENABLE_WHATSAPP_RUNTIME ?? "true").trim().toLowerCase());
+const DATA_PROFILE = runtimeDataProfile();
 
 const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -198,6 +200,8 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
+    dataMode: DATA_PROFILE.dataMode,
+    localSandbox: DATA_PROFILE.localSandbox,
     backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
     whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
   });
@@ -250,6 +254,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 app.listen(PORT, () => {
   logger.info("server started", {
     port: PORT,
+    dataMode: DATA_PROFILE.dataMode,
+    localSandbox: DATA_PROFILE.localSandbox,
     backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
     whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
   });

@@ -47,3 +47,5 @@ npm run build
 ```
 
 The goal is simple: a new feature can change these areas intentionally, but it should never silently remove them because local code was stale.
+
+Pair this with the local sandbox policy in [local-sandbox.md](local-sandbox.md): localhost should run the same UI/features as production, but against a separate test Supabase project seeded with mock data.

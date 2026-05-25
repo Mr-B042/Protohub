@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import "./load-env.js";
+import { assertSafeSupabaseRuntime } from "./local-safety.js";
 
 const url = process.env.SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -7,6 +8,8 @@ const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !serviceKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment.");
 }
+
+assertSafeSupabaseRuntime(url);
 
 // Service role client — bypasses RLS for server-side operations.
 // Never expose this key to the frontend.
