@@ -3,7 +3,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendToUser } from "../lib/mailer.js";
-import { calculatePayrollPreview } from "../lib/payroll-calculator.js";
+import { calculatePayrollPreview, payrollPeriodKey } from "../lib/payroll-calculator.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin"));
@@ -28,7 +28,7 @@ router.get("/", async (req, res) => {
 
 // Generate a payroll run for a given period
 const PayrollSchema = z.object({
-  period: z.string().min(1),    // e.g. "May 2026"
+  period: z.string().min(1),    // e.g. "May 2026" or "2026-05"
   label: z.string().optional(),
   notes: z.string().optional()
 });
@@ -56,13 +56,20 @@ router.post("/generate", async (req, res) => {
   const { period, label, notes } = parsed.data;
   const orgId = req.user!.orgId;
 
-  // Guard against duplicate runs for the same period
-  const { data: existingRun } = await supabase
+  // Guard against duplicate runs for the same period, even if one side used YYYY-MM.
+  const normalizedPeriodKey = payrollPeriodKey(period);
+  const { data: existingRuns, error: existingError } = await supabase
     .from("payroll_runs")
-    .select("id")
+    .select("id, period")
     .eq("org_id", orgId)
-    .eq("period", period)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
+  if (existingError) {
+    res.status(500).json({ error: existingError.message });
+    return;
+  }
+  const existingRun = (existingRuns ?? []).find((run) =>
+    normalizedPeriodKey ? payrollPeriodKey(run.period ?? "") === normalizedPeriodKey : run.period === period
+  );
   if (existingRun) {
     res.status(409).json({ error: `A payroll run for "${period}" already exists.` });
     return;

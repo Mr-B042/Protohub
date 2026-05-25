@@ -37,6 +37,8 @@ export type PayStructure = {
 type PayrollPenalty = {
   rep_id: string;
   amount?: number | null;
+  period?: string | null;
+  created_at?: string | null;
 };
 
 export type PayrollOrder = {
@@ -110,10 +112,15 @@ export const defaultBonusConfig = (): Required<ProductBonusConfig> => ({
 });
 
 const parsePayrollPeriod = (period: string): PeriodBounds | null => {
-  const parts = period.trim().split(/\s+/);
-  const periodDate = parts.length === 2
-    ? new Date(`${parts[0]} 1, ${parts[1]}`)
-    : new Date(`${period} 1`);
+  const trimmed = period.trim().replace(/\s+Payroll$/i, "");
+  const isoMonthMatch = trimmed.match(/^(\d{4})-(\d{2})$/);
+  const isoMonthNumber = isoMonthMatch ? Number(isoMonthMatch[2]) : 0;
+  if (isoMonthMatch && (isoMonthNumber < 1 || isoMonthNumber > 12)) {
+    return null;
+  }
+  const periodDate = isoMonthMatch
+    ? new Date(Number(isoMonthMatch[1]), isoMonthNumber - 1, 1)
+    : new Date(`${trimmed} 1`);
   if (Number.isNaN(periodDate.getTime())) {
     return null;
   }
@@ -129,6 +136,8 @@ const parsePayrollPeriod = (period: string): PeriodBounds | null => {
     periodEndTs: `${periodEndDate}T00:00:00`
   };
 };
+
+export const payrollPeriodKey = (period: string) => parsePayrollPeriod(period)?.periodStartDate.slice(0, 7) ?? "";
 
 export const normalizeDateKey = (value?: string | null) => {
   if (!value) return "";
@@ -303,7 +312,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
       .neq("status", "Delivered")
       .gte("created_at", bounds.periodStartTs)
       .lt("created_at", bounds.periodEndTs),
-    supabase.from("rep_penalties").select("rep_id, amount").eq("org_id", orgId).eq("period", period)
+    supabase.from("rep_penalties").select("rep_id, amount, period, created_at").eq("org_id", orgId)
   ]);
 
   const settled = [usersResult, structuresResult, productsResult, orgResult, deliveredOrdersResult, deliveredFallbackOrdersResult, pendingOrdersResult, penaltiesResult];
@@ -316,7 +325,13 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
   const structures = (structuresResult.data ?? []) as PayStructure[];
   const products = (productsResult.data ?? []) as ProductRecord[];
   const org = orgResult.data as { top_performer_bonus_enabled?: boolean | null; top_performer_bonus_amount?: number | null } | null;
-  const penalties = (penaltiesResult.data ?? []) as PayrollPenalty[];
+  const selectedPeriodKey = bounds.periodStartDate.slice(0, 7);
+  const penalties = ((penaltiesResult.data ?? []) as PayrollPenalty[]).filter((penalty) => {
+    const savedPeriodKey = penalty.period ? payrollPeriodKey(penalty.period) : "";
+    if (savedPeriodKey) return savedPeriodKey === selectedPeriodKey;
+    const createdKey = normalizeDateKey(penalty.created_at);
+    return createdKey >= bounds.periodStartDate && createdKey < bounds.periodEndDate;
+  });
 
   const deliveredOrders = new Map<string, PayrollOrder>();
   for (const order of [...(deliveredOrdersResult.data ?? []), ...(deliveredFallbackOrdersResult.data ?? [])] as PayrollOrder[]) {

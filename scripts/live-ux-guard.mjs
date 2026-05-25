@@ -152,6 +152,18 @@ const checks = [
       "/dashboard/admin/waybill",
       "/dashboard/admin/customers"
     ]
+  },
+  {
+    name: "Smart payroll month picker",
+    why: "Payroll month selection must stay as a real month picker with period-aware penalties and duplicate-run protection.",
+    required: [
+      "payrollMonthKeyFromPeriod",
+      "type=\"month\"",
+      "Preview ${selectedPayrollMonthLabel}",
+      "period: record.period",
+      "existingPayrollRunForMonth",
+      "payrollPeriodPenalties"
+    ]
   }
 ];
 

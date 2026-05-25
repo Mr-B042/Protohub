@@ -561,6 +561,7 @@ type RepPenaltyRecord = {
   type: RepPenaltyType;
   amount: number;
   removeAllBonuses: boolean;
+  period?: string;
   weekKey?: string;
   orderId?: string;
   reason: string;
@@ -2013,6 +2014,37 @@ const formatDateKey = (date: Date) => {
 
 const monthLabel = (date: Date) =>
   new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+
+const payrollMonthKeyFromDate = (date = new Date()) => {
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  return `${safeDate.getFullYear()}-${String(safeDate.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const payrollMonthLabelFromKey = (key: string) => {
+  if (!/^\d{4}-\d{2}$/.test(key)) return "";
+  const [year, month] = key.split("-").map(Number);
+  if (!year || month < 1 || month > 12) return "";
+  return monthLabel(new Date(year, month - 1, 1));
+};
+
+const payrollMonthKeyFromPeriod = (period?: string | null) => {
+  const rawValue = period?.trim() ?? "";
+  if (!rawValue) return "";
+  if (/^\d{4}-\d{2}$/.test(rawValue)) return rawValue;
+  const value = rawValue.replace(/\s+Payroll$/i, "");
+  const isoDateMatch = value.match(/^(\d{4})-(\d{2})-\d{2}/);
+  if (isoDateMatch) return `${isoDateMatch[1]}-${isoDateMatch[2]}`;
+  const parsed = new Date(`${value} 1`);
+  return Number.isNaN(parsed.getTime()) ? "" : payrollMonthKeyFromDate(parsed);
+};
+
+const currentPayrollMonthLabel = () => payrollMonthLabelFromKey(payrollMonthKeyFromDate()) || monthLabel(new Date());
+
+const shiftPayrollMonthKey = (key: string, delta: number) => {
+  const base = /^\d{4}-\d{2}$/.test(key) ? new Date(`${key}-01T00:00:00`) : new Date();
+  base.setMonth(base.getMonth() + delta);
+  return payrollMonthKeyFromDate(base);
+};
 
 const addMonths = (date: Date, months: number) => new Date(date.getFullYear(), date.getMonth() + months, 1);
 
@@ -4892,8 +4924,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
   const [payrollTab, setPayrollTab] = useState<PayrollTab>("Pay Rates");
-  const [payrollMonth, setPayrollMonth] = useState(() => new Date().toLocaleString("en-US", { month: "long", year: "numeric" }));
-  const [payrollLabel, setPayrollLabel] = useState(() => `${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })} Payroll`);
+  const [payrollMonth, setPayrollMonth] = useState(currentPayrollMonthLabel);
+  const [payrollLabel, setPayrollLabel] = useState(() => `${currentPayrollMonthLabel()} Payroll`);
   const [payrollNotes, setPayrollNotes] = useState("");
   const [payStructureType, setPayStructureType] = useState<PayStructureType>("Per Delivered Order");
   const [bonusTiers, setBonusTiers] = useState<BonusTier[]>([{ threshold: 50, amount: 5000 }, { threshold: 100, amount: 15000 }]);
@@ -10865,6 +10897,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     }
     const rep = users.find((u) => u.id === penaltyTargetRepId);
     const amount = Number(penaltyAmount) || 0;
+    const penaltyPeriodKey = payrollMonthKeyFromPeriod(payrollMonth) || payrollMonthKeyFromDate();
+    const penaltyPeriod = payrollMonthLabelFromKey(penaltyPeriodKey) || payrollMonth.trim() || currentPayrollMonthLabel();
     const record: RepPenaltyRecord = {
       id: makePenaltyId(),
       repId: penaltyTargetRepId,
@@ -10872,6 +10906,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       type: penaltyType,
       amount,
       removeAllBonuses: penaltyRemoveAllBonuses,
+      period: penaltyPeriod,
       orderId: penaltyOrderId || undefined,
       reason: penaltyReason.trim(),
       date: new Date().toISOString(),
@@ -10896,6 +10931,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       type: record.type,
       amount: record.amount,
       removeAllBonuses: record.removeAllBonuses,
+      period: record.period,
       orderId: record.orderId,
       reason: record.reason,
       byName: record.by
@@ -11559,6 +11595,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const payrollPreviewRows = payrollPreviewData?.rows ?? [];
   const topPerformerInfo = payrollPreviewData?.topPerformer ?? null;
   const payrollGrandTotal = payrollPreviewData?.total ?? 0;
+  const selectedPayrollMonthKey = payrollMonthKeyFromPeriod(payrollMonth) || payrollMonthKeyFromDate();
+  const selectedPayrollMonthLabel = payrollMonthLabelFromKey(selectedPayrollMonthKey) || payrollMonth.trim() || currentPayrollMonthLabel();
+  const currentPayrollMonthKey = payrollMonthKeyFromDate();
+  const payrollPreviewPeriodKey = payrollMonthKeyFromPeriod(payrollPreviewData?.period);
+  const payrollPreviewIsStale = !!payrollPreviewData && payrollPreviewPeriodKey !== selectedPayrollMonthKey;
+  const existingPayrollRunForMonth = payrollRuns.find((run) =>
+    payrollMonthKeyFromPeriod(run.month || run.label) === selectedPayrollMonthKey
+  );
+  const payrollPeriodPenalties = repPenalties.filter((pen) => {
+    const savedPeriodKey = payrollMonthKeyFromPeriod(pen.period);
+    if (savedPeriodKey) return savedPeriodKey === selectedPayrollMonthKey;
+    const penaltyDate = new Date(pen.date);
+    if (Number.isNaN(penaltyDate.getTime())) return false;
+    const penaltyPeriodKey = payrollMonthKeyFromDate(penaltyDate);
+    return penaltyPeriodKey === selectedPayrollMonthKey;
+  });
   const roundRobinActiveRows = activeSalesRepUsers
     .map((user) => ({
       user,
@@ -13181,6 +13233,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             type: p.type,
             amount: Number(p.amount ?? 0),
             removeAllBonuses: p.removeAllBonuses ?? p.remove_all_bonuses ?? false,
+            period: p.period ?? undefined,
             orderId: p.orderId ?? p.order_id ?? undefined,
             reason: p.reason ?? "",
             date: p.date ?? p.createdAt ?? p.created_at ?? "",
@@ -19226,11 +19279,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const previewPayroll = async () => {
-    const period = payrollMonth.trim();
+    const periodKey = payrollMonthKeyFromPeriod(payrollMonth);
+    const period = periodKey ? payrollMonthLabelFromKey(periodKey) : "";
     if (!period) {
-      showToast("Enter a payroll month first.");
+      showToast("Choose a valid payroll month first.");
       return;
     }
+    setPayrollMonth(period);
     setPayrollLabel(`${period} Payroll`);
     setPayrollPreviewLoading(true);
     try {
@@ -19269,16 +19324,31 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   };
 
   const savePayrollDraft = () => {
+    const periodKey = payrollMonthKeyFromPeriod(payrollMonth);
+    const period = periodKey ? payrollMonthLabelFromKey(periodKey) : "";
+    if (!period) {
+      showToast("Choose a valid payroll month first.");
+      return;
+    }
+    if (payrollPreviewIsStale) {
+      showToast(`Preview ${period} before saving this payroll.`);
+      return;
+    }
+    if (existingPayrollRunForMonth) {
+      showToast(`A ${existingPayrollRunForMonth.status ?? "Draft"} payroll already exists for ${period}.`);
+      return;
+    }
     if (payrollPreviewRows.length === 0) {
-      showToast("Set at least one pay rate before saving payroll.");
+      showToast(`Preview ${period} before saving payroll.`);
       return;
     }
 
     const localId = makePayrollRunId();
+    const label = payrollLabel || `${period} Payroll`;
     const run: PayrollRun = {
       id: localId,
-      month: payrollMonth,
-      label: payrollLabel || `${payrollMonth} Payroll`,
+      month: period,
+      label,
       notes: payrollNotes,
       total: payrollGrandTotal,
       status: "Draft",
@@ -19289,7 +19359,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setPayrollRuns((value) => [run, ...value]);
     setPayrollTab("History");
     showToast(`${run.label} saved as a draft.`);
-    payrollApi.generate({ period: payrollMonth }).then((saved: any) => {
+    payrollApi.generate({ period, label, notes: payrollNotes }).then((saved: any) => {
       if (saved?.id) setPayrollRuns((prev) => prev.map((r) => r.id === localId ? { ...r, id: saved.id } : r));
     }).catch((err: any) => {
       setPayrollRuns((prev) => prev.filter((r) => r.id !== localId));
@@ -28696,27 +28766,71 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </section>
               ) : payrollTab === "Run Payroll" ? (
                 <section className="space-y-5" aria-label="Run payroll">
-                  <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-4">
-                    <label className="flex flex-col gap-1 w-full sm:w-auto">
-                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Payroll Month</span>
-                      <div className="flex items-center gap-2 h-10 sm:h-9 px-3 border border-gray-200 rounded-md bg-white focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-auto">
-                        <input className="bg-transparent outline-none text-sm text-gray-700 w-full sm:w-32" value={payrollMonth} onChange={(event) => {
-                          setPayrollMonth(event.target.value);
-                          setPayrollLabel(`${event.target.value || "Monthly"} Payroll`);
-                          setPayrollPreviewData(null);
-                        }} />
-                        <CalendarDays className="w-4 h-4 text-gray-400" />
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-col lg:flex-row lg:items-end gap-4">
+                      <label className="flex flex-col gap-1 w-full sm:w-auto">
+                        <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Payroll Month</span>
+                        <div className="flex items-center gap-2 h-12 sm:h-11 px-3 border border-gray-200 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:w-52">
+                          <CalendarDays className="w-4 h-4 text-gray-400" />
+                          <input
+                            type="month"
+                            className="bg-transparent outline-none text-sm font-semibold text-gray-800 w-full"
+                            value={selectedPayrollMonthKey}
+                            max={currentPayrollMonthKey}
+                            onChange={(event) => {
+                              const nextLabel = payrollMonthLabelFromKey(event.target.value);
+                              setPayrollMonth(nextLabel || event.target.value);
+                              setPayrollLabel(`${nextLabel || "Monthly"} Payroll`);
+                              setPayrollPreviewData(null);
+                            }}
+                          />
+                        </div>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2 w-full sm:w-auto">
+                        {[
+                          { label: "Previous", key: shiftPayrollMonthKey(selectedPayrollMonthKey, -1), disabled: false },
+                          { label: "This Month", key: currentPayrollMonthKey, disabled: false },
+                          { label: "Next", key: shiftPayrollMonthKey(selectedPayrollMonthKey, 1), disabled: selectedPayrollMonthKey >= currentPayrollMonthKey }
+                        ].map((item) => (
+                          <button
+                            key={item.label}
+                            className="!min-h-0 inline-flex h-11 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 px-3 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-45"
+                            onClick={() => {
+                              const nextLabel = payrollMonthLabelFromKey(item.key);
+                              if (!nextLabel) {
+                                showToast("Choose a valid payroll month.");
+                                return;
+                              }
+                              setPayrollMonth(nextLabel);
+                              setPayrollLabel(`${nextLabel} Payroll`);
+                              setPayrollPreviewData(null);
+                            }}
+                            disabled={item.disabled}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
                       </div>
-                    </label>
-                    <button
-                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                      onClick={previewPayroll}
-                      disabled={payrollPreviewLoading}
-                    >
-                      <Eye className="w-4 h-4" /> {payrollPreviewLoading ? "Previewing..." : "Preview"}
-                    </button>
+                      <button
+                        className="!min-h-0 inline-flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-[#1F8FE0] bg-[#1F8FE0] px-5 text-sm font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={previewPayroll}
+                        disabled={payrollPreviewLoading || !selectedPayrollMonthKey}
+                      >
+                        <Eye className="w-4 h-4" /> {payrollPreviewLoading ? "Previewing..." : `Preview ${selectedPayrollMonthLabel}`}
+                      </button>
+                    </div>
+                    <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-500">
+                      {existingPayrollRunForMonth ? (
+                        <span>A {existingPayrollRunForMonth.status ?? "Draft"} payroll already exists for {selectedPayrollMonthLabel}. You can preview again, but saving will stay locked to prevent duplicates.</span>
+                      ) : payrollPreviewIsStale ? (
+                        <span>Preview is for another month. Click Preview {selectedPayrollMonthLabel} to refresh the totals.</span>
+                      ) : payrollPreviewRows.length > 0 ? (
+                        <span>Preview ready: {payrollPreviewRows.length} team member{payrollPreviewRows.length === 1 ? "" : "s"} · {formatMoney(payrollGrandTotal)} total.</span>
+                      ) : (
+                        <span>Choose a payroll month, then preview. Penalties are matched to this exact month.</span>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-500">Select a month and click Preview to calculate payroll.</p>
                   {topPerformerInfo && (
                     <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
                       <span className="text-amber-600 font-black">🏆</span>
@@ -28831,13 +28945,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700" onClick={() => openAddPenalty()}>+ Apply Penalty</button>
                     </div>
                     {(() => {
-                      const periodPenalties = repPenalties.filter((pen) => {
-                        try {
-                          return new Date(pen.date).toLocaleString("en-US", { month: "long", year: "numeric" }) === payrollMonth.trim();
-                        } catch { return false; }
-                      });
+                      const periodPenalties = payrollPeriodPenalties;
                       if (periodPenalties.length === 0) {
-                        return <p className="text-xs text-gray-400 italic">No penalties recorded for {payrollMonth}.</p>;
+                        return <p className="text-xs text-gray-400 italic">No penalties recorded for {selectedPayrollMonthLabel}.</p>;
                       }
                       return (
                         <div className="rounded-lg border border-gray-200 overflow-hidden">
@@ -28901,7 +29011,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Notes (optional)</span>
                       <textarea className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] resize-none" rows={3} value={payrollNotes} onChange={(event) => setPayrollNotes(event.target.value)} placeholder="Any notes for this payroll run..." />
                     </label>
-                    <button className="!min-h-0 self-stretch sm:self-start inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors" onClick={savePayrollDraft}>Save as Draft</button>
+                    <button
+                      className="!min-h-0 self-stretch sm:self-start inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={savePayrollDraft}
+                      disabled={payrollPreviewRows.length === 0 || payrollPreviewIsStale || !!existingPayrollRunForMonth}
+                    >
+                      Save as Draft
+                    </button>
                   </div>
                 </section>
               ) : (
