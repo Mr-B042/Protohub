@@ -222,6 +222,7 @@ export const authApi = {
       campaigns: Record<string, string>;
       creatives: Record<string, string>;
     };
+    adTrackingLabelsShared?: boolean;
   }>("/api/auth/me"),
   bumpCacheVersion: () => post<{ cacheVersion: number }>("/api/auth/bump-cache-version", {}),
   updateBranding: (body: {
@@ -267,9 +268,16 @@ export const authApi = {
     creatives?: Record<string, string>;
   }) =>
     patch<{
+      shared?: boolean;
       campaigns: Record<string, string>;
       creatives: Record<string, string>;
     }>("/api/auth/ad-tracking-labels", body),
+  adTrackingLabels: () =>
+    get<{
+      shared?: boolean;
+      campaigns: Record<string, string>;
+      creatives: Record<string, string>;
+    }>("/api/auth/ad-tracking-labels"),
 
   invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
     post<{ message: string }>("/api/auth/invite", body),

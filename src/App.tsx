@@ -5152,6 +5152,14 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
 };
 // ─── End Phase 1 restoration ───
 
+const normalizeAdTrackingLabelMap = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const next: Record<string, string> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, label]) => {
+    if (typeof label === "string" && label.trim()) next[key] = label.trim().slice(0, 80);
+  });
+  return next;
+};
 
 export function App({ onLogout }: { onLogout?: () => void }) {
   const authUser = auth.getUser();
@@ -5840,6 +5848,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [adTrackingLabelDraft, setAdTrackingLabelDraft] = useState("");
   const [adTrackingLabelSaving, setAdTrackingLabelSaving] = useState(false);
   const [adTrackingLabelsLoadedScope, setAdTrackingLabelsLoadedScope] = useState<string | null>(null);
+  const [adTrackingLabelSyncState, setAdTrackingLabelSyncState] = useState<"checking" | "shared" | "local-cache" | "error">("checking");
+  const [adTrackingLabelSyncMessage, setAdTrackingLabelSyncMessage] = useState("");
   const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
   const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
@@ -5881,13 +5891,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     const parseLabelMap = (raw: string): Record<string, string> | null => {
       try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-        const next: Record<string, string> = {};
-        Object.entries(parsed).forEach(([key, value]) => {
-          if (typeof value === "string" && value.trim()) next[key] = value.trim();
-        });
-        return next;
+        return normalizeAdTrackingLabelMap(JSON.parse(raw));
       } catch {
         return null;
       }
@@ -5897,6 +5901,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setEditingAdTrackingLabel(null);
     setAdTrackingLabelDraft("");
     setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+    setAdTrackingLabelSyncState(auth.getAccessToken() ? "checking" : "local-cache");
+    setAdTrackingLabelSyncMessage("");
   }, [adTrackingLabelScope]);
 
   useEffect(() => {
@@ -5929,6 +5935,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const isPageAllowed = (page: ActivePage) => currentAllowedPages.includes(page);
   const canManageMessagingSettings = currentRole === "Owner";
   const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
+  const canManageAdTrackingLabels = ["Owner", "Admin", "Manager"].includes(currentRole);
   const emailActivityPageSize = 10;
   const smsActivityPageSize = 10;
   // Owner / Admin / Manager see org-wide data; everyone else is pinned to
@@ -6043,17 +6050,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setWorkingDayEnd(res.workingDayEnd);
       }
       if (res?.adTrackingLabels) {
-        setCampaignCardLabels(
-          res.adTrackingLabels.campaigns && typeof res.adTrackingLabels.campaigns === "object"
-            ? res.adTrackingLabels.campaigns
-            : {}
-        );
-        setCreativeCardLabels(
-          res.adTrackingLabels.creatives && typeof res.adTrackingLabels.creatives === "object"
-            ? res.adTrackingLabels.creatives
-            : {}
-        );
+        setCampaignCardLabels(normalizeAdTrackingLabelMap(res.adTrackingLabels.campaigns));
+        setCreativeCardLabels(normalizeAdTrackingLabelMap(res.adTrackingLabels.creatives));
         setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+        setAdTrackingLabelSyncState(res.adTrackingLabelsShared === false ? "local-cache" : "shared");
+        setAdTrackingLabelSyncMessage(
+          res.adTrackingLabelsShared === false
+            ? "Shared ad labels are not active on the server yet, so labels on this screen may only be cached on this device."
+            : ""
+        );
       }
       workingScheduleSyncedRef.current = {
         enabled: !!res?.workingScheduleEnabled,
@@ -6099,6 +6104,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setCustomerFlags((prev) => ({ ...prev, ...next }));
     }).catch(() => { /* defaults stay */ });
   }, []);
+
+  useEffect(() => {
+    if (activePage !== "Ad Tracking" || !auth.getAccessToken()) return;
+
+    let cancelled = false;
+    let pollingHandle: number | undefined;
+    const syncSharedLabels = async (silent = false) => {
+      if (!silent) {
+        setAdTrackingLabelSyncState("checking");
+      }
+      try {
+        const labels = await authApi.adTrackingLabels();
+        if (cancelled) return;
+        setCampaignCardLabels(normalizeAdTrackingLabelMap(labels?.campaigns));
+        setCreativeCardLabels(normalizeAdTrackingLabelMap(labels?.creatives));
+        setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+        setAdTrackingLabelSyncState(labels?.shared === false ? "local-cache" : "shared");
+        setAdTrackingLabelSyncMessage(
+          labels?.shared === false
+            ? "Shared campaign labels are not active on the server yet. Labels may only show on this device."
+            : ""
+        );
+      } catch (err: any) {
+        if (cancelled) return;
+        const message = (err?.message ?? "").toLowerCase().includes("migration 076")
+          ? "Shared campaign labels need the database migration before they can sync across devices."
+          : "Could not refresh shared campaign labels from the server yet.";
+        setAdTrackingLabelSyncState("error");
+        setAdTrackingLabelSyncMessage(message);
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void syncSharedLabels(true);
+      }
+    };
+
+    void syncSharedLabels(true);
+    pollingHandle = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void syncSharedLabels(true);
+    }, 30_000);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (pollingHandle) window.clearInterval(pollingHandle);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activePage, adTrackingLabelScope]);
 
   // Sync org-level settings (branding + payroll bonus) back to the server,
   // debounced, so other devices see the same values. Only Owner/Admin can
@@ -8719,6 +8774,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
   }, [activePage, adTrackingJourneyCartIdsKey, adTrackingTab]);
   const beginAdTrackingLabelEdit = (kind: "campaign" | "creative", id: string) => {
+    if (!canManageAdTrackingLabels) {
+      showToast("Only Owner, Admin, or Manager can edit shared ad labels.");
+      return;
+    }
     setEditingAdTrackingLabel({ kind, id });
     setAdTrackingLabelDraft(kind === "campaign" ? campaignCardLabelFor(id) : creativeCardLabelFor(id));
   };
@@ -8744,20 +8803,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         campaigns: nextCampaignLabels,
         creatives: nextCreativeLabels
       });
-      setCampaignCardLabels(saved?.campaigns && typeof saved.campaigns === "object" ? saved.campaigns : nextCampaignLabels);
-      setCreativeCardLabels(saved?.creatives && typeof saved.creatives === "object" ? saved.creatives : nextCreativeLabels);
-      showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared.`);
+      setCampaignCardLabels(normalizeAdTrackingLabelMap(saved?.campaigns ?? nextCampaignLabels));
+      setCreativeCardLabels(normalizeAdTrackingLabelMap(saved?.creatives ?? nextCreativeLabels));
+      setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+      setAdTrackingLabelSyncState("shared");
+      setAdTrackingLabelSyncMessage("");
+      showToast(trimmed ? `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label saved for everyone.` : `${editingAdTrackingLabel.kind === "campaign" ? "Campaign" : "Creative"} label cleared for everyone.`);
       setEditingAdTrackingLabel(null);
       setAdTrackingLabelDraft("");
     } catch (err: any) {
-      setCampaignCardLabels(nextCampaignLabels);
-      setCreativeCardLabels(nextCreativeLabels);
-      setEditingAdTrackingLabel(null);
-      setAdTrackingLabelDraft("");
       if ((err?.message ?? "").toLowerCase().includes("migration 076")) {
-        showToast("Shared labels are not active in the database yet. Saved on this device for now.");
+        setAdTrackingLabelSyncState("error");
+        setAdTrackingLabelSyncMessage("Shared campaign labels need the database migration before they can sync across devices.");
+        showToast("Label was not saved. Shared labels need the database migration before they can sync.");
+      } else if (err?.status === 403) {
+        setAdTrackingLabelSyncState("error");
+        setAdTrackingLabelSyncMessage("Only Owner, Admin, or Manager can save shared campaign labels.");
+        showToast("Label was not saved. Only Owner, Admin, or Manager can edit shared labels.");
       } else {
-        showToast(`Could not sync this ${editingAdTrackingLabel.kind} label right now. Saved on this device for now.`);
+        setAdTrackingLabelSyncState("error");
+        setAdTrackingLabelSyncMessage("The label was not saved because the server did not confirm it. Please try again.");
+        showToast(`Could not save this ${editingAdTrackingLabel.kind} label for the team. Please try again.`);
       }
     } finally {
       setAdTrackingLabelSaving(false);
@@ -33220,6 +33286,48 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
 
               <DataErrorBanner />
+              <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${
+                adTrackingLabelSyncState === "shared"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  : adTrackingLabelSyncState === "checking"
+                    ? "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200"
+                    : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100"
+              }`}>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="inline-flex items-center gap-2">
+                    {adTrackingLabelSyncState === "shared" ? <CheckCircle2 className="h-4 w-4" /> : <RefreshCw className={`h-4 w-4 ${adTrackingLabelSyncState === "checking" ? "animate-spin" : ""}`} />}
+                    {adTrackingLabelSyncState === "shared"
+                      ? "Campaign and creative labels are shared with the whole team."
+                      : adTrackingLabelSyncState === "checking"
+                        ? "Checking shared campaign labels..."
+                        : adTrackingLabelSyncMessage || "Campaign labels are not syncing right now."}
+                  </span>
+                  {adTrackingLabelSyncState !== "shared" && (
+                    <button
+                      type="button"
+                      className="inline-flex w-fit items-center gap-2 rounded-lg border border-current/20 bg-white/60 px-3 py-1.5 text-xs font-bold hover:bg-white dark:bg-slate-900/60 dark:hover:bg-slate-900"
+                      onClick={async () => {
+                        setAdTrackingLabelSyncState("checking");
+                        try {
+                          const labels = await authApi.adTrackingLabels();
+                          setCampaignCardLabels(normalizeAdTrackingLabelMap(labels?.campaigns));
+                          setCreativeCardLabels(normalizeAdTrackingLabelMap(labels?.creatives));
+                          setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+                          setAdTrackingLabelSyncState("shared");
+                          setAdTrackingLabelSyncMessage("");
+                          showToast("Shared ad labels refreshed.");
+                        } catch (err: any) {
+                          setAdTrackingLabelSyncState("error");
+                          setAdTrackingLabelSyncMessage(err?.message ?? "Could not refresh shared labels.");
+                          showToast("Could not refresh shared ad labels yet.");
+                        }
+                      }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Retry sync
+                    </button>
+                  )}
+                </div>
+              </div>
               {dataLoading && <TableSkeleton cols={8} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
 

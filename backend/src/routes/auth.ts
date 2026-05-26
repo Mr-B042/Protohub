@@ -40,6 +40,22 @@ const sanitizeAdTrackingLabelMap = (value: unknown) => {
   return next;
 };
 
+const loadOrgAdTrackingLabels = async (orgId: string) => {
+  const { data, error } = await supabase
+    .from("organizations")
+    .select("ad_tracking_campaign_labels, ad_tracking_creative_labels")
+    .eq("id", orgId)
+    .single();
+  if (error) throw error;
+  return {
+    campaigns: sanitizeAdTrackingLabelMap(data?.ad_tracking_campaign_labels),
+    creatives: sanitizeAdTrackingLabelMap(data?.ad_tracking_creative_labels)
+  };
+};
+
+const isMissingAdTrackingLabelsColumn = (error: { code?: string; message?: string } | null | undefined) =>
+  Boolean(error?.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels/i.test(error?.message ?? ""));
+
 const DEFAULT_SMART_STOCK_RULES = {
   demandLookbackDays: 7,
   dormantDays: 21,
@@ -271,6 +287,7 @@ router.get("/me", requireAuth, async (req, res) => {
   const orgSelectWithAdTracking = `${orgSelectBase}, ad_tracking_campaign_labels, ad_tracking_creative_labels`;
   let org: Record<string, unknown> | null = null;
   let orgError: { code?: string; message?: string } | null = null;
+  let adTrackingLabelsShared = true;
   const initialOrgQuery = await supabase
     .from("organizations")
     .select(orgSelectWithAdTracking)
@@ -278,7 +295,10 @@ router.get("/me", requireAuth, async (req, res) => {
     .single();
   org = initialOrgQuery.data as Record<string, unknown> | null;
   orgError = initialOrgQuery.error;
-  if (orgError && (orgError.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels|smart_stock_/i.test(orgError.message ?? ""))) {
+  if (isMissingAdTrackingLabelsColumn(orgError)) {
+    adTrackingLabelsShared = false;
+  }
+  if (orgError && (isMissingAdTrackingLabelsColumn(orgError) || /smart_stock_/i.test(orgError.message ?? ""))) {
     const fallback = await supabase
       .from("organizations")
       .select(orgSelectBase)
@@ -314,6 +334,7 @@ router.get("/me", requireAuth, async (req, res) => {
     workingDays: normalizeWorkingDays(org?.working_days),
     workingDayStart: typeof org?.working_day_start === "string" && org.working_day_start.trim() ? org.working_day_start.trim() : "08:00",
     workingDayEnd: typeof org?.working_day_end === "string" && org.working_day_end.trim() ? org.working_day_end.trim() : "18:00",
+    adTrackingLabelsShared,
     adTrackingLabels: {
       campaigns: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_campaign_labels),
       creatives: sanitizeAdTrackingLabelMap((org as Record<string, unknown> | null)?.ad_tracking_creative_labels)
@@ -417,6 +438,19 @@ const AdTrackingLabelsSchema = z.object({
   creatives: z.record(z.string()).optional()
 });
 
+router.get("/ad-tracking-labels", requireAuth, async (req, res) => {
+  try {
+    const labels = await loadOrgAdTrackingLabels(req.user!.orgId);
+    res.json({ shared: true, ...labels });
+  } catch (error: any) {
+    if (isMissingAdTrackingLabelsColumn(error)) {
+      res.status(503).json({ error: "Shared ad tracking labels are not ready yet. Apply migration 076 first." });
+      return;
+    }
+    res.status(500).json({ error: error?.message ?? "Failed to load ad tracking labels." });
+  }
+});
+
 router.patch("/ad-tracking-labels", requireAuth, async (req, res) => {
   if (!["Owner", "Admin", "Manager"].includes(req.user!.role)) {
     res.status(403).json({ error: "You do not have permission to edit ad tracking labels." });
@@ -441,7 +475,7 @@ router.patch("/ad-tracking-labels", requireAuth, async (req, res) => {
     .select("ad_tracking_campaign_labels, ad_tracking_creative_labels")
     .single();
   if (error) {
-    if (error.code === "42703" || /ad_tracking_campaign_labels|ad_tracking_creative_labels/i.test(error.message ?? "")) {
+    if (isMissingAdTrackingLabelsColumn(error)) {
       res.status(503).json({ error: "Shared ad tracking labels are not ready yet. Apply migration 076 first." });
       return;
     }
@@ -449,6 +483,7 @@ router.patch("/ad-tracking-labels", requireAuth, async (req, res) => {
     return;
   }
   res.json({
+    shared: true,
     campaigns: sanitizeAdTrackingLabelMap(data?.ad_tracking_campaign_labels),
     creatives: sanitizeAdTrackingLabelMap(data?.ad_tracking_creative_labels)
   });
