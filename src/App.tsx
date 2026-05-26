@@ -3537,6 +3537,7 @@ type PublicFormSubmissionSection = {
   rows: PublicFormSubmissionField[];
   fullWidth?: boolean;
 };
+const CAPTURE_DATA_SECTION_TITLES = new Set(["Form Session", "Capture Details", "Ad Click IDs", "Device & Form Metadata"]);
 const hiddenFieldValuePresent = (value: unknown): boolean => {
   if (value == null) return false;
   if (typeof value === "string") return value.trim().length > 0;
@@ -3867,8 +3868,10 @@ const renderPublicFormFieldSections = (sections: PublicFormSubmissionSection[]) 
     </div>
   );
 };
-const renderPublicFormSubmissionDetails = (order: TrackedOrder) =>
-  renderPublicFormFieldSections(publicFormSubmissionSectionsFor(order));
+const publicFormSubmissionPrimarySectionsFor = (order: TrackedOrder) =>
+  publicFormSubmissionSectionsFor(order).filter((section) => !CAPTURE_DATA_SECTION_TITLES.has(section.title));
+const publicFormSubmissionCaptureSectionsFor = (order: TrackedOrder) =>
+  publicFormSubmissionSectionsFor(order).filter((section) => CAPTURE_DATA_SECTION_TITLES.has(section.title));
 const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
   return publicFormSubmissionSectionsFor(order).some((section) => section.rows.length > 0);
 };
@@ -7059,6 +7062,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderAuditLog, setOrderAuditLog] = useState<{ id: string; from_status: string | null; to_status: string; note: string | null; created_at: string; changed_by: string | null }[]>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
+  const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
+  const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
   const [whatsAppPicker, setWhatsAppPicker] = useState<null | {
     customerName: string;
     normalUrl: string;
@@ -7074,6 +7079,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentProductIds, setAgentProductIds] = useState<Set<string>>(new Set());
   const [showAgentProductFilter, setShowAgentProductFilter] = useState(false);
   const [agentDetailShowAll, setAgentDetailShowAll] = useState(false);
+  useEffect(() => {
+    if (modal !== "orderDetails") setExpandedOrderCaptureDataId(null);
+    if (modal !== "cartDetails") setExpandedCartCaptureDataId(null);
+  }, [modal]);
   // Stock Ledger filter state (lives at the agent-detail page level)
   const [ledgerScope, setLedgerScope] = useState<"7d" | "30d" | "period" | "all">("30d");
   const [ledgerDirection, setLedgerDirection] = useState<"all" | "in" | "out" | "corrections">("all");
@@ -39987,24 +39996,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  </section>
 	                )}
 
-	                {/* Section 7: Form Submission + Capture Data */}
-	                {hasPublicFormSubmissionDetails(selectedOrder) && (
-	                  <section>
-	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
-	                      <div>
-	                        <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission + Capture Data</h3>
-	                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Attribution shows UTM and referrer. Capture data shows embed label, session ID, landing page, device, ad click IDs, and form metadata.</p>
-	                      </div>
-	                      <button
-	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-	                      >
-	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-	                      </button>
-	                    </div>
-	                    {renderPublicFormSubmissionDetails(selectedOrder)}
-	                  </section>
-	                )}
+		                {/* Section 7: Form Submission + Capture Data */}
+		                {hasPublicFormSubmissionDetails(selectedOrder) && (() => {
+		                  const primarySections = publicFormSubmissionPrimarySectionsFor(selectedOrder);
+		                  const captureSections = publicFormSubmissionCaptureSectionsFor(selectedOrder);
+		                  const captureExpanded = expandedOrderCaptureDataId === selectedOrder.id;
+		                  return (
+		                    <section>
+		                      <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
+		                        <div>
+		                          <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission</h3>
+		                          <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Customer details, order intent, and attribution stay visible. Capture data is tucked away unless you need to inspect it.</p>
+		                        </div>
+		                        <button
+		                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
+		                          onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+		                        >
+		                          <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+		                        </button>
+		                      </div>
+		                      {renderPublicFormFieldSections(primarySections)}
+		                      {captureSections.length > 0 && (
+		                        <div className={`mt-3 rounded-2xl border ${orderBorderClass} ${orderPanelMutedClass} overflow-hidden`}>
+		                          <button
+		                            type="button"
+		                            className={`!min-h-0 w-full flex items-center justify-between gap-3 px-4 py-3 text-left ${orderTitleTextClass}`}
+		                            aria-expanded={captureExpanded}
+		                            onClick={() => setExpandedOrderCaptureDataId(captureExpanded ? null : selectedOrder.id)}
+		                          >
+		                            <span>
+		                              <span className="block text-[11px] font-bold uppercase tracking-[0.16em]">Capture Data</span>
+		                              <span className={`mt-1 block text-xs font-medium ${orderMutedTextClass}`}>Embed label, session ID, landing page, device, ad click IDs, and form metadata.</span>
+		                            </span>
+		                            <span className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold ${orderSecondaryButtonClass}`}>
+		                              {captureExpanded ? "Hide" : "View"} <ChevronDown className={`w-3.5 h-3.5 transition-transform ${captureExpanded ? "rotate-180" : ""}`} />
+		                            </span>
+		                          </button>
+		                          {captureExpanded && (
+		                            <div className={`border-t ${orderBorderClass} px-4 py-4`}>
+		                              {renderPublicFormFieldSections(captureSections)}
+		                            </div>
+		                          )}
+		                        </div>
+		                      )}
+		                    </section>
+		                  );
+		                })()}
 
                   {isOwnerOrAdmin && selectedOrder.sourceCartId && (
                     <section>
@@ -40667,10 +40704,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 		              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 		              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
-		              const selectedCartJourney = selectedCartJourneyEvents;
-		              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
-		              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
-		              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
+			              const selectedCartJourney = selectedCartJourneyEvents;
+			              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
+		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
+			              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
 		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
 		              const linkedOrderAddOnLines = selectedCartAddOnLinesFromOrder(linkedOrder);
 		              const capturedAddOnLines = capturedCartOfferLinesFor(selectedCart);
@@ -40856,19 +40894,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 		                        </div>
 		                      ) : null}
 		                    </div>
-		                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
-		                      <div className="flex items-start justify-between gap-2 mb-3">
-		                        <div>
-		                          <p className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-200 m-0">Capture Data</p>
-		                          <p className="text-[12px] text-slate-600 dark:text-slate-300 m-0 mt-0.5">Behind-the-scenes embed, session, landing page, device, ad click ID, and form metadata values. UTM/referrer stays under Attribution.</p>
-		                        </div>
-		                      </div>
-		                      {selectedCartHiddenFieldSections.length > 0 ? (
-		                        renderPublicFormFieldSections(selectedCartHiddenFieldSections)
-		                      ) : (
-		                        <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 m-0">No capture data was captured for this cart yet.</p>
-		                      )}
-		                    </div>
+			                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 dark:border-sky-500/30 dark:bg-sky-500/10 overflow-hidden">
+			                      <button
+			                        type="button"
+			                        className="!min-h-0 w-full flex items-center justify-between gap-3 px-3 py-3 text-left"
+			                        aria-expanded={cartCaptureDataExpanded}
+			                        onClick={() => setExpandedCartCaptureDataId(cartCaptureDataExpanded ? null : selectedCart.id)}
+			                      >
+			                        <span>
+			                          <span className="block text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-200">Capture Data</span>
+			                          <span className="mt-0.5 block text-[12px] text-slate-600 dark:text-slate-300">Embed, session, landing page, device, ad click ID, and form metadata values.</span>
+			                        </span>
+			                        <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-bold text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+			                          {cartCaptureDataExpanded ? "Hide" : "View"} <ChevronDown className={`w-3.5 h-3.5 transition-transform ${cartCaptureDataExpanded ? "rotate-180" : ""}`} />
+			                        </span>
+			                      </button>
+			                      {cartCaptureDataExpanded && (
+			                        <div className="border-t border-sky-200 px-3 py-3 dark:border-sky-500/30">
+			                          {selectedCartHiddenFieldSections.length > 0 ? (
+			                            renderPublicFormFieldSections(selectedCartHiddenFieldSections)
+			                          ) : (
+			                            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 m-0">No capture data was captured for this cart yet.</p>
+			                          )}
+			                        </div>
+			                      )}
+			                    </div>
 	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
 	                      <div className="flex items-center justify-between gap-2 mb-2">
 	                        <div>
