@@ -9578,6 +9578,16 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const overdueScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "Missed", scheduleTodayKey));
   const deliveredOnTimeScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "On Time", scheduleTodayKey));
   const deliveredLateScheduledRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, "Late", scheduleTodayKey));
+  const actuallyDeliveredScheduledRows = scheduledDeliveryBaseRows.filter((order) => (order.status ?? "New") === "Delivered");
+  const unresolvedScheduledRows = activeScheduledRows.filter((order) => !overdueScheduledRows.some((missed) => missed.id === order.id));
+  const failedOrCancelledScheduledRows = scheduledDeliveryBaseRows.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New"));
+  const unassignedScheduledRows = scheduledDeliveryBaseRows.filter((order) => !order.agentId && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New"));
+  const scheduledDeliveredRevenue = actuallyDeliveredScheduledRows.reduce((sum, order) => sum + order.amount, 0);
+  const scheduledCompletionRate = scheduledDeliveryBaseRows.length === 0 ? 0 : Math.round((actuallyDeliveredScheduledRows.length / scheduledDeliveryBaseRows.length) * 100);
+  const scheduledOnTimeRate = actuallyDeliveredScheduledRows.length === 0 ? 0 : Math.round((deliveredOnTimeScheduledRows.length / actuallyDeliveredScheduledRows.length) * 100);
+  const scheduledLateRate = actuallyDeliveredScheduledRows.length === 0 ? 0 : Math.round((deliveredLateScheduledRows.length / actuallyDeliveredScheduledRows.length) * 100);
+  const scheduledAttentionCount = overdueScheduledRows.length + failedOrCancelledScheduledRows.length + unassignedScheduledRows.length;
+  const scheduledDeliveryCurrency = scheduledDeliveryBaseRows[0]?.currency ?? "NGN";
   const SCHEDULE_PAGE_SIZE = 25;
   const scheduleTotalPages = Math.max(1, Math.ceil(scheduledDeliveryRows.length / SCHEDULE_PAGE_SIZE));
   const schedulePageClamped = Math.min(schedulePage, scheduleTotalPages);
@@ -26502,25 +26512,94 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
-              <section className="grid grid-cols-2 lg:grid-cols-5 gap-4" aria-label="Scheduled deliveries summary">
+              <section className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-4" aria-label="Scheduled delivery health">
+                <article className="relative overflow-hidden rounded-2xl border border-blue-100 bg-gradient-to-br from-white via-blue-50/70 to-sky-50 p-5 shadow-sm dark:border-sky-500/25 dark:from-[#0d1c2a] dark:via-[#0a1722] dark:to-[#07111b]">
+                  <div className="absolute -right-12 -top-12 h-36 w-36 rounded-full bg-[#1F8FE0]/15 blur-3xl" />
+                  <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-blue-700 dark:text-sky-200">Schedule health</p>
+                      <h2 className="m-0 mt-2 text-2xl font-black tracking-[-0.04em] text-gray-900 dark:text-slate-100">
+                        {actuallyDeliveredScheduledRows.length} of {scheduledDeliveryBaseRows.length} actually delivered
+                      </h2>
+                      <p className="m-0 mt-2 text-sm font-semibold text-gray-500 dark:text-slate-400">
+                        Target date: <span className="text-gray-900 dark:text-slate-100">{displayDateFromKey(scheduleTargetKey)}</span>. This shows whether scheduled promises became real deliveries.
+                      </p>
+                    </div>
+                    <div className="min-w-[180px] rounded-2xl border border-white/80 bg-white/85 p-4 text-center shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Delivery rate</p>
+                      <p className="m-0 mt-1 text-4xl font-black text-[#1F8FE0]">{scheduledCompletionRate}%</p>
+                      <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">{formatProductMoney(scheduledDeliveredRevenue, scheduledDeliveryCurrency)} delivered revenue</p>
+                    </div>
+                  </div>
+                  <div className="relative mt-5 h-3 overflow-hidden rounded-full bg-blue-100 dark:bg-slate-800">
+                    <div className="h-full rounded-full bg-gradient-to-r from-[#1F8FE0] to-emerald-400" style={{ width: `${Math.min(100, scheduledCompletionRate)}%` }} />
+                  </div>
+                  <div className="relative mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {[
+                      { label: "On-time rate", value: `${scheduledOnTimeRate}%`, sub: `${deliveredOnTimeScheduledRows.length} on time`, tone: "text-emerald-700 dark:text-emerald-200" },
+                      { label: "Late rate", value: `${scheduledLateRate}%`, sub: `${deliveredLateScheduledRows.length} late`, tone: "text-amber-700 dark:text-amber-200" },
+                      { label: "Still open", value: unresolvedScheduledRows.length, sub: "not delivered yet", tone: "text-sky-700 dark:text-sky-200" },
+                      { label: "Needs action", value: scheduledAttentionCount, sub: "overdue, failed, or no agent", tone: "text-rose-700 dark:text-rose-200" }
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-white/80 bg-white/80 px-3 py-3 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/60">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">{item.label}</p>
+                        <p className={`m-0 mt-1 text-2xl font-black ${item.tone}`}>{item.value}</p>
+                        <p className="m-0 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{item.sub}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 dark:text-slate-500">What needs attention</p>
+                      <h2 className="m-0 mt-2 text-xl font-black text-gray-900 dark:text-slate-100">Operational follow-up</h2>
+                    </div>
+                    <span className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl ${scheduledAttentionCount > 0 ? "bg-rose-50 text-rose-600 dark:bg-rose-500/12 dark:text-rose-200" : "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/12 dark:text-emerald-200"}`}>
+                      {scheduledAttentionCount > 0 ? <Siren className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {[
+                      { label: "Missed / overdue", value: overdueScheduledRows.length, helper: "promise date passed without delivery", tone: "text-rose-700 dark:text-rose-200" },
+                      { label: "No agent assigned", value: unassignedScheduledRows.length, helper: "open scheduled orders without logistics owner", tone: "text-amber-700 dark:text-amber-200" },
+                      { label: "Cancelled / failed", value: failedOrCancelledScheduledRows.length, helper: "scheduled promises that closed badly", tone: "text-slate-700 dark:text-slate-200" }
+                    ].map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/45">
+                        <div>
+                          <p className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{item.label}</p>
+                          <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{item.helper}</p>
+                        </div>
+                        <strong className={`text-2xl font-black ${item.tone}`}>{item.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </section>
+
+              <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Scheduled deliveries summary">
                 {[
-                  { title: "Scheduled In Range", value: String(scheduledDeliveryBaseRows.length), helper: "all scheduled orders on this date", icon: CalendarDays, tone: "blue" },
-                  { title: "Active Queue", value: String(activeScheduledRows.length), helper: "still pending or in progress", icon: Clock, tone: "cyan" },
-                  { title: "Delivered On Time", value: String(deliveredOnTimeScheduledRows.length), helper: "met the promised date", icon: CheckCircle2, tone: "green" },
-                  { title: "Delivered Late", value: String(deliveredLateScheduledRows.length), helper: "completed after the promise", icon: AlertTriangle, tone: "amber" },
-                  { title: "Missed / Overdue", value: String(overdueScheduledRows.length), helper: "promise date passed without delivery", icon: Siren, tone: "rose" }
+                  { title: "Scheduled", value: String(scheduledDeliveryBaseRows.length), helper: "all promises for this date", icon: CalendarDays, tone: "blue" },
+                  { title: "Actually Delivered", value: String(actuallyDeliveredScheduledRows.length), helper: `${scheduledCompletionRate}% delivered`, icon: CheckCircle2, tone: "green" },
+                  { title: "Still Open", value: String(activeScheduledRows.length), helper: `${unresolvedScheduledRows.length} open, ${overdueScheduledRows.length} overdue`, icon: Clock, tone: "cyan" },
+                  { title: "Delivered On Time", value: String(deliveredOnTimeScheduledRows.length), helper: "met or beat the promise", icon: CheckCircle2, tone: "green" },
+                  { title: "Delivered Late", value: String(deliveredLateScheduledRows.length), helper: "completed after promise", icon: AlertTriangle, tone: "amber" },
+                  { title: "Missed / Overdue", value: String(overdueScheduledRows.length), helper: "promise passed without delivery", icon: Siren, tone: "rose" },
+                  { title: "Cancelled / Failed", value: String(failedOrCancelledScheduledRows.length), helper: "bad schedule outcomes", icon: CircleX, tone: "rose" },
+                  { title: "Delivered Revenue", value: formatProductMoney(scheduledDeliveredRevenue, scheduledDeliveryCurrency), helper: "from actually delivered scheduled orders", icon: CircleDollarSign, tone: "blue" }
                 ].map((metric) => {
                   const Icon = metric.icon;
                   return (
-                    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow" key={metric.title}>
+                    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow dark:border-slate-800 dark:bg-[#101a24]" key={metric.title}>
                       <div className="flex items-center justify-between mb-3">
-                        <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "green" ? "bg-green-50 text-green-500" : metric.tone === "blue" ? "bg-blue-50 text-blue-500" : metric.tone === "amber" ? "bg-amber-50 text-amber-500" : metric.tone === "rose" ? "bg-rose-50 text-rose-500" : "bg-cyan-50 text-cyan-500"}`}>
+                        <span className={`w-10 h-10 rounded-full flex items-center justify-center ${metric.tone === "green" ? "bg-green-50 text-green-500 dark:bg-green-500/12 dark:text-green-200" : metric.tone === "blue" ? "bg-blue-50 text-blue-500 dark:bg-sky-500/12 dark:text-sky-200" : metric.tone === "amber" ? "bg-amber-50 text-amber-500 dark:bg-amber-500/12 dark:text-amber-200" : metric.tone === "rose" ? "bg-rose-50 text-rose-500 dark:bg-rose-500/12 dark:text-rose-200" : "bg-cyan-50 text-cyan-500 dark:bg-cyan-500/12 dark:text-cyan-200"}`}>
                           <Icon className="w-5 h-5" />
                         </span>
                       </div>
-                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{metric.title}</h2>
-                      <strong className={`text-2xl font-bold block my-1 ${metric.tone === "amber" ? "text-amber-700" : metric.tone === "rose" ? "text-rose-700" : "text-gray-900"}`}>{metric.value}</strong>
-                      <p className="text-[10px] text-gray-400 font-medium">{metric.helper}</p>
+                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider dark:text-slate-400">{metric.title}</h2>
+                      <strong className={`text-2xl font-bold block my-1 ${metric.tone === "amber" ? "text-amber-700 dark:text-amber-200" : metric.tone === "rose" ? "text-rose-700 dark:text-rose-200" : "text-gray-900 dark:text-slate-100"}`}>{metric.value}</strong>
+                      <p className="text-[10px] text-gray-400 font-medium dark:text-slate-500">{metric.helper}</p>
                     </article>
                   );
                 })}
