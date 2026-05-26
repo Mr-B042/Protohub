@@ -156,7 +156,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -1045,6 +1045,51 @@ type PayrollPreviewData = {
   rows: PayrollRun["rows"];
   total: number;
   topPerformer?: PayrollRun["topPerformer"] | null;
+};
+type BonusBreakdownComponentLine = {
+  label: string;
+  amount: number;
+  note: string;
+  tone: "earned" | "blocked" | "info";
+};
+type BonusBreakdownOrderLine = {
+  orderId: string;
+  customer: string;
+  productName: string;
+  packageName: string;
+  quantity: number;
+  amount: number;
+  currency: ProductCurrencyCode;
+  source: string;
+  createdKey: string;
+  deliveredKey: string;
+  isCarryover: boolean;
+  weeklyRate: number;
+  weeklyOrderCount: number;
+  base: number;
+  upgrade: number;
+  crossSell: number;
+  freeGift: number;
+  manual: number;
+  total: number;
+  components: BonusBreakdownComponentLine[];
+};
+type BonusBreakdownData = {
+  personName: string;
+  role: ManagedUser["role"];
+  weekLabel: string;
+  deliveredCount: number;
+  carryoverDelivered: number;
+  revenue: number;
+  aov: number;
+  cohortPlaced: number;
+  cohortDelivered: number;
+  cohortPending: number;
+  cohortRate: number | null;
+  finalRate: number | null;
+  targetRate: number;
+  totalBonus: number;
+  orders: BonusBreakdownOrderLine[];
 };
 type RepBonusSnapshot = {
   weekStart: string;
@@ -7150,6 +7195,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusTargetOrderId, setManualBonusTargetOrderId] = useState<string | null>(null);
   const [manualBonusAmount, setManualBonusAmount] = useState("");
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
+  const [bonusBreakdownData, setBonusBreakdownData] = useState<BonusBreakdownData | null>(null);
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>([]);
   const [dataLoading, setDataLoading] = useState(() => {
     if (auth.isLoggedIn()) return true;
@@ -11848,6 +11894,132 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const total = base + upgrade + crossSell + freeGift;
     return { base, upgrade, crossSell, freeGift, manual: 0, total, components };
   }
+
+  const buildOrderBonusBreakdownLine = (
+    order: TrackedOrder,
+    repWeeklyDeliveryRate: number,
+    repWeeklyOrderCount: number,
+    weekRange: { start: string; end: string }
+  ): BonusBreakdownOrderLine => {
+    const computed = computeOrderBonus(order, repWeeklyDeliveryRate, 0, repWeeklyOrderCount);
+    const product = products.find((p) => p.id === order.productId);
+    const cfg = productBonusConfig(product);
+    const qty = quantityForOrder(order);
+    const sourceLabel = order.source ?? orderSourceFromUtm(order.utmSource);
+    const isManualSourced = order.source === "WhatsApp";
+    const createdKey = orderCreatedKey(order);
+    const deliveredKey = orderDeliveredKey(order) || normalizeDateKey(order.deliveredDate ?? order.updatedAt ?? order.createdAt ?? order.date);
+    const componentLines: BonusBreakdownComponentLine[] = [];
+    const nearestQuantityRule = <T extends { quantity: number; amount: number }>(rules: T[]) =>
+      rules.find((rule) => rule.quantity === qty)
+        ?? rules.slice().sort((a, b) => Math.abs(a.quantity - qty) - Math.abs(b.quantity - qty))[0];
+
+    if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
+      componentLines.push({
+        label: "Manual override",
+        amount: order.manualBonusOverride,
+        note: order.manualBonusReason
+          ? `Owner/admin override was used instead of auto rules: ${order.manualBonusReason}`
+          : "Owner/admin override was used instead of auto rules.",
+        tone: order.manualBonusOverride > 0 ? "earned" : "blocked"
+      });
+    } else if ((order.status ?? "New") !== "Delivered") {
+      componentLines.push({
+        label: "Delivery requirement",
+        amount: 0,
+        note: `No per-order bonus because this order is currently ${order.status ?? "New"}, not Delivered.`,
+        tone: "blocked"
+      });
+    } else {
+      const baseRule = nearestQuantityRule(isManualSourced ? cfg.manualOrderBonuses : cfg.baseDelivered);
+      componentLines.push({
+        label: isManualSourced ? "Manual-source base bonus" : "Delivered base bonus",
+        amount: computed.base,
+        note: baseRule
+          ? `${sourceLabel} order, ${qty} pcs. Matched ${baseRule.quantity} pcs rule worth ${formatProductMoney(baseRule.amount, order.currency)}.`
+          : `${sourceLabel} order, ${qty} pcs. No matching base rule is configured for this product.`,
+        tone: computed.base > 0 ? "earned" : "blocked"
+      });
+
+      if (order.upsellFromQty && order.upsellToQty && order.upsellToQty > order.upsellFromQty) {
+        const upgradeRule = cfg.upgradeBonuses.find((rule) => rule.fromQty === order.upsellFromQty && rule.toQty === order.upsellToQty);
+        const meetsGate = repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
+        componentLines.push({
+          label: "Upgrade bonus",
+          amount: computed.upgrade,
+          note: upgradeRule
+            ? meetsGate
+              ? `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs qualified. Weekly delivery rate ${repWeeklyDeliveryRate}% met the ${cfg.upgradeRequiresMinDeliveryRate}% upgrade gate.`
+              : `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs matched ${formatProductMoney(upgradeRule.amount, order.currency)}, but weekly delivery rate ${repWeeklyDeliveryRate}% is below ${cfg.upgradeRequiresMinDeliveryRate}%, so half was counted.`
+            : `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs was recorded, but no matching upgrade rule exists.`,
+          tone: computed.upgrade > 0 ? "earned" : "blocked"
+        });
+      } else {
+        componentLines.push({
+          label: "Upgrade bonus",
+          amount: 0,
+          note: "No upsell quantity was recorded on this order.",
+          tone: "info"
+        });
+      }
+
+      const crossSellLineCount = order.crossSellLines?.length ?? 0;
+      const crossSellValue = (order.crossSellLines ?? []).reduce((sum, line) => sum + (line.amount || 0), 0);
+      componentLines.push({
+        label: "Cross-sell bonus",
+        amount: computed.crossSell,
+        note: crossSellLineCount > 0
+          ? `${crossSellLineCount} add-on line${crossSellLineCount === 1 ? "" : "s"} worth ${formatProductMoney(crossSellValue, order.currency)}. Formula: ${cfg.crossSellPercent}% of add-ons + ${formatProductMoney(cfg.crossSellFixed, order.currency)} fixed per line.`
+          : "No cross-sell/add-on line was attached to this delivered order.",
+        tone: computed.crossSell > 0 ? "earned" : crossSellLineCount > 0 ? "blocked" : "info"
+      });
+
+      const freeGiftCount = order.freeGiftLines?.length ?? 0;
+      componentLines.push({
+        label: "Free-gift bonus",
+        amount: computed.freeGift,
+        note: freeGiftCount > 0
+          ? `${freeGiftCount} free gift${freeGiftCount === 1 ? "" : "s"} attached. Rule pays ${formatProductMoney(cfg.freeGiftBonus, order.currency)} per gift.`
+          : "No free gift was attached to this delivered order.",
+        tone: computed.freeGift > 0 ? "earned" : freeGiftCount > 0 ? "blocked" : "info"
+      });
+
+      const poorRateGateApplies = repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent;
+      componentLines.push({
+        label: "Delivery-rate quality gate",
+        amount: 0,
+        note: poorRateGateApplies
+          ? `Gate applied: ${repWeeklyDeliveryRate}% is below ${cfg.poorDeliveryRatePercent}% with ${repWeeklyOrderCount} cohort order${repWeeklyOrderCount === 1 ? "" : "s"}, so only the base bonus survived.`
+          : repWeeklyOrderCount < cfg.deliveryRateMinOrders
+            ? `Gate not enforced yet because this person has ${repWeeklyOrderCount} cohort order${repWeeklyOrderCount === 1 ? "" : "s"}; product minimum is ${cfg.deliveryRateMinOrders}.`
+            : `Gate passed: ${repWeeklyDeliveryRate}% is at/above the ${cfg.poorDeliveryRatePercent}% poor-rate threshold.`,
+        tone: poorRateGateApplies ? "blocked" : "info"
+      });
+    }
+
+    return {
+      orderId: order.id,
+      customer: order.customer,
+      productName: order.productName,
+      packageName: order.packageName,
+      quantity: qty,
+      amount: order.amount,
+      currency: order.currency,
+      source: sourceLabel,
+      createdKey,
+      deliveredKey,
+      isCarryover: Boolean(createdKey && (createdKey < weekRange.start || createdKey > weekRange.end)),
+      weeklyRate: repWeeklyDeliveryRate,
+      weeklyOrderCount: repWeeklyOrderCount,
+      base: computed.base,
+      upgrade: computed.upgrade,
+      crossSell: computed.crossSell,
+      freeGift: computed.freeGift,
+      manual: computed.manual,
+      total: computed.total,
+      components: componentLines
+    };
+  };
 
   // Projected bonus: what the rep would earn IF this order is delivered — ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
@@ -23914,6 +24086,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
+    if (modalBeforeClose === "bonusBreakdown") {
+      setBonusBreakdownData(null);
+    }
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
     }
@@ -31670,7 +31845,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
                         const repRs   = getRepCohortStats(u.id);
-                        const bonusEstimate = cashOrders.reduce((s, o) => s + (computeOrderBonus(o, repRs.rate, 0, repRs.count).total ?? 0), 0);
+                        const bonusOrderBreakdowns = cashOrders.map((o) => buildOrderBonusBreakdownLine(o, repRs.rate, repRs.count, cashWeekRange));
+                        const bonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.total, 0);
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
@@ -31685,7 +31861,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           cohortDelivered: cohortDeliveredOrders.length,
                           cohortPending: cohortOrders.length - cohortFinalizedOrders.length,
                           cohortRate,
-                          finalRate
+                          finalRate,
+                          bonusOrderBreakdowns
                         };
                       })
                       .filter((r) => {
@@ -31759,7 +31936,36 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                                       </td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
-                                      <td className="px-3 py-2.5 text-emerald-700 font-bold whitespace-nowrap">{formatMoney(r.bonusEstimate)}</td>
+                                      <td className="px-3 py-2.5 whitespace-nowrap">
+                                        <button
+                                          type="button"
+                                          className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-sm font-extrabold text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                          title="Open detailed bonus breakdown"
+                                          onClick={() => {
+                                            setBonusBreakdownData({
+                                              personName: r.user.name,
+                                              role: r.user.role,
+                                              weekLabel: `${formatDateWithWeekday(start)} to ${formatDateWithWeekday(end)}`,
+                                              deliveredCount: r.delivered,
+                                              carryoverDelivered: r.carryoverDelivered,
+                                              revenue: r.revenue,
+                                              aov: r.aov,
+                                              cohortPlaced: r.cohortPlaced,
+                                              cohortDelivered: r.cohortDelivered,
+                                              cohortPending: r.cohortPending,
+                                              cohortRate: r.cohortRate,
+                                              finalRate: r.finalRate,
+                                              targetRate: target,
+                                              totalBonus: r.bonusEstimate,
+                                              orders: r.bonusOrderBreakdowns
+                                            });
+                                            setModal("bonusBreakdown");
+                                          }}
+                                        >
+                                          {formatMoney(r.bonusEstimate)}
+                                          <Eye className="h-3.5 w-3.5" />
+                                        </button>
+                                      </td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
                                         <span className="font-semibold text-gray-900">{r.cohortDelivered}</span>
                                         <span className="text-gray-400"> / {r.cohortPlaced}</span>
@@ -38439,7 +38645,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
@@ -38486,6 +38692,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
 	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance — ${remittanceTargetOrder.id}`}
 	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && `Record Batch Remittance — ${remittanceBatchTargetRow.partnerName}`}
+	                {modal === "bonusBreakdown" && "Bonus Breakdown"}
 	                {modal === "bonusSettings" && "Bonus Settings"}
 	                {modal === "stateAvailability" && "State Availability"}
 	                {modal === "addCrossSell" && "Add Cross-sell"}
@@ -43164,6 +43371,136 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
               </div>
             )}
+
+            {modal === "bonusBreakdown" && bonusBreakdownData && (() => {
+              const componentTotals = [
+                { label: "Base / manual-source", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.base, 0), tone: "text-sky-700 dark:text-sky-200" },
+                { label: "Upgrade", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.upgrade, 0), tone: "text-violet-700 dark:text-violet-200" },
+                { label: "Cross-sell", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.crossSell, 0), tone: "text-amber-700 dark:text-amber-200" },
+                { label: "Free gift", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.freeGift, 0), tone: "text-emerald-700 dark:text-emerald-200" },
+                { label: "Manual override", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.manual, 0), tone: "text-rose-700 dark:text-rose-200" }
+              ].filter((item) => item.amount > 0 || item.label !== "Manual override");
+              const rateValue = bonusBreakdownData.finalRate ?? bonusBreakdownData.cohortRate;
+              const totalCheck = componentTotals.reduce((sum, item) => sum + item.amount, 0);
+              return (
+                <div className="px-4 py-5 sm:px-6 flex flex-col gap-5">
+                  <section className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-5 dark:border-emerald-500/25 dark:from-emerald-500/10 dark:via-slate-900/60 dark:to-sky-500/10">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-200">Per-order bonus estimate</p>
+                        <h3 className="m-0 mt-2 text-2xl font-black tracking-[-0.04em] text-gray-950 dark:text-slate-100">{bonusBreakdownData.personName}</h3>
+                        <p className="m-0 mt-1 text-sm font-semibold text-gray-500 dark:text-slate-400">{bonusBreakdownData.role} · {bonusBreakdownData.weekLabel}</p>
+                      </div>
+                      <div className="rounded-3xl border border-white/80 bg-white/90 px-5 py-4 text-right shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Total shown in table</p>
+                        <p className="m-0 mt-1 text-4xl font-black text-emerald-600 dark:text-emerald-300">{formatMoney(bonusBreakdownData.totalBonus)}</p>
+                        <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">{bonusBreakdownData.orders.length} delivered order{bonusBreakdownData.orders.length === 1 ? "" : "s"} counted</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+                      {[
+                        { label: "Delivered", value: bonusBreakdownData.deliveredCount, helper: `${bonusBreakdownData.carryoverDelivered} carry-over`, tone: "text-gray-900 dark:text-slate-100" },
+                        { label: "Revenue", value: formatMoney(bonusBreakdownData.revenue), helper: "delivered this week", tone: "text-gray-900 dark:text-slate-100" },
+                        { label: "AOV", value: bonusBreakdownData.aov > 0 ? formatMoney(bonusBreakdownData.aov) : "—", helper: "avg delivered order", tone: "text-gray-900 dark:text-slate-100" },
+                        { label: "Cohort", value: `${bonusBreakdownData.cohortDelivered}/${bonusBreakdownData.cohortPlaced}`, helper: `${bonusBreakdownData.cohortPending} pending`, tone: "text-gray-900 dark:text-slate-100" },
+                        { label: "Rate gate", value: rateValue === null ? "—" : `${rateValue}%`, helper: `target ${bonusBreakdownData.targetRate}%`, tone: rateValue !== null && rateValue >= bonusBreakdownData.targetRate ? "text-emerald-700 dark:text-emerald-200" : "text-rose-700 dark:text-rose-200" }
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-2xl border border-white/80 bg-white/80 px-3 py-3 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/55">
+                          <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">{item.label}</p>
+                          <p className={`m-0 mt-1 text-xl font-black ${item.tone}`}>{item.value}</p>
+                          <p className="m-0 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{item.helper}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="grid grid-cols-1 gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/45">
+                      <h4 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">How the total was formed</h4>
+                      <div className="mt-3 space-y-2">
+                        {componentTotals.map((item) => (
+                          <div key={item.label} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
+                            <span className="text-sm font-bold text-gray-700 dark:text-slate-300">{item.label}</span>
+                            <strong className={`text-base font-black ${item.tone}`}>{formatMoney(item.amount)}</strong>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                          <span className="text-sm font-black text-emerald-900 dark:text-emerald-100">Component total check</span>
+                          <strong className="text-base font-black text-emerald-700 dark:text-emerald-200">{formatMoney(totalCheck)}</strong>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+                      <h4 className="m-0 text-sm font-black text-amber-950 dark:text-amber-100">Important: what this number does not include</h4>
+                      <div className="mt-3 grid gap-2 text-sm font-semibold leading-6 text-amber-900 dark:text-amber-100">
+                        <p className="m-0">This column is only the per-order bonus estimate for delivered orders in this accounting week.</p>
+                        <p className="m-0">Weekly AOV bonuses, weekly delivery-rate bonuses, top-performer challenge prizes, penalties, deductions, and paid/unpaid payroll status are separate from this table amount.</p>
+                        <p className="m-0">Final payroll can be higher or lower after those weekly bonuses and deductions are applied.</p>
+                      </div>
+                    </article>
+                  </section>
+
+                  <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
+                    <div className="border-b border-gray-100 px-4 py-3 dark:border-slate-800">
+                      <h4 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Order-by-order breakdown</h4>
+                      <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">Each order below shows the exact components that rolled into the table amount.</p>
+                    </div>
+                    <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                      {bonusBreakdownData.orders.length === 0 ? (
+                        <p className="m-0 px-4 py-8 text-center text-sm font-semibold text-gray-500 dark:text-slate-400">No delivered orders contributed to this estimate.</p>
+                      ) : (
+                        bonusBreakdownData.orders.map((order) => (
+                          <article key={order.orderId} className="px-4 py-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-black text-sky-700 dark:bg-sky-500/12 dark:text-sky-200">#{order.orderId}</span>
+                                  {order.isCarryover && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-700 dark:bg-amber-500/12 dark:text-amber-200">Carry-over</span>}
+                                </div>
+                                <h5 className="m-0 mt-2 text-base font-black text-gray-950 dark:text-slate-100">{order.customer}</h5>
+                                <p className="m-0 mt-1 text-sm font-semibold text-gray-500 dark:text-slate-400">
+                                  {order.productName} · {order.packageName} · {order.quantity} pcs · {order.source}
+                                </p>
+                                <p className="m-0 mt-1 text-xs font-semibold text-gray-400 dark:text-slate-500">
+                                  Created {displayDateFromKey(order.createdKey) || order.createdKey || "unknown"} · Delivered {displayDateFromKey(order.deliveredKey) || order.deliveredKey || "unknown"} · Order value {formatProductMoney(order.amount, order.currency)}
+                                </p>
+                              </div>
+                              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-right dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                                <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">Order bonus</p>
+                                <p className="m-0 mt-1 text-2xl font-black text-emerald-700 dark:text-emerald-200">{formatProductMoney(order.total, order.currency)}</p>
+                              </div>
+                            </div>
+                            <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+                              {order.components.map((component) => (
+                                <div
+                                  key={`${order.orderId}-${component.label}`}
+                                  className={`rounded-2xl border px-3 py-3 ${
+                                    component.tone === "earned"
+                                      ? "border-emerald-100 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10"
+                                      : component.tone === "blocked"
+                                        ? "border-rose-100 bg-rose-50 dark:border-rose-500/25 dark:bg-rose-500/10"
+                                        : "border-gray-100 bg-gray-50 dark:border-slate-800 dark:bg-slate-900/45"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <p className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{component.label}</p>
+                                    <strong className={`shrink-0 text-sm font-black ${component.amount > 0 ? "text-emerald-700 dark:text-emerald-200" : "text-gray-500 dark:text-slate-400"}`}>
+                                      {formatProductMoney(component.amount, order.currency)}
+                                    </strong>
+                                  </div>
+                                  <p className="m-0 mt-1 text-xs font-semibold leading-5 text-gray-600 dark:text-slate-300">{component.note}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                </div>
+              );
+            })()}
 
             {modal === "bonusSettings" && (() => {
               const product = products.find((p) => p.id === bonusSettingsProductId);
