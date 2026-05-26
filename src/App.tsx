@@ -164,7 +164,7 @@ type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Sched
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
-type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Customer Finished Later";
+type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Recovered Pending" | "Recovered Failed / Cancelled" | "Customer Finished Later";
 type DeliveryAgent = string;
 type ScheduleRange = "Today" | "Tomorrow" | "Day After" | "Custom";
 type ScheduleAuditMode = "Active" | "On Time" | "Late" | "Missed" | "History";
@@ -1161,7 +1161,7 @@ const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Sche
 const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
-const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Customer Finished Later"];
+const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
 const scheduleAuditModes: { value: ScheduleAuditMode; label: string }[] = [
   { value: "Active", label: "Active" },
@@ -3890,6 +3890,16 @@ const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | 
     };
   }
   return null;
+};
+const abandonedCartIsBadRecoveredOutcome = (status: string) => ["Failed", "Cancelled"].includes(status);
+const abandonedCartIsPendingRecoveredOutcome = (status: string) => status !== "Delivered" && !abandonedCartIsBadRecoveredOutcome(status);
+const abandonedCartRecoveryNoteFor = (order: Partial<TrackedOrder> | null | undefined, cartId: string): OrderNote | null => {
+  if (!order || !cartId) return null;
+  const cartIdLower = cartId.toLowerCase();
+  return orderNotesFor(order).find((note) => {
+    const text = note.text.toLowerCase();
+    return text.includes(`converted from ${cartIdLower}`) || text.includes(`converted from abandoned cart ${cartIdLower}`);
+  }) ?? null;
 };
 const normalizeTrackedOrder = (value: any): TrackedOrder => {
   const legacyMetadata = parseLegacyOrderMetadata(value?.notes);
@@ -9373,6 +9383,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
     const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+    const linkedOrderStatus = linkedOrder?.status ?? "New";
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName}`.toLowerCase().includes(search);
     const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
     const matchesConversion =
@@ -9381,13 +9392,74 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         : cartConversionFilter === "Recovered by Team"
           ? conversionKind === "manual_recovery"
           : cartConversionFilter === "Recovered Delivered"
-            ? conversionKind === "manual_recovery" && (linkedOrder?.status ?? "New") === "Delivered"
-            : conversionKind === "customer_self_completed";
+            ? conversionKind === "manual_recovery" && linkedOrderStatus === "Delivered"
+            : cartConversionFilter === "Recovered Pending"
+              ? conversionKind === "manual_recovery" && abandonedCartIsPendingRecoveredOutcome(linkedOrderStatus)
+              : cartConversionFilter === "Recovered Failed / Cancelled"
+                ? conversionKind === "manual_recovery" && abandonedCartIsBadRecoveredOutcome(linkedOrderStatus)
+                : conversionKind === "customer_self_completed";
     const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange);
     const matchesProduct = matchesProductFilter(cart.productId, cart.productName, cartProductIds);
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer;
   });
+  const abandonedCartRecoveryRows = filteredAbandonedCarts.map((cart) => {
+    const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+    const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+    const linkedStatus = linkedOrder?.status ?? "New";
+    const recoveryNote = abandonedCartRecoveryNoteFor(linkedOrder, cart.id);
+    const converterName = recoveryNote?.by
+      ?? users.find((user) => user.id === linkedOrder?.assignedRepId)?.name
+      ?? users.find((user) => user.id === cart.assignedRepId)?.name
+      ?? "Team";
+    const converterRole = users.find((user) => user.name.trim().toLowerCase() === converterName.trim().toLowerCase())?.role ?? "Team";
+    return {
+      cart,
+      linkedOrder,
+      conversionKind,
+      linkedStatus,
+      converterName,
+      converterRole
+    };
+  });
+  const teamRecoveredCartRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "manual_recovery");
+  const customerFinishedLaterRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "customer_self_completed");
+  const teamRecoveredDeliveredRows = teamRecoveredCartRows.filter((row) => row.linkedStatus === "Delivered");
+  const teamRecoveredFailedRows = teamRecoveredCartRows.filter((row) => abandonedCartIsBadRecoveredOutcome(row.linkedStatus));
+  const teamRecoveredPendingRows = teamRecoveredCartRows.filter((row) => abandonedCartIsPendingRecoveredOutcome(row.linkedStatus));
+  const convertedMissingLinkedOrderRows = filteredAbandonedCarts.filter((cart) => cart.status === "Converted" && !linkedOrderBySourceCartId.has(cart.id));
+  const teamRecoveryCurrency = teamRecoveredCartRows[0]?.linkedOrder?.currency ?? teamRecoveredCartRows[0]?.cart.currency ?? "NGN";
+  const teamRecoveredRevenue = teamRecoveredDeliveredRows.reduce((sum, row) => sum + (row.linkedOrder?.amount ?? row.cart.amount), 0);
+  const teamRecoveredPipelineValue = teamRecoveredPendingRows.reduce((sum, row) => sum + (row.linkedOrder?.amount ?? row.cart.amount), 0);
+  const teamRecoveredFailedValue = teamRecoveredFailedRows.reduce((sum, row) => sum + (row.linkedOrder?.amount ?? row.cart.amount), 0);
+  const teamRecoveryDeliveryRate = teamRecoveredCartRows.length === 0 ? 0 : Math.round((teamRecoveredDeliveredRows.length / teamRecoveredCartRows.length) * 100);
+  const teamRecoveryPendingRate = teamRecoveredCartRows.length === 0 ? 0 : Math.round((teamRecoveredPendingRows.length / teamRecoveredCartRows.length) * 100);
+  const teamRecoveryIssueCount = teamRecoveredPendingRows.length + teamRecoveredFailedRows.length + convertedMissingLinkedOrderRows.length;
+  const teamRecoveryByPersonMap = new Map<string, { name: string; role: string; total: number; delivered: number; pending: number; failed: number; revenue: number }>();
+  teamRecoveredCartRows.forEach((row) => {
+    const key = `${row.converterName}::${row.converterRole}`;
+    const current = teamRecoveryByPersonMap.get(key) ?? {
+      name: row.converterName,
+      role: row.converterRole,
+      total: 0,
+      delivered: 0,
+      pending: 0,
+      failed: 0,
+      revenue: 0
+    };
+    current.total += 1;
+    if (row.linkedStatus === "Delivered") {
+      current.delivered += 1;
+      current.revenue += row.linkedOrder?.amount ?? row.cart.amount;
+    } else if (abandonedCartIsBadRecoveredOutcome(row.linkedStatus)) {
+      current.failed += 1;
+    } else {
+      current.pending += 1;
+    }
+    teamRecoveryByPersonMap.set(key, current);
+  });
+  const teamRecoveryByPersonRows = Array.from(teamRecoveryByPersonMap.values())
+    .sort((a, b) => b.total - a.total || b.delivered - a.delivered || b.revenue - a.revenue);
   const abandonedJourneyCartIds = useMemo(
     () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
     [filteredAbandonedCarts]
@@ -19897,23 +19969,51 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ["Product Filter", cartProductIds.size === 0 ? "All Products" : products.filter(p => cartProductIds.has(p.id)).map(p => p.name).join(", ")],
       ["Total Captured", String(filteredAbandonedCarts.length)],
       ["Converted", String(exportConverted)],
+      ["Team Converted", String(teamRecoveredCartRows.length)],
+      ["Team Converted Delivered", String(teamRecoveredDeliveredRows.length)],
+      ["Team Converted Pending", String(teamRecoveredPendingRows.length)],
+      ["Team Converted Failed / Cancelled", String(teamRecoveredFailedRows.length)],
+      ["Team Recovered Revenue", formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)],
+      ["Pending Recovered Value", formatProductMoney(teamRecoveredPipelineValue, teamRecoveryCurrency)],
+      ["Converted With Missing Linked Order", String(convertedMissingLinkedOrderRows.length)],
+      ["Customer Finished Later", String(customerFinishedLaterRows.length)],
       ["Lost", String(exportLost)],
       ["Conversion Rate", `${exportRate}%`],
       [],
-      ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Status", "Source", "Rep", "Created", "Last Activity"],
-      ...filteredAbandonedCarts.map((cart) => [
-        cart.id,
-        cart.customer,
-        cart.phone,
-        cart.productName,
-        cart.packageName,
-        formatProductMoney(cart.amount, cart.currency),
-        cart.status,
-        cart.source,
-        users.find((u) => u.id === cart.assignedRepId)?.name ?? "Unassigned",
-        cart.createdAt,
-        cart.lastActivity
-      ])
+      ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Cart Status", "Conversion Path", "Linked Order", "Linked Order Status", "Recovered By", "Outcome Bucket", "Source", "Rep", "Created", "Last Activity"],
+      ...filteredAbandonedCarts.map((cart) => {
+        const recoveryRow = abandonedCartRecoveryRows.find((row) => row.cart.id === cart.id);
+        const linkedStatus = recoveryRow?.linkedStatus ?? "";
+        const outcomeBucket = recoveryRow?.conversionKind === "manual_recovery"
+          ? linkedStatus === "Delivered"
+            ? "Delivered"
+            : abandonedCartIsBadRecoveredOutcome(linkedStatus)
+              ? "Failed / Cancelled"
+              : "Pending"
+          : recoveryRow?.conversionKind === "customer_self_completed"
+            ? "Customer finished later"
+            : cart.status === "Converted"
+              ? "Converted but missing linked order"
+              : "";
+        return [
+          cart.id,
+          cart.customer,
+          cart.phone,
+          cart.productName,
+          cart.packageName,
+          formatProductMoney(cart.amount, cart.currency),
+          cart.status,
+          recoveryRow?.conversionKind === "manual_recovery" ? "Recovered by Team" : recoveryRow?.conversionKind === "customer_self_completed" ? "Customer Finished Later" : "",
+          recoveryRow?.linkedOrder?.id ?? "",
+          linkedStatus,
+          recoveryRow?.conversionKind === "manual_recovery" ? recoveryRow.converterName : "",
+          outcomeBucket,
+          cart.source,
+          users.find((u) => u.id === cart.assignedRepId)?.name ?? "Unassigned",
+          cart.createdAt,
+          cart.lastActivity
+        ];
+      })
     ];
     const csv = rows
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
@@ -25932,7 +26032,103 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 </div>
                 {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
               </div>
-              <section className="grid grid-cols-2 lg:grid-cols-5 gap-4" aria-label="Abandoned carts summary">
+              <section className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4" aria-label="Team abandoned cart recovery outcomes">
+                <article className="relative overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-white via-emerald-50/80 to-sky-50 p-5 shadow-sm dark:border-emerald-500/25 dark:from-[#0d1c2a] dark:via-[#0a1722] dark:to-[#07111b]">
+                  <div className="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-emerald-400/20 blur-3xl" />
+                  <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-200">Team recovery outcomes</p>
+                      <h2 className="m-0 mt-2 text-2xl font-black tracking-[-0.04em] text-gray-900 dark:text-slate-100">
+                        {teamRecoveredCartRows.length} cart{teamRecoveredCartRows.length === 1 ? "" : "s"} converted by team
+                      </h2>
+                      <p className="m-0 mt-2 text-sm font-semibold text-gray-500 dark:text-slate-400">
+                        Shows recovered carts converted by admin/sales reps, then tracks if the linked order delivered, failed, or is still pending.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 sm:min-w-[360px]">
+                      <div className="rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Delivery rate</p>
+                        <p className="m-0 mt-1 text-4xl font-black text-emerald-600 dark:text-emerald-300">{teamRecoveryDeliveryRate}%</p>
+                        <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">{teamRecoveredDeliveredRows.length} delivered of {teamRecoveredCartRows.length}</p>
+                      </div>
+                      <div className="rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Recovered revenue</p>
+                        <p className="m-0 mt-1 text-3xl font-black text-[#1F8FE0]">{formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)}</p>
+                        <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">delivered recovered orders</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="relative mt-5 h-3 overflow-hidden rounded-full bg-emerald-100 dark:bg-slate-800">
+                    <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-sky-400" style={{ width: `${Math.min(100, teamRecoveryDeliveryRate)}%` }} />
+                  </div>
+                  <div className="relative mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    {[
+                      { label: "Delivered", value: teamRecoveredDeliveredRows.length, sub: formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency), tone: "text-emerald-700 dark:text-emerald-200", icon: CheckCircle2 },
+                      { label: "Still pending", value: teamRecoveredPendingRows.length, sub: `${teamRecoveryPendingRate}% still open`, tone: "text-sky-700 dark:text-sky-200", icon: Clock },
+                      { label: "Failed / cancelled", value: teamRecoveredFailedRows.length, sub: formatProductMoney(teamRecoveredFailedValue, teamRecoveryCurrency), tone: "text-rose-700 dark:text-rose-200", icon: CircleX },
+                      { label: "Missing order link", value: convertedMissingLinkedOrderRows.length, sub: "converted cart but no linked order", tone: "text-amber-700 dark:text-amber-200", icon: AlertTriangle }
+                    ].map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div key={item.label} className="rounded-2xl border border-white/80 bg-white/80 px-3 py-3 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">{item.label}</p>
+                            <Icon className={`h-4 w-4 ${item.tone}`} />
+                          </div>
+                          <p className={`m-0 mt-1 text-2xl font-black ${item.tone}`}>{item.value}</p>
+                          <p className="m-0 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{item.sub}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="relative mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-sky-100 bg-white/70 px-4 py-3 dark:border-sky-500/25 dark:bg-sky-500/10">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 dark:text-sky-200">Pending order value</p>
+                      <p className="m-0 mt-1 text-lg font-black text-gray-900 dark:text-slate-100">{formatProductMoney(teamRecoveredPipelineValue, teamRecoveryCurrency)}</p>
+                    </div>
+                    <div className={`rounded-2xl border px-4 py-3 ${teamRecoveryIssueCount > 0 ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"}`}>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.14em]">Needs attention</p>
+                      <p className="m-0 mt-1 text-lg font-black">{teamRecoveryIssueCount} recovered cart{teamRecoveryIssueCount === 1 ? "" : "s"}</p>
+                    </div>
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 dark:text-slate-500">Who converted them</p>
+                      <h2 className="m-0 mt-2 text-xl font-black text-gray-900 dark:text-slate-100">Team recovery leaderboard</h2>
+                    </div>
+                    <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/12 dark:text-emerald-200">
+                      <Users className="h-5 w-5" />
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {teamRecoveryByPersonRows.length === 0 ? (
+                      <p className="m-0 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-4 text-sm font-semibold text-gray-500 dark:border-slate-800 dark:bg-slate-900/45 dark:text-slate-400">
+                        No team-converted carts in this filter yet.
+                      </p>
+                    ) : (
+                      teamRecoveryByPersonRows.slice(0, 5).map((person) => (
+                        <div key={`${person.name}-${person.role}`} className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/45">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{person.name}</p>
+                              <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-500 dark:text-slate-400">{person.role}</p>
+                            </div>
+                            <strong className="text-xl font-black text-[#1F8FE0]">{person.total}</strong>
+                          </div>
+                          <p className="m-0 mt-2 text-[11px] font-semibold text-gray-500 dark:text-slate-400">
+                            {person.delivered} delivered · {person.pending} pending · {person.failed} failed · {formatProductMoney(person.revenue, teamRecoveryCurrency)}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </article>
+              </section>
+
+              <section className="grid grid-cols-2 lg:grid-cols-6 gap-4" aria-label="Abandoned carts summary">
                 {(() => {
                   const scoped = filteredAbandonedCarts;
                   const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length;
@@ -25940,27 +26136,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
                   const converted = scoped.filter((cart) => cart.status === "Converted").length;
                   const lost = scoped.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
-                  const recoveredDelivered = scoped.filter((cart) => {
-                    const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
-                    return abandonedCartConversionKindFor(linkedOrder) === "manual_recovery" && (linkedOrder?.status ?? "New") === "Delivered";
-                  }).length;
-                  const customerFinishedLater = scoped.filter((cart) => abandonedCartConversionKindFor(linkedOrderBySourceCartId.get(cart.id)) === "customer_self_completed").length;
                   const rate = scoped.length === 0 ? 0 : Math.round((converted / scoped.length) * 100);
                   return [
-                    { label: "Active", value: active, sub: "Open · Abandoned · In progress", icon: ShoppingCart },
-                    { label: "Assigned", value: assigned, sub: "with a rep, not yet converted", icon: UserRound },
-                    { label: "Contacted", value: contacted, sub: "any rep outcome recorded", icon: BadgeCheck },
-                    { label: "Recovered Delivered", value: recoveredDelivered, sub: customerFinishedLater > 0 ? `${customerFinishedLater} customer finished later` : "team recovered and delivered", icon: CheckCircle2 },
+                    { label: "Captured", value: scoped.length, sub: "in current filters", icon: ShoppingCart },
+                    { label: "Active", value: active, sub: "open / abandoned / in progress", icon: Clock },
+                    { label: "Assigned", value: assigned, sub: "with a rep, not converted", icon: UserRound },
+                    { label: "Contacted", value: contacted, sub: "any outcome recorded", icon: BadgeCheck },
+                    { label: "Customer finished", value: customerFinishedLaterRows.length, sub: "self-completed later", icon: ShoppingBag },
                     { label: "Conversion Rate", value: `${rate}%`, sub: `${converted} converted · ${lost} lost`, icon: TrendingUp }
                   ];
                 })().map(({ label, value, sub, icon: Icon }) => (
-                  <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between shadow-sm">
+                  <article key={label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</span>
-                      <strong className="text-3xl font-bold text-gray-900">{value}</strong>
-                      {sub && <span className="text-xs text-gray-400">{sub}</span>}
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide dark:text-slate-400">{label}</span>
+                      <strong className="text-3xl font-bold text-gray-900 dark:text-slate-100">{value}</strong>
+                      {sub && <span className="text-xs text-gray-400 dark:text-slate-500">{sub}</span>}
                     </div>
-                    <span className="w-10 h-10 rounded-full bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-500 shrink-0">
+                    <span className="w-10 h-10 rounded-full bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-500 shrink-0 dark:border-cyan-500/25 dark:bg-cyan-500/12 dark:text-cyan-200">
                       <Icon className="w-5 h-5" />
                     </span>
                   </article>
