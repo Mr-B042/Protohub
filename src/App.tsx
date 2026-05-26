@@ -8035,11 +8035,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const inventoryStateHubRows = agents.flatMap((agent) =>
     agentLocationRows(agent).map((location) => ({
+      agent,
       agentId: agent.id,
       agentName: agent.name,
       location
     }))
   );
+  const agentHasPositiveLocationStockForProduct = (agent: DeliveryAgentRecord, productId: string) =>
+    agentLocationRows(agent).some((location) =>
+      location.stock.some((stock) => stock.productId === productId && Number(stock.quantity ?? 0) > 0)
+    );
+  const stockRowsForStateHub = (agent: DeliveryAgentRecord, location: DeliveryAgentLocation): DeliveryAgentLocationStock[] => {
+    const directRows = location.stock;
+    if (!location.isPrimary) return directRows;
+
+    // Older stock records can exist only in the flat agentStock table. Count them
+    // once on the primary hub so state-stock signals do not falsely show 0 left.
+    const legacyRows = agentStock
+      .filter((stock) =>
+        stock.agentId === agent.id
+        && Number(stock.quantity ?? 0) > 0
+        && !agentHasPositiveLocationStockForProduct(agent, stock.productId)
+      )
+      .map((stock) => ({
+        productId: stock.productId,
+        quantity: Number(stock.quantity ?? 0),
+        defective: Number(stock.defective ?? 0),
+        missing: Number(stock.missing ?? 0)
+      }));
+
+    return legacyRows.length > 0 ? [...directRows, ...legacyRows] : directRows;
+  };
   const stateStockStateOptions = Array.from(
     new Set(
       inventoryStateHubRows
@@ -8059,7 +8085,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             (row) => normalizeAgentState(row.location.state) === state
           );
           const quantity = stateHubs.reduce(
-            (sum, row) => sum + Number(row.location.stock.find((stock) => stock.productId === product.id)?.quantity ?? 0),
+            (sum, row) => sum + Number(stockRowsForStateHub(row.agent, row.location).find((stock) => stock.productId === product.id)?.quantity ?? 0),
             0
           );
           return {
@@ -8393,10 +8419,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     topHubName: string;
     topHubQty: number;
   }>();
-  inventoryStateHubRows.forEach(({ location }) => {
+  inventoryStateHubRows.forEach(({ agent, location }) => {
     const state = normalizeAgentState(location.state);
     if (!state) return;
-    location.stock.forEach((stock) => {
+    stockRowsForStateHub(agent, location).forEach((stock) => {
       if (!smartStockProductIds.has(stock.productId)) return;
       const key = smartStockKey(stock.productId, state);
       smartStockStateByKey.set(key, state);
@@ -8455,7 +8481,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         velocity,
         daysCover,
         severity,
-        label: severity === "stockout" ? "Stockout risk" : severity === "critical" ? "Critical fast mover" : "Watch fast mover",
+        label: severity === "stockout" ? "Local stockout risk" : severity === "critical" ? "Critical fast mover" : "Watch fast mover",
         className: severity === "stockout"
           ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
           : severity === "critical"
@@ -23180,7 +23206,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div className="min-w-0">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600 dark:text-orange-200">{signal.label}</span>
                           <h3 className="mt-1 text-sm font-extrabold text-gray-900 dark:text-white">{signal.productName}</h3>
-                          <p className="text-xs text-gray-500 dark:text-slate-300">{signal.state} · {signal.stock} left</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-300">{signal.state} · {signal.stock} local stock left</p>
                         </div>
                         <Flame className="h-4 w-4 shrink-0 text-orange-500" />
                       </div>
@@ -38353,7 +38379,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
-                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Left</span>
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Local stock</span>
                               <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
                             </div>
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
@@ -38366,7 +38392,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           </div>
                           <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
-                            {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need stock. ` : ""}
+                            {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered. ` : ""}
                             {signal.hubCount} hub{signal.hubCount === 1 ? "" : "s"} tracked in {signal.state}; top hub has {signal.topHubQty}.
                           </p>
                         </article>

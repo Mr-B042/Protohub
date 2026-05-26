@@ -64,7 +64,7 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
   const totalOpenOrders = sorted.reduce((sum, signal) => sum + signal.openOrders, 0);
   const lookbackDays = Math.max(1, Math.round(sorted[0]?.lookbackDays ?? 7));
   const headline = stockoutCount > 0
-    ? `${stockoutCount} stockout risk${stockoutCount === 1 ? "" : "s"} need attention now`
+    ? `${stockoutCount} local stockout risk${stockoutCount === 1 ? "" : "s"} need attention now`
     : criticalCount > 0
       ? `${criticalCount} critical fast-moving stock risk${criticalCount === 1 ? "" : "s"}`
       : `${watchCount} moving stock item${watchCount === 1 ? "" : "s"} to watch`;
@@ -73,13 +73,13 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
       ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d cover`
       : "cover unknown";
     const open = signal.openOrders > 0 ? `, ${signal.openOrders} open` : "";
-    return `${signal.productName} in ${signal.state}: ${signal.stock} left, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
+    return `${signal.productName} in ${signal.state}: ${signal.stock} local stock left, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
   });
   const remaining = sorted.length > topLines.length
     ? ` +${sorted.length - topLines.length} more in Inventory Dashboard.`
     : "";
   const openText = totalOpenOrders > 0
-    ? ` ${totalOpenOrders} open order${totalOpenOrders === 1 ? "" : "s"} may need stock.`
+    ? ` ${totalOpenOrders} open order${totalOpenOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered.`
     : "";
   return `${headline}.${openText} ${topLines.join(" • ")}${remaining}`.trim();
 };
