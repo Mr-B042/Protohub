@@ -3564,13 +3564,11 @@ const hiddenFormFieldSectionsFor = ({
   source,
   embedLabel,
   linkedSessionId,
-  attribution,
   formContext
 }: {
   source?: string;
   embedLabel?: string;
   linkedSessionId?: string;
-  attribution?: AbandonedCartAttribution;
   formContext?: Record<string, unknown> | null;
 }): PublicFormSubmissionSection[] => {
   const context = formContext ?? {};
@@ -3603,29 +3601,23 @@ const hiddenFormFieldSectionsFor = ({
 
   return [
     {
-      title: "Hidden Fields: Campaign",
+      title: "Capture Details",
       fullWidth: true,
       rows: [
         maybeField("Source", source),
         maybeField("Embed Label", embedLabel),
         maybeField("Linked Form Session", linkedSessionId, { wide: true }),
-        maybeField("UTM Source", attribution?.utmSource),
-        maybeField("UTM Campaign", attribution?.utmCampaign),
-        maybeField("UTM Medium", attribution?.utmMedium),
-        maybeField("UTM Content", attribution?.utmContent),
-        maybeField("UTM Term", attribution?.utmTerm),
-        maybeField("Referrer", attribution?.referrer, { wide: true }),
         maybeField("Landing URL", contextValue("landingUrl"), { wide: true }),
         maybeField("Landing Path", contextValue("landingPath"), { wide: true })
       ].filter(Boolean) as PublicFormSubmissionField[]
     },
     {
-      title: "Hidden Fields: Ad Click IDs",
+      title: "Ad Click IDs",
       fullWidth: true,
       rows: adClickRows
     },
     {
-      title: "Hidden Fields: Form Session",
+      title: "Device & Form Metadata",
       fullWidth: true,
       rows: [
         maybeField("Context Event", contextValue("contextEvent")),
@@ -3653,7 +3645,6 @@ const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: Ca
     source: cart.source,
     embedLabel: cart.embedLabel ?? hiddenFieldValueToString(payload?.embedLabel),
     linkedSessionId: cart.id,
-    attribution: cartAttributionFor(cart, journeyEvents),
     formContext: payloadContext ?? journeyContext
   });
 };
@@ -3792,14 +3783,6 @@ const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmiss
     source: order.source ?? orderSourceFromUtm(order.utmSource),
     embedLabel: order.embedLabel,
     linkedSessionId: order.sourceCartId,
-    attribution: {
-      utmSource: details.utmSource,
-      utmCampaign: details.utmCampaign,
-      utmMedium: details.utmMedium,
-      utmContent: details.utmContent,
-      utmTerm: details.utmTerm,
-      referrer: details.referrer
-    },
     formContext
   });
   return [...visibleSections, ...hiddenSections];
@@ -39389,13 +39372,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 	                )}
 
-	                {/* Section 7: Form Submission + Hidden Fields */}
+	                {/* Section 7: Form Submission + Capture Data */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
 	                      <div>
-	                        <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission + Hidden Fields</h3>
-	                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Includes UTM tags, ad click IDs, embed label, landing page, device, and session data captured from the form.</p>
+	                        <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission + Capture Data</h3>
+	                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Attribution shows UTM and referrer. Capture data shows embed label, session ID, landing page, device, ad click IDs, and form metadata.</p>
 	                      </div>
 	                      <button
 	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
@@ -40261,14 +40244,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
 		                      <div className="flex items-start justify-between gap-2 mb-3">
 		                        <div>
-		                          <p className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-200 m-0">Hidden Fields & Tracking</p>
-		                          <p className="text-[12px] text-slate-600 dark:text-slate-300 m-0 mt-0.5">UTM tags, ad click IDs, landing page, device, and form-session values captured behind the cart.</p>
+		                          <p className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-200 m-0">Capture Data</p>
+		                          <p className="text-[12px] text-slate-600 dark:text-slate-300 m-0 mt-0.5">Behind-the-scenes embed, session, landing page, device, ad click ID, and form metadata values. UTM/referrer stays under Attribution.</p>
 		                        </div>
 		                      </div>
 		                      {selectedCartHiddenFieldSections.length > 0 ? (
 		                        renderPublicFormFieldSections(selectedCartHiddenFieldSections)
 		                      ) : (
-		                        <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 m-0">No hidden fields were captured for this cart yet.</p>
+		                        <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 m-0">No capture data was captured for this cart yet.</p>
 		                      )}
 		                    </div>
 	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
