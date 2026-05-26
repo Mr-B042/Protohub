@@ -21052,6 +21052,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       ) : (
         <div className="sm:hidden space-y-3 bg-slate-50/80 px-3 py-3 dark:bg-[#07111b]">
           {orders.map((order) => {
+            const status = order.status ?? "New";
+            const callOutcome = (order.callOutcome ?? "").trim();
             const latestNote = latestTimelineNoteForOrder(order);
             const nextFollowUp = nextFollowUpForOrder(order);
             const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
@@ -21077,33 +21079,41 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               >
                 <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1F8FE0] via-emerald-400 to-amber-300" />
 
-                <div className="flex items-start justify-between gap-3 pt-1">
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-black text-[#1F8FE0] dark:bg-sky-500/12 dark:text-sky-200">
-                        #{order.id}
-                      </span>
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                        Rep lead
-                      </span>
-                    </div>
-                    <p className={`m-0 truncate text-[20px] font-black leading-6 tracking-[-0.03em] ${orderTitleTextClass}`}>{order.customer}</p>
-                    <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>{order.phone || "No phone saved"}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-black text-[#1F8FE0] dark:bg-sky-500/12 dark:text-sky-200">
+                      #{order.id}
+                    </span>
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                      Rep lead
+                    </span>
                   </div>
-                  <div className="shrink-0 pt-1">
-                    {renderOrderStatusSummary(order, "right")}
-                  </div>
+                  <span className={`inline-flex shrink-0 items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-[0.01em] ${statusBadgeClasses(status)}`}>
+                    {status}
+                  </span>
                 </div>
 
+                <div className="mt-3 min-w-0">
+                  <p className={`m-0 text-[21px] font-black leading-7 tracking-[-0.03em] break-words ${orderTitleTextClass}`}>{order.customer || "Unnamed customer"}</p>
+                  <p className={`m-0 mt-1 text-sm font-semibold break-words ${orderMutedTextClass}`}>{order.phone || "No phone saved"}</p>
+                </div>
+
+                {callOutcome && (
+                  <section className={`mt-3 rounded-2xl border px-3.5 py-3 ${outcomeBadgeClasses(callOutcome, status)}`}>
+                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] opacity-70">Call outcome</p>
+                    <p className="m-0 mt-1 text-sm font-bold leading-5 break-words">{callOutcome}</p>
+                  </section>
+                )}
+
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
-                    <Globe className="h-3.5 w-3.5 text-[#1F8FE0]" /> {sourceLabel}
+                  <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <Globe className="h-3.5 w-3.5 shrink-0 text-[#1F8FE0]" /> <span className="min-w-0 break-words">{sourceLabel}</span>
                   </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
-                    <Clock className="h-3.5 w-3.5 text-amber-500" /> {responseLabel}
+                  <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" /> <span className="min-w-0 break-words">{responseLabel}</span>
                   </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
-                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> {locationLabel}
+                  <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-500" /> <span className="min-w-0 break-words">{locationLabel}</span>
                   </span>
                 </div>
 
@@ -21116,30 +21126,30 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       </span>
                     )}
                   </div>
-                  <p className="m-0 mt-2 text-[17px] font-black leading-6">{followUpHeadline(nextFollowUp)}</p>
-                  <p className="m-0 mt-1 text-sm font-semibold leading-5 opacity-75">{followUpDetail}</p>
+                  <p className="m-0 mt-2 text-[17px] font-black leading-6 break-words">{followUpHeadline(nextFollowUp)}</p>
+                  <p className="m-0 mt-1 text-sm font-semibold leading-5 opacity-75 break-words">{followUpDetail}</p>
                 </section>
 
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-3 grid grid-cols-1 gap-2 min-[430px]:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900/50">
                     <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Created</p>
-                    <p className={`m-0 mt-1 text-sm font-bold leading-5 ${orderBodyTextClass}`}>{formatOrderCreatedAt(order)}</p>
+                    <p className={`m-0 mt-1 text-sm font-bold leading-5 break-words ${orderBodyTextClass}`}>{formatOrderCreatedAt(order)}</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900/50">
                     <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Stage</p>
-                    <p className={`m-0 mt-1 text-sm font-bold leading-5 ${orderBodyTextClass}`}>{workflowLabel}</p>
+                    <p className={`m-0 mt-1 text-sm font-bold leading-5 break-words ${orderBodyTextClass}`}>{workflowLabel}</p>
                   </div>
                 </div>
 
                 <section className="mt-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 dark:border-slate-700 dark:bg-[#101a24]">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col items-start gap-1">
                     <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">Latest feedback</p>
                     {latestNote && (
-                      <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{latestNote.by} · {formatMoment(latestNote.date)}</span>
+                      <span className="text-[11px] font-semibold leading-4 text-slate-400 dark:text-slate-500">{latestNote.by} · {formatMoment(latestNote.date)}</span>
                     )}
                   </div>
-                  <p className={`m-0 mt-2 text-sm font-bold leading-5 ${latestNote ? orderBodyTextClass : orderMutedTextClass}`}>
-                    {latestNote ? noteSnippet(latestNote.text, 118) : "No saved note yet. Open details after contacting the customer."}
+                  <p className={`m-0 mt-2 whitespace-pre-wrap text-sm font-bold leading-5 break-words ${latestNote ? orderBodyTextClass : orderMutedTextClass}`}>
+                    {latestNote ? latestNote.text : "No saved note yet. Open details after contacting the customer."}
                   </p>
                 </section>
 
@@ -21160,7 +21170,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   </button>
                   <button
                     type="button"
-                    className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`}
+                    className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-center text-sm font-black leading-5 transition-colors ${orderSecondaryButtonClass}`}
                     onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
                   >
                     <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
@@ -21260,6 +21270,17 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const renderRepOrderDetail = (order: TrackedOrder) => {
     const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
     const bonusMotivator = repBonusCoach?.motivators.find((motivator) => motivator.orderId === order.id);
+    const repScheduleKey = scheduledKeyForOrder(order);
+    const repScheduleIsOverdue = Boolean(repScheduleKey && repScheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New"));
+    const repScheduleIsToday = repScheduleKey === todayKey();
+    const repScheduleBadge = repScheduleIsOverdue ? "Overdue" : repScheduleIsToday ? "Today" : scheduledMomentForOrder(order) ? "Scheduled" : "Not scheduled";
+    const repScheduleBadgeClass = repScheduleIsOverdue
+      ? "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-500/14 dark:text-rose-100 dark:border-rose-400/30"
+      : repScheduleIsToday
+        ? "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-500/14 dark:text-emerald-100 dark:border-emerald-400/30"
+        : scheduledMomentForOrder(order)
+          ? "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-500/14 dark:text-sky-100 dark:border-sky-400/30"
+          : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
 
     return (
     <div className="space-y-6 pb-6 sm:pb-8 lg:pb-12">
@@ -21298,29 +21319,54 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         </div>
       </header>
 
-      <section className={`${orderPanelClass} overflow-hidden`}>
-        <div className={`px-5 py-4 border-b ${orderPanelInfoClass} flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between`}>
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-sky-200 m-0">Scheduled Delivery</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <strong className={`text-base ${orderTitleTextClass}`}>{scheduleSummaryForOrder(order)}</strong>
-              {(() => {
-                const scheduleKey = scheduledKeyForOrder(order);
-                const isOverdue = scheduleKey && scheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New");
-                const isToday = scheduleKey === todayKey();
-                if (isOverdue) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700">Overdue</span>;
-                if (isToday) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">Today</span>;
-                return null;
-              })()}
+      <section className="overflow-hidden rounded-[28px] border border-sky-200/70 bg-gradient-to-br from-sky-50 via-white to-blue-50 shadow-sm dark:border-sky-500/25 dark:from-[#0d2741] dark:via-[#0b1724] dark:to-[#0c1420] dark:shadow-[0_22px_55px_rgba(2,6,23,0.36)]">
+        <div className="p-4 sm:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex items-start gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#1F8FE0] text-white shadow-[0_14px_30px_rgba(31,143,224,0.28)]">
+                <CalendarClock className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="m-0 text-[11px] font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-200">Scheduled Delivery</p>
+                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black ${repScheduleBadgeClass}`}>
+                    {repScheduleBadge}
+                  </span>
+                </div>
+                <h2 className={`m-0 mt-2 text-[21px] font-black leading-7 tracking-[-0.03em] break-words ${orderTitleTextClass}`}>{scheduleSummaryForOrder(order)}</h2>
+                <p className={`m-0 mt-1 max-w-xl text-sm font-semibold leading-5 ${orderMutedTextClass}`}>
+                  Set the promise clearly here so dispatch, follow-up, and the rep all work from the same slot.
+                </p>
+              </div>
             </div>
-            <p className={`text-xs m-0 ${orderMutedTextClass}`}>Keep the promised slot clear here before dispatch or follow-up.</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_auto] gap-2 w-full lg:w-auto lg:min-w-[420px]">
-            <input type="date" value={repScheduleDate} onChange={(event) => setRepScheduleDate(event.target.value)} />
-            <input type="time" value={repScheduleTime} onChange={(event) => setRepScheduleTime(event.target.value)} />
-            <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={saveRepScheduleDate}>
-              <CalendarDays className="w-4 h-4" /> {scheduledMomentForOrder(order) ? "Reschedule" : "Schedule"}
-            </button>
+
+            <div className="grid w-full grid-cols-1 gap-3 lg:max-w-xl lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+              <label className="rounded-2xl border border-sky-100 bg-white/85 px-3.5 py-3 shadow-sm dark:border-sky-500/20 dark:bg-[#07111b]/80">
+                <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+                  <CalendarDays className="h-3.5 w-3.5" /> Delivery date
+                </span>
+                <input
+                  type="date"
+                  value={repScheduleDate}
+                  onChange={(event) => setRepScheduleDate(event.target.value)}
+                  className={`mt-2 w-full border-0 bg-transparent p-0 text-base font-black outline-none [color-scheme:light] dark:[color-scheme:dark] ${orderTitleTextClass}`}
+                />
+              </label>
+              <label className="rounded-2xl border border-sky-100 bg-white/85 px-3.5 py-3 shadow-sm dark:border-sky-500/20 dark:bg-[#07111b]/80">
+                <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+                  <Clock className="h-3.5 w-3.5" /> Time
+                </span>
+                <input
+                  type="time"
+                  value={repScheduleTime}
+                  onChange={(event) => setRepScheduleTime(event.target.value)}
+                  className={`mt-2 w-full border-0 bg-transparent p-0 text-base font-black outline-none [color-scheme:light] dark:[color-scheme:dark] ${orderTitleTextClass}`}
+                />
+              </label>
+              <button className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1F8FE0] px-5 py-3 text-sm font-black text-white shadow-[0_16px_32px_rgba(31,143,224,0.24)] transition-colors hover:bg-[#1560a8] lg:col-span-2" onClick={saveRepScheduleDate}>
+                <CalendarDays className="h-4 w-4" /> {scheduledMomentForOrder(order) ? "Save new schedule" : "Schedule delivery"}
+              </button>
+            </div>
           </div>
         </div>
       </section>
