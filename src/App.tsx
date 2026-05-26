@@ -12327,6 +12327,129 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         ? `${repBonusCoach.snapshot.topPerformerGap} deliveries behind the weekly leader.`
         : "No higher tier is waiting right now.";
   const repBonusEmptyActionCopy = "No specific bonus push is blocking you right now. Keep converting and delivering assigned orders.";
+  const buildLocalRepBonusCoach = (repId: string): RepBonusCoachResponse | null => {
+    if (!repId) return null;
+    const deliveredOrders = trackedOrders.filter((order) =>
+      order.assignedRepId === repId
+      && (order.status ?? "New") === "Delivered"
+      && isInExplicitRange(bonusCoachDeliveredKey(order), repBonusWeekRange)
+    );
+    const pendingWeekOrders = trackedOrders.filter((order) =>
+      order.assignedRepId === repId
+      && (order.status ?? "New") !== "Delivered"
+      && isInExplicitRange(orderCreatedKey(order), repBonusWeekRange)
+    );
+    const openOrders = trackedOrders.filter((order) =>
+      order.assignedRepId === repId
+      && ["New", "Confirmed", "In Process", "Dispatched", "Postponed"].includes(order.status ?? "New")
+    );
+    const deliveredRevenue = deliveredOrders.reduce((sum, order) => sum + Math.max(0, order.amount || 0), 0);
+    const totalCount = deliveredOrders.length + pendingWeekOrders.length;
+    const deliveryRateExact = totalCount > 0 ? (deliveredOrders.length / totalCount) * 100 : 0;
+    const aov = deliveredOrders.length > 0 ? deliveredRevenue / deliveredOrders.length : 0;
+    const currentBonusEarned = deliveredOrders.reduce((sum, order) => (
+      sum + Math.max(0, computeOrderBonus(order, deliveryRateExact, aov, totalCount).total ?? 0)
+    ), 0);
+    const orderOpportunities = openOrders
+      .map((order): RepBonusOrderOpportunity | null => {
+        const projected = Math.max(0, projectedOrderBonus(order).total ?? 0);
+        if (!(projected > 0)) return null;
+        const hasUpgrade = typeof order.upsellFromQty === "number" && typeof order.upsellToQty === "number" && order.upsellToQty > order.upsellFromQty;
+        const hasCrossSell = (order.crossSellLines?.length ?? 0) > 0;
+        return {
+          orderId: order.id,
+          customerName: order.customer,
+          packageName: order.packageName,
+          amount: projected,
+          type: hasUpgrade ? "upsell_opportunity" : hasCrossSell ? "cross_sell_opportunity" : "bonus_opportunity",
+          subtitle: hasUpgrade
+            ? `Upsell ${order.customer || "this customer"} from ${order.upsellFromQty} to ${order.upsellToQty} pcs to grow this bonus.`
+            : hasCrossSell
+              ? `${order.customer || "This customer"} already has add-ons attached that can convert into bonus on delivery.`
+              : "A clean delivery on this order still adds to weekly bonus progress."
+        };
+      })
+      .filter((entry): entry is RepBonusOrderOpportunity => Boolean(entry))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 12);
+    const projectedBonusOpenPipeline = currentBonusEarned + orderOpportunities.reduce((sum, entry) => sum + entry.amount, 0);
+    const structure = payStructures.find((item) => item.userId === repId);
+    const nextTier = structure?.type === "Performance Bonus"
+      ? [...(structure.bonusTiers ?? [])]
+          .filter((tier) => Number(tier.threshold ?? 0) > deliveredOrders.length)
+          .sort((a, b) => Number(a.threshold ?? 0) - Number(b.threshold ?? 0))[0]
+      : undefined;
+    const nextTierTarget = nextTier ? Number(nextTier.threshold ?? 0) : null;
+    const ordersNeededForNextTier = nextTierTarget ? Math.max(1, nextTierTarget - deliveredOrders.length) : null;
+    const deliveredByRep = new Map<string, number>();
+    for (const order of trackedOrders) {
+      if ((order.status ?? "New") !== "Delivered" || !isInExplicitRange(bonusCoachDeliveredKey(order), repBonusWeekRange)) continue;
+      const candidateRepId = order.assignedRepId ?? "";
+      if (!candidateRepId) continue;
+      deliveredByRep.set(candidateRepId, (deliveredByRep.get(candidateRepId) ?? 0) + 1);
+    }
+    const rankedReps = [...deliveredByRep.entries()].sort((a, b) => b[1] - a[1]);
+    const currentDelivered = deliveredByRep.get(repId) ?? deliveredOrders.length;
+    const leaderDelivered = rankedReps[0]?.[1] ?? currentDelivered;
+    const rankIndex = rankedReps.findIndex(([candidateRepId]) => candidateRepId === repId);
+    const topPerformerActive = topPerformerBonusEnabled && Number(topPerformerBonusAmount || 0) > 0;
+    const topPerformerGap = topPerformerActive ? Math.max(0, leaderDelivered - currentDelivered) : null;
+    const topPerformerRank = topPerformerActive && rankIndex >= 0 ? rankIndex + 1 : null;
+    const motivators: RepBonusMotivator[] = [];
+    if (nextTier && nextTierTarget && ordersNeededForNextTier) {
+      motivators.push({
+        type: "next_delivered_unlock",
+        title: `Deliver ${ordersNeededForNextTier} more order${ordersNeededForNextTier === 1 ? "" : "s"} to unlock ${formatProductMoney(Number(nextTier.amount ?? 0), "NGN")}`,
+        subtitle: `Next milestone is ${nextTierTarget} delivered orders this week.`,
+        amount: Number(nextTier.amount ?? 0),
+        priority: 100
+      });
+    }
+    const bestOpportunity = orderOpportunities[0];
+    if (bestOpportunity) {
+      motivators.push({
+        type: bestOpportunity.type === "upsell_opportunity" ? "upsell_opportunity" : bestOpportunity.type === "cross_sell_opportunity" ? "cross_sell_opportunity" : "cross_sell_opportunity",
+        title: `${bestOpportunity.type === "upsell_opportunity" ? "Close" : "Recover"} ${bestOpportunity.customerName || "this customer"}${bestOpportunity.type === "upsell_opportunity" ? "'s upsell" : "'s add-on order"} for about ${formatProductMoney(bestOpportunity.amount, "NGN")} bonus`,
+        subtitle: bestOpportunity.packageName ? `${bestOpportunity.packageName} is already the selected package.` : bestOpportunity.subtitle,
+        amount: bestOpportunity.amount,
+        orderId: bestOpportunity.orderId,
+        customerName: bestOpportunity.customerName,
+        priority: 95
+      });
+    }
+    if (topPerformerActive && topPerformerGap !== null && topPerformerGap <= 2) {
+      motivators.push({
+        type: "top_performer_race",
+        title: topPerformerGap === 0
+          ? `You are currently leading for the ${formatProductMoney(Number(topPerformerBonusAmount || 0), "NGN")} top performer bonus`
+          : `${topPerformerGap} more deliver${topPerformerGap === 1 ? "y" : "ies"} can put you in first place`,
+        subtitle: topPerformerGap === 0
+          ? "Keep the pace so you hold the weekly top-performer slot."
+          : `The weekly winner bonus is ${formatProductMoney(Number(topPerformerBonusAmount || 0), "NGN")}.`,
+        amount: Number(topPerformerBonusAmount || 0),
+        priority: topPerformerGap === 0 ? 70 : 85
+      });
+    }
+    return {
+      snapshot: {
+        weekStart: repBonusWeekStart,
+        weekEnd: repBonusWeekEnd,
+        deliveredCount: deliveredOrders.length,
+        deliveredRevenue,
+        deliveryRate: Math.round(deliveryRateExact),
+        currentBonusEarned,
+        projectedBonusOpenPipeline,
+        nextTierTarget,
+        ordersNeededForNextTier,
+        nextDeliveryRateTarget: null,
+        deliveriesNeededForRateTarget: null,
+        topPerformerGap,
+        topPerformerRank
+      },
+      motivators: motivators.sort((a, b) => b.priority - a.priority).slice(0, 3),
+      orderOpportunities
+    };
+  };
 
   useEffect(() => {
     if (activePage !== "Sales Rep Workspace" || repConsoleTab !== "Dashboard") {
@@ -12356,8 +12479,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       })
       .catch((error: any) => {
         if (cancelled) return;
-        setRepBonusCoach(null);
-        setRepBonusCoachError(error?.message ?? "Could not load bonus progress.");
+        const fallbackRepId = ownerLikeViewer && selectedRepUser
+          ? selectedRepUser.id
+          : currentManagedUser?.id ?? authUser?.id ?? "";
+        const fallback = buildLocalRepBonusCoach(fallbackRepId);
+        setRepBonusCoach(fallback);
+        setRepBonusCoachError(fallback ? "" : (error?.message ?? "Could not load bonus progress."));
       })
       .finally(() => {
         if (!cancelled) setRepBonusCoachLoading(false);
