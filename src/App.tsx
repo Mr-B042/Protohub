@@ -14477,6 +14477,65 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     return lines.join("\n\n");
   };
 
+  const formatCartForWhatsAppDispatch = (
+    cart: AbandonedCartRecord,
+    options?: {
+      addOnLines?: CapturedCartOfferLine[];
+      mainPackageAmount?: number;
+      displayedTotal?: number;
+      packageQuantity?: number;
+    }
+  ) => {
+    const addOnLines = options?.addOnLines ?? capturedCartOfferLinesFor(cart).map((line) => resolveCartAddOnLinePricing(line, cart, products));
+    const addOnTotal = addOnLines.reduce((sum, line) => sum + Math.max(0, Number(line.total) || 0), 0);
+    const payload = cartCapturePayloadFor(cart);
+    const packageQuantity = Math.max(1, Number(options?.packageQuantity ?? payload?.packageQuantity ?? 1) || 1);
+    const mainPackageAmount = Math.max(0, Number(options?.mainPackageAmount ?? (addOnTotal > 0 ? cart.amount - addOnTotal : cart.amount)) || 0);
+    const displayedTotal = Math.max(0, Number(options?.displayedTotal ?? (addOnTotal > 0 ? mainPackageAmount + addOnTotal : cart.amount)) || 0);
+    const deliveryParts = [cart.city, cart.state]
+      .map((value) => (value ?? "").trim())
+      .filter(Boolean);
+    const fullDeliveryLabel = deliveryParts.length > 0 ? deliveryParts.join(", ") : "No delivery address provided";
+    const buildPreferredPackageLine = (productName: string, packageName: string | null | undefined, quantity: number) => {
+      const qty = Math.max(1, quantity || 1);
+      const qtyLabel = `${qty}pc${qty === 1 ? "" : "s"}`;
+      const cleanProductName = (productName ?? "").trim();
+      const cleanPackageName = (packageName ?? "").trim();
+      const packageIsQuantityOnly = /^\d+\s*(pc|pcs|unit|units|bundle|bundles)\b/i.test(cleanPackageName) || /selected$/i.test(cleanPackageName);
+      if (cleanPackageName && !packageIsQuantityOnly) {
+        if (cleanProductName && cleanPackageName.toLowerCase().includes(cleanProductName.toLowerCase())) {
+          return `${qtyLabel} Of ${cleanPackageName}`;
+        }
+        return `${qtyLabel} Of ${cleanPackageName}${cleanProductName ? ` of ${cleanProductName}` : ""}`;
+      }
+      return `${qtyLabel} Of ${cleanProductName || "item"}`;
+    };
+    const lines = [
+      `Full Name:  ${cart.customer || "—"}`,
+      `Active Phone Number:  ${cart.phone || "—"}`,
+      `Whatsapp Number:  ${cart.whatsapp || cart.phone || "—"}`,
+      `State: ${cart.state || "—"}`,
+      `City:  ${cart.city || "—"}`,
+      `Full Delivery: ${fullDeliveryLabel}`,
+      addOnLines.length > 0
+        ? `Preferred Package 1: ${buildPreferredPackageLine(cart.productName, cart.packageName, packageQuantity)} = ${formatProductMoney(mainPackageAmount, cart.currency)}`
+        : `Preferred Package: ${buildPreferredPackageLine(cart.productName, cart.packageName, packageQuantity)} = ${formatProductMoney(mainPackageAmount, cart.currency)}`
+    ];
+    addOnLines.forEach((line, index) => {
+      lines.push(
+        `Preferred Package ${index + 2}: ${buildPreferredPackageLine(
+          line.name,
+          line.detail,
+          Math.max(1, Number(line.qty) || 1)
+        )} = ${formatProductMoney(Math.max(0, Number(line.total) || 0), cart.currency)}`
+      );
+    });
+    if (addOnLines.length > 0) {
+      lines.push(`Total = ${formatProductMoney(displayedTotal, cart.currency)}`);
+    }
+    return lines.join("\n\n");
+  };
+
   const buildOrderWhatsAppMessage = (order: TrackedOrder) => {
     const quantity = quantityForOrder(order);
     const productLabel = order.packageName
@@ -39645,14 +39704,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                          <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
 	                        </button>
 	                      )}
-                        {(selectedCart.whatsapp || selectedCart.phone) && (
-                          <button
-                            type="button"
-                            onClick={() => copyText(buildCartWhatsAppMessage(selectedCart), `${selectedCart.customer || "Customer"} order copied for WhatsApp group`)}
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
-                            <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => copyText(
+                            formatCartForWhatsAppDispatch(selectedCart, {
+                              addOnLines: pricedSelectedCartAddOnLines,
+                              mainPackageAmount,
+                              displayedTotal: displayedCartTotal,
+                              packageQuantity: pkg?.quantity
+                            }),
+                            `${selectedCart.customer || "Customer"} order copied for WhatsApp group`
+                          )}
+                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
+                          <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
+                        </button>
 	                      {phoneClean && (
 	                        <a href={`tel:${phoneClean}`}
 	                          className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
