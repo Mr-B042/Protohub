@@ -1146,7 +1146,40 @@ router.get("/:id/audit", async (req, res) => {
     .order("created_at", { ascending: false });
 
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data ?? []);
+  type OrderAuditRow = {
+    id: string;
+    from_status: string | null;
+    to_status: string | null;
+    note: string | null;
+    created_at: string;
+    changed_by: string | null;
+  };
+  type AuditActorRow = { id: string; name: string | null; role: string | null };
+  const rows = (data ?? []) as OrderAuditRow[];
+  const actorIds = Array.from(new Set(rows.map((row) => row.changed_by).filter((id): id is string => Boolean(id))));
+  const actorById = new Map<string, AuditActorRow>();
+
+  if (actorIds.length > 0) {
+    const { data: actors, error: actorsError } = await supabase
+      .from("users")
+      .select("id, name, role")
+      .eq("org_id", req.user!.orgId)
+      .in("id", actorIds);
+    if (!actorsError) {
+      for (const actor of (actors ?? []) as AuditActorRow[]) {
+        actorById.set(actor.id, actor);
+      }
+    }
+  }
+
+  res.json(rows.map((row) => {
+    const actor = row.changed_by ? actorById.get(row.changed_by) : undefined;
+    return {
+      ...row,
+      changed_by_name: actor?.name ?? null,
+      changed_by_role: actor?.role ?? null
+    };
+  }));
 });
 
 // ── PATCH /api/orders/:id ─────────────────────────────────

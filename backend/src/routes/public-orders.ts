@@ -817,7 +817,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
 
   const { data: order, error: orderErr } = await supabase
     .from("orders")
-    .select("id, org_id, source_cart_id, product_id, product_name, package_id, package_name, state, customer, assigned_rep_id, amount, currency, cross_sell_lines")
+    .select("id, org_id, source_cart_id, product_id, product_name, package_id, package_name, state, customer, assigned_rep_id, status, amount, currency, cross_sell_lines")
     .eq("id", orderId)
     .maybeSingle();
   if (orderErr || !order) {
@@ -930,9 +930,9 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     order_id: order.id,
     org_id: order.org_id,
     changed_by: null,
-    from_status: null,
-    to_status: null,
-    note: `Customer accepted after-submit offer: ${lineProductName} × ${acceptedQuantity}`
+    from_status: order.status ?? "New",
+    to_status: order.status ?? "New",
+    note: `Customer accepted after-submit offer: ${lineProductName} × ${acceptedQuantity} (${formatNotificationMoney(lineAmount, order.currency)}). New order total: ${formatNotificationMoney(nextAmount, order.currency)}`
   });
 
   if (order.source_cart_id) {

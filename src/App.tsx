@@ -670,6 +670,16 @@ type TrackedOrder = {
   deliveredDateCorrectionReason?: string;
   date: string;
 };
+type OrderAuditEntry = {
+  id: string;
+  from_status: string | null;
+  to_status: string | null;
+  note: string | null;
+  created_at: string;
+  changed_by: string | null;
+  changed_by_name?: string | null;
+  changed_by_role?: string | null;
+};
 type OrderNote = {
   id: string;
   text: string;
@@ -2225,6 +2235,65 @@ const formatMoment = (value?: string | Date | null) => {
     return formatDateOnly(value);
   }
   return formatDateTime(value);
+};
+const cleanAuditText = (value: unknown) =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+const normalizeOrderAuditLog = (rows: unknown): OrderAuditEntry[] => {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row, index) => {
+    if (!row || typeof row !== "object") return [];
+    const record = row as Record<string, unknown>;
+    const createdAt = cleanAuditText(record.created_at);
+    return [{
+      id: cleanAuditText(record.id) ?? `${createdAt ?? "audit"}-${index}`,
+      from_status: cleanAuditText(record.from_status),
+      to_status: cleanAuditText(record.to_status),
+      note: cleanAuditText(record.note),
+      created_at: createdAt ?? nowIso(),
+      changed_by: cleanAuditText(record.changed_by),
+      changed_by_name: cleanAuditText(record.changed_by_name),
+      changed_by_role: cleanAuditText(record.changed_by_role)
+    }];
+  });
+};
+const orderAuditTitleFor = (entry: OrderAuditEntry) => {
+  const fromStatus = entry.from_status;
+  const toStatus = entry.to_status;
+  const note = entry.note ?? "";
+  const lowerNote = note.toLowerCase();
+
+  if (fromStatus && toStatus && fromStatus !== toStatus) {
+    return `${fromStatus} → ${toStatus}`;
+  }
+  if (lowerNote.includes("after-submit offer")) return "After-submit add-on accepted";
+  if (lowerNote.includes("delivered date corrected")) return "Delivered date corrected";
+  if (lowerNote.includes("order date changed")) return "Order date corrected";
+  if (lowerNote.includes("public embed form") || lowerNote.includes("order created")) {
+    return !fromStatus && toStatus ? `Order created as ${toStatus}` : "Order created";
+  }
+  if (!fromStatus && toStatus) {
+    return `Status set to ${toStatus}`;
+  }
+  if (fromStatus && toStatus && fromStatus === toStatus) {
+    return `Order updated while ${toStatus}`;
+  }
+  if (lowerNote.includes("assigned")) return "Assignment update";
+  return fromStatus ? `Order activity while ${fromStatus}` : "Order activity recorded";
+};
+const orderAuditDetailFor = (entry: OrderAuditEntry) => {
+  if (entry.note) return entry.note;
+  if (!entry.to_status) return "This older audit entry did not save a destination status or note.";
+  return "";
+};
+const orderAuditActorFor = (entry: OrderAuditEntry) => {
+  if (entry.changed_by_name) {
+    return entry.changed_by_role ? `${entry.changed_by_name} · ${entry.changed_by_role}` : entry.changed_by_name;
+  }
+  const note = (entry.note ?? "").toLowerCase();
+  if (!entry.changed_by && note.includes("customer accepted")) return "Customer";
+  if (!entry.changed_by && note.includes("public embed form")) return "Public form";
+  if (!entry.changed_by) return "System";
+  return "Team member";
 };
 const weekRangeLabel = (weekStart: string, weekEnd: string) => `${formatDateOnly(weekStart)} - ${formatDateOnly(weekEnd)}`;
 const USER_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
@@ -7060,7 +7129,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [toast, setToast] = useState("");
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
-  const [orderAuditLog, setOrderAuditLog] = useState<{ id: string; from_status: string | null; to_status: string; note: string | null; created_at: string; changed_by: string | null }[]>([]);
+  const [orderAuditLog, setOrderAuditLog] = useState<OrderAuditEntry[]>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
@@ -15066,7 +15135,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Fetch audit log when order details modal opens
   useEffect(() => {
     if (modal === "orderDetails" && selectedOrderId) {
-      ordersApi.audit(selectedOrderId).then(setOrderAuditLog).catch(() => setOrderAuditLog([]));
+      ordersApi.audit(selectedOrderId).then((rows) => setOrderAuditLog(normalizeOrderAuditLog(rows))).catch(() => setOrderAuditLog([]));
     } else {
       setOrderAuditLog([]);
     }
@@ -39977,24 +40046,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                )}
 	
 	                	
-	                {/* Status Audit Timeline */}
-	                {orderAuditLog.length > 0 && (
-	                  <section>
-	                    <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-3 ${orderTitleTextClass}`}>Status History</h3>
-	                    <div className="flex flex-col gap-3 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-	                      {orderAuditLog.map((entry) => (
-	                        <div key={entry.id} className={`flex items-start gap-2.5 text-[15px] sm:text-base ${orderBodyTextClass}`}>
-	                          <span className="mt-0.5 w-2 h-2 rounded-full bg-[#1F8FE0] shrink-0" />
-	                          <div>
-	                            <span className={`font-semibold ${orderTitleTextClass}`}>{entry.from_status ?? "New"} → {entry.to_status}</span>
-	                            {entry.note && <span className={`font-medium ${orderMutedTextClass}`}> · {entry.note}</span>}
-	                            <div className={`text-[12px] sm:text-[13px] mt-1 ${orderFaintTextClass}`}>{formatDateTime(entry.created_at)}</div>
-	                          </div>
-	                        </div>
-	                      ))}
-	                    </div>
-	                  </section>
-	                )}
+		                {/* Status Audit Timeline */}
+		                {orderAuditLog.length > 0 && (
+		                  <section>
+		                    <div className={`border-b ${orderBorderClass} pb-2 mb-3`}>
+		                      <h3 className={`font-semibold text-lg m-0 ${orderTitleTextClass}`}>Status & Activity History</h3>
+		                      <p className={`m-0 mt-1 text-sm ${orderMutedTextClass}`}>Status changes, add-ons, date corrections, and system notes saved for this order.</p>
+		                    </div>
+		                    <div className="flex flex-col gap-3 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+		                      {orderAuditLog.map((entry) => {
+		                        const detail = orderAuditDetailFor(entry);
+		                        const actor = orderAuditActorFor(entry);
+		                        return (
+		                          <div key={entry.id} className={`relative rounded-2xl border ${orderBorderClass} ${orderPanelMutedClass} p-3.5`}>
+		                            <span className="absolute left-0 top-5 h-2.5 w-2.5 -translate-x-1/2 rounded-full border-2 border-white bg-[#1F8FE0] dark:border-[#0f1822]" />
+		                            <div className="flex min-w-0 flex-col gap-2">
+		                              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+		                                <p className={`m-0 text-[15px] sm:text-base font-black leading-5 ${orderTitleTextClass}`}>{orderAuditTitleFor(entry)}</p>
+		                                <span className={`text-[12px] sm:text-[13px] font-semibold whitespace-nowrap ${orderFaintTextClass}`}>{formatDateTime(entry.created_at)}</span>
+		                              </div>
+		                              {detail && (
+		                                <p className={`m-0 text-sm leading-5 ${orderBodyTextClass}`}>{detail}</p>
+		                              )}
+		                              <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Recorded by {actor}</p>
+		                            </div>
+		                          </div>
+		                        );
+		                      })}
+		                    </div>
+		                  </section>
+		                )}
 
 		                {/* Section 7: Form Submission + Capture Data */}
 		                {hasPublicFormSubmissionDetails(selectedOrder) && (() => {
