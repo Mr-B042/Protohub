@@ -21270,8 +21270,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   const renderRepOrderDetail = (order: TrackedOrder) => {
     const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
     const bonusMotivator = repBonusCoach?.motivators.find((motivator) => motivator.orderId === order.id);
+    const orderStatus = order.status ?? "New";
+    const orderCallOutcome = (order.callOutcome ?? "").trim();
+    const orderLocationLabel = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
     const repScheduleKey = scheduledKeyForOrder(order);
-    const repScheduleIsOverdue = Boolean(repScheduleKey && repScheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New"));
+    const repScheduleIsOverdue = Boolean(repScheduleKey && repScheduleKey < todayKey() && !["Delivered", "Cancelled", "Failed"].includes(orderStatus));
     const repScheduleIsToday = repScheduleKey === todayKey();
     const repScheduleBadge = repScheduleIsOverdue ? "Overdue" : repScheduleIsToday ? "Today" : scheduledMomentForOrder(order) ? "Scheduled" : "Not scheduled";
     const repScheduleBadgeClass = repScheduleIsOverdue
@@ -21284,38 +21287,70 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     return (
     <div className="space-y-6 pb-6 sm:pb-8 lg:pb-12">
-      {/* Header & Breadcrumbs */}
-      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-2">
-            <button className="hover:text-[#1F8FE0] transition-colors" onClick={closeRepOrderDetail}>Orders</button>
-            <ArrowRight className="w-4 h-4" />
-            <span className="text-gray-900">{order.id}</span>
-          </nav>
-          <h1 className="text-2xl font-bold text-[#1F8FE0]">{order.customer}</h1>
-          <p className="text-sm font-medium text-gray-500 mt-1">
-            {order.phone} · {order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")} · {repScopeDescription}
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
-          <button
-            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors"
-            onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
-          >
-            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-          </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
-            <Repeat2 className="w-4 h-4" /> Change Status
-          </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(order)}>
-            <BookOpen className="w-4 h-4" /> Print Invoice
-          </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(order)}>
-            <Download className="w-4 h-4" /> Download Invoice
-          </button>
-          <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm" onClick={() => openRepEditOrderCustomer(order)}>
-            <Pencil className="w-4 h-4" /> Edit Order
-          </button>
+      <header className="relative overflow-hidden rounded-[32px] border border-sky-200/80 bg-gradient-to-br from-white via-sky-50 to-blue-100 p-4 shadow-[0_24px_70px_rgba(15,23,42,0.12)] dark:border-sky-500/25 dark:from-[#0d1c2a] dark:via-[#08131e] dark:to-[#06101a] dark:shadow-[0_34px_90px_rgba(0,0,0,0.42)] sm:p-5">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-[#1F8FE0]/18 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-8 h-44 w-44 rounded-full bg-emerald-400/12 blur-3xl" />
+        <div className="relative">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <nav className="mb-3 flex flex-wrap items-center gap-2 text-sm font-bold text-slate-500 dark:text-slate-400">
+                <button className="!min-h-0 rounded-full border border-slate-200 bg-white/85 px-3 py-1.5 text-slate-600 transition-colors hover:border-sky-200 hover:text-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300" onClick={closeRepOrderDetail}>Orders</button>
+                <ArrowRight className="h-4 w-4" />
+                <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-[#1F8FE0] dark:border-sky-500/30 dark:bg-sky-500/12 dark:text-sky-100">#{order.id}</span>
+              </nav>
+              <h1 className="m-0 text-[34px] font-black leading-[1.03] tracking-[-0.05em] text-[#1F8FE0] sm:text-[42px]">
+                {order.customer || "Unnamed customer"}
+              </h1>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+                  <Phone className="h-4 w-4 shrink-0 text-sky-500" /> <span className="break-words">{order.phone || "No phone saved"}</span>
+                </span>
+                <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+                  <MapPin className="h-4 w-4 shrink-0 text-emerald-500" /> <span className="break-words">{orderLocationLabel}</span>
+                </span>
+                <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-amber-500" /> <span className="break-words">{repScopeDescription}</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="min-w-0 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur dark:border-sky-500/20 dark:bg-[#0a1723]/78 dark:shadow-[0_22px_50px_rgba(0,0,0,0.34)] lg:min-w-[240px]">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Current stage</span>
+                <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-bold ${statusBadgeClasses(orderStatus)}`}>{orderStatus}</span>
+              </div>
+              {orderCallOutcome ? (
+                <p className="m-0 mt-3 text-sm font-bold leading-5 text-slate-700 dark:text-slate-100">{orderCallOutcome}</p>
+              ) : (
+                <p className="m-0 mt-3 text-sm font-semibold leading-5 text-slate-500 dark:text-slate-400">No call outcome saved yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 shadow-[0_14px_30px_rgba(16,185,129,0.12)] transition-colors hover:bg-emerald-100 dark:border-emerald-400/25 dark:bg-emerald-500/12 dark:text-emerald-100 dark:hover:bg-emerald-500/18"
+                onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+              >
+                <Copy className="h-4 w-4" /> Copy Order To WhatsApp Group
+              </button>
+              <button className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)] transition-colors hover:bg-blue-700" onClick={() => openRepEditOrderCustomer(order)}>
+                <Pencil className="h-4 w-4" /> Edit Order
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <button className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`} onClick={() => openRepStatusChangeModal(order)}>
+                <Repeat2 className="h-4 w-4" /> Change Status
+              </button>
+              <button className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`} onClick={() => printInvoiceForOrder(order)}>
+                <BookOpen className="h-4 w-4" /> Print Invoice
+              </button>
+              <button className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`} onClick={() => downloadInvoiceForOrder(order)}>
+                <Download className="h-4 w-4" /> Download Invoice
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -21640,30 +21675,65 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
 
       {/* Status Workflow Panel */}
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="text-base font-bold text-gray-900">Status Workflow</h2>
-          {renderOrderStatusSummary(order, "right")}
-        </div>
-          <div className="p-6">
-          <div className="grid grid-cols-2 sm:flex sm:items-center sm:justify-between relative gap-x-3 gap-y-4">
-            {/* Background Line */}
-            <div className="hidden sm:block absolute top-5 left-8 right-8 h-0.5 bg-gray-100 -z-0"></div>
-            
-            {(["Confirmed", "In Process", "Dispatched", "Delivered"] as Exclude<OrderStatus, "All Orders">[]).map((status) => {
-              const isActive = (order.status ?? "New") === status;
+      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-100 p-4 shadow-[0_24px_70px_rgba(15,23,42,0.12)] dark:border-sky-500/25 dark:from-[#0d1b29] dark:via-[#08131e] dark:to-[#06101a] dark:shadow-[0_34px_90px_rgba(0,0,0,0.42)] sm:p-5">
+        <div className="pointer-events-none absolute -right-20 top-0 h-56 w-56 rounded-full bg-sky-400/15 blur-3xl" />
+        <div className="pointer-events-none absolute -left-16 -bottom-20 h-48 w-48 rounded-full bg-emerald-400/10 blur-3xl" />
+        <div className="relative">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700 dark:text-sky-200">Status Workflow</p>
+              <h2 className={`m-0 mt-1 text-2xl font-black tracking-[-0.04em] ${orderTitleTextClass}`}>Order progress path</h2>
+              <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>See exactly where this order is and what remains before delivery.</p>
+            </div>
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-bold ${statusBadgeClasses(orderStatus)}`}>{orderStatus}</span>
+              {orderCallOutcome && (
+                <span className="max-w-sm rounded-2xl border border-amber-300/50 bg-amber-500/12 px-3 py-2 text-xs font-bold leading-5 text-amber-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] dark:text-amber-100">
+                  {orderCallOutcome}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {(["Confirmed", "In Process", "Dispatched", "Delivered"] as Exclude<OrderStatus, "All Orders">[]).map((status, index) => {
+              const isActive = orderStatus === status;
               const statusOrder = ["Confirmed", "In Process", "Dispatched", "Delivered"];
-              const currentIdx = statusOrder.indexOf(order.status ?? "");
+              const currentIdx = statusOrder.indexOf(orderStatus);
               const thisIdx = statusOrder.indexOf(status);
               const isCompleted = currentIdx > thisIdx;
+              const isUpcoming = !isActive && !isCompleted;
               return (
-                <article key={status} className={`flex flex-col items-center gap-2 relative z-10 w-full sm:w-1/4 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`}>
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isActive ? "bg-blue-50 text-[#1F8FE0] ring-4 ring-blue-50" : isCompleted ? "bg-green-50 text-green-500" : "bg-white border-2 border-gray-100 text-gray-300"}`}>
-                    {isCompleted ? <BadgeCheck className="w-6 h-6" /> : <CheckCircle2 className="w-5 h-5" />}
+                <article
+                  key={status}
+                  className={`relative overflow-hidden rounded-[26px] border p-4 transition-all ${
+                    isActive
+                      ? "border-sky-300 bg-gradient-to-br from-sky-50 to-blue-100 text-sky-950 shadow-[0_22px_45px_rgba(31,143,224,0.2)] dark:border-sky-400/45 dark:from-sky-500/18 dark:to-blue-500/10 dark:text-sky-50"
+                      : isCompleted
+                        ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-950 shadow-[0_16px_32px_rgba(16,185,129,0.12)] dark:border-emerald-400/30 dark:from-emerald-500/14 dark:to-emerald-500/6 dark:text-emerald-50"
+                        : "border-slate-200 bg-white/80 text-slate-500 shadow-[0_14px_30px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900/55 dark:text-slate-400"
+                  }`}
+                >
+                  <div className="pointer-events-none absolute -right-8 -top-8 h-20 w-20 rounded-full bg-white/35 blur-2xl dark:bg-white/5" />
+                  <div className="relative flex items-start justify-between gap-3">
+                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_14px_26px_rgba(15,23,42,0.12)] ${
+                      isActive
+                        ? "border-sky-200 bg-[#1F8FE0] text-white"
+                        : isCompleted
+                          ? "border-emerald-200 bg-emerald-500 text-white"
+                          : "border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-800"
+                    }`}>
+                      {isCompleted ? <BadgeCheck className="h-7 w-7" /> : <CheckCircle2 className="h-6 w-6" />}
+                    </div>
+                    <span className="rounded-full bg-black/5 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] dark:bg-white/8">
+                      Step {index + 1}
+                    </span>
                   </div>
-                  <div className="text-center">
-                    <strong className={`block text-xs uppercase tracking-wider font-bold ${isActive ? "text-gray-900" : "text-gray-400"}`}>{status}</strong>
-                    <span className="text-[10px] font-medium text-gray-400 mt-0.5">{statusCompletedAt(order, status)}</span>
+                  <div className="relative mt-4">
+                    <strong className={`block text-sm font-black uppercase tracking-[0.12em] ${isUpcoming ? "text-slate-500 dark:text-slate-400" : ""}`}>{status}</strong>
+                    <span className="mt-1 block text-sm font-semibold opacity-75">
+                      {isActive ? "Current" : isCompleted ? statusCompletedAt(order, status) : "Pending"}
+                    </span>
                   </div>
                 </article>
               );
@@ -21889,25 +21959,37 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       </section>
 
       {/* Action Required Panel */}
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4 border-l-[#1F8FE0]">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-bold text-gray-900">Action Required</h2>
-            <p className="text-xs text-gray-400 font-medium">Owner and rep workflow controls</p>
-          </div>
+      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-100 shadow-[0_24px_70px_rgba(15,23,42,0.12)] dark:border-sky-500/25 dark:from-[#0d1b29] dark:via-[#08131e] dark:to-[#06101a] dark:shadow-[0_34px_90px_rgba(0,0,0,0.42)]">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full bg-[#1F8FE0]/16 blur-3xl" />
+        <div className="relative border-b border-sky-100/80 px-5 py-5 dark:border-sky-500/18">
+          <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700 dark:text-sky-200">Action Required</p>
+          <h2 className={`m-0 mt-1 text-2xl font-black tracking-[-0.04em] ${orderTitleTextClass}`}>Choose the next move</h2>
+          <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>Fast controls for owner and rep workflow decisions.</p>
         </div>
-        <div className="p-5 flex flex-wrap items-center gap-3">
-          <button className="flex-1 min-w-[140px] px-4 py-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 transition-colors shadow-sm" onClick={() => openRepRescheduleModal(order)}>
-            Reschedule
+        <div className="relative grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
+          <button
+            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#1F8FE0] px-5 py-4 text-sm font-black text-white shadow-[0_20px_40px_rgba(31,143,224,0.28)] transition-all hover:-translate-y-0.5 hover:bg-blue-700 md:col-span-2 xl:col-span-1"
+            onClick={() => openRepStatusChangeModal(order, "Confirmed")}
+          >
+            <CheckCircle2 className="h-5 w-5" /> Confirm Order Now
           </button>
-          <button className="flex-1 min-w-[140px] px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors shadow-sm" onClick={() => openRepStatusChangeModal(order, "Postponed")}>
-            Postpone Order
+          <button
+            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] border border-sky-200 bg-sky-50 px-5 py-4 text-sm font-black text-sky-800 shadow-[0_16px_32px_rgba(31,143,224,0.12)] transition-all hover:-translate-y-0.5 hover:bg-sky-100 dark:border-sky-400/25 dark:bg-sky-500/12 dark:text-sky-100 dark:hover:bg-sky-500/18"
+            onClick={() => openRepRescheduleModal(order)}
+          >
+            <CalendarClock className="h-5 w-5" /> Reschedule
           </button>
-          <button className="flex-1 min-w-[140px] px-4 py-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold hover:bg-red-100 transition-colors shadow-sm border border-red-100" onClick={() => openRepStatusChangeModal(order, "Cancelled")}>
-            Cancel Order
+          <button
+            className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-5 py-4 text-sm font-black transition-all hover:-translate-y-0.5 ${orderSecondaryButtonClass}`}
+            onClick={() => openRepStatusChangeModal(order, "Postponed")}
+          >
+            <Clock className="h-5 w-5" /> Postpone Order
           </button>
-          <button className="flex-2 min-w-[200px] px-4 py-3 bg-[#1F8FE0] text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-md" onClick={() => openRepStatusChangeModal(order, "Confirmed")}>
-            Confirm Order Now
+          <button
+            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] border border-red-200 bg-red-50 px-5 py-4 text-sm font-black text-red-700 shadow-[0_16px_32px_rgba(239,68,68,0.12)] transition-all hover:-translate-y-0.5 hover:bg-red-100 dark:border-red-400/25 dark:bg-red-500/12 dark:text-red-100 dark:hover:bg-red-500/18"
+            onClick={() => openRepStatusChangeModal(order, "Cancelled")}
+          >
+            <CircleX className="h-5 w-5" /> Cancel Order
           </button>
         </div>
       </section>
