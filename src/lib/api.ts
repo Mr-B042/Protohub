@@ -317,6 +317,25 @@ export const productsApi = {
     }
     return snakeToCamel<{ product: any; related: any[] }>(await res.json());
   },
+  publicPackageAvailability: async (id: string, state: string) => {
+    const qs = new URLSearchParams({ state });
+    const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}/package-availability?${qs.toString()}`, {
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+    }
+    return snakeToCamel<{
+      packages: Array<{
+        packageId: string;
+        stateAllowed: boolean;
+        stockReady: boolean;
+        visible: boolean;
+        requiresStateStock: boolean;
+      }>;
+    }>(await res.json());
+  },
   create: (body: unknown) => post<any>("/api/products", body),
   update: (id: string, body: unknown) => patch<any>(`/api/products/${id}`, body),
   delete: (id: string) => del<void>(`/api/products/${id}`),

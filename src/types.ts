@@ -178,6 +178,12 @@ export type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  stateFilterMode?: "all" | "allow" | "block";
+  stateRestrictions?: string[];
+  requiresStateStock?: boolean;
+  featuredComboCard?: boolean;
+  imageUrl?: string;
+  imageUrls?: string[];
   companions?: PackageCompanion[];
   packageComponents?: PackageComponent[];
   offerSyncEnabled?: boolean;

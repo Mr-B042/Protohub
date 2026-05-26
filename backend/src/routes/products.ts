@@ -245,6 +245,12 @@ const PackageSchema = z.object({
   currency:     z.enum(["NGN", "USD", "GBP"]).default("NGN"),
   displayOrder: z.number().int().default(0),
   active:       z.boolean().default(true),
+  stateFilterMode:   z.enum(["all", "allow", "block"]).default("all"),
+  stateRestrictions: z.array(z.string()).default([]),
+  requiresStateStock: z.boolean().default(false),
+  featuredComboCard: z.boolean().default(false),
+  imageUrl:          mediaImageSchema,
+  imageUrls:         z.array(mediaImageSchema.unwrap()).max(10).default([]),
   companionProducts: z.array(CompanionSchema).default([]),
   packageComponents: z.array(PackageComponentSchema).default([]),
   offerSyncEnabled: z.boolean().default(false),
@@ -269,6 +275,12 @@ router.post("/:id/packages",
       currency,
       displayOrder,
       active,
+      stateFilterMode,
+      stateRestrictions,
+      requiresStateStock,
+      featuredComboCard,
+      imageUrl,
+      imageUrls,
       companionProducts,
       packageComponents,
       offerSyncEnabled,
@@ -286,6 +298,12 @@ router.post("/:id/packages",
         currency,
         display_order: displayOrder,
         active,
+        state_filter_mode: stateFilterMode,
+        state_restrictions: stateFilterMode === "all" ? [] : stateRestrictions,
+        requires_state_stock: requiresStateStock,
+        featured_combo_card: featuredComboCard,
+        image_url: imageUrl ?? null,
+        image_urls: imageUrls.filter((url) => url && url.trim()),
         companion_products: companionProducts,
         package_components: packageComponents,
         offer_sync_enabled: offerSyncEnabled,
@@ -308,6 +326,12 @@ const PackageUpdateSchema = z.object({
   currency:     z.enum(["NGN", "USD", "GBP"]).optional(),
   displayOrder: z.number().int().optional(),
   active:       z.boolean().optional(),
+  stateFilterMode:   z.enum(["all", "allow", "block"]).optional(),
+  stateRestrictions: z.array(z.string()).optional(),
+  requiresStateStock: z.boolean().optional(),
+  featuredComboCard: z.boolean().optional(),
+  imageUrl:          mediaImageSchema,
+  imageUrls:         z.array(mediaImageSchema.unwrap()).max(10).optional(),
   companionProducts: z.array(CompanionSchema).optional(),
   packageComponents: z.array(PackageComponentSchema).optional(),
   offerSyncEnabled: z.boolean().optional(),
@@ -332,6 +356,12 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.currency !== undefined) updates.currency = parsed.data.currency;
     if (parsed.data.displayOrder !== undefined) updates.display_order = parsed.data.displayOrder;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
+    if (parsed.data.stateFilterMode !== undefined) updates.state_filter_mode = parsed.data.stateFilterMode;
+    if (parsed.data.stateRestrictions !== undefined) updates.state_restrictions = parsed.data.stateFilterMode === "all" ? [] : parsed.data.stateRestrictions;
+    if (parsed.data.requiresStateStock !== undefined) updates.requires_state_stock = parsed.data.requiresStateStock;
+    if (parsed.data.featuredComboCard !== undefined) updates.featured_combo_card = parsed.data.featuredComboCard;
+    if (parsed.data.imageUrl !== undefined) updates.image_url = parsed.data.imageUrl || null;
+    if (parsed.data.imageUrls !== undefined) updates.image_urls = parsed.data.imageUrls.filter((url) => url && url.trim());
     if (parsed.data.companionProducts !== undefined) updates.companion_products = parsed.data.companionProducts;
     if (parsed.data.packageComponents !== undefined) updates.package_components = parsed.data.packageComponents;
     if (parsed.data.offerSyncEnabled !== undefined) updates.offer_sync_enabled = parsed.data.offerSyncEnabled;

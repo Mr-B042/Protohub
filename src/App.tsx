@@ -458,6 +458,12 @@ type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  stateFilterMode?: "all" | "allow" | "block";
+  stateRestrictions?: string[];
+  requiresStateStock?: boolean;
+  featuredComboCard?: boolean;
+  imageUrl?: string;
+  imageUrls?: string[];
   companionProducts?: PackageCompanion[];
   packageComponents?: PackageComponent[];
 };
@@ -542,6 +548,11 @@ type FreeGiftLine = {
   productId?: string;
   productName: string;
   quantity: number;
+};
+type AdTrackingSourceStat = {
+  key: string;
+  label: string;
+  count: number;
 };
 type OrderInventoryComponentSnapshot = {
   componentId?: string;
@@ -1980,6 +1991,65 @@ const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources">
   }
 
   return "Website";
+};
+const AD_TRACKING_SOURCE_PRIORITY = ["fb", "ig", "an", "th", "ms", "wa", "tt"];
+const normalizeAdTrackingSource = (value?: string | null) => {
+  const normalized = (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalized || normalized === "direct") return "";
+  if (normalized === "fb" || normalized.includes("facebook") || normalized.includes("meta")) return "fb";
+  if (normalized === "ig" || normalized.includes("instagram") || normalized.includes("insta")) return "ig";
+  if (normalized === "an" || normalized.includes("audience network")) return "an";
+  if (normalized === "th" || normalized.includes("threads")) return "th";
+  if (normalized === "ms" || normalized.includes("messenger")) return "ms";
+  if (normalized === "wa" || normalized.includes("whatsapp")) return "wa";
+  if (normalized === "tt" || normalized.includes("tiktok") || normalized.includes("tik tok")) return "tt";
+  return normalized.replace(/\s+/g, "-");
+};
+const adTrackingSourceLabel = (key: string) => {
+  switch (key) {
+    case "fb":
+      return "Fb";
+    case "ig":
+      return "Ig";
+    case "an":
+      return "An";
+    case "th":
+      return "Th";
+    case "ms":
+      return "Ms";
+    case "wa":
+      return "Wa";
+    case "tt":
+      return "Tt";
+    default:
+      return key
+        .split("-")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+  }
+};
+const adTrackingSourceSortIndex = (key: string) => {
+  const idx = AD_TRACKING_SOURCE_PRIORITY.indexOf(key);
+  return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+};
+const adTrackingSourceBreakdown = (values: Array<string | undefined | null>): AdTrackingSourceStat[] => {
+  const counts = new Map<string, number>();
+  values.forEach((value) => {
+    const key = normalizeAdTrackingSource(value);
+    if (!key) return;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return Array.from(counts, ([key, count]) => ({
+    key,
+    label: adTrackingSourceLabel(key),
+    count
+  })).sort((a, b) => b.count - a.count || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key) || a.label.localeCompare(b.label));
 };
 const orderLocationFromFields = (city: string, state: string) => {
   const rawLocation = `${city} ${state}`.trim();
@@ -3509,6 +3579,10 @@ const normalisePackageComponent = (component: Partial<PackageComponent>): Packag
   isFreeGift: Boolean(component.isFreeGift),
   note: component.note ?? ""
 });
+const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
+  mode === "allow" || mode === "block" ? mode : "all";
+const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
+  Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 10);
 const companionMatchesState = (
   companion: Pick<PackageCompanion, "stateRestrictions" | "stateFilterMode">,
   state: string
@@ -5517,6 +5591,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
   const [packageComponents, setPackageComponents] = useState<PackageComponent[]>([]);
   const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
+  const [packageStateFilterMode, setPackageStateFilterMode] = useState<"all" | "allow" | "block">("all");
+  const [packageStateRestrictions, setPackageStateRestrictions] = useState<string[]>([]);
+  const [packageRequiresStateStock, setPackageRequiresStateStock] = useState(false);
+  const [packageFeaturedComboCard, setPackageFeaturedComboCard] = useState(false);
+  const [packageImageUrls, setPackageImageUrls] = useState<string[]>([]);
+  const [packageImageUrlDraft, setPackageImageUrlDraft] = useState("");
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
@@ -5958,9 +6038,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [adTrackingSearch, setAdTrackingSearch] = useState<string>(() =>
     readPref<string>("protohub.adTracking.search", "", (raw) => typeof raw === "string" ? raw : null)
   );
+  const [adTrackingSourceFilter, setAdTrackingSourceFilter] = useState<string>(() =>
+    readPref<string>("protohub.adTracking.source", "all", (raw) => typeof raw === "string" ? raw : null)
+  );
   useEffect(() => { writePref("protohub.adTracking.period", campaignPeriod); }, [campaignPeriod]);
   useEffect(() => { writePref("protohub.adTracking.tab",    adTrackingTab);   }, [adTrackingTab]);
   useEffect(() => { writePref("protohub.adTracking.search", adTrackingSearch); }, [adTrackingSearch]);
+  useEffect(() => { writePref("protohub.adTracking.source", adTrackingSourceFilter); }, [adTrackingSourceFilter]);
   const [campaignPage, setCampaignPage] = useState(1);
   const [adTrackingCartPage, setAdTrackingCartPage] = useState(1);
   const [adTrackingCartStatus, setAdTrackingCartStatus] = useState<CartStatus>(() =>
@@ -5994,7 +6078,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     setCampaignPage(1);
     setAdTrackingCartPage(1);
-  }, [adTrackingSearch]);
+  }, [adTrackingSearch, adTrackingSourceFilter]);
   useEffect(() => { writePref("protohub.adTracking.abandonedCartStatus", adTrackingCartStatus); }, [adTrackingCartStatus]);
   useEffect(() => {
     setAdTrackingCartPage(1);
@@ -7972,7 +8056,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice(String(selectedPackage.price));
     setPackageCurrency(selectedPackage.currency);
     setPackageDisplayOrder(String(selectedPackage.displayOrder));
+    setPackageComponents((selectedPackage.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((selectedPackage.companionProducts ?? []).map(normalisePackageCompanion));
+    setPackageStateFilterMode(normalisePackageStateFilterMode(selectedPackage.stateFilterMode));
+    setPackageStateRestrictions(Array.isArray(selectedPackage.stateRestrictions) ? selectedPackage.stateRestrictions : []);
+    setPackageRequiresStateStock(Boolean(selectedPackage.requiresStateStock));
+    setPackageFeaturedComboCard(Boolean(selectedPackage.featuredComboCard));
+    setPackageImageUrls(normalisePackageImageUrls([...(selectedPackage.imageUrls ?? []), selectedPackage.imageUrl]));
+    setPackageImageUrlDraft("");
   }, [modal, selectedPackage]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
@@ -8467,6 +8558,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const packageRecord = product?.packages.find((item) => item.id === order.packageId);
     return order.quantity ?? packageRecord?.quantity ?? 1;
   };
+  const CUSTOMER_SELECTED_CROSS_SELL_BONUS = 100;
+  const isCustomerSelectedCrossSell = (line?: CrossSellLine | null) => {
+    const source = line?.selectionSource ?? "";
+    return source === "public_form" || source === "public_upsell";
+  };
+  const splitCrossSellLinesBySource = (lines?: CrossSellLine[] | null) => {
+    const customerSelected: CrossSellLine[] = [];
+    const repDriven: CrossSellLine[] = [];
+    for (const line of lines ?? []) {
+      if (isCustomerSelectedCrossSell(line)) customerSelected.push(line);
+      else repDriven.push(line);
+    }
+    return { customerSelected, repDriven };
+  };
+  const crossSellBonusDetails = (lines: CrossSellLine[] | undefined, cfg: ProductBonusConfig) => {
+    const { customerSelected, repDriven } = splitCrossSellLinesBySource(lines);
+    const customerSelectedBonus = customerSelected.length * CUSTOMER_SELECTED_CROSS_SELL_BONUS;
+    const repDrivenValue = repDriven.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+    const repDrivenBonus = Math.round(repDrivenValue * (cfg.crossSellPercent / 100)) + (cfg.crossSellFixed * repDriven.length);
+    return {
+      customerSelected,
+      repDriven,
+      customerSelectedBonus,
+      repDrivenValue,
+      repDrivenBonus,
+      total: customerSelectedBonus + repDrivenBonus
+    };
+  };
   const costForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
     if (!product) {
@@ -8690,25 +8809,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     d.setDate(d.getDate() + i);
     return formatDateKey(d);
   });
+  const matchesAdTrackingSourceFilter = (source?: string | null) =>
+    adTrackingSourceFilter === "all" || normalizeAdTrackingSource(source) === adTrackingSourceFilter;
   const campaignBaseOrders = trackedOrders
     .filter(o => isInPeriod(orderCreatedKey(o), campaignPeriod, campaignDateRange))
     .filter(o => matchesProductFilter(o.productId, o.productName, campaignProductIds));
-  const filteredCampaignOrders = campaignBaseOrders.filter(o => o.utmSource && o.utmSource !== "direct");
+  const trackedCampaignOrders = campaignBaseOrders.filter((order) => Boolean(normalizeAdTrackingSource(order.utmSource)));
+  const filteredCampaignOrders = trackedCampaignOrders.filter((order) => matchesAdTrackingSourceFilter(order.utmSource));
   const campaignGroupedRows = Object.values(
     filteredCampaignOrders.reduce<Record<string, {
       id: string;
       orders: TrackedOrder[];
       deliveredCount: number;
       revenue: number;
-      topSource: string;
     }>>((acc, order) => {
       const key = order.utmCampaign?.trim() || "Unlabelled";
       const bucket = acc[key] ?? {
         id: key,
         orders: [],
         deliveredCount: 0,
-        revenue: 0,
-        topSource: ""
+        revenue: 0
       };
       bucket.orders.push(order);
       if ((order.status ?? "New") === "Delivered") {
@@ -8719,15 +8839,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return acc;
     }, {})
   ).map((row) => {
-    const sourceCounts: Record<string, number> = {};
-    row.orders.forEach((order) => {
-      const src = order.utmSource?.trim() || "unknown";
-      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-    });
+    const sourceBreakdown = adTrackingSourceBreakdown(row.orders.map((order) => order.utmSource));
     return {
       ...row,
       orderCount: row.orders.length,
-      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
+      topSource: sourceBreakdown[0]?.label ?? "Unknown",
+      sourceBreakdown
     };
   }).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
   const creativeGroupedRows = Object.values(
@@ -8756,10 +8873,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         acc[key] = bucket;
         return acc;
       }, {})
-  ).map((row) => ({
-    ...row,
-    orderCount: row.orders.length
-  })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
+  ).map((row) => {
+    const sourceBreakdown = adTrackingSourceBreakdown(row.orders.map((order) => order.utmSource));
+    return {
+      ...row,
+      orderCount: row.orders.length,
+      sourceBreakdown
+    };
+  }).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
   const campaignCardLabelFor = (id: string) => campaignCardLabels[id]?.trim() || "";
   const creativeCardLabelFor = (id: string) => creativeCardLabels[id]?.trim() || "";
   const adTrackingSearchNeedle = adTrackingSearch.trim().toLowerCase();
@@ -8772,6 +8893,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       row.id,
       campaignCardLabelFor(row.id),
       row.topSource,
+      ...row.sourceBreakdown.map((source) => `${source.label} ${source.count}`),
       ...row.orders.map((order) => order.utmSource ?? "")
     )
   );
@@ -8781,12 +8903,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       creativeCardLabelFor(row.id),
       row.campaignId,
       campaignCardLabelFor(row.campaignId),
+      ...row.sourceBreakdown.map((source) => `${source.label} ${source.count}`),
       ...row.orders.map((order) => order.utmSource ?? "")
     )
   );
   const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) => {
     const campaignId = order.utmCampaign?.trim() || "Unlabelled";
     const creativeId = order.utmContent?.trim() || "";
+    const sourceKey = normalizeAdTrackingSource(order.utmSource);
     return matchesAdTrackingSearch(
       order.id,
       order.customer,
@@ -8798,9 +8922,43 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       order.utmMedium,
       order.utmContent,
       campaignCardLabelFor(campaignId),
-      creativeId ? creativeCardLabelFor(creativeId) : ""
+      creativeId ? creativeCardLabelFor(creativeId) : "",
+      sourceKey ? adTrackingSourceLabel(sourceKey) : ""
     );
   });
+  const adTrackingOrderSourceStats = Object.values(
+    filteredAdTrackingOrders.reduce<Record<string, {
+      key: string;
+      label: string;
+      orderCount: number;
+      deliveredCount: number;
+      undeliveredCount: number;
+      revenue: number;
+    }>>((acc, order) => {
+      const key = normalizeAdTrackingSource(order.utmSource);
+      if (!key) return acc;
+      const bucket = acc[key] ?? {
+        key,
+        label: adTrackingSourceLabel(key),
+        orderCount: 0,
+        deliveredCount: 0,
+        undeliveredCount: 0,
+        revenue: 0
+      };
+      bucket.orderCount += 1;
+      if ((order.status ?? "New") === "Delivered") {
+        bucket.deliveredCount += 1;
+        bucket.revenue += order.amount;
+      } else {
+        bucket.undeliveredCount += 1;
+      }
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => ({
+    ...row,
+    deliveryRate: row.orderCount > 0 ? Math.round((row.deliveredCount / row.orderCount) * 100) : 0
+  })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
   const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
     if (order.sourceCartId && !map.has(order.sourceCartId)) {
       map.set(order.sourceCartId, order);
@@ -8810,12 +8968,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const campaignBaseCarts = abandonedCarts
     .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
     .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
-  const adTrackingJourneyCartIds = useMemo(
-    () => Array.from(new Set(campaignBaseCarts.map((cart) => cart.id).filter(Boolean))),
-    [campaignBaseCarts]
-  );
-  const adTrackingJourneyCartIdsKey = adTrackingJourneyCartIds.join("|");
-  const filteredCampaignBaseCarts = campaignBaseCarts
+  const attributedCampaignBaseCarts = campaignBaseCarts
     .map((cart) => ({
       cart,
       journeyEvents: adTrackingCartJourneyMap[cart.id] ?? [],
@@ -8824,6 +8977,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }))
     .filter(({ cart }) => adTrackingCartStatus === "All statuses" || cart.status === adTrackingCartStatus)
     .filter(({ cart, journeyEvents }) => cartHasAdAttribution(cart, journeyEvents));
+  const adTrackingJourneyCartIds = useMemo(
+    () => Array.from(new Set(campaignBaseCarts.map((cart) => cart.id).filter(Boolean))),
+    [campaignBaseCarts]
+  );
+  const adTrackingJourneyCartIdsKey = adTrackingJourneyCartIds.join("|");
+  const filteredCampaignBaseCarts = attributedCampaignBaseCarts
+    .filter(({ attribution, cart }) => matchesAdTrackingSourceFilter(attribution.utmSource ?? cart.source));
   const cartCampaignGroupedRows = Object.values(
     filteredCampaignBaseCarts.reduce<Record<string, {
       id: string;
@@ -8831,7 +8991,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       recoveredCount: number;
       deliveredCount: number;
       value: number;
-      topSource: string;
     }>>((acc, row) => {
       const key = row.attribution.utmCampaign?.trim() || "Unlabelled";
       const bucket = acc[key] ?? {
@@ -8839,8 +8998,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         carts: [],
         recoveredCount: 0,
         deliveredCount: 0,
-        value: 0,
-        topSource: ""
+        value: 0
       };
       bucket.carts.push(row);
       bucket.value += row.cart.amount;
@@ -8854,15 +9012,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return acc;
     }, {})
   ).map((row) => {
-    const sourceCounts: Record<string, number> = {};
-    row.carts.forEach(({ attribution }) => {
-      const src = attribution.utmSource?.trim() || "unknown";
-      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-    });
+    const sourceBreakdown = adTrackingSourceBreakdown(
+      row.carts.map(({ attribution, cart }) => attribution.utmSource ?? cart.source)
+    );
     return {
       ...row,
       cartCount: row.carts.length,
-      topSource: Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown"
+      topSource: sourceBreakdown[0]?.label ?? "Unknown",
+      sourceBreakdown
     };
   }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
   const cartCreativeGroupedRows = Object.values(
@@ -8896,15 +9053,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         acc[key] = bucket;
         return acc;
       }, {})
-  ).map((row) => ({
-    ...row,
-    cartCount: row.carts.length
-  })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
+  ).map((row) => {
+    const sourceBreakdown = adTrackingSourceBreakdown(
+      row.carts.map(({ attribution, cart }) => attribution.utmSource ?? cart.source)
+    );
+    return {
+      ...row,
+      cartCount: row.carts.length,
+      sourceBreakdown
+    };
+  }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
   const filteredCartCampaignGroupedRows = cartCampaignGroupedRows.filter((row) =>
     matchesAdTrackingSearch(
       row.id,
       campaignCardLabelFor(row.id),
       row.topSource,
+      ...row.sourceBreakdown.map((source) => `${source.label} ${source.count}`),
       ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
     )
   );
@@ -8914,12 +9078,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       creativeCardLabelFor(row.id),
       row.campaignId,
       campaignCardLabelFor(row.campaignId),
+      ...row.sourceBreakdown.map((source) => `${source.label} ${source.count}`),
       ...row.carts.map(({ attribution }) => attribution.utmSource ?? "")
     )
   );
   const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) => {
     const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
     const creativeId = attribution.utmContent?.trim() || "";
+    const sourceKey = normalizeAdTrackingSource(attribution.utmSource ?? cart.source);
     return matchesAdTrackingSearch(
       cart.id,
       cart.customer,
@@ -8932,10 +9098,51 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       attribution.utmContent,
       campaignCardLabelFor(campaignId),
       creativeId ? creativeCardLabelFor(creativeId) : "",
+      sourceKey ? adTrackingSourceLabel(sourceKey) : "",
       linkedOrder?.customer ?? "",
       linkedOrder?.id ?? ""
     );
   });
+  const adTrackingCartSourceStats = Object.values(
+    filteredAdTrackingCarts.reduce<Record<string, {
+      key: string;
+      label: string;
+      cartCount: number;
+      recoveredCount: number;
+      deliveredCount: number;
+      value: number;
+    }>>((acc, row) => {
+      const key = normalizeAdTrackingSource(row.attribution.utmSource ?? row.cart.source);
+      if (!key) return acc;
+      const bucket = acc[key] ?? {
+        key,
+        label: adTrackingSourceLabel(key),
+        cartCount: 0,
+        recoveredCount: 0,
+        deliveredCount: 0,
+        value: 0
+      };
+      bucket.cartCount += 1;
+      bucket.value += row.cart.amount;
+      if (row.linkedOrder) {
+        bucket.recoveredCount += 1;
+        if ((row.linkedOrder.status ?? "New") === "Delivered") {
+          bucket.deliveredCount += 1;
+        }
+      }
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => ({
+    ...row,
+    unrecoveredCount: row.cartCount - row.recoveredCount,
+    recoveryRate: row.cartCount > 0 ? Math.round((row.recoveredCount / row.cartCount) * 100) : 0,
+    deliveredRate: row.cartCount > 0 ? Math.round((row.deliveredCount / row.cartCount) * 100) : 0
+  })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
+  const adTrackingAvailableSourceOptions = adTrackingSourceBreakdown([
+    ...trackedCampaignOrders.map((order) => order.utmSource),
+    ...attributedCampaignBaseCarts.map(({ attribution, cart }) => attribution.utmSource ?? cart.source)
+  ]);
   useEffect(() => {
     if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
       setAdTrackingCartJourneyLoading(false);
@@ -11633,7 +11840,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productId: product.id,
       productName: product.name,
       quantity: qty,
-      amount: price
+      amount: price,
+      selectionSource: "manual_rep"
     };
     const orderSnapshot = order;
     const nextCrossSellLines = [...(order.crossSellLines ?? []), line];
@@ -12152,9 +12360,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Cross-sell bonus
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const xsTotal = order.crossSellLines.reduce((sum, line) => sum + (line.amount || 0), 0);
-      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
-      if (crossSell > 0) components.push({ label: `Cross-sell ${cfg.crossSellPercent}%`, amount: crossSell });
+      const details = crossSellBonusDetails(order.crossSellLines, cfg);
+      crossSell = details.total;
+      if (crossSell > 0) {
+        const label = details.customerSelected.length > 0 && details.repDriven.length > 0
+          ? "Cross-sell (customer + rep-added)"
+          : details.customerSelected.length > 0
+            ? "Cross-sell (customer add-ons)"
+            : "Cross-sell (rep-added)";
+        components.push({ label, amount: crossSell });
+      }
     }
 
     // Free-gift bonus
@@ -12244,12 +12459,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const crossSellLineCount = order.crossSellLines?.length ?? 0;
-      const crossSellValue = (order.crossSellLines ?? []).reduce((sum, line) => sum + (line.amount || 0), 0);
+      const crossSellDetails = crossSellBonusDetails(order.crossSellLines, cfg);
+      const crossSellNotes: string[] = [];
+      if (crossSellDetails.customerSelected.length > 0) {
+        crossSellNotes.push(
+          `${crossSellDetails.customerSelected.length} customer add-on line${crossSellDetails.customerSelected.length === 1 ? "" : "s"} chosen on the order form = ${formatProductMoney(crossSellDetails.customerSelectedBonus, order.currency)} flat (${formatProductMoney(CUSTOMER_SELECTED_CROSS_SELL_BONUS, order.currency)} each).`
+        );
+      }
+      if (crossSellDetails.repDriven.length > 0) {
+        crossSellNotes.push(
+          `${crossSellDetails.repDriven.length} rep-added cross-sell line${crossSellDetails.repDriven.length === 1 ? "" : "s"} worth ${formatProductMoney(crossSellDetails.repDrivenValue, order.currency)} use ${cfg.crossSellPercent}% + ${formatProductMoney(cfg.crossSellFixed, order.currency)} per line.`
+        );
+      }
       componentLines.push({
         label: "Cross-sell bonus",
         amount: computed.crossSell,
         note: crossSellLineCount > 0
-          ? `${crossSellLineCount} add-on line${crossSellLineCount === 1 ? "" : "s"} worth ${formatProductMoney(crossSellValue, order.currency)}. Formula: ${cfg.crossSellPercent}% of add-ons + ${formatProductMoney(cfg.crossSellFixed, order.currency)} fixed per line.`
+          ? crossSellNotes.join(" ")
           : "No cross-sell/add-on line was attached to this delivered order.",
         tone: computed.crossSell > 0 ? "earned" : crossSellLineCount > 0 ? "blocked" : "info"
       });
@@ -12331,9 +12557,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     let crossSell = 0;
     if (order.crossSellLines && order.crossSellLines.length > 0) {
-      const xsTotal = order.crossSellLines.reduce((s, l) => s + (l.amount || 0), 0);
-      crossSell = Math.round(xsTotal * (cfg.crossSellPercent / 100)) + cfg.crossSellFixed * order.crossSellLines.length;
-      if (crossSell > 0) components.push({ label: `Cross-sell`, amount: crossSell });
+      crossSell = crossSellBonusDetails(order.crossSellLines, cfg).total;
+      if (crossSell > 0) components.push({ label: "Cross-sell", amount: crossSell });
     }
     let freeGift = 0;
     if (order.freeGiftLines && order.freeGiftLines.length > 0 && cfg.freeGiftBonus > 0) {
@@ -17001,6 +17226,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           currency: pkg.currency,
           displayOrder: pkg.displayOrder,
           active: pkg.active,
+          stateFilterMode: pkg.stateFilterMode ?? "all",
+          stateRestrictions: pkg.stateRestrictions ?? [],
+          requiresStateStock: Boolean(pkg.requiresStateStock),
+          featuredComboCard: Boolean(pkg.featuredComboCard),
+          imageUrl: pkg.imageUrl ?? "",
+          imageUrls: pkg.imageUrls ?? [],
+          packageComponents: pkg.packageComponents ?? [],
           companionProducts: pkg.companionProducts ?? []
         }).then((savedPackage: any) => ({ tempId: pkg.id, savedPackage: savedPackage as ProductPackage }))
       );
@@ -17259,6 +17491,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageDisplayOrder("1");
     setPackageComponents([]);
     setPackageCompanions([]);
+    setPackageStateFilterMode("all");
+    setPackageStateRestrictions([]);
+    setPackageRequiresStateStock(false);
+    setPackageFeaturedComboCard(false);
+    setPackageImageUrls([]);
+    setPackageImageUrlDraft("");
     setSelectedPackageId("");
   };
 
@@ -17282,6 +17520,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageDisplayOrder(String(item.displayOrder));
     setPackageComponents((item.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((item.companionProducts ?? []).map(normalisePackageCompanion));
+    setPackageStateFilterMode(normalisePackageStateFilterMode(item.stateFilterMode));
+    setPackageStateRestrictions(Array.isArray(item.stateRestrictions) ? item.stateRestrictions : []);
+    setPackageRequiresStateStock(Boolean(item.requiresStateStock));
+    setPackageFeaturedComboCard(Boolean(item.featuredComboCard));
+    setPackageImageUrls(normalisePackageImageUrls([...(item.imageUrls ?? []), item.imageUrl]));
+    setPackageImageUrlDraft("");
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -17300,7 +17544,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ...pkg,
                       ...savedPackage,
                       packageComponents: savedPackage.packageComponents ?? pkg.packageComponents ?? [],
-                      companionProducts: savedPackage.companionProducts ?? pkg.companionProducts ?? []
+                      companionProducts: savedPackage.companionProducts ?? pkg.companionProducts ?? [],
+                      stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode ?? "all",
+                      stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions ?? [],
+                      requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock ?? false,
+                      featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard ?? false,
+                      imageUrl: savedPackage.imageUrl ?? pkg.imageUrl ?? "",
+                      imageUrls: savedPackage.imageUrls ?? pkg.imageUrls ?? []
                     }
               )
             }
@@ -17332,6 +17582,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Pick at least one state for every 'Show only in selected states' offer.");
       return;
     }
+    if (packageStateFilterMode === "allow" && packageStateRestrictions.length === 0) {
+      showToast("Pick at least one state, or change package visibility back to Show everywhere.");
+      return;
+    }
+    const normalisedPackageStateRestrictions = packageStateFilterMode === "all" ? [] : packageStateRestrictions;
+    const normalisedPackageImageUrls = normalisePackageImageUrls(packageImageUrls);
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
@@ -17340,7 +17596,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       price: Math.max(0, Number(packagePrice) || 0),
       currency: packageCurrency,
       displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
-      active: true,
+      active: modal === "editPackage" && selectedPackage ? selectedPackage.active : true,
+      stateFilterMode: packageStateFilterMode,
+      stateRestrictions: normalisedPackageStateRestrictions,
+      requiresStateStock: packageRequiresStateStock,
+      featuredComboCard: packageFeaturedComboCard,
+      imageUrl: normalisedPackageImageUrls[0] ?? "",
+      imageUrls: normalisedPackageImageUrls,
+      packageComponents: normalisedComponents,
+      companionProducts: normalisedCompanions
+    };
+    const packagePayload = {
+      name: packageRecord.name,
+      description: packageRecord.description,
+      quantity: packageRecord.quantity,
+      price: packageRecord.price,
+      currency: packageRecord.currency,
+      displayOrder: packageRecord.displayOrder,
+      active: packageRecord.active,
+      stateFilterMode: packageRecord.stateFilterMode,
+      stateRestrictions: packageRecord.stateRestrictions,
+      requiresStateStock: packageRecord.requiresStateStock,
+      featuredComboCard: packageRecord.featuredComboCard,
+      imageUrl: packageRecord.imageUrl,
+      imageUrls: packageRecord.imageUrls,
       packageComponents: normalisedComponents,
       companionProducts: normalisedCompanions
     };
@@ -17364,7 +17643,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     closeModal();
     showToast(`Package "${packageRecord.name}" saved.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, active: packageRecord.active, packageComponents: normalisedComponents, companionProducts: normalisedCompanions })
+      productsApi.createPackage(_pkgProdId, packagePayload)
         .then((savedPackage: any) => {
           replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
         })
@@ -17373,7 +17652,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
         });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, { name: packageRecord.name, description: packageRecord.description, quantity: packageRecord.quantity, price: packageRecord.price, currency: packageRecord.currency, displayOrder: packageRecord.displayOrder, packageComponents: normalisedComponents, companionProducts: normalisedCompanions }).catch((err: any) => {
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packagePayload).catch((err: any) => {
         setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
         showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
       });
@@ -17410,6 +17689,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       name: clone.name, description: clone.description,
       quantity: clone.quantity, price: clone.price, currency: clone.currency,
       displayOrder: clone.displayOrder, active: clone.active,
+      stateFilterMode: clone.stateFilterMode ?? "all",
+      stateRestrictions: clone.stateRestrictions ?? [],
+      requiresStateStock: Boolean(clone.requiresStateStock),
+      featuredComboCard: Boolean(clone.featuredComboCard),
+      imageUrl: clone.imageUrl ?? "",
+      imageUrls: clone.imageUrls ?? [],
       packageComponents: clone.packageComponents,
       companionProducts: clone.companionProducts
     }).then((savedPackage: any) => {
@@ -17456,6 +17741,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       currency: clone.currency,
       displayOrder: clone.displayOrder,
       active: clone.active,
+      stateFilterMode: clone.stateFilterMode ?? "all",
+      stateRestrictions: clone.stateRestrictions ?? [],
+      requiresStateStock: Boolean(clone.requiresStateStock),
+      featuredComboCard: Boolean(clone.featuredComboCard),
+      imageUrl: clone.imageUrl ?? "",
+      imageUrls: clone.imageUrls ?? [],
       packageComponents: clone.packageComponents,
       companionProducts: clone.companionProducts
     }).then((savedPackage: any) => {
@@ -38232,6 +38523,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     +{item.companionProducts!.length} offer{item.companionProducts!.length === 1 ? "" : "s"}
                                   </span>
                                 )}
+                                {(item.stateFilterMode ?? "all") !== "all" && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 align-middle">
+                                    {item.stateFilterMode === "allow" ? "State-only" : "State-hidden"}
+                                  </span>
+                                )}
+                                {item.requiresStateStock && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 align-middle">
+                                    Stock-gated
+                                  </span>
+                                )}
+                                {item.featuredComboCard && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 align-middle">
+                                    Featured
+                                  </span>
+                                )}
+                                {(item.imageUrls?.length ?? 0) > 1 && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-700 align-middle">
+                                    Carousel
+                                  </span>
+                                )}
                               </td>
                               <td className="px-4 py-4 text-gray-600">
                                 {item.description || summarizePackageComponents(item.packageComponents, products) || "-"}
@@ -41450,7 +41761,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <strong className="text-sm text-gray-800">{selectedProduct.availableStates && selectedProduct.availableStates.length > 0 ? `${selectedProduct.availableStates.length} of ${nigeriaStates.length}` : `All ${nigeriaStates.length}`}</strong>
                     </article>
                     <article className="bg-white rounded-lg p-3 flex flex-col gap-1 border border-blue-100">
-                      <span className="text-[10px] uppercase font-semibold text-gray-500">Cross-sell %</span>
+                      <span className="text-[10px] uppercase font-semibold text-gray-500">Rep Add-on %</span>
                       <strong className="text-sm text-gray-800">{productBonusConfig(selectedProduct).crossSellPercent}%</strong>
                     </article>
                   </div>
@@ -41553,6 +41864,196 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <label><span>Currency</span><select value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
                   <label><span>Display Order</span><input value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} inputMode="numeric" /></label>
                 </div>
+                <section className="border border-amber-200 bg-amber-50/70 rounded-xl p-4 space-y-4">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h4 className="text-sm font-bold text-amber-950 m-0">Optional state-aware combo setup</h4>
+                      <p className="text-xs text-amber-900/80 mt-0.5">
+                        Leave these off for normal packages. Turn them on only when this package should act like a state-limited combo or visual carousel offer.
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center rounded-full bg-white border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800">
+                      Default is normal package
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Where should this package show?</span>
+                      <select
+                        className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                        value={packageStateFilterMode}
+                        onChange={(event) => {
+                          const value = event.target.value as "all" | "allow" | "block";
+                          setPackageStateFilterMode(value);
+                          if (value === "all") setPackageStateRestrictions([]);
+                        }}
+                      >
+                        <option value="all">Show everywhere</option>
+                        <option value="allow">Show only in selected states</option>
+                        <option value="block">Hide in selected states</option>
+                      </select>
+                      <span className="text-[10px] text-amber-800/70">
+                        State-limited combos wait until the customer selects a state.
+                      </span>
+                    </label>
+                    <div className="rounded-lg border border-amber-100 bg-white px-3 py-2 text-xs text-amber-900">
+                      {packageStateFilterMode === "all"
+                        ? "This package behaves exactly like today's normal package."
+                        : packageStateFilterMode === "allow"
+                          ? packageStateRestrictions.length > 0
+                            ? `Only ${packageStateRestrictions.length} selected state${packageStateRestrictions.length === 1 ? "" : "s"} can see it.`
+                            : "Pick the states where this combo exists."
+                          : packageStateRestrictions.length > 0
+                            ? `Hidden in ${packageStateRestrictions.length} selected state${packageStateRestrictions.length === 1 ? "" : "s"}.`
+                            : "Pick states where this package should not appear."}
+                    </div>
+                  </div>
+                  {packageStateFilterMode !== "all" && (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="!min-h-0 px-2.5 py-1 rounded-lg border border-amber-200 bg-white text-[11px] font-bold text-amber-800 hover:bg-amber-100"
+                          onClick={() => setPackageStateRestrictions([...nigeriaStates])}
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          className="!min-h-0 px-2.5 py-1 rounded-lg border border-amber-200 bg-white text-[11px] font-bold text-amber-800 hover:bg-amber-100"
+                          onClick={() => setPackageStateRestrictions((selectedProduct.availableStates?.length ?? 0) > 0 ? [...selectedProduct.availableStates!] : [...nigeriaStates])}
+                        >
+                          Use product states
+                        </button>
+                        <button
+                          type="button"
+                          className="!min-h-0 px-2.5 py-1 rounded-lg border border-red-200 bg-white text-[11px] font-bold text-red-600 hover:bg-red-50"
+                          onClick={() => setPackageStateRestrictions([])}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto rounded-lg border border-amber-100 bg-white p-2">
+                        {nigeriaStates.map((state) => {
+                          const active = packageStateRestrictions.includes(state);
+                          return (
+                            <button
+                              key={state}
+                              type="button"
+                              onClick={() => setPackageStateRestrictions((prev) => active ? prev.filter((item) => item !== state) : [...prev, state])}
+                              className={`!min-h-0 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition-colors ${active ? "bg-amber-500 text-white border-amber-500" : "border-amber-200 bg-white text-amber-800 hover:bg-amber-50"}`}
+                            >
+                              {state}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="flex items-start gap-3 rounded-lg border border-emerald-100 bg-white px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 w-4 h-4 accent-emerald-600"
+                        checked={packageRequiresStateStock}
+                        onChange={(event) => setPackageRequiresStateStock(event.target.checked)}
+                      />
+                      <span className="text-sm text-gray-700">
+                        <strong className="block text-gray-900">Require agent stock in customer state</strong>
+                        Only show this package when active agents in the selected state have enough stock for the package components.
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-lg border border-orange-100 bg-white px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 w-4 h-4 accent-orange-500"
+                        checked={packageFeaturedComboCard}
+                        onChange={(event) => setPackageFeaturedComboCard(event.target.checked)}
+                      />
+                      <span className="text-sm text-gray-700">
+                        <strong className="block text-gray-900">Featured combo card</strong>
+                        Give this package a stronger visual style on the public order form.
+                      </span>
+                    </label>
+                  </div>
+                  <div className="rounded-xl border border-dashed border-amber-200 bg-white p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <p className="m-0 text-sm font-bold text-gray-900">Package image carousel</p>
+                        <p className="m-0 text-[11px] text-gray-500">Optional. Add 2 or more images if this combo needs a slide preview. One image shows as a single picture.</p>
+                      </div>
+                      <span className="text-[11px] font-bold text-amber-800">{packageImageUrls.length}/10 images</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,auto] gap-2">
+                      <input
+                        type="url"
+                        className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                        placeholder="Paste image URL..."
+                        value={packageImageUrlDraft}
+                        onChange={(event) => setPackageImageUrlDraft(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-md border border-amber-200 text-xs font-bold text-amber-800 hover:bg-amber-50"
+                        onClick={() => {
+                          const next = normalisePackageImageUrls([...packageImageUrls, packageImageUrlDraft]);
+                          if (next.length === packageImageUrls.length) {
+                            showToast("Paste a new image URL first.");
+                            return;
+                          }
+                          setPackageImageUrls(next);
+                          setPackageImageUrlDraft("");
+                        }}
+                      >
+                        Add URL
+                      </button>
+                      <label className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-amber-200 text-xs font-bold text-amber-800 hover:bg-amber-50 cursor-pointer">
+                        <Upload className="w-4 h-4" />
+                        Upload
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 600_000) {
+                              showToast("Package image must be under 600 KB.");
+                              event.target.value = "";
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = (readerEvent) => {
+                              const dataUrl = String(readerEvent.target?.result ?? "");
+                              if (!dataUrl) return;
+                              setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, dataUrl]));
+                              showToast("Package image added.");
+                            };
+                            reader.readAsDataURL(file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {packageImageUrls.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {packageImageUrls.map((url, index) => (
+                          <div key={`${url}-${index}`} className="relative rounded-lg border border-amber-100 bg-amber-50 overflow-hidden">
+                            <img src={url} alt={`Package image ${index + 1}`} className="w-full h-24 object-cover bg-white" />
+                            <button
+                              type="button"
+                              className="absolute top-1 right-1 !min-h-0 inline-flex items-center justify-center rounded-full bg-white/95 border border-red-100 text-red-600 w-7 h-7 shadow-sm"
+                              onClick={() => setPackageImageUrls((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                              title="Remove image"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
                 <section className="border border-blue-100 bg-blue-50/60 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
@@ -44130,13 +44631,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
                     <strong className="text-sm">3. Cross-sell &amp; Free Gift Bonus</strong>
+                    <p className="text-[11px] text-gray-500">
+                      Customer-selected order-form add-ons always pay {formatProductMoney(CUSTOMER_SELECTED_CROSS_SELL_BONUS, moneyCode)} flat each. The cross-sell fields below apply only when a rep/admin adds the item later.
+                    </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <label className="text-xs flex flex-col gap-1">
-                        <span className="text-gray-600 font-semibold">Cross-sell %</span>
+                        <span className="text-gray-600 font-semibold">Rep-added cross-sell %</span>
                         <input className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellPercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellPercent: Number(e.target.value) || 0 }))} />
                       </label>
                       <label className="text-xs flex flex-col gap-1">
-                        <span className="text-gray-600 font-semibold">Cross-sell fixed ₦ per line</span>
+                        <span className="text-gray-600 font-semibold">Rep-added cross-sell fixed ₦ per line</span>
                         <input className="border border-gray-200 rounded-lg px-2 py-1.5" inputMode="decimal" value={cfg.crossSellFixed} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, crossSellFixed: Number(e.target.value) || 0 }))} />
                       </label>
                       <label className="text-xs flex flex-col gap-1">
@@ -44293,7 +44797,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <label><span>Quantity</span><input value={crossSellQuantity} onChange={(e) => setCrossSellQuantity(e.target.value)} inputMode="numeric" /></label>
                     <label><span>Amount (defaults to {chosen ? formatProductMoney(suggested, primaryPricing(chosen)?.currency ?? "NGN") : "auto"})</span><input value={crossSellAmount} onChange={(e) => setCrossSellAmount(e.target.value)} inputMode="decimal" placeholder={String(suggested)} /></label>
                   </div>
-                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Bonus is applied automatically based on this product's cross-sell %.</p>
+                  <p className="text-[11px] text-gray-500">This adds the item to the order total and marks it for inventory deduction. Because it was added by staff, bonus uses this product&apos;s rep cross-sell % and fixed-per-line settings.</p>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveCrossSell}>Add Cross-sell</button>

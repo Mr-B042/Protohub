@@ -59,7 +59,30 @@ type PublicPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  stateFilterMode?: "all" | "allow" | "block";
+  stateRestrictions?: string[];
+  requiresStateStock?: boolean;
+  featuredComboCard?: boolean;
+  imageUrl?: string;
+  imageUrls?: string[];
+  packageComponents?: PublicPackageComponent[];
   companionProducts?: PublicCompanion[];
+};
+
+type PublicPackageComponent = {
+  componentId?: string;
+  productId: string;
+  quantity: number;
+  isFreeGift?: boolean;
+  note?: string;
+};
+
+type PublicPackageAvailability = {
+  packageId: string;
+  stateAllowed: boolean;
+  stockReady: boolean;
+  visible: boolean;
+  requiresStateStock: boolean;
 };
 
 type PublicProduct = {
@@ -325,6 +348,35 @@ function activeProductPackages(product: PublicProduct) {
   return [...(product.packages ?? [])]
     .filter((item) => item.active)
     .sort((a, b) => a.displayOrder - b.displayOrder);
+}
+
+function packageVisibleInState(pkg: PublicPackage, state: string) {
+  const mode = pkg.stateFilterMode ?? "all";
+  if (mode === "all") return true;
+  const restrictions = pkg.stateRestrictions ?? [];
+  if (restrictions.length === 0) return mode === "block";
+  if (!state) return false;
+  const normalizedState = normalizeStateName(state);
+  const matches = restrictions.map(normalizeStateName).includes(normalizedState);
+  return mode === "block" ? !matches : matches;
+}
+
+function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) {
+  const components = pkg.packageComponents ?? [];
+  if (components.length === 0) return "";
+  return components
+    .filter((component) => component.productId)
+    .slice(0, 4)
+    .map((component) => {
+      const productName = products.find((product) => product.id === component.productId)?.name ?? "Item";
+      const qty = Math.max(1, Number(component.quantity) || 1);
+      return `${component.isFreeGift ? "FREE " : ""}${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`;
+    })
+    .join(" + ");
+}
+
+function packageImageList(pkg: PublicPackage) {
+  return Array.from(new Set([...(pkg.imageUrls ?? []), pkg.imageUrl ?? ""].map((url) => url.trim()).filter(Boolean))).slice(0, 10);
 }
 
 function primaryPricing(product: PublicProduct) {
@@ -845,6 +897,8 @@ export default function PublicOrderFormPage() {
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
   const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
+  const [packageAvailabilityById, setPackageAvailabilityById] = useState<Record<string, PublicPackageAvailability>>({});
+  const [packageAvailabilityLoading, setPackageAvailabilityLoading] = useState(false);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [isCompactUpsellViewport, setIsCompactUpsellViewport] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 680px)").matches : false
@@ -948,7 +1002,22 @@ export default function PublicOrderFormPage() {
     () => (publicProduct ? activeProductPackages(publicProduct) : []),
     [publicProduct]
   );
-  const chosenPackage = publicPackages.find((item) => item.id === orderFormPackageId) ?? publicPackages[0];
+  const normalizedSelectedState = normalizeStateName(orderFormState);
+  const packagesNeedAvailability = publicPackages.some((pkg) =>
+    (pkg.stateFilterMode ?? "all") !== "all" || pkg.requiresStateStock
+  );
+  const orderablePublicPackages = useMemo(
+    () => publicPackages.filter((pkg) => {
+      if (!packageVisibleInState(pkg, normalizedSelectedState)) return false;
+      if (!pkg.requiresStateStock) return true;
+      if (!normalizedSelectedState) return false;
+      return packageAvailabilityById[pkg.id]?.visible === true;
+    }),
+    [normalizedSelectedState, packageAvailabilityById, publicPackages]
+  );
+  const chosenPackage = orderablePublicPackages.find((item) => item.id === orderFormPackageId)
+    ?? orderablePublicPackages[0]
+    ?? (packagesNeedAvailability ? undefined : publicPackages[0]);
   const chosenPackagePrice = chosenPackage?.price ?? 0;
   const chosenPackageCurrency = chosenPackage?.currency ?? publicPackages[0]?.currency ?? "NGN";
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
@@ -983,6 +1052,31 @@ export default function PublicOrderFormPage() {
       mediaQuery.onchange = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!publicProductId || !packagesNeedAvailability || !normalizedSelectedState) {
+      setPackageAvailabilityById({});
+      setPackageAvailabilityLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPackageAvailabilityLoading(true);
+    productsApi.publicPackageAvailability(publicProductId, normalizedSelectedState)
+      .then((response) => {
+        if (cancelled) return;
+        setPackageAvailabilityById(Object.fromEntries((response.packages ?? []).map((row) => [row.packageId, row])));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPackageAvailabilityById({});
+      })
+      .finally(() => {
+        if (!cancelled) setPackageAvailabilityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedSelectedState, packagesNeedAvailability, publicProductId]);
 
   const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
     fieldRefs.current[field] = element;
@@ -1548,11 +1642,11 @@ export default function PublicOrderFormPage() {
   }, [publicProductId]);
 
   useEffect(() => {
-    if (publicPackages.length === 0) return;
-    if (!publicPackages.some((item) => item.id === orderFormPackageId)) {
-      setOrderFormPackageId(publicPackages[0].id);
+    if (orderablePublicPackages.length === 0) return;
+    if (!orderablePublicPackages.some((item) => item.id === orderFormPackageId)) {
+      setOrderFormPackageId(orderablePublicPackages[0].id);
     }
-  }, [orderFormPackageId, publicPackages]);
+  }, [orderFormPackageId, orderablePublicPackages]);
 
   useEffect(() => {
     const companionKeys = new Set(
@@ -1574,7 +1668,7 @@ export default function PublicOrderFormPage() {
       orderFormCity.trim() ||
       orderFormState.trim()
     );
-    const primaryPackageId = publicPackages[0]?.id ?? "";
+    const primaryPackageId = orderablePublicPackages[0]?.id ?? publicPackages[0]?.id ?? "";
     const meaningfulInteraction = Boolean(
       formTouched ||
       orderFormCrossSells.length > 0 ||
@@ -1626,7 +1720,7 @@ export default function PublicOrderFormPage() {
       orderFormCity.trim() ||
       orderFormState.trim()
     );
-    const primaryPackageId = publicPackages[0]?.id ?? "";
+    const primaryPackageId = orderablePublicPackages[0]?.id ?? publicPackages[0]?.id ?? "";
     const meaningfulInteraction = Boolean(
       formTouched ||
       orderFormCrossSells.length > 0 ||
@@ -1920,7 +2014,8 @@ export default function PublicOrderFormPage() {
     lastExpandedCardProductIdRef.current = null;
     firstInteractionTrackedRef.current = false;
     exitTrackedRef.current = false;
-    if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
+    if (orderablePublicPackages[0]) setOrderFormPackageId(orderablePublicPackages[0].id);
+    else if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
   }
 
   function finishPublicOrderJourney(
@@ -2411,8 +2506,6 @@ export default function PublicOrderFormPage() {
       : NIGERIA_STATES;
   }, [publicProduct]);
 
-  const normalizedSelectedState = normalizeStateName(orderFormState);
-
   const companionOptions = (chosenPackage?.companionProducts ?? [])
     .filter((companion) => !companion.autoInclude)
     .filter((companion) => (companion.placement ?? "inline") === "inline")
@@ -2659,7 +2752,7 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
-  const orderSummaryBlock = settings.formOrderSummaryEnabled ? (
+  const orderSummaryBlock = settings.formOrderSummaryEnabled && chosenPackage ? (
     <div className="panel public-order-summary-rail" style={{ padding: 16, display: "grid", gap: 6 }}>
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
@@ -2724,7 +2817,7 @@ export default function PublicOrderFormPage() {
     : contactStepComplete && deliveryStepComplete
       ? "Review the details below, then tap Place My Order to finish."
       : "Complete the steps above and we’ll guide you to the final order button.";
-  const guidedReviewBlock = guidedCheckout ? (
+  const guidedReviewBlock = guidedCheckout && chosenPackage ? (
     <div
       style={{
         marginTop: 18,
@@ -3282,32 +3375,102 @@ export default function PublicOrderFormPage() {
               <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", color: "#111827" }}>
                 SELECT YOUR PACKAGE *
               </div>
-              <div className="package-picker package-picker-clean" style={{ borderTop: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", fontWeight: 700, fontSize: 14, borderBottom: "1px solid #e5e7eb" }}>
-                  <span>Product</span>
-                  <span>Price</span>
-                </div>
-                {publicPackages.map((item) => {
+              <div className="package-picker package-picker-clean" style={{ display: "grid", gap: 12 }}>
+                {orderablePublicPackages.length === 0 ? (
+                  <div style={{ border: "1px solid #dbeafe", borderRadius: 18, padding: 16, background: "#eff6ff", color: "#1e3a8a" }}>
+                    <strong style={{ display: "block", fontSize: 15 }}>
+                      {!normalizedSelectedState
+                        ? "Pick your state first"
+                        : packageAvailabilityLoading
+                          ? `Checking package availability in ${orderFormState}...`
+                          : `No package is available in ${orderFormState} right now`}
+                    </strong>
+                    <span style={{ display: "block", marginTop: 6, fontSize: 13, lineHeight: 1.45 }}>
+                      {!normalizedSelectedState
+                        ? "Some combo packages only show after we know where delivery will happen."
+                        : "Please choose another state or contact us so we can help you pick the right option."}
+                    </span>
+                  </div>
+                ) : orderablePublicPackages.map((item) => {
                   const isSelected = orderFormPackageId === item.id;
                   const title = settings.showPackageName ? item.name : `${publicProduct.name} x${item.quantity}`;
+                  const imageUrls = packageImageList(item);
+                  const hasCarousel = imageUrls.length > 1;
+                  const componentSummary = packageComponentSummary(item, products);
+                  const isFeatured = item.featuredComboCard || hasCarousel;
                   return (
-                    <label key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", cursor: "pointer", borderBottom: "1px solid #f3f4f6" }}>
-                      <input
-                        type="radio"
-                        name="public-package"
-                        checked={isSelected}
-                        onChange={() => setOrderFormPackageId(item.id)}
-                        style={{ marginTop: 4, accentColor: "#1F8FE0" }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{title}</div>
-                        {item.description && (
-                          <div style={{ fontSize: 13, color: "#374151", marginTop: 4, lineHeight: 1.5 }}>{item.description}</div>
-                        )}
+                    <label
+                      key={item.id}
+                      style={{
+                        display: "grid",
+                        gap: 12,
+                        padding: 14,
+                        cursor: "pointer",
+                        border: `2px solid ${isSelected ? "#1F8FE0" : isFeatured ? "#f59e0b" : "#e5e7eb"}`,
+                        borderRadius: 20,
+                        background: isSelected ? "#eff6ff" : isFeatured ? "#fffbeb" : "#ffffff",
+                        boxShadow: isSelected ? "0 16px 38px rgba(31, 143, 224, 0.16)" : "0 10px 30px rgba(15, 23, 42, 0.08)"
+                      }}
+                    >
+                      {imageUrls.length > 0 && (
+                        <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: hasCarousel ? 4 : 0, scrollSnapType: "x mandatory" }}>
+                          {imageUrls.map((url, imageIndex) => (
+                            <img
+                              key={`${item.id}-image-${imageIndex}`}
+                              src={url}
+                              alt={`${title} preview ${imageIndex + 1}`}
+                              style={{
+                                width: hasCarousel ? 180 : "100%",
+                                minWidth: hasCarousel ? 180 : "100%",
+                                height: hasCarousel ? 150 : 190,
+                                objectFit: "cover",
+                                borderRadius: 16,
+                                border: "1px solid rgba(148, 163, 184, 0.28)",
+                                background: "#f8fafc",
+                                scrollSnapAlign: "start"
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "start", gap: 12 }}>
+                        <input
+                          type="radio"
+                          name="public-package"
+                          checked={isSelected}
+                          onChange={() => setOrderFormPackageId(item.id)}
+                          style={{ marginTop: 4, accentColor: "#1F8FE0" }}
+                        />
+                        <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {isFeatured && (
+                              <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
+                                FEATURED COMBO
+                              </span>
+                            )}
+                            {item.requiresStateStock && (
+                              <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#dcfce7", color: "#166534", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
+                                STATE STOCK CHECKED
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontWeight: 900, fontSize: 17, color: "#111827", lineHeight: 1.2 }}>{title}</div>
+                          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
+                            {item.description || componentSummary || `${item.quantity} ${item.quantity === 1 ? "unit" : "units"}`}
+                          </div>
+                          {componentSummary && item.description && (
+                            <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
+                          )}
+                          {hasCarousel && (
+                            <div style={{ fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+                              Swipe to see {imageUrls.length} pictures
+                            </div>
+                          )}
+                        </div>
+                        <strong style={{ fontSize: 18, color: "#111827", whiteSpace: "nowrap", lineHeight: 1.2 }}>
+                          {formatProductMoney(item.price, item.currency)}
+                        </strong>
                       </div>
-                      <strong style={{ fontSize: 14, color: "#111827", whiteSpace: "nowrap" }}>
-                        {formatProductMoney(item.price, item.currency)}
-                      </strong>
                     </label>
                   );
                 })}

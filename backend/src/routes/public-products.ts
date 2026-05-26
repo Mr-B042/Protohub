@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { supabase } from "../lib/supabase.js";
+import { packageAvailabilityForState } from "../lib/package-availability.js";
 
 const router = Router();
 
@@ -57,6 +58,12 @@ type DbPackageComponent = {
 type DbPackage = {
   id: string; name: string; description: string | null; quantity: number;
   price: number; currency: string; display_order: number; active: boolean;
+  state_filter_mode?: "all" | "allow" | "block" | null;
+  state_restrictions?: string[] | null;
+  requires_state_stock?: boolean | null;
+  featured_combo_card?: boolean | null;
+  image_url?: string | null;
+  image_urls?: string[] | null;
   companion_products: DbCompanion[] | null;
   package_components: DbPackageComponent[] | null;
 };
@@ -91,6 +98,12 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
   currency:     p.currency,
   displayOrder: p.display_order,
   active:       p.active,
+  stateFilterMode: p.state_filter_mode ?? "all",
+  stateRestrictions: p.state_restrictions ?? [],
+  requiresStateStock: p.requires_state_stock === true,
+  featuredComboCard: p.featured_combo_card === true,
+  imageUrl: p.image_url ?? "",
+  imageUrls: p.image_urls ?? [],
   companionProducts: (p.companion_products ?? []).map((c) => {
     const restrictions = c.stateRestrictions ?? [];
     const stateFilterMode =
@@ -258,8 +271,33 @@ const PUBLIC_PRODUCT_SELECT = `
   free_gift_product_ids, free_gift_state_restrictions,
   form_custom_text,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, companion_products, package_components)
+  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, companion_products, package_components)
 `;
+
+router.get("/:id/package-availability", readRateLimit, async (req, res) => {
+  const { id } = req.params;
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const { data: rawProduct, error } = await supabase
+    .from("products")
+    .select(PUBLIC_PRODUCT_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!rawProduct || !rawProduct.active) {
+    res.status(404).json({ error: "Product not found." });
+    return;
+  }
+
+  try {
+    const product = rawProduct as unknown as DbProduct;
+    const packages = (product.packages ?? []).filter((pkg) => pkg.active);
+    const availability = await packageAvailabilityForState(product.org_id, product.id, packages, state);
+    res.json({ packages: availability });
+  } catch (availabilityError: any) {
+    res.status(500).json({ error: availabilityError?.message ?? "Could not check package availability." });
+  }
+});
 
 // ── GET /api/public/products/:id ──────────────────────────
 // Storefront-safe view of a single product, plus eagerly-loaded cross-sell

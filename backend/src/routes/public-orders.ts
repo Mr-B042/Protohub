@@ -18,6 +18,7 @@ import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
+import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -337,7 +338,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // 1. Resolve package → product → org
   const { data: pkg, error: pkgErr } = await supabase
     .from("product_packages")
-    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active")
+    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock")
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
@@ -352,6 +353,26 @@ router.post("/", submitRateLimit, async (req, res) => {
     .maybeSingle();
   if (productErr || !product || !product.active) {
     res.status(404).json({ error: "Product not available." });
+    return;
+  }
+
+  if (!packageAllowsState(pkg, d.state)) {
+    res.status(400).json({ error: "This package is not available in your selected state. Please choose another package." });
+    return;
+  }
+  try {
+    const stockReady = await packageHasAgentStateStock(product.org_id, product.id, pkg, d.state);
+    if (!stockReady) {
+      res.status(409).json({ error: "This combo is no longer available in your state. Please choose the single set." });
+      return;
+    }
+  } catch (availabilityError: any) {
+    logger.warn("public-orders: package stock gate failed", {
+      packageId: pkg.id,
+      state: d.state,
+      error: availabilityError?.message
+    });
+    res.status(500).json({ error: "Could not confirm package availability. Please try again." });
     return;
   }
 
