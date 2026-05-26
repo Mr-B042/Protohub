@@ -221,6 +221,17 @@ const checks = [
       "selectionSource: \"public_upsell\"",
       "After-submit add-on accepted"
     ]
+  },
+  {
+    name: "Cart details separate add-on cards",
+    why: "Cart Details must show every picked add-on as its own card below the main selected package, even before final submit.",
+    required: [
+      "selectedCartAddOnLinesFromJourney",
+      "capturedCartOfferLinesFor",
+      "Add-on packages picked",
+      "Shown separately so reps know exactly what the customer added.",
+      "Estimated cart total"
+    ]
   }
 ];
 

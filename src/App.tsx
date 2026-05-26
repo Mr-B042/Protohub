@@ -3018,15 +3018,96 @@ const orderDeliveredKey = (order: TrackedOrder) =>
   order.deliveredDate ? normalizeDateKey(order.deliveredDate) : (order.status ?? "New") === "Delivered" ? orderCreatedKey(order) : "";
 
 type CapturedCartOfferLine = {
+  key: string;
   name: string;
   detail?: string;
   qty: number;
-  total: number;
+  total?: number;
+  source: "captured" | "journey" | "order";
 };
 const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
   const payload = cart.capturePayload;
   return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
 };
+const capturedCartOfferLinesFor = (cart: AbandonedCartRecord, key: "selectedCrossSellLines" | "autoCompanionLines" = "selectedCrossSellLines") => {
+  const payload = cartCapturePayloadFor(cart);
+  const rawLines = payload?.[key];
+  if (!Array.isArray(rawLines)) return [] as CapturedCartOfferLine[];
+  return rawLines
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const name = typeof record.name === "string" && record.name.trim()
+        ? record.name.trim()
+        : typeof record.productName === "string" && record.productName.trim()
+          ? record.productName.trim()
+          : "";
+      if (!name) return null;
+      const detail = typeof record.detail === "string" && record.detail.trim()
+        ? record.detail.trim()
+        : typeof record.packageName === "string" && record.packageName.trim()
+          ? record.packageName.trim()
+          : undefined;
+      const qty = Math.max(1, Number(record.qty ?? record.quantity) || 1);
+      const totalCandidate = Number(record.total ?? record.amount);
+      return {
+        key: `${key}:${name}:${detail ?? ""}:${index}`,
+        name,
+        detail,
+        qty,
+        total: Number.isFinite(totalCandidate) ? Math.max(0, totalCandidate) : undefined,
+        source: "captured" as const
+      };
+    })
+    .filter(Boolean) as CapturedCartOfferLine[];
+};
+const selectedCartAddOnLinesFromJourney = (events: CartJourneyEvent[]) => {
+  const selections = new Map<string, CapturedCartOfferLine & { selected: boolean }>();
+  for (const event of events) {
+    if (!isAdditionalItemJourneyEventType(event.eventType)) continue;
+    const productName = additionalItemNameFromJourneyEvent(event);
+    const packageName = typeof event.metadata?.packageName === "string" && event.metadata.packageName.trim()
+      ? event.metadata.packageName.trim()
+      : undefined;
+    const key = `${event.companionProductId ?? productName}:${event.companionPackageId ?? packageName ?? ""}`;
+    const quantity = Math.max(1, Number(event.metadata?.quantity) || 1);
+    const offerAmount = Number(event.metadata?.offerAmount);
+    const existing = selections.get(key) ?? {
+      key: `journey:${key}`,
+      name: productName,
+      detail: packageName,
+      qty: quantity,
+      total: Number.isFinite(offerAmount) ? Math.max(0, offerAmount) : undefined,
+      source: "journey" as const,
+      selected: false
+    };
+    if (event.eventType === "additional_item_added") {
+      selections.set(key, {
+        ...existing,
+        name: productName,
+        detail: packageName ?? existing.detail,
+        qty: quantity,
+        total: Number.isFinite(offerAmount) ? Math.max(0, offerAmount) : existing.total,
+        selected: true
+      });
+    }
+    if (event.eventType === "additional_item_removed") {
+      selections.set(key, { ...existing, selected: false });
+    }
+  }
+  return [...selections.values()]
+    .filter((entry) => entry.selected)
+    .map(({ selected, ...line }) => line);
+};
+const selectedCartAddOnLinesFromOrder = (order: TrackedOrder | undefined) =>
+  (order?.crossSellLines ?? []).map((line, index) => ({
+    key: `order:${line.id ?? line.productId ?? line.productName}:${index}`,
+    name: line.productName,
+    detail: line.packageName,
+    qty: Math.max(1, Number(line.quantity) || 1),
+    total: Math.max(0, Number(line.amount) || 0),
+    source: "order" as const
+  }));
 const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
   const next: AbandonedCartAttribution = {};
   const assign = (key: keyof AbandonedCartAttribution, value: unknown) => {
@@ -13961,6 +14042,38 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       return;
     }
 
+    const capturedSelectedCrossSellLines = orderFormCrossSells
+      .map((selection) => {
+        const addOnProduct = products.find((item) => item.id === selection.productId);
+        if (!addOnProduct) return null;
+        const companion = chosenPackage.companionProducts?.find((item) =>
+          item.productId === selection.productId
+          && companionMatchesState(item, orderFormState.trim())
+        );
+        if (companion) {
+          const standard = primaryPricing(addOnProduct)?.sellingPrice ?? 0;
+          const unit = companion.pricingMode === "free" ? 0
+            : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
+              : standard;
+          return {
+            name: addOnProduct.name,
+            detail: `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} selected`,
+            qty: companion.quantity,
+            total: unit * companion.quantity
+          };
+        }
+        const qty = Math.max(1, Number(selection.quantity) || 1);
+        const unit = crossSellPriceFor(captureProduct, addOnProduct);
+        return {
+          name: addOnProduct.name,
+          detail: `${qty} ${qty === 1 ? "pc" : "pcs"} selected`,
+          qty,
+          total: unit * qty
+        };
+      })
+      .filter(Boolean) as Array<{ name: string; detail: string; qty: number; total: number }>;
+    const capturedAddOnTotal = capturedSelectedCrossSellLines.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
+
     const cartPatch: AbandonedCartRecord = {
       id: abandonedDraftCartId || makeCartId(),
       customer: orderFormName.trim() || "Partial lead",
@@ -13973,13 +14086,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       packageId: chosenPackage.id,
       productName: captureProduct.name,
       packageName: chosenPackage.name,
-      amount: chosenPackage.price,
+      amount: chosenPackage.price + capturedAddOnTotal,
       currency: chosenPackage.currency,
       source: publicProduct ? orderSourceFromUtm(publicUtmSource) : "Website",
       status: abandonedDraftCartId ? "In progress" : "Open abandoned",
       assignedRepId: abandonedCarts.find((cart) => cart.id === abandonedDraftCartId)?.assignedRepId,
       lastActivity: nowIso(),
-      createdAt: nowIso()
+      createdAt: nowIso(),
+      capturePayload: {
+        packageId: chosenPackage.id,
+        packageName: chosenPackage.name,
+        packageQuantity: chosenPackage.quantity,
+        selectedCrossSellLines: capturedSelectedCrossSellLines
+      }
     };
 
     setAbandonedCarts((value) => {
@@ -14013,7 +14132,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           packageName:  cartPatch.packageName,
           amount:       cartPatch.amount,
           currency:     cartPatch.currency,
-          source:       cartPatch.source
+          source:       cartPatch.source,
+          capturePayload: cartPatch.capturePayload ?? undefined
         }).catch(() => { /* swallow — local state already has it */ });
       }, 1500);
     }
@@ -14026,7 +14146,10 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     orderFormCity,
     orderFormState,
     orderFormPackageId,
+    orderFormCrossSells,
+    products,
     publicProduct,
+    publicPackages,
     publicUtmSource,
     previewProduct
   ]);
@@ -39180,12 +39303,27 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const conversionPathLabel = abandonedCartConversionPathLabel(linkedOrder);
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
-	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
+		              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
 		              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 		              const selectedCartJourney = selectedCartJourneyEvents;
 		              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
 		              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
 		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
+		              const linkedOrderAddOnLines = selectedCartAddOnLinesFromOrder(linkedOrder);
+		              const capturedAddOnLines = capturedCartOfferLinesFor(selectedCart);
+		              const journeyAddOnLines = selectedCartAddOnLinesFromJourney(selectedCartJourney);
+		              const selectedCartAddOnLines = linkedOrderAddOnLines.length > 0
+		                ? linkedOrderAddOnLines
+		                : capturedAddOnLines.length > 0
+		                  ? capturedAddOnLines
+		                  : journeyAddOnLines;
+		              const selectedCartAddOnKnownTotal = selectedCartAddOnLines.reduce((sum, line) => sum + (typeof line.total === "number" ? Math.max(0, line.total) : 0), 0);
+		              const mainPackageAmount = typeof pkg?.price === "number" && pkg.price > 0
+		                ? pkg.price
+		                : Math.max(0, selectedCart.amount - selectedCartAddOnKnownTotal);
+		              const displayedCartTotal = selectedCartAddOnKnownTotal > 0
+		                ? mainPackageAmount + selectedCartAddOnKnownTotal
+		                : selectedCart.amount;
 		              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
@@ -39247,23 +39385,74 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 
 	                  {/* Product / package */}
-	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Selected package</h4>
-	                    <div className="rounded-xl border border-gray-200 p-3 flex items-start gap-3">
-	                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
-	                      <div className="flex-1 min-w-0">
-	                        <p className="text-sm font-bold text-gray-900 m-0">{selectedCart.productName}</p>
-	                        {selectedCart.packageName && (
+		                  <section>
+		                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Selected package</h4>
+		                    <div className="rounded-xl border border-gray-200 p-3 flex items-start gap-3">
+		                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><Package className="w-5 h-5" /></div>
+		                      <div className="flex-1 min-w-0">
+		                        <p className="text-sm font-bold text-gray-900 m-0">{selectedCart.productName}</p>
+		                        {selectedCart.packageName && (
 	                          <p className="text-xs text-gray-600 m-0 mt-0.5">{selectedCart.packageName}{pkg ? ` · ${pkg.quantity} unit${pkg.quantity === 1 ? "" : "s"}` : ""}</p>
 	                        )}
 	                        {pkg?.description && <p className="text-xs text-gray-500 italic m-0 mt-1 leading-snug">{pkg.description}</p>}
 	                      </div>
-	                      <div className="text-right shrink-0">
-	                        <p className="text-[11px] text-gray-400 m-0">Amount</p>
-	                        <p className="text-base font-extrabold text-[#1F8FE0] m-0">{formatProductMoney(selectedCart.amount, selectedCart.currency)}</p>
-	                      </div>
-	                    </div>
-	                  </section>
+		                      <div className="text-right shrink-0">
+		                        <p className="text-[11px] text-gray-400 m-0">Amount</p>
+		                        <p className="text-base font-extrabold text-[#1F8FE0] m-0">{formatProductMoney(mainPackageAmount, selectedCart.currency)}</p>
+		                      </div>
+		                    </div>
+		                    {selectedCartAddOnLines.length > 0 && (
+		                      <div className="mt-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-3">
+		                        <div className="flex items-center justify-between gap-3 flex-wrap">
+		                          <div>
+		                            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-amber-700 m-0">Add-on packages picked</p>
+		                            <p className="text-xs text-gray-500 m-0 mt-0.5">Shown separately so reps know exactly what the customer added.</p>
+		                          </div>
+		                          <span className="inline-flex items-center rounded-full bg-white border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800">
+		                            {selectedCartAddOnLines.length} item{selectedCartAddOnLines.length === 1 ? "" : "s"}
+		                          </span>
+		                        </div>
+		                        <div className="mt-3 grid gap-2">
+		                          {selectedCartAddOnLines.map((line, index) => {
+		                            const detailParts = [
+		                              `${line.qty} ${line.qty === 1 ? "pc" : "pcs"}`,
+		                              line.detail && line.detail !== selectedCart.packageName ? line.detail : null
+		                            ].filter(Boolean);
+		                            const sourceLabel = line.source === "order"
+		                              ? "Saved on order"
+		                              : line.source === "captured"
+		                                ? "Picked before leaving"
+		                                : "Seen in journey";
+		                            return (
+		                              <div key={`${line.key}-${index}`} className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm flex items-start gap-3">
+		                                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+		                                  <PackagePlus className="w-4 h-4" />
+		                                </div>
+		                                <div className="flex-1 min-w-0">
+		                                  <div className="flex items-center gap-2 flex-wrap">
+		                                    <p className="text-sm font-extrabold text-gray-900 m-0">{line.name}</p>
+		                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Add-on {index + 1}</span>
+		                                  </div>
+		                                  <p className="text-xs text-gray-600 m-0 mt-0.5">{detailParts.join(" · ") || "Additional item selected"}</p>
+		                                  <p className="text-[11px] text-gray-400 m-0 mt-1">{sourceLabel}</p>
+		                                </div>
+		                                <div className="text-right shrink-0">
+		                                  <p className="text-[11px] text-gray-400 m-0">Amount</p>
+		                                  <p className="text-sm font-extrabold text-amber-700 m-0">
+		                                    {typeof line.total === "number" ? formatProductMoney(line.total, selectedCart.currency) : "Added"}
+		                                  </p>
+		                                </div>
+		                              </div>
+		                            );
+		                          })}
+		                        </div>
+		                        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2">
+		                          <span className="text-xs font-bold text-slate-600">Estimated cart total</span>
+		                          <strong className="text-base text-[#1F8FE0]">{formatProductMoney(displayedCartTotal, selectedCart.currency)}</strong>
+		                        </div>
+		                      </div>
+		                    )}
+		                  </section>
 
 	                  {/* Workflow + timeline */}
 	                  <section>
