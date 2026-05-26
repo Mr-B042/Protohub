@@ -11304,6 +11304,224 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     });
   };
 
+  const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean }) => {
+    const actions = options?.actions ?? true;
+    const crossSellTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
+    const mainQty = Math.max(1, quantityForOrder(order));
+    const mainTotal = Math.max(0, (Number(order.amount) || 0) - crossSellTotal);
+    const mainUnit = Math.round(mainTotal / mainQty);
+    const addOnCount = order.crossSellLines?.length ?? 0;
+    const giftCount = order.freeGiftLines?.length ?? 0;
+    const itemCount = 1 + addOnCount + giftCount;
+    const lineStat = (label: string, value: string | number, tone = "") => (
+      <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 shadow-sm dark:border-slate-700/70 dark:bg-white/[0.04]">
+        <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{label}</p>
+        <p className={`m-0 mt-1 text-sm font-black leading-5 break-words ${tone || orderTitleTextClass}`}>{value}</p>
+      </div>
+    );
+    const lineTone = {
+      main: {
+        shell: "border-sky-200/80 bg-sky-50/80 dark:border-sky-400/25 dark:bg-sky-400/10",
+        icon: "bg-sky-500 text-white shadow-[0_14px_30px_rgba(14,165,233,0.28)]",
+        pill: "border-sky-200 bg-sky-100 text-sky-800 dark:border-sky-400/25 dark:bg-sky-400/15 dark:text-sky-100",
+        title: orderTitleTextClass,
+        amount: "text-sky-700 dark:text-sky-200"
+      },
+      addOn: {
+        shell: "border-amber-200/80 bg-amber-50/85 dark:border-amber-400/30 dark:bg-amber-400/10",
+        icon: "bg-amber-500 text-white shadow-[0_14px_30px_rgba(245,158,11,0.24)]",
+        pill: "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-400/30 dark:bg-amber-400/15 dark:text-amber-100",
+        title: "text-amber-950 dark:text-amber-50",
+        amount: "text-amber-800 dark:text-amber-100"
+      },
+      gift: {
+        shell: "border-emerald-200/80 bg-emerald-50/85 dark:border-emerald-400/30 dark:bg-emerald-400/10",
+        icon: "bg-emerald-500 text-white shadow-[0_14px_30px_rgba(16,185,129,0.24)]",
+        pill: "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-400/15 dark:text-emerald-100",
+        title: "text-emerald-950 dark:text-emerald-50",
+        amount: "text-emerald-800 dark:text-emerald-100"
+      }
+    };
+    const LineCard = ({
+      kind,
+      label,
+      name,
+      detail,
+      quantity,
+      unit,
+      total,
+      onRemove
+    }: {
+      kind: "main" | "addOn" | "gift";
+      label: string;
+      name: string;
+      detail?: string;
+      quantity: string | number;
+      unit: string;
+      total: string;
+      onRemove?: () => void;
+    }) => {
+      const tone = lineTone[kind];
+      const Icon = kind === "gift" ? Gift : kind === "addOn" ? PackagePlus : Package;
+      return (
+        <article className={`relative overflow-hidden rounded-[26px] border p-3.5 sm:p-4 ${tone.shell}`}>
+          <div className="pointer-events-none absolute -right-12 -top-16 h-32 w-32 rounded-full bg-white/50 blur-3xl dark:bg-white/5" />
+          <div className="relative grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(270px,0.82fr)] md:items-center">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${tone.icon}`}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] ${tone.pill}`}>
+                    {label}
+                  </span>
+                  {kind === "main" && order.originalQuantity != null && order.originalQuantity !== mainQty ? (
+                    <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-rose-700 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-100">
+                      Qty changed
+                    </span>
+                  ) : null}
+                </div>
+                <h4 className={`m-0 mt-2 text-lg font-black leading-6 tracking-[-0.03em] break-words ${tone.title}`}>
+                  {name}
+                </h4>
+                {detail ? (
+                  <p className={`m-0 mt-1 text-sm font-semibold leading-5 break-words ${orderMutedTextClass}`}>{detail}</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {lineStat("Qty", quantity)}
+              {lineStat("Unit", unit)}
+              {lineStat("Total", total, tone.amount)}
+            </div>
+          </div>
+          {actions && onRemove ? (
+            <button
+              className="!min-h-0 absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-rose-200 bg-white/90 text-rose-500 shadow-sm transition-colors hover:bg-rose-50 hover:text-rose-700 dark:border-rose-400/30 dark:bg-slate-950/70 dark:text-rose-200 dark:hover:bg-rose-500/12"
+              onClick={onRemove}
+              aria-label={`Remove ${name}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </article>
+      );
+    };
+
+    return (
+      <article className={`relative overflow-hidden rounded-[30px] border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(31,143,224,0.14),transparent_34%),linear-gradient(145deg,#ffffff_0%,#f8fbff_48%,#eef7ff_100%)] shadow-[0_22px_55px_rgba(15,23,42,0.10)] dark:border-sky-400/20 dark:bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_35%),linear-gradient(145deg,#122333_0%,#0e1924_52%,#07111a_100%)] dark:shadow-[0_28px_70px_rgba(2,6,23,0.48)] ${options?.className ?? ""}`}>
+        <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-sky-300/20 blur-3xl dark:bg-sky-400/10" />
+        <div className="pointer-events-none absolute -bottom-24 left-6 h-44 w-44 rounded-full bg-emerald-300/15 blur-3xl dark:bg-emerald-400/10" />
+        <div className="relative p-4 sm:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex items-start gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#1F8FE0] text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)]">
+                <ShoppingBag className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="m-0 text-[11px] font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-200">Order Items</p>
+                <h3 className={`m-0 mt-2 text-2xl font-black tracking-[-0.04em] ${orderTitleTextClass}`}>Saved order breakdown</h3>
+                <p className={`m-0 mt-1 text-sm font-semibold leading-5 ${orderMutedTextClass}`}>
+                  Main offer, add-ons, gifts, quantities, unit prices, and final total in one place.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:min-w-[360px]">
+              {lineStat("Items", itemCount)}
+              {lineStat("Add-ons", addOnCount)}
+              {lineStat("Grand total", formatProductMoney(order.amount, order.currency), "text-sky-700 dark:text-sky-200")}
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3">
+            <LineCard
+              kind="main"
+              label="Main offer"
+              name={order.productName}
+              detail={`${order.packageName}${order.originalQuantity != null && order.originalQuantity !== mainQty ? ` · was ${order.originalQuantity}, now ${mainQty}` : ""}`}
+              quantity={mainQty}
+              unit={formatProductMoney(mainUnit, order.currency)}
+              total={formatProductMoney(mainTotal, order.currency)}
+            />
+            {(order.crossSellLines ?? []).map((line, index) => {
+              const isPublicAddOn = line.selectionSource === "public_form" || line.selectionSource === "public_upsell";
+              const qty = Math.max(1, Number(line.quantity) || 1);
+              const amount = Math.max(0, Number(line.amount) || 0);
+              const label = isPublicAddOn ? `Add-on ${index + 1}` : `Cross-sell ${index + 1}`;
+              const detail = [
+                line.packageName,
+                line.packageQuantity ? `${line.packageQuantity} unit${line.packageQuantity === 1 ? "" : "s"} package` : null,
+                `${qty} ${qty === 1 ? "pc" : "pcs"}`
+              ].filter(Boolean).join(" · ");
+              return (
+                <LineCard
+                  key={line.id}
+                  kind="addOn"
+                  label={label}
+                  name={line.productName}
+                  detail={detail}
+                  quantity={qty}
+                  unit={formatProductMoney(Math.round(amount / qty), order.currency)}
+                  total={formatProductMoney(amount, order.currency)}
+                  onRemove={() => removeCrossSell(order.id, line.id)}
+                />
+              );
+            })}
+            {(order.freeGiftLines ?? []).map((line, index) => {
+              const qty = Math.max(1, Number(line.quantity) || 1);
+              return (
+                <LineCard
+                  key={line.id}
+                  kind="gift"
+                  label={`Free gift ${index + 1}`}
+                  name={line.productName}
+                  detail={`${qty} unit${qty === 1 ? "" : "s"} included at no extra cost`}
+                  quantity={qty}
+                  unit="FREE"
+                  total="FREE"
+                  onRemove={() => removeFreeGift(order.id, line.id)}
+                />
+              );
+            })}
+          </div>
+
+          <div className="mt-4 rounded-[26px] border border-sky-200 bg-white/80 px-4 py-4 shadow-sm dark:border-sky-400/25 dark:bg-white/[0.05]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className={`m-0 text-[11px] font-black uppercase tracking-[0.18em] ${orderFaintTextClass}`}>
+                  {order.originalAmount != null && order.originalAmount !== order.amount ? "Final collected" : "Grand total"}
+                </p>
+                <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>
+                  {addOnCount > 0 || giftCount > 0 ? "Includes main offer plus every saved add-on and free gift." : "Main offer only."}
+                </p>
+                {order.originalAmount != null && order.originalAmount !== order.amount ? (
+                  <p className="m-0 mt-2 text-xs font-bold text-slate-400 line-through dark:text-slate-500">
+                    Original amount: {formatProductMoney(order.originalAmount, order.currency)}
+                  </p>
+                ) : null}
+              </div>
+              <div className="text-[32px] font-black leading-none tracking-[-0.06em] text-[#1F8FE0] dark:text-sky-200 sm:text-[40px]">
+                {formatProductMoney(order.amount, order.currency)}
+              </div>
+            </div>
+          </div>
+
+          {actions ? (
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800 shadow-sm transition-colors hover:bg-amber-100 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100 dark:hover:bg-amber-400/20" onClick={() => openCrossSellModal(order)}>
+                <PackagePlus className="h-4 w-4" /> Add cross-sell / upsell
+              </button>
+              <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-100 dark:hover:bg-emerald-400/20" onClick={() => openFreeGiftModal(order)}>
+                <Gift className="h-4 w-4" /> Add free gift
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </article>
+    );
+  };
+
   const saveManualBonus = () => {
     const order = trackedOrders.find((o) => o.id === manualBonusTargetOrderId);
     if (!order) return;
@@ -21670,129 +21888,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           </div>
         </article>
 
-        {/* Order Items Card */}
-        <article className={`${orderPanelClass} overflow-hidden`}>
-          <div className={`px-5 py-4 border-b ${orderBorderClass}`}>
-            <h2 className={`text-base font-bold ${orderTitleTextClass}`}>Order Items</h2>
-          </div>
-          <div className="sm:hidden divide-y divide-gray-100">
-            <article className="px-4 py-4 space-y-3">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">{order.productName}</p>
-                <p className="text-xs text-gray-400">{order.packageName}</p>
-              </div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                  <p className="mt-1 font-semibold text-gray-800">{quantityForOrder(order)}</p>
-                </div>
-                <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
-                  <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</p>
-                </div>
-                <div>
-                  <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                  <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</p>
-                </div>
-              </div>
-            </article>
-            {(order.crossSellLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-amber-50/40">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Cross-sell</p>
-                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
-                  </div>
-                  <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
-                </div>
-                <div className="grid grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Unit</p>
-                    <p className="mt-1 font-semibold text-gray-800">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                    <p className="mt-1 font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</p>
-                  </div>
-                </div>
-              </article>
-            ))}
-            {(order.freeGiftLines ?? []).map((line) => (
-              <article key={line.id} className="px-4 py-4 space-y-3 bg-emerald-50/40">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">Free Gift</p>
-                    <p className="mt-1 text-sm font-semibold text-gray-900">{line.productName}</p>
-                  </div>
-                  <button className="!min-h-0 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Qty</p>
-                    <p className="mt-1 font-semibold text-gray-800">{line.quantity}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold uppercase tracking-wide text-gray-400">Total</p>
-                    <p className="mt-1 font-semibold text-gray-900">FREE</p>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-          <div className="hidden sm:block overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Product</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-center">Qty</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Price per unit</th>
-                  <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right">Total Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                <tr className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-4">
-                    <div className="font-medium text-gray-900">{order.productName}</div>
-                    <div className="text-xs text-gray-400">{order.packageName}</div>
-                  </td>
-                  <td className="px-4 py-4 text-center text-gray-700">{quantityForOrder(order)}</td>
-                  <td className="px-4 py-4 text-gray-700">{formatProductMoney(Math.round(order.amount / Math.max(1, quantityForOrder(order))), order.currency)}</td>
-                  <td className="px-4 py-4 text-right font-semibold text-gray-900">{formatProductMoney(order.amount, order.currency)}</td>
-                </tr>
-                {(order.crossSellLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-amber-50/40">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-amber-800">↳ Cross-sell</span><div className="text-gray-700">{line.productName}</div></td>
-                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
-                    <td className="px-4 py-3 text-xs text-gray-700">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), order.currency)}</td>
-                    <td className="px-4 py-3 text-right text-xs">
-                      <span className="font-semibold text-gray-900">{formatProductMoney(line.amount, order.currency)}</span>
-                      <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(order.id, line.id)}>×</button>
-                    </td>
-                  </tr>
-                ))}
-                {(order.freeGiftLines ?? []).map((line) => (
-                  <tr key={line.id} className="bg-emerald-50/40">
-                    <td className="px-4 py-3 text-xs"><span className="font-medium text-emerald-800">🎁 Free Gift</span><div className="text-gray-700">{line.productName}</div></td>
-                    <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
-                    <td className="px-4 py-3 text-xs text-gray-500 italic">FREE</td>
-                    <td className="px-4 py-3 text-right text-xs">
-                      <span className="text-gray-500">—</span>
-                      <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="px-5 py-3 border-t border-gray-100 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
-            <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-3 py-2 sm:py-1.5 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => openCrossSellModal(order)}>+ Cross-sell / Upsell Item</button>
-            <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-3 py-2 sm:py-1.5 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50" onClick={() => openFreeGiftModal(order)}>+ Free Gift</button>
-          </div>
-        </article>
+        {renderOrderItemsReceipt(order, { className: "h-full" })}
       </div>
 
       {/* Bonus & Upsell Tracking */}
@@ -38976,155 +39072,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 	
 		                {/* Section 4: Order Items */}
-		                <section>
-		                  <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Order Items</h3>
-                    {(() => {
-                      const additionalItemTotal = (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
-                      const mainOfferTotal = Math.max(0, (selectedOrder.amount || 0) - additionalItemTotal);
-                      const hasAdditionalItems = (selectedOrder.crossSellLines?.length ?? 0) > 0;
-                      const hasFreeGifts = (selectedOrder.freeGiftLines?.length ?? 0) > 0;
-                      const offerLabel = (line: CrossSellLine) =>
-                        line.selectionSource === "public_form" || line.selectionSource === "public_upsell"
-                          ? "Additional item"
-                          : "Cross-sell";
-                      const offerDetail = (line: CrossSellLine) => {
-                        const qtyLabel = `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this ${offerLabel(line).toLowerCase()}`;
-                        return line.packageName ? `${qtyLabel} · ${line.packageName}` : qtyLabel;
-                      };
-                      return (
-                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-4 sm:px-5">
-                          <div className="flex items-start justify-between gap-4 flex-wrap">
-                            <div>
-                              <h4 className={`m-0 text-[16px] sm:text-[18px] font-bold ${orderTitleTextClass}`}>Order breakdown</h4>
-                              <p className={`m-0 mt-1 text-[13px] sm:text-[14px] ${orderMutedTextClass}`}>
-                                Main offer plus any additional items saved with this order.
-                              </p>
-                            </div>
-                            <div className="text-[24px] sm:text-[28px] font-extrabold text-sky-600 dark:text-sky-300">
-                              {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
-                            </div>
-                          </div>
-                          <div className="mt-4 grid gap-3 border-t border-blue-100 pt-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <p className={`m-0 text-[15px] sm:text-[16px] font-semibold ${orderTitleTextClass}`}>
-                                  {selectedOrder.productName} · {selectedOrder.packageName}
-                                </p>
-                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>Main offer</p>
-                              </div>
-                              <div className={`text-[15px] sm:text-[16px] font-bold ${orderTitleTextClass}`}>
-                                {formatProductMoney(mainOfferTotal, selectedOrder.currency)}
-                              </div>
-                            </div>
-                            {(selectedOrder.crossSellLines ?? []).map((line) => (
-                              <div key={`selected-breakdown-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-amber-800">
-                                    {offerLabel(line)} · {line.productName}
-                                  </p>
-                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>{offerDetail(line)}</p>
-                                </div>
-                                <div className="text-[15px] sm:text-[16px] font-bold text-amber-800">
-                                  {formatProductMoney(line.amount, selectedOrder.currency)}
-                                </div>
-                              </div>
-                            ))}
-                            {(selectedOrder.freeGiftLines ?? []).map((line) => (
-                              <div key={`selected-breakdown-gift-${line.id}`} className="flex items-start justify-between gap-4 border-t border-blue-100 pt-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 text-[15px] sm:text-[16px] font-semibold text-emerald-800">
-                                    Free gift · {line.productName}
-                                  </p>
-                                  <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                                    {line.quantity} unit{line.quantity === 1 ? "" : "s"} included
-                                  </p>
-                                </div>
-                                <div className="text-[15px] sm:text-[16px] font-bold text-emerald-800">
-                                  FREE
-                                </div>
-                              </div>
-                            ))}
-                            <div className="flex items-start justify-between gap-4 border-t border-blue-100 pt-4">
-                              <div className="min-w-0">
-                                <p className={`m-0 text-[18px] sm:text-[20px] font-bold ${orderTitleTextClass}`}>Total</p>
-                                <p className={`m-0 mt-1 text-[13px] ${orderMutedTextClass}`}>
-                                  {hasAdditionalItems || hasFreeGifts ? "Includes the full saved order breakdown above." : "Main offer only."}
-                                </p>
-                              </div>
-                              <div className="text-[26px] sm:text-[32px] font-extrabold text-sky-600 dark:text-sky-300">
-                                {formatProductMoney(selectedOrder.amount, selectedOrder.currency)}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-		                  <div className="overflow-x-auto rounded-lg border border-gray-200">
-	                    <table className="w-full text-sm">
-	                      <thead>
-	                        <tr className="border-b border-gray-100 bg-gray-50/60">
-	                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-400">Product</th>
-	                          <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Qty</th>
-	                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Price</th>
-	                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Total</th>
-	                        </tr>
-	                      </thead>
-	                      <tbody>
-	                        <tr>
-	                          <td className="px-4 py-2.5 text-gray-800">{selectedOrder.productName} · {selectedOrder.packageName}</td>
-	                          <td className="px-4 py-2.5 text-center text-gray-700">
-	                            {selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== quantityForOrder(selectedOrder) && (
-	                              <span className="line-through text-gray-400 text-xs mr-1">{selectedOrder.originalQuantity}</span>
-	                            )}
-	                            {quantityForOrder(selectedOrder)}
-	                          </td>
-		                          <td className="px-4 py-2.5 text-right text-gray-700">{formatProductMoney(Math.round(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)) / Math.max(1, quantityForOrder(selectedOrder))), selectedOrder.currency)}</td>
-		                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatProductMoney(Math.max(0, (selectedOrder.amount || 0) - (selectedOrder.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0)), selectedOrder.currency)}</td>
-	                        </tr>
-	                        {(selectedOrder.crossSellLines ?? []).map((line) => (
-	                          <tr key={line.id} className="bg-amber-50/40">
-		                            <td className="px-4 py-2 text-gray-800 text-xs">↳ {line.selectionSource === "public_form" || line.selectionSource === "public_upsell" ? "Additional item" : "Cross-sell"} · {line.productName}</td>
-	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
-	                            <td className="px-4 py-2 text-right text-gray-700 text-xs">{formatProductMoney(Math.round(line.amount / Math.max(1, line.quantity)), selectedOrder.currency)}</td>
-	                            <td className="px-4 py-2 text-right text-xs">
-	                              <span className="font-semibold text-gray-900">{formatProductMoney(line.amount, selectedOrder.currency)}</span>
-	                              <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeCrossSell(selectedOrder.id, line.id)}>×</button>
-	                            </td>
-	                          </tr>
-	                        ))}
-	                        {(selectedOrder.freeGiftLines ?? []).map((line) => (
-	                          <tr key={line.id} className="bg-emerald-50/40">
-	                            <td className="px-4 py-2 text-gray-800 text-xs">🎁 Free Gift · {line.productName}</td>
-	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
-	                            <td className="px-4 py-2 text-right text-gray-700 text-xs italic">FREE</td>
-	                            <td className="px-4 py-2 text-right text-xs">
-	                              <span className="text-gray-500">—</span>
-	                              <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(selectedOrder.id, line.id)}>×</button>
-	                            </td>
-	                          </tr>
-	                        ))}
-	                      </tbody>
-	                      <tfoot>
-	                        {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== selectedOrder.amount && (
-	                          <tr className="border-t border-gray-100">
-	                            <td colSpan={3} className="px-4 py-2 text-xs text-gray-400">Original order amount</td>
-	                            <td className="px-4 py-2 text-right text-xs text-gray-400 line-through">{formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)}</td>
-	                          </tr>
-	                        )}
-	                        <tr className="border-t border-gray-200">
-	                          <td colSpan={3} className="px-4 py-2.5 text-sm font-semibold text-gray-700">
-	                            {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== selectedOrder.amount ? "Final Collected" : "Grand Total"}
-	                          </td>
-	                          <td className="px-4 py-2.5 text-right font-semibold text-[#1F8FE0]">{formatProductMoney(selectedOrder.amount, selectedOrder.currency)}</td>
-	                        </tr>
-	                      </tfoot>
-	                    </table>
-	                  </div>
-	                  <div className="flex items-center gap-2 mt-2 flex-wrap">
-	                    <button className="!min-h-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => openCrossSellModal(selectedOrder)}>+ Cross-sell / Upsell Item</button>
-	                    <button className="!min-h-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 text-xs font-semibold hover:bg-emerald-50" onClick={() => openFreeGiftModal(selectedOrder)}>+ Free Gift</button>
-	                  </div>
-	                </section>
+		                {renderOrderItemsReceipt(selectedOrder)}
 
 	                {(selectedOrder.packageComponentsSnapshot ?? []).length > 0 && (
 	                  <section>
