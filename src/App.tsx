@@ -25238,9 +25238,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 )}
 
                 {/* Mobile card list (sm and below) */}
-                <div className="block sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
+                <div className="block sm:hidden space-y-3 bg-gray-50/80 p-3 dark:bg-[#07111a]">
                   {filteredOrderRows.length === 0 ? (
-                    <div className="px-5 py-12 text-center text-sm text-gray-400">
+                    <div className="rounded-3xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400 shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
                       {orderWorkspacePage === "Follow-up Queue"
                         ? "No follow-up orders match this filter."
                         : orderWorkspacePage === "Closed Orders"
@@ -25256,35 +25256,84 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                       const scheduleMarker = orderScheduleMarkerForOrder(order);
                       const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
+                      const callOutcome = (order.callOutcome ?? "").trim();
+                      const sourceIcon = (() => {
+                        const s = (source ?? "").toLowerCase();
+                        const cls = "h-4 w-4 shrink-0";
+                        if (s.includes("facebook")) return <Facebook className={`${cls} text-[#1877F2]`} aria-hidden="true" />;
+                        if (s.includes("instagram")) return <Instagram className={`${cls} text-pink-500`} aria-hidden="true" />;
+                        if (s.includes("youtube")) return <Youtube className={`${cls} text-red-500`} aria-hidden="true" />;
+                        if (s.includes("whatsapp")) return <WhatsAppIcon className={`${cls} text-[#25D366]`} aria-hidden="true" />;
+                        return <Globe className={`${cls} text-sky-500 dark:text-sky-300`} aria-hidden="true" />;
+                      })();
                       return (
-                        <article key={order.id} className="p-4 flex flex-col gap-3 bg-white dark:bg-[#101a24]">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex flex-col">
-                              <span className={`text-[10px] font-bold uppercase tracking-wider ${orderFaintTextClass}`}>Order</span>
-                              <span className="text-xl font-bold text-[#1F8FE0] leading-none">#{order.id}</span>
+                        <article
+                          key={order.id}
+                          className="relative overflow-hidden rounded-[30px] border border-sky-100/90 bg-[radial-gradient(circle_at_top_left,rgba(31,143,224,0.14),transparent_34%),linear-gradient(145deg,#ffffff_0%,#f8fbff_48%,#eef7ff_100%)] p-4 shadow-[0_22px_55px_rgba(15,23,42,0.12)] dark:border-sky-400/20 dark:bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_35%),linear-gradient(145deg,#122333_0%,#0e1924_52%,#07111a_100%)] dark:shadow-[0_28px_70px_rgba(2,6,23,0.58)]"
+                        >
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-emerald-400 to-amber-300" />
+                          <div className="pointer-events-none absolute -right-14 -top-16 h-40 w-40 rounded-full bg-sky-300/20 blur-3xl dark:bg-sky-400/12" />
+
+                          <div className="relative flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
+                                Order #{order.id}
+                              </span>
+                              <h3 className={`mt-4 mb-0 text-[24px] font-black leading-7 tracking-[-0.04em] break-words ${orderTitleTextClass}`}>
+                                {order.customer || "Unnamed customer"}
+                              </h3>
+                              <p className={`mt-1 mb-0 text-[15px] font-semibold break-words ${orderMutedTextClass}`}>
+                                {order.phone || "No phone saved"}
+                              </p>
                             </div>
-                            <div className="shrink-0">
-                              {renderOrderStatusSummary(order, "right")}
-                            </div>
+                            <span className={`shrink-0 rounded-full px-3.5 py-2 text-xs font-black ${statusBadgeClasses(status)}`}>
+                              {status}
+                            </span>
                           </div>
-                          <div>
-                            <div className={`font-bold text-base ${orderTitleTextClass}`}>{order.customer}</div>
-                            <div className={`text-xs ${orderMutedTextClass}`}>{order.phone}</div>
-                            {scheduleMarker && (
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
-                                <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
+
+                          {callOutcome ? (
+                            <div className={`relative mt-4 rounded-[22px] px-4 py-3 text-sm font-bold leading-6 break-words ${outcomeBadgeClasses(callOutcome, status)}`}>
+                              <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] opacity-75">
+                                <span className="h-2 w-2 rounded-full bg-current" />
+                                Customer signal
                               </div>
-                            )}
+                              {callOutcome}
+                            </div>
+                          ) : null}
+
+                          {scheduleMarker && (
+                            <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-black ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
+                                <span className={`text-sm font-bold leading-5 ${orderBodyTextClass}`}>{scheduleMarker.detail}</span>
+                              </div>
+                            </section>
+                          )}
+
+                          <div className="relative mt-4 grid grid-cols-1 gap-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
+                                {sourceIcon}
+                                <span className="min-w-0 break-words">{source}</span>
+                              </span>
+                              <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
+                                <MapPin className="h-4 w-4 shrink-0 text-emerald-500 dark:text-emerald-300" />
+                                <span className="min-w-0 break-words">{location}</span>
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                              <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
+                                <CalendarDays className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" />
+                                <span className="min-w-0 break-words">{formatOrderCreatedAt(order)}</span>
+                              </span>
+                              <span className={`inline-flex items-center justify-center rounded-2xl px-3 py-2 text-xs font-black shadow-sm ${rt.cls}`}>
+                                <Clock className="mr-1.5 h-3.5 w-3.5" /> {rt.label}
+                              </span>
+                            </div>
                           </div>
-                          <div className={`flex items-center gap-3 flex-wrap text-xs ${orderMutedTextClass}`}>
-                            <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-gray-200" />{source}</span>
-                            <span className="inline-flex items-center gap-1"><MapPin className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{location}</span>
-                            <span className="inline-flex items-center gap-1"><CalendarDays className={`w-3.5 h-3.5 ${orderFaintTextClass}`} />{formatOrderCreatedAt(order)}</span>
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${rt.cls}`}>{rt.label}</span>
-                          </div>
+
                           {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative mt-3 flex flex-wrap items-center gap-2">
                               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpReasonBadgeClass(latestAttempt)}`}>
                                 {followUpReasonBadgeText(latestAttempt)}
                               </span>
@@ -25295,22 +25344,23 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               )}
                             </div>
                           )}
-                          <div className="grid grid-cols-2 gap-2 pt-1">
+
+                          <div className="relative mt-4 grid grid-cols-2 gap-3">
                             <button
-                              className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#25D366] text-white rounded-lg hover:bg-[#1ebe57] transition-colors"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#25D366] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(37,211,102,0.28)] transition-all hover:-translate-y-0.5 hover:bg-[#1ebe57]"
                               onClick={() => openWhatsAppForOrder(order)}
                             >
                               <WhatsAppIcon className="w-4 h-4" /> WhatsApp
                             </button>
                             <button
-                              className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
+                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#1F8FE0] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)] transition-all hover:-translate-y-0.5 hover:bg-blue-700"
                               onClick={() => openScopedOrderDetail(order)}
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
                             {!isTerminal && currentRole !== "Sales Rep" && (
                               <button
-                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderSecondaryButtonClass}`}
+                                className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-sm font-black transition-all hover:-translate-y-0.5 ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
                               >
                                 <Pencil className="w-4 h-4" /> Edit
@@ -25318,7 +25368,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             )}
                             {currentRole !== "Sales Rep" && (
                               <button
-                                className={`!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
+                                className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-sm font-black transition-all hover:-translate-y-0.5 ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
                                 onClick={() => openAdminOrderDeleteRoute(order.id)}
                               >
                                 <Trash2 className="w-4 h-4" /> Delete
