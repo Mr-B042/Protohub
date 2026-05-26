@@ -454,6 +454,7 @@ export const notificationsApi = {
       productName: string;
       state: string;
       stock: number;
+      warehouseStock?: number;
       recentUnits: number;
       openOrders: number;
       daysCover?: number;

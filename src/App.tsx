@@ -4396,6 +4396,8 @@ type SmartStockDemandSignal = {
   sku: string;
   state: string;
   stock: number;
+  warehouseStock: number;
+  totalAvailableStock: number;
   hubCount: number;
   topHubName: string;
   topHubQty: number;
@@ -8453,25 +8455,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const recentUnits = demand?.recentUnits ?? 0;
       const velocity = recentUnits / smartStockLookbackDays;
       const stock = supply?.stock ?? 0;
+      const hubCount = supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0;
+      const warehouseStock = Math.max(0, Number(product.warehouseStock ?? 0));
+      const totalAvailableStock = stock + warehouseStock;
+      const hasWarehouseFallback = stock <= 0 && warehouseStock > 0;
       const daysCover = velocity > 0 ? stock / velocity : Number.POSITIVE_INFINITY;
       const hasActiveDemand = recentUnits > 0 && (demand?.recentOrderIds.size ?? 0) > 0;
       const isLowSupply = stock <= Math.max(product.reorderPoint || 0, smartStockLowStockThreshold);
       const isProjectedTight = hasActiveDemand && daysCover <= smartStockWatchDaysCover;
       if (!hasActiveDemand || (!isLowSupply && !isProjectedTight)) return null;
 
-      const severity: SmartStockDemandSignal["severity"] = stock <= 0
+      const severity: SmartStockDemandSignal["severity"] = stock <= 0 && warehouseStock <= 0
         ? "stockout"
-        : daysCover <= smartStockCriticalDaysCover || stock <= 2
+        : hasWarehouseFallback
+          ? "watch"
+          : daysCover <= smartStockCriticalDaysCover || stock <= 2
           ? "critical"
           : "watch";
+      const label = hasWarehouseFallback
+        ? "Warehouse dispatch needed"
+        : severity === "stockout"
+          ? "True stockout risk"
+          : severity === "critical"
+            ? "Critical fast mover"
+            : "Watch fast mover";
       return {
         productId,
         productName: product.name,
         sku: product.sku,
         state,
         stock,
-        hubCount: supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0,
-        topHubName: supply?.topHubName || `${state} hub`,
+        warehouseStock,
+        totalAvailableStock,
+        hubCount,
+        topHubName: hubCount > 0 ? (supply?.topHubName || `${state} hub`) : "No local hub tracked",
         topHubQty: supply?.topHubQty ?? 0,
         recentUnits,
         recentOrders: demand?.recentOrderIds.size ?? 0,
@@ -8481,8 +8498,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         velocity,
         daysCover,
         severity,
-        label: severity === "stockout" ? "Local stockout risk" : severity === "critical" ? "Critical fast mover" : "Watch fast mover",
-        className: severity === "stockout"
+        label,
+        className: hasWarehouseFallback
+          ? "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-100"
+          : severity === "stockout"
           ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
           : severity === "critical"
             ? "border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100"
@@ -12818,6 +12837,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         productName: signal.productName,
         state: signal.state,
         stock: signal.stock,
+        warehouseStock: signal.warehouseStock,
         recentUnits: signal.recentUnits,
         openOrders: signal.openOrders,
         daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
@@ -12838,7 +12858,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ]);
   const smartStockNotificationKey = useMemo(
     () => smartStockNotificationPayload
-      .map((signal) => `${smartStockTodayKey}:${signal.lookbackDays}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
+      .map((signal) => `${smartStockTodayKey}:${signal.lookbackDays}:${signal.productId}:${signal.state}:${signal.stock}:${signal.warehouseStock ?? 0}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
       .join("|"),
     [smartStockNotificationPayload, smartStockTodayKey]
   );
@@ -23206,12 +23226,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div className="min-w-0">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600 dark:text-orange-200">{signal.label}</span>
                           <h3 className="mt-1 text-sm font-extrabold text-gray-900 dark:text-white">{signal.productName}</h3>
-                          <p className="text-xs text-gray-500 dark:text-slate-300">{signal.state} · {signal.stock} local stock left</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-300">
+                            {signal.state} · {signal.stock} local{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
+                          </p>
                         </div>
                         <Flame className="h-4 w-4 shrink-0 text-orange-500" />
                       </div>
                       <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
-                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days. {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
+                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days. {signal.hubCount === 0 && signal.warehouseStock > 0 ? "Ask admin to dispatch from warehouse before delivery." : signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
                       </p>
                     </article>
                   ))}
@@ -37861,7 +37883,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <p className="text-xs font-semibold text-gray-700 dark:text-slate-300">{signal.state} · {signal.topHubName}</p>
                             </div>
                             <span className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-[11px] font-extrabold text-gray-900 dark:bg-white/10 dark:text-white">
-                              {signal.stock} left
+                              {signal.stock} local{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
                             </span>
                           </div>
                           <p className="mt-2 text-xs leading-5 text-gray-700 dark:text-slate-300">
@@ -38381,6 +38403,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
                               <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Local stock</span>
                               <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
+                              {signal.warehouseStock > 0 && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
+                                  {signal.warehouseStock} in warehouse
+                                </span>
+                              )}
                             </div>
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
                               <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">7d demand</span>
@@ -38392,8 +38419,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                           </div>
                           <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
-                            {signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered. ` : ""}
-                            {signal.hubCount} hub{signal.hubCount === 1 ? "" : "s"} tracked in {signal.state}; top hub has {signal.topHubQty}.
+                            {signal.hubCount === 0 && signal.warehouseStock > 0
+                              ? `No local hub is tracked in ${signal.state}. Warehouse has ${signal.warehouseStock} available; assign or dispatch before delivery.`
+                              : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered. ` : ""}${signal.hubCount} hub${signal.hubCount === 1 ? "" : "s"} tracked in ${signal.state}; top hub has ${signal.topHubQty}.`}
                           </p>
                         </article>
                       ))}

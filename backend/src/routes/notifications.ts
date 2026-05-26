@@ -23,6 +23,7 @@ type SmartStockSignal = {
   productName: string;
   state: string;
   stock: number;
+  warehouseStock?: number;
   recentUnits: number;
   openOrders: number;
   daysCover?: number;
@@ -73,7 +74,11 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
       ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d cover`
       : "cover unknown";
     const open = signal.openOrders > 0 ? `, ${signal.openOrders} open` : "";
-    return `${signal.productName} in ${signal.state}: ${signal.stock} local stock left, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
+    const warehouse = Number(signal.warehouseStock ?? 0);
+    const warehouseText = signal.stock <= 0 && warehouse > 0
+      ? `, ${warehouse} in warehouse`
+      : "";
+    return `${signal.productName} in ${signal.state}: ${signal.stock} local stock left${warehouseText}, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
   });
   const remaining = sorted.length > topLines.length
     ? ` +${sorted.length - topLines.length} more in Inventory Dashboard.`
@@ -138,6 +143,7 @@ router.post("/stock-risk", async (req, res) => {
     productName: z.string().trim().min(1).max(180),
     state: z.string().trim().min(1).max(80),
     stock: z.number().int().min(0),
+    warehouseStock: z.number().int().min(0).optional(),
     recentUnits: z.number().int().min(0),
     openOrders: z.number().int().min(0),
     daysCover: z.number().min(0).optional(),
