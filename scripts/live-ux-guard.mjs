@@ -5,6 +5,7 @@ import path from "node:path";
 
 const root = process.cwd();
 const appPath = path.join(root, "src", "App.tsx");
+const publicFormPath = path.join(root, "src", "pages", "PublicOrderFormPage.tsx");
 
 if (!existsSync(appPath)) {
   console.error("[live-ux-guard] Missing src/App.tsx. Run this from the project root.");
@@ -12,6 +13,7 @@ if (!existsSync(appPath)) {
 }
 
 const app = readFileSync(appPath, "utf8");
+const publicForm = existsSync(publicFormPath) ? readFileSync(publicFormPath, "utf8") : "";
 
 const checks = [
   {
@@ -170,14 +172,38 @@ const checks = [
       "existingPayrollRunForMonth",
       "payrollPeriodPenalties"
     ]
+  },
+  {
+    name: "Add-on completion bridge",
+    why: "Customers who add an extra item must get an obvious next step to finish the order instead of getting stranded in the add-on chooser.",
+    source: "public-form",
+    required: [
+      "additionalItemNextStepRef",
+      "Extra item added",
+      "Next step: finish the order",
+      "Continue to finish order",
+      "If anything is missing, we will take you straight there.",
+      "handleAdditionalItemFinishClick"
+    ]
+  },
+  {
+    name: "Add-on leak recovery insight",
+    why: "Admin/rep journey screens must explain when a customer added an extra item but did not submit.",
+    required: [
+      "Add-on leak detected",
+      "Smart recovery hint",
+      "addedAdditionalItemWithoutSubmit",
+      "Ask if they want to keep the extra item or confirm only the main order."
+    ]
   }
 ];
 
 const failures = [];
 
 for (const check of checks) {
-  const missing = check.required.filter((needle) => !app.includes(needle));
-  const presentForbidden = (check.forbidden ?? []).filter((needle) => app.includes(needle));
+  const source = check.source === "public-form" ? publicForm : app;
+  const missing = check.required.filter((needle) => !source.includes(needle));
+  const presentForbidden = (check.forbidden ?? []).filter((needle) => source.includes(needle));
   if (missing.length > 0 || presentForbidden.length > 0) {
     failures.push({ ...check, missing, presentForbidden });
   }

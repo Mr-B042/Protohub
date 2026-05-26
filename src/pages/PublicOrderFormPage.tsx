@@ -144,6 +144,18 @@ type PublicOrderFieldKey =
   | "confirmation"
   | "commitment";
 
+const PUBLIC_ORDER_VALIDATION_ORDER: PublicOrderFieldKey[] = [
+  "name",
+  "phone",
+  "whatsapp",
+  "address",
+  "city",
+  "state",
+  "delivery",
+  "confirmation",
+  "commitment"
+];
+
 const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
 
 type PendingUpsellOffer = {
@@ -771,6 +783,7 @@ export default function PublicOrderFormPage() {
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<CrossSellSelection[]>([]);
   const [expandedCardCompanionProductId, setExpandedCardCompanionProductId] = useState<string | null>(null);
+  const [lastAdditionalItemActionKey, setLastAdditionalItemActionKey] = useState("");
   const [publicHoneypot, setPublicHoneypot] = useState("");
   const [orderFormConfirmed, setOrderFormConfirmed] = useState(false);
   const [orderFormCommitmentAccepted, setOrderFormCommitmentAccepted] = useState(false);
@@ -789,6 +802,8 @@ export default function PublicOrderFormPage() {
   const firstInteractionTrackedRef = useRef(false);
   const exitTrackedRef = useRef(false);
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
+  const submitActionRef = useRef<HTMLDivElement | null>(null);
+  const additionalItemNextStepRef = useRef<HTMLDivElement | null>(null);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
@@ -923,6 +938,18 @@ export default function PublicOrderFormPage() {
         }
       }
     }, 90);
+  };
+
+  const scrollAdditionalItemNextStepIntoView = () => {
+    window.setTimeout(() => {
+      const target = additionalItemNextStepRef.current ?? submitActionRef.current;
+      if (!target) return;
+      try {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {
+        // Some embedded browsers do not support smooth scroll.
+      }
+    }, 160);
   };
 
   const inputErrorStyle = (field: PublicOrderFieldKey) => (
@@ -1686,12 +1713,38 @@ export default function PublicOrderFormPage() {
     setToast(message);
   }
 
+  function handleAdditionalItemFinishClick() {
+    const nextErrors = buildSubmitValidationErrors();
+    const firstInvalidField = PUBLIC_ORDER_VALIDATION_ORDER.find((field) => nextErrors[field]);
+    if (firstInvalidField) {
+      showToast("Your extra item is saved. Finish the highlighted detail so we can submit the order.");
+      triggerValidationAttention(firstInvalidField);
+      focusField(firstInvalidField);
+      void submitPublicOrder();
+      return;
+    }
+
+    try {
+      submitActionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch {
+      // Ignore scroll errors in embedded browsers.
+    }
+    setSubmitButtonAttention(true);
+    void submitPublicOrder();
+  }
+
   function setOrderFormCrossSellSelection(
     companion: PublicCompanion,
     nextSelected: boolean,
     options?: { exclusiveProduct?: boolean }
   ) {
     const key = companionSelectionKey(companion);
+    if (nextSelected) {
+      setLastAdditionalItemActionKey(key);
+      scrollAdditionalItemNextStepIntoView();
+    } else {
+      setLastAdditionalItemActionKey((current) => (current === key ? "" : current));
+    }
     setOrderFormCrossSells((prev) => {
       const withoutCurrent = prev.filter((line) => companionSelectionKey(line) !== key);
       if (!nextSelected) {
@@ -1729,6 +1782,7 @@ export default function PublicOrderFormPage() {
     setOrderFormConfirmed(false);
     setOrderFormCommitmentAccepted(false);
     setOrderFormCrossSells([]);
+    setLastAdditionalItemActionKey("");
     setFieldErrors({});
     setPublicHoneypot("");
     setAbandonedDraftCartId("");
@@ -1923,18 +1977,7 @@ export default function PublicOrderFormPage() {
     const nextErrors = buildSubmitValidationErrors();
     setFieldErrors(nextErrors);
 
-    const validationOrder: PublicOrderFieldKey[] = [
-      "name",
-      "phone",
-      "whatsapp",
-      "address",
-      "city",
-      "state",
-      "delivery",
-      "confirmation",
-      "commitment"
-    ];
-    const firstInvalidField = validationOrder.find((field) => nextErrors[field]);
+    const firstInvalidField = PUBLIC_ORDER_VALIDATION_ORDER.find((field) => nextErrors[field]);
     if (firstInvalidField) {
       switch (firstInvalidField) {
         case "name":
@@ -2260,7 +2303,11 @@ export default function PublicOrderFormPage() {
         companionPackageId: selection.packageId ?? undefined,
         metadata: {
           productName: product?.name ?? "Additional item",
-          quantity: selection.quantity
+          quantity: selection.quantity,
+          packageName: chosenPackage?.name ?? null,
+          totalAfterAdd: summaryTotal,
+          currency: chosenPackageCurrency,
+          selectedAdditionalItems: orderFormCrossSells.length
         }
       });
     }
@@ -2278,7 +2325,7 @@ export default function PublicOrderFormPage() {
     }
 
     previousCrossSellKeysRef.current = nextKeys;
-  }, [orderFormCrossSells, products]);
+  }, [chosenPackage?.name, chosenPackageCurrency, orderFormCrossSells, products, summaryTotal]);
 
   useEffect(() => {
     if (cardCompanionGroups.length === 0) {
@@ -2545,6 +2592,75 @@ export default function PublicOrderFormPage() {
       </div>
     </div>
   ) : null;
+  const additionalItemValidationPreview = buildSubmitValidationErrors();
+  const additionalItemMissingCount = PUBLIC_ORDER_VALIDATION_ORDER.filter((field) => additionalItemValidationPreview[field]).length;
+  const lastAdditionalItemStillSelected = Boolean(
+    lastAdditionalItemActionKey
+    && orderFormCrossSells.some((line) => companionSelectionKey(line) === lastAdditionalItemActionKey)
+  );
+  const additionalItemNames = selectedCrossSellLines.map((line) => line.name).slice(0, 2).join(", ");
+  const additionalItemCompletionBlock = selectedCrossSellLines.length > 0 ? (
+    <div
+      ref={additionalItemNextStepRef}
+      style={{
+        marginTop: 14,
+        padding: isCompactUpsellViewport ? 16 : 14,
+        borderRadius: 18,
+        border: "2px solid #22c55e",
+        background: "linear-gradient(135deg, #ecfdf5 0%, #f8fbff 100%)",
+        display: "grid",
+        gap: 12,
+        boxShadow: lastAdditionalItemStillSelected ? "0 14px 32px rgba(34, 197, 94, 0.16)" : "none",
+        ...(lastAdditionalItemStillSelected ? { animation: "publicAddOnBridgePulse 1.2s ease 2" } : {})
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
+          <span style={{ width: "fit-content", padding: "5px 9px", borderRadius: 999, background: "#dcfce7", border: "1px solid #86efac", color: "#15803d", fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Extra item added
+          </span>
+          <strong style={{ fontSize: isCompactUpsellViewport ? 20 : 17, color: "#0f172a", lineHeight: 1.2 }}>
+            Next step: finish the order
+          </strong>
+          <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+            {additionalItemNames || "The extra item"} is saved. Tap the button below. If anything is missing, we will take you straight there.
+          </span>
+        </div>
+        <strong style={{ fontSize: isCompactUpsellViewport ? 21 : 18, color: "#1F8FE0", whiteSpace: "nowrap" }}>
+          {formatProductMoney(summaryTotal, chosenPackageCurrency)}
+        </strong>
+      </div>
+      <button
+        type="button"
+        onClick={handleAdditionalItemFinishClick}
+        disabled={publicOrderSubmitting}
+        style={{
+          width: "100%",
+          minHeight: 54,
+          border: "none",
+          borderRadius: 14,
+          background: reviewStepReady ? "#16a34a" : "#111827",
+          color: "#ffffff",
+          fontSize: 16,
+          fontWeight: 900,
+          cursor: publicOrderSubmitting ? "not-allowed" : "pointer",
+          opacity: publicOrderSubmitting ? 0.75 : 1,
+          boxShadow: "0 12px 28px rgba(15, 23, 42, 0.18)"
+        }}
+      >
+        {publicOrderSubmitting
+          ? "Submitting..."
+          : reviewStepReady
+            ? `Place order now - ${formatProductMoney(summaryTotal, chosenPackageCurrency)}`
+            : additionalItemMissingCount > 0
+              ? `Finish ${additionalItemMissingCount} missing detail${additionalItemMissingCount === 1 ? "" : "s"}`
+              : "Continue to finish order"}
+      </button>
+      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+        Not sure about the extra item? You can remove it above and still complete the main order.
+      </span>
+    </div>
+  ) : null;
 
   return (
     <main className="public-order-page">
@@ -2582,6 +2698,10 @@ export default function PublicOrderFormPage() {
         @keyframes publicProofBadgeFloat {
           0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 0 0 rgba(34, 197, 94, 0); }
           50% { transform: translateY(-2px) scale(1.02); box-shadow: 0 10px 24px rgba(34, 197, 94, 0.16); }
+        }
+        @keyframes publicAddOnBridgePulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 14px 32px rgba(34, 197, 94, 0.16); }
+          50% { transform: scale(1.01); box-shadow: 0 18px 40px rgba(34, 197, 94, 0.26); }
         }
       `}</style>
       <section className="public-order-shell">
@@ -3601,6 +3721,30 @@ export default function PublicOrderFormPage() {
                                       </div>
                                       <button
                                         type="button"
+                                        onClick={handleAdditionalItemFinishClick}
+                                        disabled={publicOrderSubmitting}
+                                        style={{
+                                          width: "100%",
+                                          padding: "13px 16px",
+                                          background: reviewStepReady ? "#0f9f6e" : "#111827",
+                                          color: "white",
+                                          borderRadius: 12,
+                                          fontWeight: 900,
+                                          fontSize: 15,
+                                          border: "none",
+                                          cursor: publicOrderSubmitting ? "not-allowed" : "pointer",
+                                          opacity: publicOrderSubmitting ? 0.75 : 1,
+                                          boxShadow: "0 12px 24px rgba(15, 23, 42, 0.18)"
+                                        }}
+                                      >
+                                        {publicOrderSubmitting
+                                          ? "Submitting..."
+                                          : reviewStepReady
+                                            ? `Place order now - ${formatProductMoney(summaryTotal, chosenPackageCurrency)}`
+                                            : "Continue to finish order"}
+                                      </button>
+                                      <button
+                                        type="button"
                                         onClick={() => setOrderFormCrossSellSelection(selectedVariant, false, { exclusiveProduct: true })}
                                         style={{
                                           width: "100%",
@@ -3664,6 +3808,7 @@ export default function PublicOrderFormPage() {
               )}
 
               {inlineOrderBreakdownBlock}
+              {additionalItemCompletionBlock}
 
               {autoCompanionLines.length > 0 && (
                 <div style={{ padding: 10, border: "1px solid #10b98140", background: "#ecfdf5", borderRadius: 12, fontSize: 13, marginTop: 12 }}>
@@ -3851,6 +3996,7 @@ export default function PublicOrderFormPage() {
               {guidedReviewBlock}
 
               <div
+                ref={submitActionRef}
                 style={guidedCheckout ? {
                   position: "sticky",
                   bottom: 12,

@@ -4381,6 +4381,8 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
   const variants = typeof metadata.variants === "number" ? metadata.variants : null;
   const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
   const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
+  const totalAfterAdd = typeof metadata.totalAfterAdd === "number" ? metadata.totalAfterAdd : null;
+  const currency = typeof metadata.currency === "string" ? metadata.currency : "";
   const actorName = typeof metadata.actorName === "string" ? metadata.actorName : "";
   const repName = typeof metadata.repName === "string" ? metadata.repName : "";
   const agentName = typeof metadata.agentName === "string" ? metadata.agentName : "";
@@ -4405,7 +4407,10 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
     case "additional_item_preview_opened":
       return variants && variants > 1 ? `${productName || "Additional item"} · ${variants} bundle choices` : (productName || "Opened an additional item");
     case "additional_item_added":
-      return quantity && quantity > 1 ? `${productName || "Additional item"} · ${quantity} pcs` : (productName || "Added an additional item");
+      return [
+        quantity && quantity > 1 ? `${productName || "Additional item"} · ${quantity} pcs` : (productName || "Added an additional item"),
+        totalAfterAdd != null ? `Total now ${formatFlexibleMoney(totalAfterAdd, currency)}` : null
+      ].filter(Boolean).join(" · ");
     case "additional_item_removed":
       return productName || "Removed an additional item";
     case "submit_attempted":
@@ -4498,6 +4503,14 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
   const selectedAdditionalItems = [...addedSelections.values()].filter((entry) => entry.selected).length;
   if (lastEvent?.eventType === "form_exited" && selectedAdditionalItems > 0) {
     return `Left after adding ${selectedAdditionalItems} additional item${selectedAdditionalItems === 1 ? "" : "s"}.`;
+  }
+  if (selectedAdditionalItems > 0) {
+    const itemNames = [...addedSelections.values()]
+      .filter((entry) => entry.selected)
+      .map((entry) => entry.name)
+      .slice(0, 2)
+      .join(", ");
+    return `Added ${itemNames || "an additional item"} but did not submit yet. Ask if they want to keep the extra item or confirm only the main order.`;
   }
 
   const latestState = [...events].reverse().find((event) => event.eventType === "state_selected");
@@ -4595,6 +4608,7 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
     submitAttempted: 0,
     submitted: 0,
     exited: 0,
+    addedAdditionalItemWithoutSubmit: 0,
     submittedWithAdditionalItem: 0
   };
   const blockedCounts = new Map<CartJourneyBlockedEventType, number>();
@@ -4639,8 +4653,8 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
       additionalItemStats.set(key, current);
     }
 
+    const submittedWithAnyItem = [...selectedByItem.values()].some(Boolean);
     if (seenTypes.has("order_submitted")) {
-      const submittedWithAnyItem = [...selectedByItem.values()].some(Boolean);
       if (submittedWithAnyItem) {
         funnel.submittedWithAdditionalItem += 1;
       }
@@ -4652,6 +4666,8 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
           additionalItemStats.set(key, current);
         }
       }
+    } else if (submittedWithAnyItem) {
+      funnel.addedAdditionalItemWithoutSubmit += 1;
     }
   }
 
@@ -25134,6 +25150,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               )}
 
               <section className="grid grid-cols-1 xl:grid-cols-[1.25fr,0.9fr,1fr] gap-4" aria-label="Journey analytics">
+                {abandonedCartJourneyAnalytics.funnel.addedAdditionalItemWithoutSubmit > 0 ? (
+                  <article className="xl:col-span-3 rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div>
+                        <h2 className="text-base font-bold text-amber-950 m-0">Add-on leak detected</h2>
+                        <p className="text-sm text-amber-900 mt-1 mb-0 leading-relaxed">
+                          {abandonedCartJourneyAnalytics.funnel.additionalItemAdded} cart{abandonedCartJourneyAnalytics.funnel.additionalItemAdded === 1 ? "" : "s"} added an extra item, but {abandonedCartJourneyAnalytics.funnel.submittedWithAdditionalItem} submitted with it. The item is interesting; the next step after adding it needs to be easier.
+                        </p>
+                      </div>
+                      <span className="inline-flex w-fit items-center rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800">
+                        {abandonedCartJourneyAnalytics.funnel.addedAdditionalItemWithoutSubmit} stuck after add
+                      </span>
+                    </div>
+                  </article>
+                ) : null}
                 <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
@@ -25190,20 +25221,20 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   {abandonedCartJourneyAnalytics.additionalItems.length === 0 && !abandonedCartJourneyLoading ? (
                     <p className="mt-4 text-sm text-gray-500">No additional-item journey activity captured in this filter yet.</p>
                   ) : (
-                    <div className="mt-4 space-y-3">
-                      {abandonedCartJourneyAnalytics.additionalItems.slice(0, 4).map((item) => (
-                        <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-semibold text-gray-900 m-0">{item.name}</p>
-                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-1">
-                              {item.submittedWithItem} submitted
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-2 mb-0">
-                            {item.previewed} viewed · {item.added} added · {item.removed} removed
-                          </p>
-                        </div>
-                      ))}
+	                    <div className="mt-4 space-y-3">
+	                      {abandonedCartJourneyAnalytics.additionalItems.slice(0, 4).map((item) => (
+	                        <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+	                          <div className="flex items-center justify-between gap-3">
+	                            <p className="text-sm font-semibold text-gray-900 m-0">{item.name}</p>
+	                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-1">
+	                              {item.addToSubmitRate}% add to submit
+	                            </span>
+	                          </div>
+	                          <p className="text-xs text-gray-500 mt-2 mb-0">
+	                            {item.previewed} viewed · {item.added} added · {item.submittedWithItem} submitted · {Math.max(0, item.added - item.submittedWithItem)} stuck
+	                          </p>
+	                        </div>
+	                      ))}
                     </div>
                   )}
                 </article>
@@ -39141,11 +39172,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	              const repName = users.find((u) => u.id === selectedCart.assignedRepId)?.name ?? "Unassigned";
 	              const phoneClean    = (selectedCart.phone ?? "").replace(/\D/g, "");
 	              const whatsappClean = (selectedCart.whatsapp ?? selectedCart.phone ?? "").replace(/\D/g, "");
-	              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
-	              const selectedCartJourney = selectedCartJourneyEvents;
-	              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
-	              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
-	              const StatusBadge = ({ s }: { s: string }) => {
+		              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
+		              const selectedCartJourney = selectedCartJourneyEvents;
+		              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+		              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
+		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
+		              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
 	                            : s === "Lost" ? "bg-rose-100 text-rose-800"
 	                            : s === "Contacted" ? "bg-blue-100 text-blue-800"
@@ -39238,16 +39270,22 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Conversion path</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{conversionPathLabel ?? "Converted"}</p></div>
                           </>
                         )}
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last step reached</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Journey events</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartJourney.length}</p></div>
-	                      <div className="sm:col-span-2">
-	                        <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Recovery priority</p>
-	                        <div className="mt-1 flex items-center gap-2 flex-wrap">
-	                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
-	                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
-	                        </div>
-	                      </div>
-	                    </div>
+		                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Last step reached</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{latestJourneyEvent ? cartJourneyTitle(latestJourneyEvent) : "No tracked steps yet"}</p></div>
+		                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Journey events</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{selectedCartJourney.length}</p></div>
+		                      <div className="sm:col-span-2">
+		                        <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Recovery priority</p>
+		                        <div className="mt-1 flex items-center gap-2 flex-wrap">
+		                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${cartJourneyRecoveryBadgeClass(recovery.band)}`}>{recovery.band} · {recovery.score}</span>
+		                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
+		                        </div>
+		                      </div>
+		                      {followUpHint ? (
+		                        <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+		                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Smart recovery hint</p>
+		                          <p className="text-xs font-medium text-amber-950 mt-1 mb-0 leading-relaxed">{followUpHint}</p>
+		                        </div>
+		                      ) : null}
+		                    </div>
 	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
 	                      <div className="flex items-center justify-between gap-2 mb-2">
 	                        <div>
