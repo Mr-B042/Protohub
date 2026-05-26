@@ -21314,15 +21314,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
               </div>
             </div>
 
-            <div className="min-w-0 rounded-[24px] border border-white/70 bg-white/75 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur dark:border-sky-500/20 dark:bg-[#0a1723]/78 dark:shadow-[0_22px_50px_rgba(0,0,0,0.34)] lg:min-w-[240px]">
+            <div className="min-w-0 rounded-[24px] border border-sky-100 bg-white/95 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.12)] backdrop-blur dark:border-sky-400/35 dark:bg-[#07131f] dark:shadow-[0_22px_50px_rgba(0,0,0,0.42)] lg:min-w-[240px]">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Current stage</span>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600 dark:text-sky-100">Current stage</span>
                 <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-bold ${statusBadgeClasses(orderStatus)}`}>{orderStatus}</span>
               </div>
               {orderCallOutcome ? (
                 <p className="m-0 mt-3 text-sm font-bold leading-5 text-slate-700 dark:text-slate-100">{orderCallOutcome}</p>
               ) : (
-                <p className="m-0 mt-3 text-sm font-semibold leading-5 text-slate-500 dark:text-slate-400">No call outcome saved yet.</p>
+                <p className="m-0 mt-3 text-sm font-semibold leading-5 text-slate-700 dark:text-slate-200">No call outcome saved yet.</p>
               )}
             </div>
           </div>
