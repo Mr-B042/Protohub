@@ -3024,6 +3024,8 @@ type CapturedCartOfferLine = {
   detail?: string;
   qty: number;
   total?: number;
+  productId?: string;
+  packageId?: string;
   source: "captured" | "journey" | "order";
 };
 const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknown> | null => {
@@ -3051,12 +3053,16 @@ const capturedCartOfferLinesFor = (cart: AbandonedCartRecord, key: "selectedCros
           : undefined;
       const qty = Math.max(1, Number(record.qty ?? record.quantity) || 1);
       const totalCandidate = Number(record.total ?? record.amount);
+      const productId = typeof record.productId === "string" && record.productId.trim() ? record.productId.trim() : undefined;
+      const packageId = typeof record.packageId === "string" && record.packageId.trim() ? record.packageId.trim() : undefined;
       return {
         key: `${key}:${name}:${detail ?? ""}:${index}`,
         name,
         detail,
         qty,
         total: Number.isFinite(totalCandidate) ? Math.max(0, totalCandidate) : undefined,
+        productId,
+        packageId,
         source: "captured" as const
       };
     })
@@ -3073,12 +3079,16 @@ const selectedCartAddOnLinesFromJourney = (events: CartJourneyEvent[]) => {
     const key = `${event.companionProductId ?? productName}:${event.companionPackageId ?? packageName ?? ""}`;
     const quantity = Math.max(1, Number(event.metadata?.quantity) || 1);
     const offerAmount = Number(event.metadata?.offerAmount);
+    const productId = event.companionProductId || undefined;
+    const packageId = event.companionPackageId || undefined;
     const existing = selections.get(key) ?? {
       key: `journey:${key}`,
       name: productName,
       detail: packageName,
       qty: quantity,
       total: Number.isFinite(offerAmount) ? Math.max(0, offerAmount) : undefined,
+      productId,
+      packageId,
       source: "journey" as const,
       selected: false
     };
@@ -3089,6 +3099,8 @@ const selectedCartAddOnLinesFromJourney = (events: CartJourneyEvent[]) => {
         detail: packageName ?? existing.detail,
         qty: quantity,
         total: Number.isFinite(offerAmount) ? Math.max(0, offerAmount) : existing.total,
+        productId,
+        packageId,
         selected: true
       });
     }
@@ -3107,8 +3119,60 @@ const selectedCartAddOnLinesFromOrder = (order: TrackedOrder | undefined) =>
     detail: line.packageName,
     qty: Math.max(1, Number(line.quantity) || 1),
     total: Math.max(0, Number(line.amount) || 0),
+    productId: line.productId,
+    packageId: line.packageId,
     source: "order" as const
   }));
+const resolveCartAddOnLinePricing = (
+  line: CapturedCartOfferLine,
+  cart: AbandonedCartRecord,
+  products: Product[]
+): CapturedCartOfferLine => {
+  if (typeof line.total === "number" && Number.isFinite(line.total)) return line;
+
+  const mainProduct = cart.productId ? products.find((product) => product.id === cart.productId) : undefined;
+  const mainPackage = mainProduct?.packages.find((pkg) => pkg.id === cart.packageId);
+  const addOnProduct = line.productId
+    ? products.find((product) => product.id === line.productId)
+    : products.find((product) => product.name.trim().toLowerCase() === line.name.trim().toLowerCase());
+  const targetPackage = line.packageId
+    ? addOnProduct?.packages.find((pkg) => pkg.id === line.packageId)
+      ?? products.flatMap((product) => product.packages).find((pkg) => pkg.id === line.packageId)
+    : undefined;
+  const companion = addOnProduct
+    ? mainPackage?.companionProducts?.find((candidate) =>
+        candidate.productId === addOnProduct.id
+        && (!line.packageId || candidate.packageId === line.packageId)
+      )
+    : undefined;
+  const quantity = Math.max(1, Number(line.qty) || Number(companion?.quantity) || 1);
+  const override = addOnProduct ? mainProduct?.crossSellPriceOverrides?.[addOnProduct.id] : undefined;
+  const primary = addOnProduct ? primaryPricing(addOnProduct)?.sellingPrice ?? 0 : 0;
+  let unitPrice = targetPackage?.price ?? (typeof override === "number" && override >= 0 ? override : primary);
+
+  if (companion) {
+    if (companion.pricingMode === "free") unitPrice = 0;
+    else if (companion.pricingMode === "fixed") unitPrice = Number(companion.fixedPrice ?? 0);
+    else if (targetPackage) unitPrice = Number(targetPackage.price ?? 0);
+    else unitPrice = primary;
+  }
+
+  const total = companion?.pricingMode === "fixed"
+    ? Math.max(0, unitPrice)
+    : Math.max(0, unitPrice * quantity);
+  const detail = line.detail
+    ?? (targetPackage
+      ? `${targetPackage.name} · ${targetPackage.quantity} unit${targetPackage.quantity === 1 ? "" : "s"}`
+      : undefined);
+
+  return {
+    ...line,
+    name: addOnProduct?.name ?? line.name,
+    detail,
+    qty: quantity,
+    total
+  };
+};
 const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
   const next: AbandonedCartAttribution = {};
   const assign = (key: keyof AbandonedCartAttribution, value: unknown) => {
@@ -4200,11 +4264,11 @@ const isOrderWorkspacePage = (page: ActivePage): page is OrderWorkspacePage => O
 
 // ── followUpNoteBubbleClass ────────────────────
 const followUpNoteBubbleClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-amber-700/70 bg-amber-950/88 px-3.5 py-3 text-[13px] font-semibold leading-6 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[24px] rounded-tl-[12px] border border-orange-300 bg-orange-50 px-3.5 py-3 text-[13px] font-semibold leading-6 text-orange-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-700/70 dark:bg-amber-950/88 dark:text-amber-50";
 
 // ── followUpNoteBubbleCompactClass ────────────────────
 const followUpNoteBubbleCompactClass =
-  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-amber-700/70 bg-amber-950/88 px-3 py-2.5 text-[12px] font-semibold leading-5 text-amber-50 shadow-sm whitespace-pre-wrap break-words";
+  "mt-2 flex w-full max-w-full items-start gap-2 rounded-[20px] rounded-tl-[10px] border border-orange-300 bg-orange-50 px-3 py-2.5 text-[12px] font-semibold leading-5 text-orange-950 shadow-sm whitespace-pre-wrap break-words dark:border-amber-700/70 dark:bg-amber-950/88 dark:text-amber-50";
 
 // ── followUpNoteBubbleDotClass ────────────────────
 const followUpNoteBubbleDotClass =
@@ -14101,6 +14165,8 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
             : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
               : standard;
           return {
+            productId: addOnProduct.id,
+            packageId: companion.packageId ?? undefined,
             name: addOnProduct.name,
             detail: `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} selected`,
             qty: companion.quantity,
@@ -14110,13 +14176,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         const qty = Math.max(1, Number(selection.quantity) || 1);
         const unit = crossSellPriceFor(captureProduct, addOnProduct);
         return {
+          productId: addOnProduct.id,
           name: addOnProduct.name,
           detail: `${qty} ${qty === 1 ? "pc" : "pcs"} selected`,
           qty,
           total: unit * qty
         };
       })
-      .filter(Boolean) as Array<{ name: string; detail: string; qty: number; total: number }>;
+      .filter(Boolean) as Array<{ productId: string; packageId?: string; name: string; detail: string; qty: number; total: number }>;
     const capturedAddOnTotal = capturedSelectedCrossSellLines.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
 
     const cartPatch: AbandonedCartRecord = {
@@ -39362,12 +39429,15 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                : capturedAddOnLines.length > 0
 		                  ? capturedAddOnLines
 		                  : journeyAddOnLines;
-		              const selectedCartAddOnKnownTotal = selectedCartAddOnLines.reduce((sum, line) => sum + (typeof line.total === "number" ? Math.max(0, line.total) : 0), 0);
+		              const pricedSelectedCartAddOnLines = selectedCartAddOnLines.map((line) =>
+		                resolveCartAddOnLinePricing(line, selectedCart, products)
+		              );
+		              const pricedSelectedCartAddOnTotal = pricedSelectedCartAddOnLines.reduce((sum, line) => sum + (typeof line.total === "number" ? Math.max(0, line.total) : 0), 0);
 		              const mainPackageAmount = typeof pkg?.price === "number" && pkg.price > 0
 		                ? pkg.price
-		                : Math.max(0, selectedCart.amount - selectedCartAddOnKnownTotal);
-		              const displayedCartTotal = selectedCartAddOnKnownTotal > 0
-		                ? mainPackageAmount + selectedCartAddOnKnownTotal
+		                : Math.max(0, selectedCart.amount - pricedSelectedCartAddOnTotal);
+		              const displayedCartTotal = pricedSelectedCartAddOnTotal > 0
+		                ? mainPackageAmount + pricedSelectedCartAddOnTotal
 		                : selectedCart.amount;
 		              const StatusBadge = ({ s }: { s: string }) => {
 	                const tone = s === "Converted" ? "bg-emerald-100 text-emerald-800"
@@ -39403,9 +39473,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                         {(selectedCart.whatsapp || selectedCart.phone) && (
                           <button
                             type="button"
-                            onClick={() => copyText(buildCartWhatsAppMessage(selectedCart), `${selectedCart.customer || "Customer"} WhatsApp message`)}
+                            onClick={() => copyText(buildCartWhatsAppMessage(selectedCart), `${selectedCart.customer || "Customer"} order copied for WhatsApp group`)}
                             className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50">
-                            <Copy className="w-3.5 h-3.5" /> Copy WhatsApp text
+                            <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
                           </button>
                         )}
 	                      {phoneClean && (
@@ -39446,19 +39516,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                        <p className="text-base font-extrabold text-[#1F8FE0] m-0">{formatProductMoney(mainPackageAmount, selectedCart.currency)}</p>
 		                      </div>
 		                    </div>
-		                    {selectedCartAddOnLines.length > 0 && (
-		                      <div className="mt-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-3">
+		                    {pricedSelectedCartAddOnLines.length > 0 && (
+		                      <div className="mt-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-3 shadow-sm dark:border-amber-400/45 dark:from-[#2a1a05] dark:via-[#111c27] dark:to-[#082236]">
 		                        <div className="flex items-center justify-between gap-3 flex-wrap">
 		                          <div>
-		                            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-amber-700 m-0">Add-on packages picked</p>
-		                            <p className="text-xs text-gray-500 m-0 mt-0.5">Shown separately so reps know exactly what the customer added.</p>
+		                            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200 m-0">Add-on packages picked</p>
+		                            <p className="text-xs text-gray-500 dark:text-slate-200 m-0 mt-0.5">Shown separately so reps know exactly what the customer added.</p>
 		                          </div>
-		                          <span className="inline-flex items-center rounded-full bg-white border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800">
-		                            {selectedCartAddOnLines.length} item{selectedCartAddOnLines.length === 1 ? "" : "s"}
+		                          <span className="inline-flex items-center rounded-full bg-white border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:border-amber-300/50 dark:bg-[#101a24] dark:text-amber-100">
+		                            {pricedSelectedCartAddOnLines.length} item{pricedSelectedCartAddOnLines.length === 1 ? "" : "s"}
 		                          </span>
 		                        </div>
 		                        <div className="mt-3 grid gap-2">
-		                          {selectedCartAddOnLines.map((line, index) => {
+		                          {pricedSelectedCartAddOnLines.map((line, index) => {
 		                            const detailParts = [
 		                              `${line.qty} ${line.qty === 1 ? "pc" : "pcs"}`,
 		                              line.detail && line.detail !== selectedCart.packageName ? line.detail : null
@@ -39469,31 +39539,31 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                                ? "Picked before leaving"
 		                                : "Seen in journey";
 		                            return (
-		                              <div key={`${line.key}-${index}`} className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm flex items-start gap-3">
-		                                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+		                              <div key={`${line.key}-${index}`} className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm flex items-start gap-3 dark:border-slate-600 dark:bg-[#0f1a24] dark:shadow-[0_18px_40px_rgba(2,6,23,0.35)]">
+		                                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 dark:bg-amber-400/18 dark:text-amber-200">
 		                                  <PackagePlus className="w-4 h-4" />
 		                                </div>
 		                                <div className="flex-1 min-w-0">
 		                                  <div className="flex items-center gap-2 flex-wrap">
-		                                    <p className="text-sm font-extrabold text-gray-900 m-0">{line.name}</p>
-		                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Add-on {index + 1}</span>
+		                                    <p className="text-sm font-extrabold text-gray-900 dark:text-slate-50 m-0">{line.name}</p>
+		                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-400/18 dark:text-amber-100">Add-on {index + 1}</span>
 		                                  </div>
-		                                  <p className="text-xs text-gray-600 m-0 mt-0.5">{detailParts.join(" · ") || "Additional item selected"}</p>
-		                                  <p className="text-[11px] text-gray-400 m-0 mt-1">{sourceLabel}</p>
+		                                  <p className="text-xs text-gray-600 dark:text-slate-200 m-0 mt-0.5">{detailParts.join(" · ") || "Additional item selected"}</p>
+		                                  <p className="text-[11px] text-gray-400 dark:text-slate-400 m-0 mt-1">{sourceLabel}</p>
 		                                </div>
 		                                <div className="text-right shrink-0">
-		                                  <p className="text-[11px] text-gray-400 m-0">Amount</p>
-		                                  <p className="text-sm font-extrabold text-amber-700 m-0">
-		                                    {typeof line.total === "number" ? formatProductMoney(line.total, selectedCart.currency) : "Added"}
+		                                  <p className="text-[11px] text-gray-400 dark:text-slate-400 m-0">Amount</p>
+		                                  <p className="text-sm font-extrabold text-amber-700 dark:text-amber-100 m-0">
+		                                    {typeof line.total === "number" ? formatProductMoney(line.total, selectedCart.currency) : "Price not captured"}
 		                                  </p>
 		                                </div>
 		                              </div>
 		                            );
 		                          })}
 		                        </div>
-		                        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2">
-		                          <span className="text-xs font-bold text-slate-600">Estimated cart total</span>
-		                          <strong className="text-base text-[#1F8FE0]">{formatProductMoney(displayedCartTotal, selectedCart.currency)}</strong>
+		                        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2 dark:border-sky-400/40 dark:bg-sky-400/12">
+		                          <span className="text-xs font-bold text-slate-600 dark:text-slate-100">Estimated cart total</span>
+		                          <strong className="text-base text-[#1F8FE0] dark:text-sky-200">{formatProductMoney(displayedCartTotal, selectedCart.currency)}</strong>
 		                        </div>
 		                      </div>
 		                    )}
@@ -39523,9 +39593,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                        </div>
 		                      </div>
 		                      {followUpHint ? (
-		                        <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-		                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Smart recovery hint</p>
-		                          <p className="text-xs font-medium text-amber-950 mt-1 mb-0 leading-relaxed">{followUpHint}</p>
+		                        <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-400/45 dark:bg-amber-400/12">
+		                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-200 m-0">Smart recovery hint</p>
+		                          <p className="text-xs font-semibold text-amber-950 dark:text-amber-50 mt-1 mb-0 leading-relaxed">{followUpHint}</p>
 		                        </div>
 		                      ) : null}
 		                    </div>

@@ -1288,6 +1288,9 @@ export default function PublicOrderFormPage() {
       if (companion) {
         const targetPackage = targetPackageForCompanion(companion, products);
         return {
+          productId: product.id,
+          packageId: targetPackage?.id ?? companion.packageId ?? undefined,
+          packageName: targetPackage?.name ?? undefined,
           name: companionDisplayName(companion, product, targetPackage),
           detail: companionDisplayDetail(companion, targetPackage),
           qty: companion.quantity,
@@ -1296,6 +1299,9 @@ export default function PublicOrderFormPage() {
       }
       const unit = crossSellPriceFor(publicProduct, product);
       return {
+        productId: product.id,
+        packageId: line.packageId ?? undefined,
+        packageName: undefined,
         name: product.name,
         detail: `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this additional item`,
         qty: line.quantity,
@@ -1312,6 +1318,9 @@ export default function PublicOrderFormPage() {
       if (!product) return null;
       const targetPackage = targetPackageForCompanion(companion, products);
       return {
+        productId: product.id,
+        packageId: targetPackage?.id ?? companion.packageId ?? undefined,
+        packageName: targetPackage?.name ?? undefined,
         name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
         detail: companionDisplayDetail(companion, targetPackage),
         qty: companion.quantity,
@@ -2479,13 +2488,21 @@ export default function PublicOrderFormPage() {
       const selection = orderFormCrossSells.find((line) => companionSelectionKey(line) === key);
       if (!selection) continue;
       const product = products.find((item) => item.id === selection.productId);
+      const companion = companionForSelection(selection);
+      const targetPackage = companion ? targetPackageForCompanion(companion, products) : null;
+      const offerAmount = product && publicProduct
+        ? companion
+          ? companionLineTotal(companion, product, targetPackage)
+          : crossSellPriceFor(publicProduct, product) * Math.max(1, Number(selection.quantity) || 1)
+        : 0;
       trackCartJourney("additional_item_added", {
         companionProductId: selection.productId,
         companionPackageId: selection.packageId ?? undefined,
         metadata: {
           productName: product?.name ?? "Additional item",
           quantity: selection.quantity,
-          packageName: chosenPackage?.name ?? null,
+          packageName: targetPackage?.name ?? null,
+          offerAmount,
           totalAfterAdd: summaryTotal,
           currency: chosenPackageCurrency,
           selectedAdditionalItems: orderFormCrossSells.length
