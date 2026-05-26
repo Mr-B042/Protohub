@@ -11,35 +11,77 @@ router.use(requireAuth);
 const SMART_STOCK_ADMIN_ROLES = ["Owner", "Admin", "Inventory Manager"] as const;
 const SMART_STOCK_PRIVILEGED_ROLES = new Set<string>(SMART_STOCK_ADMIN_ROLES);
 const SMART_STOCK_SIGNAL_LIMIT = 6;
+const SMART_STOCK_DIGEST_TITLE = "Stock risk summary";
+const SMART_STOCK_DIGEST_CACHE_TTL_MS = 25 * 60 * 60 * 1000;
+const smartStockDigestCache = new Map<string, number>();
 
 const titleSlug = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "stock";
 
-const smartStockTitle = (signal: { severity: "stockout" | "critical" | "watch"; productName: string; state: string }) => {
-  const prefix = signal.severity === "stockout"
-    ? "Stockout risk"
-    : signal.severity === "critical"
-      ? "Critical fast mover"
-      : "Watch fast mover";
-  return `${prefix}: ${signal.productName} in ${signal.state}`;
-};
-
-const smartStockMessage = (signal: {
+type SmartStockSignal = {
+  productId: string;
+  productName: string;
+  state: string;
   stock: number;
   recentUnits: number;
   openOrders: number;
   daysCover?: number;
   lookbackDays?: number;
-  state: string;
-}) => {
-  const lookbackDays = Number.isFinite(signal.lookbackDays) ? Math.max(1, Math.round(Number(signal.lookbackDays))) : 7;
-  const cover = Number.isFinite(signal.daysCover)
-    ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))} day${Math.ceil(Number(signal.daysCover)) === 1 ? "" : "s"} cover`
-    : "cover unknown";
-  const open = signal.openOrders > 0
-    ? ` ${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need stock.`
+  severity: "stockout" | "critical" | "watch";
+  salesRepRecipientIds?: string[];
+};
+
+const smartStockSeverityRank: Record<SmartStockSignal["severity"], number> = {
+  stockout: 3,
+  critical: 2,
+  watch: 1
+};
+
+const smartStockDigestCacheKey = (orgId: string, recipientId: string, dayKey: string) =>
+  `${orgId}::${recipientId}::${dayKey}::${SMART_STOCK_DIGEST_TITLE}`;
+
+const reserveSmartStockDigest = (key: string) => {
+  const now = Date.now();
+  for (const [cachedKey, expiresAt] of smartStockDigestCache) {
+    if (expiresAt <= now) smartStockDigestCache.delete(cachedKey);
+  }
+  const expiresAt = smartStockDigestCache.get(key);
+  if (expiresAt && expiresAt > now) return false;
+  smartStockDigestCache.set(key, now + SMART_STOCK_DIGEST_CACHE_TTL_MS);
+  return true;
+};
+
+const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
+  const sorted = [...signals].sort((a, b) =>
+    smartStockSeverityRank[b.severity] - smartStockSeverityRank[a.severity]
+    || b.openOrders - a.openOrders
+    || b.recentUnits - a.recentUnits
+    || a.stock - b.stock
+  );
+  const stockoutCount = sorted.filter((signal) => signal.severity === "stockout").length;
+  const criticalCount = sorted.filter((signal) => signal.severity === "critical").length;
+  const watchCount = sorted.filter((signal) => signal.severity === "watch").length;
+  const totalOpenOrders = sorted.reduce((sum, signal) => sum + signal.openOrders, 0);
+  const lookbackDays = Math.max(1, Math.round(sorted[0]?.lookbackDays ?? 7));
+  const headline = stockoutCount > 0
+    ? `${stockoutCount} stockout risk${stockoutCount === 1 ? "" : "s"} need attention now`
+    : criticalCount > 0
+      ? `${criticalCount} critical fast-moving stock risk${criticalCount === 1 ? "" : "s"}`
+      : `${watchCount} moving stock item${watchCount === 1 ? "" : "s"} to watch`;
+  const topLines = sorted.slice(0, 3).map((signal) => {
+    const cover = Number.isFinite(signal.daysCover)
+      ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d cover`
+      : "cover unknown";
+    const open = signal.openOrders > 0 ? `, ${signal.openOrders} open` : "";
+    return `${signal.productName} in ${signal.state}: ${signal.stock} left, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
+  });
+  const remaining = sorted.length > topLines.length
+    ? ` +${sorted.length - topLines.length} more in Inventory Dashboard.`
     : "";
-  return `${signal.state} has ${signal.stock} left after ${signal.recentUnits} unit${signal.recentUnits === 1 ? "" : "s"} ordered in the last ${lookbackDays} day${lookbackDays === 1 ? "" : "s"} (${cover}).${open}`;
+  const openText = totalOpenOrders > 0
+    ? ` ${totalOpenOrders} open order${totalOpenOrders === 1 ? "" : "s"} may need stock.`
+    : "";
+  return `${headline}.${openText} ${topLines.join(" • ")}${remaining}`.trim();
 };
 
 router.get("/", async (req, res) => {
@@ -131,20 +173,9 @@ router.post("/stock-risk", async (req, res) => {
     ? (users ?? []).filter((user) => SMART_STOCK_ADMIN_ROLES.includes(user.role as any)).map((user) => user.id as string)
     : [];
 
-  const candidateRows: Array<{
-    org_id: string;
-    recipient_id: string;
-    type: "low_stock";
-    title: string;
-    message: string;
-    link: string;
-    product_id: string;
-    read: false;
-  }> = [];
+  const signalsByRecipient = new Map<string, { role: string; signals: SmartStockSignal[] }>();
 
   for (const signal of parsed.data.signals) {
-    const title = smartStockTitle(signal);
-    const message = smartStockMessage(signal);
     const salesRepRecipientIds = [...new Set(signal.salesRepRecipientIds ?? [])]
       .filter((id) => activeSalesRepIds.has(id))
       .filter((id) => privileged || id === req.user!.id);
@@ -156,47 +187,62 @@ router.post("/stock-risk", async (req, res) => {
 
     for (const recipientId of recipientIds) {
       const role = roleByUserId.get(recipientId) ?? req.user!.role;
-      candidateRows.push({
-        org_id: req.user!.orgId,
-        recipient_id: recipientId,
-        type: "low_stock",
-        title,
-        message,
-        link: role === "Sales Rep" ? "/dashboard/sales-rep/notifications" : "/dashboard/admin/inventory/state-stock",
-        product_id: signal.productId,
-        read: false
-      });
+      const group = signalsByRecipient.get(recipientId) ?? { role, signals: [] };
+      group.signals.push(signal);
+      signalsByRecipient.set(recipientId, group);
     }
   }
 
-  if (candidateRows.length === 0) {
+  if (signalsByRecipient.size === 0) {
     res.json([]);
     return;
   }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const productIds = [...new Set(candidateRows.map((row) => row.product_id))];
-  const titles = [...new Set(candidateRows.map((row) => row.title))];
+  const todayKey = today.toISOString().slice(0, 10);
+  const candidateRows = [...signalsByRecipient.entries()].map(([recipientId, group]) => {
+    const sortedSignals = [...group.signals].sort((a, b) =>
+      smartStockSeverityRank[b.severity] - smartStockSeverityRank[a.severity]
+      || b.openOrders - a.openOrders
+      || b.recentUnits - a.recentUnits
+      || a.stock - b.stock
+    );
+    const primarySignal = sortedSignals[0];
+    return {
+      org_id: req.user!.orgId,
+      recipient_id: recipientId,
+      type: "low_stock" as const,
+      title: SMART_STOCK_DIGEST_TITLE,
+      message: smartStockDigestMessage(sortedSignals),
+      link: group.role === "Sales Rep" ? "/dashboard/sales-rep/notifications" : "/dashboard/admin/inventory/state-stock",
+      product_id: primarySignal.productId,
+      read: false
+    };
+  });
+  const recipientIds = candidateRows.map((row) => row.recipient_id);
   const { data: existing, error: existingError } = await supabase
     .from("system_notifications")
-    .select("recipient_id, product_id, title")
+    .select("recipient_id, title")
     .eq("org_id", req.user!.orgId)
+    .eq("type", "low_stock")
+    .eq("title", SMART_STOCK_DIGEST_TITLE)
     .gte("created_at", today.toISOString())
-    .in("product_id", productIds)
-    .in("title", titles);
+    .in("recipient_id", recipientIds);
 
   if (existingError) {
     res.status(500).json({ error: existingError.message });
     return;
   }
 
-  const existingKeys = new Set((existing ?? []).map((row) => `${row.recipient_id ?? ""}::${row.product_id ?? ""}::${row.title ?? ""}`));
+  const existingKeys = new Set((existing ?? []).map((row) => smartStockDigestCacheKey(req.user!.orgId, row.recipient_id ?? "", todayKey)));
   const seenKeys = new Set<string>();
+  const reservedKeys: string[] = [];
   const rows = candidateRows.filter((row) => {
-    const key = `${row.recipient_id}::${row.product_id}::${row.title}`;
-    if (existingKeys.has(key) || seenKeys.has(key)) return false;
+    const key = smartStockDigestCacheKey(req.user!.orgId, row.recipient_id, todayKey);
+    if (existingKeys.has(key) || seenKeys.has(key) || !reserveSmartStockDigest(key)) return false;
     seenKeys.add(key);
+    reservedKeys.push(key);
     return true;
   });
 
@@ -211,6 +257,7 @@ router.post("/stock-risk", async (req, res) => {
     .select("*");
 
   if (error) {
+    reservedKeys.forEach((key) => smartStockDigestCache.delete(key));
     res.status(500).json({ error: error.message });
     return;
   }
@@ -223,7 +270,7 @@ router.post("/stock-risk", async (req, res) => {
         body: row.message,
         kind: "low_stock",
         url: row.link,
-        tag: `smart-stock-${row.product_id}-${titleSlug(row.title)}`,
+        tag: `smart-stock-digest-${todayKey}-${titleSlug(row.title)}`,
         brandName: branding.brandName,
         brandLogo: branding.brandLogo
       })
