@@ -2359,6 +2359,30 @@ const orderScheduleMarkerForOrder = (
   }
   return null;
 };
+const renderScheduleResultBadge = (
+  marker: Pick<DeliveryScheduleOutcome, "label" | "detail" | "pillClass">,
+  options?: { align?: "left" | "right"; className?: string; detailClassName?: string }
+) => {
+  const [primaryLabel, secondaryLabel] = marker.label.split("·").map((part) => part.trim()).filter(Boolean);
+  const alignRight = options?.align === "right";
+  return (
+    <div className={`inline-flex min-w-0 max-w-full flex-col gap-1 ${alignRight ? "items-end text-right" : "items-start text-left"} ${options?.className ?? ""}`}>
+      <div className={`flex max-w-full flex-wrap gap-1 ${alignRight ? "justify-end" : "justify-start"}`}>
+        <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-[10px] font-black leading-none whitespace-nowrap ${marker.pillClass}`}>
+          {primaryLabel || marker.label}
+        </span>
+        {secondaryLabel ? (
+          <span className={`inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-[10px] font-black leading-none whitespace-nowrap ${marker.pillClass}`}>
+            {secondaryLabel}
+          </span>
+        ) : null}
+      </div>
+      <span className={`max-w-[13rem] text-[11px] font-semibold leading-4 text-gray-500 dark:text-slate-400 ${options?.detailClassName ?? ""}`}>
+        {marker.detail}
+      </span>
+    </div>
+  );
+};
 const followUpMomentForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
   note.followUpAt ?? note.followUpDate;
 const followUpKeyForNote = (note: Pick<OrderNote, "followUpAt" | "followUpDate">) =>
@@ -25597,10 +25621,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
                           {scheduleMarker && (
                             <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-black ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
-                                <span className={`text-sm font-bold leading-5 ${orderBodyTextClass}`}>{scheduleMarker.detail}</span>
-                              </div>
+                              {renderScheduleResultBadge(scheduleMarker, { detailClassName: `text-sm leading-5 ${orderBodyTextClass}` })}
                             </section>
                           )}
 
@@ -25755,10 +25776,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-3.5">
                                 {renderOrderStatusSummary(order)}
                                 {scheduleMarker ? (
-                                  <div className="mt-1.5 flex flex-col gap-1">
-                                    <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleMarker.pillClass}`}>{scheduleMarker.label}</span>
-                                    <span className={`text-[11px] ${orderMutedTextClass}`}>{scheduleMarker.detail}</span>
-                                  </div>
+                                  renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5" })
                                 ) : null}
                                 {orderWorkspacePage === "Follow-up Queue" && latestAttempt && (
                                   <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -26673,10 +26691,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                               <td className="px-4 py-4 text-right whitespace-nowrap">
                                 <div className={`font-bold ${isOverdue ? "text-rose-600" : isToday ? "text-emerald-600" : "text-[#1F8FE0]"}`}>{formatPlannedMoment(order.scheduledAt, order.scheduledDate)}</div>
                                 {(order.status ?? "New") === "Delivered" ? (
-                                  <div className="mt-1 space-y-1">
-                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${scheduleOutcome.pillClass}`}>{scheduleOutcome.label}</span>
-                                    <div className="text-[10px] text-gray-500">{scheduleOutcome.detail}</div>
-                                  </div>
+                                  renderScheduleResultBadge(scheduleOutcome, { align: "right", className: "mt-1" })
                                 ) : (
                                   <>
                                     {isOverdue && <div className="text-[10px] text-rose-600 font-bold uppercase">⚠ Overdue</div>}
@@ -26882,10 +26897,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             <td className="px-4 py-4 text-gray-700">{agentNameForOrder(order)}</td>
                             <td className="px-4 py-4 text-gray-700">{formatDateTime(order.deliveredDate)}</td>
                             <td className="px-4 py-4">
-                              <div className="flex flex-col gap-1">
-                                <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${scheduleOutcome.pillClass}`}>{scheduleOutcome.label}</span>
-                                <span className="text-[11px] text-gray-500">{scheduleOutcome.detail}</span>
-                              </div>
+                              {renderScheduleResultBadge(scheduleOutcome)}
                             </td>
                             <td className="px-4 py-4 font-medium text-gray-900">{fulfillmentDaysForOrder(order).toFixed(1)} days</td>
                             <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
