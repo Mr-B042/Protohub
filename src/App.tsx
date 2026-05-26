@@ -39650,13 +39650,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                      </div>
 		                    </div>
 		                    {pricedSelectedCartAddOnLines.length > 0 && (
-		                      <div className="mt-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-3 shadow-sm dark:border-amber-400/45 dark:from-[#2a1a05] dark:via-[#111c27] dark:to-[#082236]">
+		                      <div className="mt-3 rounded-2xl border border-amber-400/70 bg-[#07111c] p-4 shadow-[0_24px_60px_rgba(2,6,23,0.45)]">
 		                        <div className="flex items-center justify-between gap-3 flex-wrap">
 		                          <div>
-		                            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200 m-0">Add-on packages picked</p>
-		                            <p className="text-xs text-gray-500 dark:text-slate-200 m-0 mt-0.5">Shown separately so reps know exactly what the customer added.</p>
+		                            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-amber-100 m-0">Add-on packages picked</p>
+		                            <p className="text-xs font-semibold text-slate-100 m-0 mt-0.5">Shown separately so reps know exactly what the customer added.</p>
 		                          </div>
-		                          <span className="inline-flex items-center rounded-full bg-white border border-amber-200 px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:border-amber-300/50 dark:bg-[#101a24] dark:text-amber-100">
+		                          <span className="inline-flex items-center rounded-full bg-amber-200 border border-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-slate-950">
 		                            {pricedSelectedCartAddOnLines.length} item{pricedSelectedCartAddOnLines.length === 1 ? "" : "s"}
 		                          </span>
 		                        </div>
@@ -39672,21 +39672,21 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                                ? "Picked before leaving"
 		                                : "Seen in journey";
 		                            return (
-		                              <div key={`${line.key}-${index}`} className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm flex items-start gap-3 dark:border-slate-600 dark:bg-[#0f1a24] dark:shadow-[0_18px_40px_rgba(2,6,23,0.35)]">
-		                                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 dark:bg-amber-400/18 dark:text-amber-200">
+		                              <div key={`${line.key}-${index}`} className="rounded-xl border border-slate-500/90 bg-[#101a24] p-3 shadow-[0_18px_40px_rgba(2,6,23,0.38)] flex items-start gap-3">
+		                                <div className="w-9 h-9 rounded-xl bg-amber-300/20 text-amber-100 flex items-center justify-center shrink-0">
 		                                  <PackagePlus className="w-4 h-4" />
 		                                </div>
 		                                <div className="flex-1 min-w-0">
 		                                  <div className="flex items-center gap-2 flex-wrap">
-		                                    <p className="text-sm font-extrabold text-gray-900 dark:text-slate-50 m-0">{line.name}</p>
-		                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-400/18 dark:text-amber-100">Add-on {index + 1}</span>
+		                                    <p className="text-sm font-extrabold text-white m-0">{line.name}</p>
+		                                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-slate-950">Add-on {index + 1}</span>
 		                                  </div>
-		                                  <p className="text-xs text-gray-600 dark:text-slate-200 m-0 mt-0.5">{detailParts.join(" · ") || "Additional item selected"}</p>
-		                                  <p className="text-[11px] text-gray-400 dark:text-slate-400 m-0 mt-1">{sourceLabel}</p>
+		                                  <p className="text-xs font-medium text-slate-100 m-0 mt-0.5">{detailParts.join(" · ") || "Additional item selected"}</p>
+		                                  <p className="text-[11px] font-semibold text-slate-300 m-0 mt-1">{sourceLabel}</p>
 		                                </div>
 		                                <div className="text-right shrink-0">
-		                                  <p className="text-[11px] text-gray-400 dark:text-slate-400 m-0">Amount</p>
-		                                  <p className="text-sm font-extrabold text-amber-700 dark:text-amber-100 m-0">
+		                                  <p className="text-[11px] font-semibold text-slate-300 m-0">Amount</p>
+		                                  <p className="text-sm font-extrabold text-amber-100 m-0">
 		                                    {typeof line.total === "number" ? formatProductMoney(line.total, selectedCart.currency) : "Price not captured"}
 		                                  </p>
 		                                </div>
@@ -39694,9 +39694,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                            );
 		                          })}
 		                        </div>
-		                        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2 dark:border-sky-400/40 dark:bg-sky-400/12">
-		                          <span className="text-xs font-bold text-slate-600 dark:text-slate-100">Estimated cart total</span>
-		                          <strong className="text-base text-[#1F8FE0] dark:text-sky-200">{formatProductMoney(displayedCartTotal, selectedCart.currency)}</strong>
+		                        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-sky-300/70 bg-[#082032] px-3 py-2">
+		                          <span className="text-xs font-extrabold text-white">Estimated cart total</span>
+		                          <strong className="text-base text-sky-300">{formatProductMoney(displayedCartTotal, selectedCart.currency)}</strong>
 		                        </div>
 		                      </div>
 		                    )}
