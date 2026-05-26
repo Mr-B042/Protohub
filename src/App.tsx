@@ -1241,10 +1241,16 @@ const normalizeStateName = (value?: string) => {
   const raw = (value ?? "").trim();
   const token = stateNameToken(raw);
   if (!token) return "";
-  const candidates = Array.from(new Set([
-    token,
-    token.replace(/(state|hub|base|warehouse|depot|branch|office)$/g, "")
-  ])).filter(Boolean);
+  const stripStateSuffix = (candidate: string) => {
+    let next = candidate;
+    let previous = "";
+    while (next !== previous) {
+      previous = next;
+      next = next.replace(/(state|hub|base|warehouse|depot|branch|office)$/g, "");
+    }
+    return next;
+  };
+  const candidates = Array.from(new Set([token, stripStateSuffix(token)])).filter(Boolean);
   for (const candidate of candidates) {
     const alias = stateNameAliasesByToken[candidate];
     if (alias) return alias;
@@ -1254,6 +1260,10 @@ const normalizeStateName = (value?: string) => {
   if (token.includes("federalcapital")) return "FCT Abuja";
   if (token.includes("portharcourt")) return "Rivers";
   if (token.includes("abuja")) return "FCT Abuja";
+  const containedState = [...canonicalNigeriaStateByToken.entries()]
+    .sort((a, b) => b[0].length - a[0].length)
+    .find(([stateToken]) => token.startsWith(stateToken) || token.endsWith(stateToken));
+  if (containedState) return containedState[1];
   return raw;
 };
 
@@ -4522,9 +4532,7 @@ type SmartStockDemandSignal = {
   state: string;
   stock: number;
   warehouseStock: number;
-  nonLocalAgentStock: number;
   totalAvailableStock: number;
-  networkDaysCover: number;
   hubCount: number;
   topHubName: string;
   topHubQty: number;
@@ -8171,10 +8179,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   const stockRowsForStateHub = (agent: DeliveryAgentRecord, location: DeliveryAgentLocation): DeliveryAgentLocationStock[] => {
     const directRows = location.stock;
-    if (!location.isPrimary) return directRows;
+    const agentLocations = agentLocationRows(agent);
+    const preferredLegacyLocation = agentLocations.find((row) => row.isPrimary) ?? agentLocations[0] ?? null;
+    const isPreferredLegacyLocation = Boolean(preferredLegacyLocation) && (
+      location.isPrimary
+      || (
+        location.id === preferredLegacyLocation?.id
+        && normalizeAgentState(location.state) === normalizeAgentState(preferredLegacyLocation?.state)
+        && agentLocationLabel(location) === agentLocationLabel(preferredLegacyLocation)
+      )
+    );
+    if (!isPreferredLegacyLocation) return directRows;
 
     // Older stock records can exist only in the flat agentStock table. Count them
-    // once on the primary hub so state-stock signals do not falsely show 0 left.
+    // once on that agent's own state hub so state-stock signals do not falsely
+    // show 0 left or spread one agent's stock across unrelated states.
     const legacyRows = agentStock
       .filter((stock) =>
         stock.agentId === agent.id
@@ -8579,16 +8598,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const stock = supply?.stock ?? 0;
       const hubCount = supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0;
       const warehouseStock = Math.max(0, Number(product.warehouseStock ?? 0));
-      const agentNetworkStock = Math.max(
-        productAgentStockSum(product.id),
-        Number(product.agentStock ?? 0),
-        stock
-      );
-      const nonLocalAgentStock = Math.max(0, agentNetworkStock - stock);
-      const totalAvailableStock = stock + warehouseStock + nonLocalAgentStock;
-      const hasDispatchFallback = stock <= 0 && totalAvailableStock > 0;
+      const totalAvailableStock = stock + warehouseStock;
+      const hasWarehouseFallback = stock <= 0 && warehouseStock > 0;
       const daysCover = velocity > 0 ? stock / velocity : Number.POSITIVE_INFINITY;
-      const networkDaysCover = velocity > 0 ? totalAvailableStock / velocity : Number.POSITIVE_INFINITY;
       const hasActiveDemand = recentUnits > 0 && (demand?.recentOrderIds.size ?? 0) > 0;
       const isLowSupply = stock <= Math.max(product.reorderPoint || 0, smartStockLowStockThreshold);
       const isProjectedTight = hasActiveDemand && daysCover <= smartStockWatchDaysCover;
@@ -8596,13 +8608,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       const severity: SmartStockDemandSignal["severity"] = stock <= 0 && totalAvailableStock <= 0
         ? "stockout"
-        : hasDispatchFallback
+        : hasWarehouseFallback
           ? "watch"
           : daysCover <= smartStockCriticalDaysCover || stock <= 2
-          ? "critical"
-          : "watch";
-      const label = hasDispatchFallback
-        ? "Dispatch or transfer needed"
+            ? "critical"
+            : "watch";
+      const label = hasWarehouseFallback
+        ? "Warehouse dispatch needed"
         : severity === "stockout"
           ? "True stockout risk"
           : severity === "critical"
@@ -8615,11 +8627,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         state,
         stock,
         warehouseStock,
-        nonLocalAgentStock,
         totalAvailableStock,
-        networkDaysCover,
         hubCount,
-        topHubName: hubCount > 0 ? (supply?.topHubName || `${state} hub`) : "No local hub tracked",
+        topHubName: hubCount > 0 ? (supply?.topHubName || `${state} agent stock`) : "No agent stock tracked",
         topHubQty: supply?.topHubQty ?? 0,
         recentUnits,
         recentOrders: demand?.recentOrderIds.size ?? 0,
@@ -8630,13 +8640,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         daysCover,
         severity,
         label,
-        className: hasDispatchFallback
+        className: hasWarehouseFallback
           ? "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-100"
           : severity === "stockout"
-          ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
-          : severity === "critical"
-            ? "border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100"
-            : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
+            ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
+            : severity === "critical"
+              ? "border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100"
+              : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
       };
     })
     .filter((signal): signal is SmartStockDemandSignal => signal !== null)
@@ -12969,12 +12979,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         state: signal.state,
         stock: signal.stock,
         warehouseStock: signal.warehouseStock,
-        nonLocalAgentStock: signal.nonLocalAgentStock,
         totalAvailableStock: signal.totalAvailableStock,
         recentUnits: signal.recentUnits,
         openOrders: signal.openOrders,
         daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
-        networkDaysCover: Number.isFinite(signal.networkDaysCover) ? signal.networkDaysCover : undefined,
         lookbackDays: smartStockLookbackDays,
         severity: signal.severity,
         salesRepRecipientIds: Array.from(relatedRepIds)
@@ -38535,23 +38543,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
-                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">
-                                {signal.totalAvailableStock > signal.stock ? "Available stock" : "Local stock"}
-                              </span>
-                              <strong className="text-gray-950 dark:text-white">{signal.totalAvailableStock > signal.stock ? signal.totalAvailableStock : signal.stock}</strong>
-                              {signal.totalAvailableStock > signal.stock && (
-                                <span className="mt-0.5 block text-[10px] font-semibold text-gray-600 dark:text-slate-300">
-                                  {signal.stock} local
-                                </span>
-                              )}
-                              {signal.nonLocalAgentStock > 0 && (
-                                <span className="mt-0.5 block text-[10px] font-semibold text-emerald-700 dark:text-emerald-200">
-                                  {signal.nonLocalAgentStock} other hubs
-                                </span>
-                              )}
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Agent stock in state</span>
+                              <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
                               {signal.warehouseStock > 0 && (
                                 <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
-                                  {signal.warehouseStock} in warehouse
+                                  {signal.warehouseStock} warehouse reserve
                                 </span>
                               )}
                             </div>
@@ -38561,22 +38557,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
                               <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Cover</span>
-                              <strong className="text-gray-950 dark:text-white">
-                                {signal.stock <= 0 && signal.totalAvailableStock > 0
-                                  ? "Route"
-                                  : signal.daysCover === 0 ? "0d" : `${Math.max(1, Math.ceil(signal.daysCover))}d`}
-                              </strong>
-                              {signal.stock <= 0 && signal.totalAvailableStock > 0 && Number.isFinite(signal.networkDaysCover) && (
-                                <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
-                                  {Math.max(1, Math.ceil(signal.networkDaysCover))}d network
-                                </span>
-                              )}
+                              <strong className="text-gray-950 dark:text-white">{signal.daysCover === 0 ? "0d" : `${Math.max(1, Math.ceil(signal.daysCover))}d`}</strong>
                             </div>
                           </div>
                           <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
-                            {signal.stock <= 0 && signal.totalAvailableStock > 0
-                              ? `No ready stock is sitting in ${signal.state}${signal.hubCount === 0 ? " because no local hub is tracked" : ""}. Network has ${signal.totalAvailableStock} available${signal.nonLocalAgentStock > 0 ? ` (${signal.nonLocalAgentStock} with other hubs/agents` : ""}${signal.warehouseStock > 0 ? `${signal.nonLocalAgentStock > 0 ? ", " : " ("}${signal.warehouseStock} in warehouse` : ""}${signal.nonLocalAgentStock > 0 || signal.warehouseStock > 0 ? ")" : ""}; transfer or dispatch before delivery.`
-                              : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered. ` : ""}${signal.hubCount} hub${signal.hubCount === 1 ? "" : "s"} tracked in ${signal.state}; top hub has ${signal.topHubQty}.`}
+                            {signal.stock <= 0
+                              ? `No agent stock is recorded in ${signal.state}${signal.hubCount === 0 ? " yet" : ""}.${signal.warehouseStock > 0 ? ` Warehouse has ${signal.warehouseStock}; dispatch to an agent in ${signal.state} before delivery.` : " Confirm carefully or assign stock to an agent in this state."}`
+                              : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need agent stock when confirmed/delivered. ` : ""}${signal.hubCount} agent stock point${signal.hubCount === 1 ? "" : "s"} tracked in ${signal.state}; top point has ${signal.topHubQty}.`}
                           </p>
                         </article>
                       ))}

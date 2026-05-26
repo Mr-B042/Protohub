@@ -24,12 +24,10 @@ type SmartStockSignal = {
   state: string;
   stock: number;
   warehouseStock?: number;
-  nonLocalAgentStock?: number;
   totalAvailableStock?: number;
   recentUnits: number;
   openOrders: number;
   daysCover?: number;
-  networkDaysCover?: number;
   lookbackDays?: number;
   severity: "stockout" | "critical" | "watch";
   salesRepRecipientIds?: string[];
@@ -74,19 +72,14 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
       : `${watchCount} moving stock item${watchCount === 1 ? "" : "s"} to watch`;
   const topLines = sorted.slice(0, 3).map((signal) => {
     const warehouse = Number(signal.warehouseStock ?? 0);
-    const nonLocal = Number(signal.nonLocalAgentStock ?? 0);
-    const totalAvailable = Number(signal.totalAvailableStock ?? (signal.stock + warehouse + nonLocal));
-    const usesNetworkStock = signal.stock <= 0 && totalAvailable > 0;
-    const cover = usesNetworkStock && Number.isFinite(signal.networkDaysCover)
-      ? `${Math.max(1, Math.ceil(Number(signal.networkDaysCover)))}d network cover after transfer`
-      : Number.isFinite(signal.daysCover)
-        ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d local cover`
-        : "cover unknown";
+    const cover = Number.isFinite(signal.daysCover)
+      ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d agent-state cover`
+      : "cover unknown";
     const open = signal.openOrders > 0 ? `, ${signal.openOrders} open` : "";
-    const availableText = totalAvailable > signal.stock
-      ? `${totalAvailable} available (${signal.stock} local${nonLocal > 0 ? `, ${nonLocal} other hubs/agents` : ""}${warehouse > 0 ? `, ${warehouse} warehouse` : ""})`
-      : `${signal.stock} local stock left`;
-    return `${signal.productName} in ${signal.state}: ${availableText}, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
+    const warehouseText = signal.stock <= 0 && warehouse > 0
+      ? `, ${warehouse} warehouse reserve`
+      : "";
+    return `${signal.productName} in ${signal.state}: ${signal.stock} agent stock in state${warehouseText}, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
   });
   const remaining = sorted.length > topLines.length
     ? ` +${sorted.length - topLines.length} more in Inventory Dashboard.`
@@ -146,18 +139,16 @@ router.post("/", async (req, res) => {
 // The frontend calculates velocity from the loaded workspace state; the server
 // handles recipient targeting, one-per-day dedupe, persistence, and push.
 router.post("/stock-risk", async (req, res) => {
-	  const SignalSchema = z.object({
-	    productId: z.string().uuid(),
+  const SignalSchema = z.object({
+    productId: z.string().uuid(),
     productName: z.string().trim().min(1).max(180),
     state: z.string().trim().min(1).max(80),
     stock: z.number().int().min(0),
     warehouseStock: z.number().int().min(0).optional(),
-    nonLocalAgentStock: z.number().int().min(0).optional(),
     totalAvailableStock: z.number().int().min(0).optional(),
     recentUnits: z.number().int().min(0),
     openOrders: z.number().int().min(0),
     daysCover: z.number().min(0).optional(),
-    networkDaysCover: z.number().min(0).optional(),
     lookbackDays: z.number().int().min(1).max(60).optional(),
     severity: z.enum(["stockout", "critical", "watch"]),
     salesRepRecipientIds: z.array(z.string().uuid()).optional()
