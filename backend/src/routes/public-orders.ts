@@ -239,10 +239,76 @@ const verifyPublicUpsellToken = (token: string): PublicUpsellTokenPayload | null
   try {
     const payload = JSON.parse(decodeTokenPart(encodedPayload)) as PublicUpsellTokenPayload;
     if (!payload?.orderId || !payload?.orgId || !payload?.packageId || !payload?.productId) return null;
+    if (!Number.isFinite(Number(payload.quantity)) || Number(payload.quantity) < 1) return null;
+    if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) < 0) return null;
     if (Date.now() - payload.issuedAt > PUBLIC_UPSELL_TTL_MS) return null;
     return payload;
   } catch {
     return null;
+  }
+};
+
+const formatNotificationMoney = (amount: number, currency: string | null | undefined) => {
+  const safeCurrency = currency?.trim() || "NGN";
+  try {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: safeCurrency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount || 0);
+  } catch {
+    return `${safeCurrency} ${Math.round(amount || 0).toLocaleString("en-NG")}`;
+  }
+};
+
+const notifyAfterSubmitUpsellAccepted = async (
+  orgId: string,
+  order: {
+    id: string;
+    customer?: string | null;
+    assigned_rep_id?: string | null;
+  },
+  line: { productName: string; amount: number },
+  nextAmount: number,
+  currency: string | null | undefined
+) => {
+  try {
+    const recipients = new Set<string>();
+    const { data: staff } = await supabase
+      .from("users")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .in("role", ["Owner", "Admin"]);
+    for (const user of staff ?? []) {
+      if (user.id) recipients.add(user.id);
+    }
+    if (order.assigned_rep_id) recipients.add(order.assigned_rep_id);
+    if (recipients.size === 0) return;
+
+    const lineAmount = formatNotificationMoney(line.amount, currency);
+    const total = formatNotificationMoney(nextAmount, currency);
+    const rows = [...recipients].map((recipientId) => ({
+      org_id: orgId,
+      recipient_id: recipientId,
+      type: "info",
+      title: `After-submit add-on accepted #${order.id}`,
+      message: `${order.customer || "Customer"} added ${line.productName} (${lineAmount}). New order total: ${total}.`,
+      link: `/dashboard/admin/orders/${order.id}`,
+      order_id: order.id,
+      read: false
+    }));
+
+    const { error } = await supabase.from("system_notifications").insert(rows);
+    if (error) {
+      logger.warn("public-orders: after-submit upsell notification failed", { orderId: order.id, error: error.message });
+    }
+  } catch (error) {
+    logger.warn("public-orders: after-submit upsell notification crashed", {
+      orderId: order.id,
+      error: (error as Error).message
+    });
   }
 };
 
@@ -744,7 +810,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
 
   const { data: order, error: orderErr } = await supabase
     .from("orders")
-    .select("id, org_id, package_id, state, amount, currency, cross_sell_lines")
+    .select("id, org_id, source_cart_id, product_id, product_name, package_id, package_name, state, customer, assigned_rep_id, amount, currency, cross_sell_lines")
     .eq("id", orderId)
     .maybeSingle();
   if (orderErr || !order) {
@@ -806,10 +872,6 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     res.status(404).json({ error: "Upsell product not available." });
     return;
   }
-  const { data: pricings } = await supabase
-    .from("product_pricings")
-    .select("selling_price, is_primary")
-    .eq("product_id", tokenPayload.productId);
   const targetPackage = tokenPayload.companionPackageId
     ? (await supabase
         .from("product_packages")
@@ -821,21 +883,18 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     res.status(400).json({ error: "This upsell bundle is no longer available." });
     return;
   }
-  const standard = targetPackage
-    ? Number(targetPackage.price ?? 0)
-    : pricings?.find((pricing) => pricing.is_primary)?.selling_price
-      ?? pricings?.[0]?.selling_price
-      ?? 0;
-  const lineAmount = companionLineAmount(companion, Number(standard), companion.quantity);
+  const acceptedQuantity = Math.max(1, Number(tokenPayload.quantity) || companion.quantity || 1);
+  const lineAmount = Math.max(0, Number(tokenPayload.amount) || 0);
+  const lineProductName = targetPackage ? `${upsellProduct.name} · ${targetPackage.name}` : upsellProduct.name;
   const packageComponentsSnapshot = targetPackage
-    ? await buildResolvedPackageSnapshot(order.org_id, targetPackage, tokenPayload.productId, upsellProduct.name, companion.quantity)
+    ? await buildResolvedPackageSnapshot(order.org_id, targetPackage, tokenPayload.productId, upsellProduct.name, acceptedQuantity)
     : undefined;
   const nextLines = [
     ...existingLines,
     {
       productId: tokenPayload.productId,
-      productName: targetPackage ? `${upsellProduct.name} · ${targetPackage.name}` : upsellProduct.name,
-      quantity: companion.quantity,
+      productName: lineProductName,
+      quantity: acceptedQuantity,
       amount: lineAmount,
       packageId: targetPackage?.id,
       packageName: targetPackage?.name,
@@ -866,8 +925,50 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     changed_by: null,
     from_status: null,
     to_status: null,
-    note: `Customer accepted follow-up offer: ${upsellProduct.name} × ${companion.quantity}`
+    note: `Customer accepted after-submit offer: ${lineProductName} × ${acceptedQuantity}`
   });
+
+  if (order.source_cart_id) {
+    const { error: journeyError } = await supabase
+      .from("cart_journey_events")
+      .insert({
+        org_id: order.org_id,
+        cart_id: order.source_cart_id,
+        product_id: order.product_id ?? null,
+        package_id: order.package_id ?? null,
+        state: order.state ?? null,
+        event_type: "additional_item_added",
+        companion_product_id: tokenPayload.productId,
+        companion_package_id: targetPackage?.id ?? tokenPayload.companionPackageId ?? null,
+        metadata: {
+          customerName: order.customer ?? "Customer",
+          productName: lineProductName,
+          packageName: targetPackage?.name ?? null,
+          quantity: acceptedQuantity,
+          placement: "after_submit",
+          selectionSource: "public_upsell",
+          orderId: order.id,
+          offerAmount: lineAmount,
+          totalAfterAdd: nextAmount,
+          currency: order.currency
+        }
+      });
+    if (journeyError) {
+      logger.warn("public-orders: failed to record after-submit upsell journey event", {
+        orderId: order.id,
+        cartId: order.source_cart_id,
+        error: journeyError.message
+      });
+    }
+  }
+
+  await notifyAfterSubmitUpsellAccepted(
+    order.org_id,
+    order,
+    { productName: lineProductName, amount: lineAmount },
+    nextAmount,
+    order.currency
+  );
 
   res.json({
     id: order.id,

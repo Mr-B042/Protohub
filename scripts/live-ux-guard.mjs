@@ -6,6 +6,7 @@ import path from "node:path";
 const root = process.cwd();
 const appPath = path.join(root, "src", "App.tsx");
 const publicFormPath = path.join(root, "src", "pages", "PublicOrderFormPage.tsx");
+const publicOrdersRoutePath = path.join(root, "backend", "src", "routes", "public-orders.ts");
 
 if (!existsSync(appPath)) {
   console.error("[live-ux-guard] Missing src/App.tsx. Run this from the project root.");
@@ -14,6 +15,7 @@ if (!existsSync(appPath)) {
 
 const app = readFileSync(appPath, "utf8");
 const publicForm = existsSync(publicFormPath) ? readFileSync(publicFormPath, "utf8") : "";
+const publicOrdersRoute = existsSync(publicOrdersRoutePath) ? readFileSync(publicOrdersRoutePath, "utf8") : "";
 
 const checks = [
   {
@@ -195,13 +197,41 @@ const checks = [
       "addedAdditionalItemWithoutSubmit",
       "Ask if they want to keep the extra item or confirm only the main order."
     ]
+  },
+  {
+    name: "After-submit add-on confirmation UX",
+    why: "The after-submit add-on must clearly say the main order is saved and must track accept/decline into Customer Journey.",
+    source: "public-form",
+    required: [
+      "Order received · optional add-on",
+      "Your main order is already saved",
+      "placement: \"after_submit\"",
+      "declined_after_submit",
+      "No thanks, show my order confirmation"
+    ]
+  },
+  {
+    name: "After-submit add-on server sync",
+    why: "Accepted after-submit add-ons must update the saved order, Customer Journey, and team notifications.",
+    source: "public-orders-route",
+    required: [
+      "notifyAfterSubmitUpsellAccepted",
+      "tokenPayload.amount",
+      "event_type: \"additional_item_added\"",
+      "selectionSource: \"public_upsell\"",
+      "After-submit add-on accepted"
+    ]
   }
 ];
 
 const failures = [];
 
 for (const check of checks) {
-  const source = check.source === "public-form" ? publicForm : app;
+  const source = check.source === "public-form"
+    ? publicForm
+    : check.source === "public-orders-route"
+      ? publicOrdersRoute
+      : app;
   const missing = check.required.filter((needle) => !source.includes(needle));
   const presentForbidden = (check.forbidden ?? []).filter((needle) => source.includes(needle));
   if (missing.length > 0 || presentForbidden.length > 0) {

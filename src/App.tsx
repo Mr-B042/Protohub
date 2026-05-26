@@ -4382,7 +4382,10 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
   const customerName = typeof metadata.customerName === "string" ? metadata.customerName : "";
   const additionalItems = typeof metadata.additionalItems === "number" ? metadata.additionalItems : null;
   const totalAfterAdd = typeof metadata.totalAfterAdd === "number" ? metadata.totalAfterAdd : null;
+  const offerAmount = typeof metadata.offerAmount === "number" ? metadata.offerAmount : null;
   const currency = typeof metadata.currency === "string" ? metadata.currency : "";
+  const placement = typeof metadata.placement === "string" ? metadata.placement : "";
+  const action = typeof metadata.action === "string" ? metadata.action : "";
   const actorName = typeof metadata.actorName === "string" ? metadata.actorName : "";
   const repName = typeof metadata.repName === "string" ? metadata.repName : "";
   const agentName = typeof metadata.agentName === "string" ? metadata.agentName : "";
@@ -4405,6 +4408,9 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
     case "state_selected":
       return stateName || "Picked a state";
     case "additional_item_preview_opened":
+      if (placement === "after_submit") {
+        return `${productName || "Additional item"} shown as optional after-submit offer${offerAmount != null ? ` · ${formatFlexibleMoney(offerAmount, currency)}` : ""}`;
+      }
       return variants && variants > 1 ? `${productName || "Additional item"} · ${variants} bundle choices` : (productName || "Opened an additional item");
     case "additional_item_added":
       return [
@@ -4412,6 +4418,9 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
         totalAfterAdd != null ? `Total now ${formatFlexibleMoney(totalAfterAdd, currency)}` : null
       ].filter(Boolean).join(" · ");
     case "additional_item_removed":
+      if (action === "declined_after_submit") {
+        return `Declined after-submit offer: ${productName || "Additional item"}`;
+      }
       return productName || "Removed an additional item";
     case "submit_attempted":
       return additionalItems && additionalItems > 0 ? `${customerName || "Customer"} tried to submit with ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : `${customerName || "Customer"} tried to submit`;

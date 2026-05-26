@@ -162,6 +162,9 @@ type PendingUpsellOffer = {
   orderId: string;
   customer: string;
   token: string;
+  sourceCartId?: string;
+  mainPackageId?: string;
+  state?: string;
   companion: PublicCompanion;
   product: PublicProduct;
   targetPackage?: PublicPackage | null;
@@ -1797,11 +1800,18 @@ export default function PublicOrderFormPage() {
     if (publicPackages[0]) setOrderFormPackageId(publicPackages[0].id);
   }
 
-  function finishPublicOrderJourney(orderId: string, customer: string) {
+  function finishPublicOrderJourney(
+    orderId: string,
+    customer: string,
+    options?: { cartId?: string; packageId?: string; state?: string }
+  ) {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     if (publicRedirectUrl) {
       trackCartJourney("redirect_triggered", {
+        cartId: options?.cartId,
+        packageId: options?.packageId,
+        state: options?.state,
         dedupeKey: `redirect_triggered:${orderId}`,
         keepalive: true,
         metadata: {
@@ -2026,11 +2036,17 @@ export default function PublicOrderFormPage() {
 
     const customerName = orderFormName.trim();
     const submissionCartId = abandonedDraftCartIdRef.current || ensureDraftCartId();
+    const submittedPackageId = chosenPackage.id;
+    const submittedPackageName = chosenPackage.name;
+    const submittedState = orderFormState.trim();
     trackCartJourney("submit_attempted", {
       cartId: submissionCartId || undefined,
+      packageId: submittedPackageId,
+      state: submittedState || undefined,
       dedupeKey: `submit_attempted:${submissionCartId || "draft"}`,
       metadata: {
         customerName: customerName || "Customer",
+        packageName: submittedPackageName,
         additionalItems: orderFormCrossSells.length,
         source: orderSourceFromUtm(publicUtmSource)
       }
@@ -2081,7 +2097,7 @@ export default function PublicOrderFormPage() {
       const upsellCompanion = upsellProductId
         ? (chosenPackage.companionProducts ?? [])
             .filter((companion) => (companion.placement ?? "inline") === "upsell")
-            .filter((companion) => companionVisibleInState(companion, orderFormState))
+            .filter((companion) => companionVisibleInState(companion, submittedState))
             .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
             .find((companion) =>
               created.upsellOffer?.companionId
@@ -2096,6 +2112,42 @@ export default function PublicOrderFormPage() {
       const upsellTargetPackage = upsellPackageId
         ? (products.flatMap((item) => item.packages ?? []).find((pkg) => pkg.id === upsellPackageId) ?? null)
         : null;
+      const hasAfterSubmitOffer = Boolean(created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct);
+
+      trackCartJourney("order_submitted", {
+        cartId: submissionCartId || undefined,
+        packageId: submittedPackageId,
+        state: submittedState || undefined,
+        dedupeKey: `order_submitted:${created.id}`,
+        metadata: {
+          orderId: created.id,
+          customerName: customerName || "Customer",
+          packageName: submittedPackageName,
+          additionalItems: orderFormCrossSells.length,
+          source: orderSourceFromUtm(publicUtmSource)
+        }
+      });
+
+      if (hasAfterSubmitOffer && created.upsellOffer && upsellProduct) {
+        trackCartJourney("additional_item_preview_opened", {
+          cartId: submissionCartId || undefined,
+          packageId: submittedPackageId,
+          state: submittedState || undefined,
+          companionProductId: created.upsellOffer.productId,
+          companionPackageId: created.upsellOffer.packageId ?? undefined,
+          metadata: {
+            productName: upsellProduct.name,
+            packageName: created.upsellOffer.packageName ?? null,
+            quantity: created.upsellOffer.quantity,
+            placement: "after_submit",
+            orderId: created.id,
+            offerAmount: created.upsellOffer.amount,
+            totalBeforeOffer: created.amount,
+            totalIfAccepted: Number(created.amount ?? 0) + Number(created.upsellOffer.amount ?? 0),
+            currency: created.currency
+          }
+        });
+      }
 
       resetOrderForm();
       setPublicOrderSubmitting(false);
@@ -2106,20 +2158,13 @@ export default function PublicOrderFormPage() {
       }
 
       if (created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct) {
-        trackCartJourney("order_submitted", {
-          cartId: submissionCartId || undefined,
-          dedupeKey: `order_submitted:${created.id}`,
-          metadata: {
-            orderId: created.id,
-            customerName: customerName || "Customer",
-            additionalItems: orderFormCrossSells.length,
-            source: orderSourceFromUtm(publicUtmSource)
-          }
-        });
         setPublicUpsellOffer({
           orderId: created.id,
           customer: customerName,
           token: created.upsellToken,
+          sourceCartId: submissionCartId || undefined,
+          mainPackageId: submittedPackageId,
+          state: submittedState || undefined,
           companion: upsellCompanion,
           product: upsellProduct,
           targetPackage: upsellTargetPackage,
@@ -2130,17 +2175,11 @@ export default function PublicOrderFormPage() {
         return;
       }
 
-      trackCartJourney("order_submitted", {
+      finishPublicOrderJourney(created.id, customerName, {
         cartId: submissionCartId || undefined,
-        dedupeKey: `order_submitted:${created.id}`,
-        metadata: {
-          orderId: created.id,
-          customerName: customerName || "Customer",
-          additionalItems: orderFormCrossSells.length,
-          source: orderSourceFromUtm(publicUtmSource)
-        }
+        packageId: submittedPackageId,
+        state: submittedState || undefined
       });
-      finishPublicOrderJourney(created.id, customerName);
       return;
     } catch (error: any) {
       if (shouldCapturePublicOrderOutage(error)) {
@@ -2193,7 +2232,11 @@ export default function PublicOrderFormPage() {
     setPublicUpsellSubmitting(true);
     try {
       await publicOrdersApi.acceptUpsell(publicUpsellOffer.orderId, { token: publicUpsellOffer.token });
-      finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
+      finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer, {
+        cartId: publicUpsellOffer.sourceCartId,
+        packageId: publicUpsellOffer.mainPackageId,
+        state: publicUpsellOffer.state
+      });
     } catch (error: any) {
       setPublicUpsellSubmitting(false);
       showToast(error?.message ?? "Could not add this offer. Please try again.");
@@ -2204,7 +2247,29 @@ export default function PublicOrderFormPage() {
 
   function declinePublicUpsell() {
     if (!publicUpsellOffer || publicUpsellSubmitting) return;
-    finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer);
+    trackCartJourney("additional_item_removed", {
+      cartId: publicUpsellOffer.sourceCartId,
+      packageId: publicUpsellOffer.mainPackageId,
+      state: publicUpsellOffer.state,
+      companionProductId: publicUpsellOffer.product.id,
+      companionPackageId: publicUpsellOffer.targetPackage?.id ?? undefined,
+      keepalive: true,
+      metadata: {
+        productName: publicUpsellOffer.product.name,
+        packageName: publicUpsellOffer.targetPackage?.name ?? null,
+        quantity: publicUpsellOffer.quantity,
+        placement: "after_submit",
+        action: "declined_after_submit",
+        orderId: publicUpsellOffer.orderId,
+        offerAmount: publicUpsellOffer.amount,
+        currency: publicUpsellOffer.currency
+      }
+    });
+    finishPublicOrderJourney(publicUpsellOffer.orderId, publicUpsellOffer.customer, {
+      cartId: publicUpsellOffer.sourceCartId,
+      packageId: publicUpsellOffer.mainPackageId,
+      state: publicUpsellOffer.state
+    });
   }
 
   const allowedStates = useMemo(() => {
@@ -2725,16 +2790,19 @@ export default function PublicOrderFormPage() {
         {publicUpsellOffer ? (
           <div className="public-form-layout">
             <article className="panel public-order-card public-form-main public-form-clean" style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ padding: "16px 18px", background: "#eff6ff", borderBottom: "1px solid #dbeafe", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#1d4ed8" }}>
-                Before you finish
+              <div style={{ padding: "16px 18px", background: "#ecfdf5", borderBottom: "1px solid #bbf7d0", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#047857" }}>
+                Order received · optional add-on
               </div>
               <div style={{ padding: 20, display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 8 }}>
+                  <span style={{ display: "inline-flex", width: "fit-content", padding: "6px 10px", borderRadius: 999, background: "#dcfce7", border: "1px solid #86efac", color: "#15803d", fontSize: 12, fontWeight: 800 }}>
+                    Your main order is already saved
+                  </span>
                   <h2 style={{ margin: 0, fontSize: 26, lineHeight: 1.15, color: "#111827" }}>
-                    {publicUpsellOffer.companion.headline?.trim() || `Add ${publicUpsellOffer.product.name} to this order?`}
+                    {publicUpsellOffer.companion.headline?.trim() || `Add ${publicUpsellOffer.product.name} before we call you?`}
                   </h2>
                   <p style={{ margin: 0, fontSize: 15, color: "#4b5563", lineHeight: 1.6 }}>
-                    {publicUpsellOffer.companion.pitch?.trim() || "Quick extra additional item before you move to the thank-you page."}
+                    {publicUpsellOffer.companion.pitch?.trim() || "This is optional. If you add it now, we will include it with the order we already received."}
                   </p>
                 </div>
                 <div style={{ border: "1px solid #dbeafe", borderRadius: 18, background: "#f8fbff", padding: 18, display: "grid", gap: 12 }}>
@@ -2760,7 +2828,7 @@ export default function PublicOrderFormPage() {
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#6b7280" }}>
-                        Add now
+                        Optional add-on
                       </div>
                       <div style={{ fontSize: 28, fontWeight: 800, color: "#1F8FE0" }}>
                         {formatProductMoney(publicUpsellOffer.amount, publicUpsellOffer.currency)}
@@ -2777,7 +2845,7 @@ export default function PublicOrderFormPage() {
                     >
                       {publicUpsellSubmitting
                         ? "Adding..."
-                        : (publicUpsellOffer.companion.ctaText?.trim() || "Yes, add to my order")}
+                        : (publicUpsellOffer.companion.ctaText?.trim() || "Yes, add this too")}
                     </button>
                     <button
                       type="button"
@@ -2785,7 +2853,7 @@ export default function PublicOrderFormPage() {
                       disabled={publicUpsellSubmitting}
                       style={{ border: "none", background: "transparent", color: "#6b7280", fontSize: 14, fontWeight: 700, textDecoration: "underline", cursor: publicUpsellSubmitting ? "not-allowed" : "pointer", opacity: publicUpsellSubmitting ? 0.7 : 1 }}
                     >
-                      {publicUpsellOffer.companion.declineText?.trim() || "No thanks, continue"}
+                      {publicUpsellOffer.companion.declineText?.trim() || "No thanks, show my order confirmation"}
                     </button>
                   </div>
                 </div>
