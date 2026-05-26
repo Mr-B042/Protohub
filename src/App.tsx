@@ -622,6 +622,7 @@ type TrackedOrder = {
   referrer?: string;
   confirmationChecked?: boolean;
   preferredDelivery?: string;
+  embedLabel?: string;
   formContext?: Record<string, string | number | boolean | null>;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
@@ -3459,6 +3460,171 @@ type PublicFormSubmissionSection = {
   rows: PublicFormSubmissionField[];
   fullWidth?: boolean;
 };
+const hiddenFieldValuePresent = (value: unknown): boolean => {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.length > 0;
+  return typeof value === "object" && Object.keys(value).length > 0;
+};
+const hiddenFieldValueToString = (value: unknown): string => {
+  if (!hiddenFieldValuePresent(value)) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+const hiddenFieldFromRecord = (record: Record<string, unknown> | null | undefined, key: string) =>
+  hiddenFieldValueToString(record?.[key]);
+const hiddenSecondsToDuration = (value: unknown) => {
+  const seconds = Number(value ?? 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return seconds < 60
+    ? `${Math.round(seconds)}s`
+    : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+};
+const latestHiddenContextFromJourney = (events: CartJourneyEvent[] = []): Record<string, unknown> => {
+  const keys = [
+    "formVersion",
+    "landingUrl",
+    "landingPath",
+    "clientTimezone",
+    "clientLocale",
+    "deviceType",
+    "viewportWidth",
+    "viewportHeight",
+    "screenWidth",
+    "screenHeight",
+    "platform",
+    "userAgent",
+    "touchCapable",
+    "contextEvent",
+    "secondsSinceOpen",
+    "fbclid",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "ttclid",
+    "msclkid",
+    "adId",
+    "adsetId",
+    "campaignId",
+    "placement",
+    "utmId"
+  ];
+  const context: Record<string, unknown> = {};
+  for (const event of [...events].reverse()) {
+    const metadata = event.metadata ?? {};
+    for (const key of keys) {
+      if (!hiddenFieldValuePresent(context[key]) && hiddenFieldValuePresent(metadata[key])) {
+        context[key] = metadata[key];
+      }
+    }
+  }
+  return context;
+};
+const hiddenFormFieldSectionsFor = ({
+  source,
+  embedLabel,
+  linkedSessionId,
+  attribution,
+  formContext
+}: {
+  source?: string;
+  embedLabel?: string;
+  linkedSessionId?: string;
+  attribution?: AbandonedCartAttribution;
+  formContext?: Record<string, unknown> | null;
+}): PublicFormSubmissionSection[] => {
+  const context = formContext ?? {};
+  const contextValue = (key: string) => hiddenFieldFromRecord(context, key);
+  const maybeField = (label: string, value?: string, options?: { wide?: boolean }) =>
+    value && value.trim().length > 0
+      ? { label, value: value.trim(), wide: options?.wide }
+      : null;
+  const viewportSummary = contextValue("viewportWidth") && contextValue("viewportHeight")
+    ? `${contextValue("viewportWidth")}x${contextValue("viewportHeight")}`
+    : "";
+  const screenSummary = contextValue("screenWidth") && contextValue("screenHeight")
+    ? `${contextValue("screenWidth")}x${contextValue("screenHeight")}`
+    : "";
+  const adClickRows = ([
+    ["fbclid", "Facebook click ID"],
+    ["gclid", "Google click ID"],
+    ["gbraid", "Google app click ID"],
+    ["wbraid", "Google web click ID"],
+    ["ttclid", "TikTok click ID"],
+    ["msclkid", "Microsoft click ID"],
+    ["adId", "Ad ID"],
+    ["adsetId", "Adset ID"],
+    ["campaignId", "Campaign ID"],
+    ["placement", "Placement"],
+    ["utmId", "UTM ID"]
+  ] as const)
+    .map(([key, label]) => maybeField(label, contextValue(key), { wide: ["fbclid", "gclid", "ttclid", "msclkid"].includes(key) }))
+    .filter(Boolean) as PublicFormSubmissionField[];
+
+  return [
+    {
+      title: "Hidden Fields: Campaign",
+      fullWidth: true,
+      rows: [
+        maybeField("Source", source),
+        maybeField("Embed Label", embedLabel),
+        maybeField("Linked Form Session", linkedSessionId, { wide: true }),
+        maybeField("UTM Source", attribution?.utmSource),
+        maybeField("UTM Campaign", attribution?.utmCampaign),
+        maybeField("UTM Medium", attribution?.utmMedium),
+        maybeField("UTM Content", attribution?.utmContent),
+        maybeField("UTM Term", attribution?.utmTerm),
+        maybeField("Referrer", attribution?.referrer, { wide: true }),
+        maybeField("Landing URL", contextValue("landingUrl"), { wide: true }),
+        maybeField("Landing Path", contextValue("landingPath"), { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    },
+    {
+      title: "Hidden Fields: Ad Click IDs",
+      fullWidth: true,
+      rows: adClickRows
+    },
+    {
+      title: "Hidden Fields: Form Session",
+      fullWidth: true,
+      rows: [
+        maybeField("Context Event", contextValue("contextEvent")),
+        maybeField("Time on Form", hiddenSecondsToDuration(context.secondsSinceOpen)),
+        maybeField("Form Version", contextValue("formVersion"), { wide: true }),
+        maybeField("Device Type", contextValue("deviceType")),
+        maybeField("Viewport", viewportSummary),
+        maybeField("Screen", screenSummary),
+        maybeField("Timezone", contextValue("clientTimezone")),
+        maybeField("Locale", contextValue("clientLocale")),
+        maybeField("Platform", contextValue("platform")),
+        maybeField("Touch Capable", contextValue("touchCapable")),
+        maybeField("User Agent", contextValue("userAgent"), { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    }
+  ].filter((section) => section.rows.length > 0);
+};
+const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
+  const payload = cartCapturePayloadFor(cart);
+  const payloadContext = payload?.formContext && typeof payload.formContext === "object" && !Array.isArray(payload.formContext)
+    ? payload.formContext as Record<string, unknown>
+    : null;
+  const journeyContext = latestHiddenContextFromJourney(journeyEvents);
+  return hiddenFormFieldSectionsFor({
+    source: cart.source,
+    embedLabel: cart.embedLabel ?? hiddenFieldValueToString(payload?.embedLabel),
+    linkedSessionId: cart.id,
+    attribution: cartAttributionFor(cart, journeyEvents),
+    formContext: payloadContext ?? journeyContext
+  });
+};
 const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDetails => {
   const out: PublicFormSubmissionDetails = {};
   for (const rawLine of noteText.split("\n")) {
@@ -3546,7 +3712,7 @@ const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmiss
       ? { label, value: value.trim(), wide: options?.wide }
       : null;
 
-  return [
+  const visibleSections = [
     {
       title: "Customer Details",
       rows: [
@@ -3590,9 +3756,23 @@ const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmiss
       ].filter(Boolean) as PublicFormSubmissionField[]
     }
   ].filter((section) => section.rows.length > 0);
+  const hiddenSections = hiddenFormFieldSectionsFor({
+    source: order.source ?? orderSourceFromUtm(order.utmSource),
+    embedLabel: order.embedLabel,
+    linkedSessionId: order.sourceCartId,
+    attribution: {
+      utmSource: details.utmSource,
+      utmCampaign: details.utmCampaign,
+      utmMedium: details.utmMedium,
+      utmContent: details.utmContent,
+      utmTerm: details.utmTerm,
+      referrer: details.referrer
+    },
+    formContext
+  });
+  return [...visibleSections, ...hiddenSections];
 };
-const renderPublicFormSubmissionDetails = (order: TrackedOrder) => {
-  const sections = publicFormSubmissionSectionsFor(order);
+const renderPublicFormFieldSections = (sections: PublicFormSubmissionSection[]) => {
   if (!sections.length) return null;
 
   return (
@@ -3627,9 +3807,10 @@ const renderPublicFormSubmissionDetails = (order: TrackedOrder) => {
     </div>
   );
 };
+const renderPublicFormSubmissionDetails = (order: TrackedOrder) =>
+  renderPublicFormFieldSections(publicFormSubmissionSectionsFor(order));
 const hasPublicFormSubmissionDetails = (order: TrackedOrder): boolean => {
-  const details = publicFormSubmissionDetailsFor(order);
-  return Object.values(details).some((value) => typeof value === "string" && value.trim().length > 0);
+  return publicFormSubmissionSectionsFor(order).some((section) => section.rows.length > 0);
 };
 const sourceCartIdForOrder = (order: Partial<TrackedOrder> | null | undefined): string => {
   const raw = order?.sourceCartId ?? (order as { source_cart_id?: unknown } | null | undefined)?.source_cart_id;
@@ -3713,6 +3894,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     ...value,
     sourceCartId: sourceCartIdForOrder(value) || undefined,
     formContext: value?.formContext ?? value?.form_context ?? undefined,
+    embedLabel: value?.embedLabel ?? value?.embed_label ?? undefined,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -39152,11 +39334,14 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 	                  </section>
 	                )}
 
-	                {/* Section 7: Form Submission Details */}
+	                {/* Section 7: Form Submission + Hidden Fields */}
 	                {hasPublicFormSubmissionDetails(selectedOrder) && (
 	                  <section>
 	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b ${orderBorderClass} pb-2 mb-3`}>
-	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission Details</h3>
+	                      <div>
+	                        <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission + Hidden Fields</h3>
+	                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Includes UTM tags, ad click IDs, embed label, landing page, device, and session data captured from the form.</p>
+	                      </div>
 	                      <button
 	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
 	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
@@ -39831,6 +40016,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 		              const selectedCartJourney = selectedCartJourneyEvents;
 		              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+		              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
 		              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
 		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
 		              const linkedOrderAddOnLines = selectedCartAddOnLinesFromOrder(linkedOrder);
@@ -40016,6 +40202,19 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 		                          <p className="text-xs font-semibold text-amber-950 dark:text-amber-50 mt-1 mb-0 leading-relaxed">{followUpHint}</p>
 		                        </div>
 		                      ) : null}
+		                    </div>
+		                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
+		                      <div className="flex items-start justify-between gap-2 mb-3">
+		                        <div>
+		                          <p className="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-200 m-0">Hidden Fields & Tracking</p>
+		                          <p className="text-[12px] text-slate-600 dark:text-slate-300 m-0 mt-0.5">UTM tags, ad click IDs, landing page, device, and form-session values captured behind the cart.</p>
+		                        </div>
+		                      </div>
+		                      {selectedCartHiddenFieldSections.length > 0 ? (
+		                        renderPublicFormFieldSections(selectedCartHiddenFieldSections)
+		                      ) : (
+		                        <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 m-0">No hidden fields were captured for this cart yet.</p>
+		                      )}
 		                    </div>
 	                    <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-[#16212c] p-3">
 	                      <div className="flex items-center justify-between gap-2 mb-2">
