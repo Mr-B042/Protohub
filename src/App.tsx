@@ -38149,9 +38149,9 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                           <button
                             type="button"
                             className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
-                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp order copy`)}
+                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
                           >
-                            <Copy className="w-3.5 h-3.5" /> Copy Your Order To WhatsApp
+                            <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
                           </button>
                         </div>
                       )}
