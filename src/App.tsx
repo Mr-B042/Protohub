@@ -21176,6 +21176,12 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
           </p>
         </div>
         <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button
+            className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-emerald-200 bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors"
+            onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+          >
+            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+          </button>
           <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => openRepStatusChangeModal(order)}>
             <Repeat2 className="w-4 h-4" /> Change Status
           </button>
