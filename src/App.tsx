@@ -1918,9 +1918,24 @@ const outcomeBadgeClasses = (outcome: string, status?: string): string => {
     return `${outcomeBadgeBaseClasses} bg-amber-50/95 text-amber-900 border-amber-200 dark:bg-amber-950/85 dark:text-amber-200 dark:border-amber-500/42`;
   }
 
-  return status
-    ? `${statusBadgeClasses(status)} dark:opacity-95`
-    : `${outcomeBadgeBaseClasses} bg-slate-50/95 text-slate-700 border-slate-200 dark:bg-slate-900/85 dark:text-slate-200 dark:border-slate-500/38`;
+  return `${outcomeBadgeBaseClasses} bg-white/95 text-slate-700 border-slate-200 dark:bg-slate-900/90 dark:text-slate-100 dark:border-slate-600/45`;
+};
+const renderCustomerSignalBadge = (
+  outcome: string,
+  status?: string,
+  options?: { label?: string; className?: string; maxWidth?: string }
+) => {
+  const cleanOutcome = outcome.trim();
+  if (!cleanOutcome) return null;
+  return (
+    <div className={`min-w-0 ${options?.maxWidth ?? "max-w-[17rem]"} rounded-[18px] px-3 py-2 text-left text-[11px] font-bold leading-5 ${outcomeBadgeClasses(cleanOutcome, status)} ${options?.className ?? ""}`}>
+      <div className="mb-1 flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.18em] opacity-70">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+        <span>{options?.label ?? "Customer signal"}</span>
+      </div>
+      <p className="m-0 whitespace-normal break-words">{cleanOutcome}</p>
+    </div>
+  );
 };
 const renderOrderStatusSummary = (
   order: Pick<TrackedOrder, "status" | "callOutcome">,
@@ -1936,18 +1951,11 @@ const renderOrderStatusSummary = (
         : "items-start text-left";
 
   return (
-    <div className={`flex flex-col gap-1 ${alignClass}`}>
-      <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)}`}>
+    <div className={`flex min-w-0 flex-col gap-1.5 ${alignClass}`}>
+      <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-black tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)}`}>
         {status}
       </span>
-      {outcome ? (
-        <span className={`inline-flex max-w-[13rem] flex-wrap items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[10px] font-semibold leading-4 ${outcomeBadgeClasses(outcome, status)}`}>
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-75 shrink-0" />
-          <span className="min-w-0 break-words text-left">
-            {outcome}
-          </span>
-        </span>
-      ) : null}
+      {outcome ? renderCustomerSignalBadge(outcome, status, { label: "Customer note" }) : null}
     </div>
   );
 };
@@ -21498,12 +21506,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                   <p className={`m-0 mt-1 text-sm font-semibold break-words ${orderMutedTextClass}`}>{order.phone || "No phone saved"}</p>
                 </div>
 
-                {callOutcome && (
-                  <section className={`mt-3 rounded-2xl border px-3.5 py-3 ${outcomeBadgeClasses(callOutcome, status)}`}>
-                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] opacity-70">Call outcome</p>
-                    <p className="m-0 mt-1 text-sm font-bold leading-5 break-words">{callOutcome}</p>
-                  </section>
-                )}
+                {callOutcome
+                  ? renderCustomerSignalBadge(callOutcome, status, {
+                      label: "Call outcome",
+                      className: "mt-3 w-full text-sm leading-6",
+                      maxWidth: "max-w-none"
+                    })
+                  : null}
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
@@ -21720,7 +21729,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                 <span className={`inline-flex items-center justify-center rounded-full px-3 py-1.5 text-[11px] font-bold ${statusBadgeClasses(orderStatus)}`}>{orderStatus}</span>
               </div>
               {orderCallOutcome ? (
-                <p className="m-0 mt-3 text-sm font-bold leading-5 text-slate-700 dark:text-slate-100">{orderCallOutcome}</p>
+                renderCustomerSignalBadge(orderCallOutcome, orderStatus, {
+                  label: "Customer signal",
+                  className: "mt-3 w-full",
+                  maxWidth: "max-w-none"
+                })
               ) : (
                 <p className="m-0 mt-3 text-sm font-semibold leading-5 text-slate-700 dark:text-slate-200">No call outcome saved yet.</p>
               )}
@@ -22353,6 +22366,11 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                     <Eye className="w-4 h-4" /> Details
                   </button>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/45">
+                <p className={`m-0 mb-2 text-[10px] font-black uppercase tracking-[0.18em] ${orderFaintTextClass}`}>Current call state</p>
+                {renderOrderStatusSummary(order)}
               </div>
 
               {/* Order details */}
@@ -25569,15 +25587,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
                             </span>
                           </div>
 
-                          {callOutcome ? (
-                            <div className={`relative mt-4 rounded-[22px] px-4 py-3 text-sm font-bold leading-6 break-words ${outcomeBadgeClasses(callOutcome, status)}`}>
-                              <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] opacity-75">
-                                <span className="h-2 w-2 rounded-full bg-current" />
-                                Customer signal
-                              </div>
-                              {callOutcome}
-                            </div>
-                          ) : null}
+                          {callOutcome
+                            ? renderCustomerSignalBadge(callOutcome, status, {
+                                label: "Customer signal",
+                                className: "mt-4 w-full text-sm leading-6",
+                                maxWidth: "max-w-none"
+                              })
+                            : null}
 
                           {scheduleMarker && (
                             <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
