@@ -20991,78 +20991,120 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       {orders.length === 0 ? (
         <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">{emptyLabel}</div>
       ) : (
-        <div className="sm:hidden divide-y divide-gray-100 dark:divide-slate-800/80">
+        <div className="sm:hidden space-y-3 bg-slate-50/80 px-3 py-3 dark:bg-[#07111b]">
           {orders.map((order) => {
-            const status = order.status ?? "New";
             const latestNote = latestTimelineNoteForOrder(order);
             const nextFollowUp = nextFollowUpForOrder(order);
             const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
+            const sourceLabel = order.source ?? orderSourceFromUtm(order.utmSource);
+            const locationLabel = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
+            const responseLabel = responseTimeForOrder(order);
+            const workflowLabel = order.response ?? "Awaiting confirmation";
+            const plannedFollowUpLabel = nextFollowUp ? formatPlannedMoment(nextFollowUp.dueAt, nextFollowUp.dueDate) : "";
+            const followUpDetail = nextFollowUp?.noteText
+              ? noteSnippet(nextFollowUp.noteText, 88)
+              : nextFollowUp
+                ? plannedFollowUpLabel || "Follow this lead from the order detail."
+                : "No reminder is waiting yet.";
+            const followUpToneClass = nextFollowUp?.overdue
+              ? "border-rose-200 bg-rose-50 text-rose-950 dark:border-rose-400/30 dark:bg-rose-500/12 dark:text-rose-50"
+              : nextFollowUp?.dueSoon
+                ? "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-400/30 dark:bg-amber-500/12 dark:text-amber-50"
+                : "border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-400/30 dark:bg-sky-500/12 dark:text-sky-50";
             return (
-              <article key={order.id} className="px-4 py-4 space-y-3 bg-white dark:bg-[#101a24]">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-bold text-[#1F8FE0]">{order.id}</h3>
-                    <p className={`text-sm font-semibold truncate ${orderTitleTextClass}`}>{order.customer}</p>
-                    <p className={`text-xs ${orderMutedTextClass}`}>{order.phone}</p>
+              <article
+                key={order.id}
+                className="relative overflow-hidden rounded-[28px] border border-sky-100 bg-white p-4 shadow-[0_18px_44px_rgba(15,23,42,0.09)] dark:border-sky-500/20 dark:bg-[#0c1722] dark:shadow-[0_22px_55px_rgba(0,0,0,0.36)]"
+              >
+                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1F8FE0] via-emerald-400 to-amber-300" />
+
+                <div className="flex items-start justify-between gap-3 pt-1">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-black text-[#1F8FE0] dark:bg-sky-500/12 dark:text-sky-200">
+                        #{order.id}
+                      </span>
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                        Rep lead
+                      </span>
+                    </div>
+                    <p className={`m-0 truncate text-[20px] font-black leading-6 tracking-[-0.03em] ${orderTitleTextClass}`}>{order.customer}</p>
+                    <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>{order.phone || "No phone saved"}</p>
                   </div>
-                  <div className="shrink-0">
+                  <div className="shrink-0 pt-1">
                     {renderOrderStatusSummary(order, "right")}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Source</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{order.source ?? orderSourceFromUtm(order.utmSource)}</p>
-                  </div>
-                  <div>
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Response</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{responseTimeForOrder(order)}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Location</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "")}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Created</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{formatOrderCreatedAt(order)}</p>
-                    <p className={`mt-1 text-[11px] uppercase tracking-tight ${orderMutedTextClass}`}>{order.response ?? "Awaiting confirmation"}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Latest Feedback</p>
-                    <p className={`mt-1 font-semibold ${orderBodyTextClass}`}>{latestNote ? noteSnippet(latestNote.text) : "No saved note yet"}</p>
-                    {latestNote && (
-                      <p className={`mt-1 text-[11px] ${orderMutedTextClass}`}>{latestNote.by} · {formatMoment(latestNote.date)}</p>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <Globe className="h-3.5 w-3.5 text-[#1F8FE0]" /> {sourceLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <Clock className="h-3.5 w-3.5 text-amber-500" /> {responseLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> {locationLabel}
+                  </span>
+                </div>
+
+                <section className={`mt-4 rounded-2xl border p-3.5 ${followUpToneClass}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] opacity-70">Next move</p>
+                    {bonusOpportunity && (
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-black text-white shadow-sm">
+                        + {formatProductMoney(bonusOpportunity.amount, "NGN")}
+                      </span>
                     )}
                   </div>
-                  <div className="col-span-2">
-                    <p className={`font-semibold uppercase tracking-wide ${orderFaintTextClass}`}>Next Follow-up</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      {bonusOpportunity && (
-                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          + {formatProductMoney(bonusOpportunity.amount, "NGN")} bonus
-                        </span>
-                      )}
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${followUpBadgeClass(nextFollowUp)}`}>
-                        {followUpHeadline(nextFollowUp)}
-                      </span>
-                      {nextFollowUp?.noteText && (
-                        <span className={`text-[11px] ${orderMutedTextClass}`}>{noteSnippet(nextFollowUp.noteText, 72)}</span>
-                      )}
-                    </div>
+                  <p className="m-0 mt-2 text-[17px] font-black leading-6">{followUpHeadline(nextFollowUp)}</p>
+                  <p className="m-0 mt-1 text-sm font-semibold leading-5 opacity-75">{followUpDetail}</p>
+                </section>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Created</p>
+                    <p className={`m-0 mt-1 text-sm font-bold leading-5 ${orderBodyTextClass}`}>{formatOrderCreatedAt(order)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Stage</p>
+                    <p className={`m-0 mt-1 text-sm font-bold leading-5 ${orderBodyTextClass}`}>{workflowLabel}</p>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+
+                <section className="mt-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 dark:border-slate-700 dark:bg-[#101a24]">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">Latest feedback</p>
+                    {latestNote && (
+                      <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{latestNote.by} · {formatMoment(latestNote.date)}</span>
+                    )}
+                  </div>
+                  <p className={`m-0 mt-2 text-sm font-bold leading-5 ${latestNote ? orderBodyTextClass : orderMutedTextClass}`}>
+                    {latestNote ? noteSnippet(latestNote.text, 118) : "No saved note yet. Open details after contacting the customer."}
+                  </p>
+                </section>
+
+                <div className="mt-4 grid grid-cols-2 gap-2">
                   <button
-                    className={`!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${orderSecondaryButtonClass}`}
+                    type="button"
+                    className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl bg-[#25D366] px-3 py-3 text-sm font-black text-white shadow-[0_14px_28px_rgba(37,211,102,0.25)] transition-colors hover:bg-[#1fb85a]"
                     onClick={() => openWhatsAppForOrder(order)}
                   >
-                    <WhatsAppIcon className="w-4 h-4 text-[#25D366]" /> WhatsApp
+                    <WhatsAppIcon className="w-4 h-4 text-white" /> WhatsApp
                   </button>
                   <button
-                    className={`!min-h-0 flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${orderSecondaryButtonClass}`}
+                    type="button"
+                    className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`}
                     onClick={() => openRepOrderDetail(order)}
                   >
                     <Eye className="w-4 h-4" /> Details
+                  </button>
+                  <button
+                    type="button"
+                    className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-sm font-black transition-colors ${orderSecondaryButtonClass}`}
+                    onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
+                  >
+                    <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
                   </button>
                 </div>
               </article>
