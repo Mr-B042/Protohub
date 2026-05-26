@@ -707,6 +707,84 @@ function freeGiftVisibleInState(mainProduct: PublicProduct, giftProduct: PublicP
   return true;
 }
 
+type PublicFormHiddenContext = Record<string, string | number | boolean | null>;
+
+const PUBLIC_FORM_CONTEXT_VERSION = "2026-05-26.hidden-context.v1";
+const PUBLIC_FORM_CLICK_PARAM_KEYS = [
+  "fbclid",
+  "gclid",
+  "gbraid",
+  "wbraid",
+  "ttclid",
+  "msclkid",
+  "ad_id",
+  "adset_id",
+  "campaign_id",
+  "placement",
+  "utm_id"
+] as const;
+
+function safeHiddenContextValue(value: string | null | undefined, maxLength = 180) {
+  const trimmed = (value ?? "").trim();
+  return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
+function hiddenContextParamKey(key: string) {
+  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+function currentFormLandingPath() {
+  if (typeof window === "undefined") return null;
+  const hashRoute = window.location.hash ? window.location.hash.split("?")[0] : "";
+  return safeHiddenContextValue(`${window.location.pathname}${hashRoute}`, 512);
+}
+
+function publicFormDeviceType(viewportWidth: number | null) {
+  if (!viewportWidth) return "unknown";
+  if (viewportWidth < 640) return "mobile";
+  if (viewportWidth < 1024) return "tablet";
+  return "desktop";
+}
+
+function mergedHiddenContextParams(params: URLSearchParams | null) {
+  const merged = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  params?.forEach((value, key) => {
+    merged.set(key, value);
+  });
+  return merged;
+}
+
+function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFormHiddenContext {
+  const hasWindow = typeof window !== "undefined";
+  const hasNavigator = typeof navigator !== "undefined";
+  const hiddenParams = mergedHiddenContextParams(params);
+  const viewportWidth = hasWindow ? window.innerWidth : null;
+  const viewportHeight = hasWindow ? window.innerHeight : null;
+  const screenWidth = hasWindow ? window.screen?.width ?? null : null;
+  const screenHeight = hasWindow ? window.screen?.height ?? null : null;
+  const context: PublicFormHiddenContext = {
+    formVersion: PUBLIC_FORM_CONTEXT_VERSION,
+    landingUrl: hasWindow ? safeHiddenContextValue(window.location.href, 2048) : null,
+    landingPath: currentFormLandingPath(),
+    clientTimezone: safeHiddenContextValue(Intl.DateTimeFormat().resolvedOptions().timeZone, 120),
+    clientLocale: hasNavigator ? safeHiddenContextValue(navigator.language, 80) : null,
+    viewportWidth,
+    viewportHeight,
+    screenWidth,
+    screenHeight,
+    deviceType: publicFormDeviceType(viewportWidth),
+    platform: hasNavigator ? safeHiddenContextValue(navigator.platform, 120) : null,
+    userAgent: hasNavigator ? safeHiddenContextValue(navigator.userAgent, 320) : null,
+    touchCapable: hasNavigator ? (navigator.maxTouchPoints ?? 0) > 0 : null
+  };
+
+  for (const key of PUBLIC_FORM_CLICK_PARAM_KEYS) {
+    context[hiddenContextParamKey(key)] = safeHiddenContextValue(hiddenParams.get(key), 180);
+  }
+
+  return context;
+}
+
 export default function PublicOrderFormPage() {
   const hash = typeof window === "undefined" ? "" : window.location.hash;
   const params = useMemo(
@@ -797,6 +875,7 @@ export default function PublicOrderFormPage() {
   const redirectTimerRef = useRef<number | null>(null);
   const publicOrderSubmittingRef = useRef(false);
   const abandonedDraftCartIdRef = useRef("");
+  const formOpenedAtRef = useRef(Date.now());
   const journeyDedupRef = useRef<Set<string>>(new Set());
   const previousCrossSellKeysRef = useRef<string[]>([]);
   const lastTrackedPackageIdRef = useRef("");
@@ -808,6 +887,35 @@ export default function PublicOrderFormPage() {
   const submitActionRef = useRef<HTMLDivElement | null>(null);
   const additionalItemNextStepRef = useRef<HTMLDivElement | null>(null);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
+  const publicJourneyFormContext = useMemo(() => {
+    const context = buildPublicFormHiddenContext(params);
+    return {
+      formVersion: context.formVersion,
+      landingUrl: context.landingUrl,
+      landingPath: context.landingPath,
+      clientTimezone: context.clientTimezone,
+      clientLocale: context.clientLocale,
+      deviceType: context.deviceType,
+      viewportWidth: context.viewportWidth,
+      viewportHeight: context.viewportHeight,
+      fbclid: context.fbclid,
+      gclid: context.gclid,
+      gbraid: context.gbraid,
+      wbraid: context.wbraid,
+      ttclid: context.ttclid,
+      msclkid: context.msclkid,
+      adId: context.adId,
+      adsetId: context.adsetId,
+      campaignId: context.campaignId,
+      placement: context.placement,
+      utmId: context.utmId
+    };
+  }, [params]);
+  const buildPublicFormContext = useCallback((contextEvent: string): PublicFormHiddenContext => ({
+    ...buildPublicFormHiddenContext(params),
+    contextEvent: safeHiddenContextValue(contextEvent, 80),
+    secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000))
+  }), [params]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),
@@ -817,10 +925,12 @@ export default function PublicOrderFormPage() {
       utmContent: publicUtmContent || null,
       utmTerm: publicUtmTerm || null,
       referrer: publicReferrer || null,
-      embedLabel: publicEmbedLabel || null
+      embedLabel: publicEmbedLabel || null,
+      ...publicJourneyFormContext
     }),
     [
       publicEmbedLabel,
+      publicJourneyFormContext,
       publicReferrer,
       publicUtmCampaign,
       publicUtmContent,
@@ -1085,7 +1195,8 @@ export default function PublicOrderFormPage() {
           metadata: {
             productName: publicProduct.name,
             packageName: chosenPackage.name,
-            ...publicJourneyAttributionMetadata
+            ...publicJourneyAttributionMetadata,
+            secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000))
           }
         }
       ).catch(() => {
@@ -1126,6 +1237,7 @@ export default function PublicOrderFormPage() {
         companionPackageId: options?.companionPackageId,
         metadata: {
           ...publicJourneyAttributionMetadata,
+          secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000)),
           ...(options?.metadata ?? {})
         }
       },
@@ -1559,7 +1671,8 @@ export default function PublicOrderFormPage() {
           utmTerm: publicUtmTerm || null,
           referrer: publicReferrer || null,
           preferredDelivery: orderFormDeliveryWindow.trim() || null,
-          embedLabel: publicEmbedLabel || null
+          embedLabel: publicEmbedLabel || null,
+          formContext: buildPublicFormContext("draft_capture")
         }
       }).catch(() => {
         // Draft capture is best-effort only.
@@ -1589,6 +1702,7 @@ export default function PublicOrderFormPage() {
     publicPackages,
     publicProduct,
     publicReferrer,
+    buildPublicFormContext,
     publicUtmCampaign,
     publicUtmContent,
     publicUtmMedium,
@@ -1947,7 +2061,8 @@ export default function PublicOrderFormPage() {
           referrer: publicReferrer || null,
           confirmationChecked: orderFormConfirmed,
           preferredDelivery: orderFormDeliveryWindow.trim() || null,
-          redirectedAfterSave: Boolean(publicRedirectUrl)
+          redirectedAfterSave: Boolean(publicRedirectUrl),
+          formContext: buildPublicFormContext("outage_capture")
         }
       });
     if (error) throw error;
@@ -2079,6 +2194,7 @@ export default function PublicOrderFormPage() {
       referrer: publicReferrer || undefined,
       confirmationChecked: orderFormConfirmed,
       preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+      formContext: buildPublicFormContext("submit"),
       company: publicHoneypot,
     };
 

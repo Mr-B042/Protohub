@@ -369,6 +369,7 @@ export type TrackedOrder = {
   utmCampaign: string;
   utmContent?: string;
   utmMedium?: string;
+  formContext?: Record<string, string | number | boolean | null>;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
   response?: string;

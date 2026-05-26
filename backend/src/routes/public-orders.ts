@@ -43,6 +43,10 @@ const CrossSellLineSchema = z.object({
   packageId: z.string().uuid().optional(),
   quantity:  z.number().int().min(1).max(50)
 });
+const PublicFormContextSchema = z.record(
+  z.string(),
+  z.union([z.string().max(2048), z.number(), z.boolean(), z.null()])
+);
 
 const PublicOrderSchema = z.object({
   id:           z.string().min(1).max(50).regex(/^[A-Za-z0-9\-_]+$/).optional(),
@@ -65,6 +69,7 @@ const PublicOrderSchema = z.object({
   referrer:     z.string().max(2048).optional(),
   confirmationChecked: z.boolean().optional(),
   preferredDelivery:   z.string().max(80).optional(),
+  formContext:  PublicFormContextSchema.optional(),
   // Honeypot — must be empty. Bots tend to fill every field they see.
   company:      z.string().max(0).optional()
 });
@@ -313,7 +318,7 @@ const notifyAfterSubmitUpsellAccepted = async (
 };
 
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|assigned_by_user_id|assigned_by_name_snapshot/i.test(error?.message ?? "");
+  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|form_context|assigned_by_user_id|assigned_by_name_snapshot/i.test(error?.message ?? "");
 
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
@@ -647,6 +652,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     referrer:          d.referrer ?? null,
     confirmation_checked: d.confirmationChecked ?? null,
     preferred_delivery:   d.preferredDelivery ?? null,
+    form_context:      d.formContext ?? {},
     status:            "New"
   } as Record<string, unknown>;
   const legacyInsert = { ...baseInsert };
@@ -654,6 +660,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.preferred_delivery;
   delete legacyInsert.referrer;
   delete legacyInsert.embed_label;
+  delete legacyInsert.form_context;
   delete legacyInsert.assigned_by_user_id;
   delete legacyInsert.assigned_by_name_snapshot;
 

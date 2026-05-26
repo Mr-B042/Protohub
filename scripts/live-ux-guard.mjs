@@ -232,6 +232,31 @@ const checks = [
       "Shown separately so reps know exactly what the customer added.",
       "Estimated cart total"
     ]
+  },
+  {
+    name: "Public form hidden context",
+    source: "public-form",
+    why: "Public order forms must keep safe hidden attribution/device context for debugging ad leads and form drop-offs.",
+    required: [
+      "PUBLIC_FORM_CONTEXT_VERSION",
+      "buildPublicFormHiddenContext",
+      "secondsSinceOpen",
+      "fbclid",
+      "gclid",
+      "ttclid",
+      "formContext: buildPublicFormContext(\"submit\")"
+    ]
+  },
+  {
+    name: "Public order form context storage",
+    source: "public-orders-route",
+    why: "Completed public orders must store hidden form context in orders.form_context.",
+    required: [
+      "PublicFormContextSchema",
+      "formContext:  PublicFormContextSchema.optional()",
+      "form_context:      d.formContext ?? {}",
+      "delete legacyInsert.form_context"
+    ]
   }
 ];
 

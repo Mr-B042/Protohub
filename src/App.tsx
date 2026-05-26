@@ -622,6 +622,7 @@ type TrackedOrder = {
   referrer?: string;
   confirmationChecked?: boolean;
   preferredDelivery?: string;
+  formContext?: Record<string, string | number | boolean | null>;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
   response?: string;
@@ -3445,6 +3446,37 @@ const publicFormSubmissionDetailsFor = (order: TrackedOrder): PublicFormSubmissi
 };
 const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmissionSection[] => {
   const details = publicFormSubmissionDetailsFor(order);
+  const formContext = order.formContext ?? {};
+  const contextValue = (key: string) => {
+    const value = formContext[key];
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return "";
+  };
+  const secondsSinceOpen = Number(formContext.secondsSinceOpen ?? 0);
+  const timeOnForm = secondsSinceOpen > 0
+    ? secondsSinceOpen < 60
+      ? `${Math.round(secondsSinceOpen)}s`
+      : `${Math.floor(secondsSinceOpen / 60)}m ${Math.round(secondsSinceOpen % 60)}s`
+    : "";
+  const viewportSummary = contextValue("viewportWidth") && contextValue("viewportHeight")
+    ? `${contextValue("viewportWidth")}x${contextValue("viewportHeight")}`
+    : "";
+  const deviceSummary = [contextValue("deviceType"), viewportSummary].filter(Boolean).join(" · ");
+  const adClickSummary = ([
+    ["fbclid", "Facebook click"],
+    ["gclid", "Google click"],
+    ["gbraid", "Google app click"],
+    ["wbraid", "Google web click"],
+    ["ttclid", "TikTok click"],
+    ["msclkid", "Microsoft click"]
+  ] as const)
+    .map(([key, label]) => {
+      const value = contextValue(key);
+      return value ? `${label}: ${value}` : "";
+    })
+    .find(Boolean) ?? "";
   const maybeField = (label: string, value?: string, options?: { wide?: boolean }) =>
     value && value.trim().length > 0
       ? { label, value: value.trim(), wide: options?.wide }
@@ -3479,6 +3511,18 @@ const publicFormSubmissionSectionsFor = (order: TrackedOrder): PublicFormSubmiss
         maybeField("UTM Content", details.utmContent),
         maybeField("UTM Term", details.utmTerm),
         maybeField("Referrer", details.referrer, { wide: true })
+      ].filter(Boolean) as PublicFormSubmissionField[]
+    },
+    {
+      title: "Form Session",
+      fullWidth: true,
+      rows: [
+        maybeField("Device", deviceSummary),
+        maybeField("Time on form", timeOnForm),
+        maybeField("Timezone", contextValue("clientTimezone")),
+        maybeField("Landing path", contextValue("landingPath"), { wide: true }),
+        maybeField("Ad click", adClickSummary, { wide: true }),
+        maybeField("Form version", contextValue("formVersion"))
       ].filter(Boolean) as PublicFormSubmissionField[]
     }
   ].filter((section) => section.rows.length > 0);
@@ -3604,6 +3648,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
   return {
     ...value,
     sourceCartId: sourceCartIdForOrder(value) || undefined,
+    formContext: value?.formContext ?? value?.form_context ?? undefined,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
