@@ -1198,10 +1198,63 @@ const nigeriaStates = [
   "FCT Abuja"
 ];
 
+const stateNameToken = (value?: string | null) => (value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+const stateNameAliasesByToken: Record<string, string> = {
+  fct: "FCT Abuja",
+  abuja: "FCT Abuja",
+  fctabuja: "FCT Abuja",
+  federalcapitalterritory: "FCT Abuja",
+  federalcapitalterritoryabuja: "FCT Abuja",
+  lagosisland: "Lagos",
+  island: "Lagos",
+  mainland: "Lagos",
+  lagosmainland: "Lagos",
+  lekki: "Lagos",
+  ikeja: "Lagos",
+  ajah: "Lagos",
+  yaba: "Lagos",
+  surulere: "Lagos",
+  victoriaisland: "Lagos",
+  vi: "Lagos",
+  portharcourt: "Rivers",
+  portharcourtrivers: "Rivers",
+  ph: "Rivers",
+  phc: "Rivers",
+  calabar: "Cross River",
+  uyo: "Akwa Ibom",
+  ibadan: "Oyo",
+  owerri: "Imo",
+  benincity: "Edo",
+  warri: "Delta",
+  asaba: "Delta",
+  ilorin: "Kwara",
+  abeokuta: "Ogun",
+  akure: "Ondo",
+  osogbo: "Osun",
+  oshogbo: "Osun",
+  onitsha: "Anambra",
+  awka: "Anambra"
+};
+const canonicalNigeriaStateByToken = new Map(nigeriaStates.map((state) => [stateNameToken(state), state]));
+
 const normalizeStateName = (value?: string) => {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "fct" || normalized === "abuja" || normalized === "fct abuja" || normalized.includes("federal capital")) return "FCT Abuja";
-  return (value ?? "").trim();
+  const raw = (value ?? "").trim();
+  const token = stateNameToken(raw);
+  if (!token) return "";
+  const candidates = Array.from(new Set([
+    token,
+    token.replace(/(state|hub|base|warehouse|depot|branch|office)$/g, "")
+  ])).filter(Boolean);
+  for (const candidate of candidates) {
+    const alias = stateNameAliasesByToken[candidate];
+    if (alias) return alias;
+    const canonical = canonicalNigeriaStateByToken.get(candidate);
+    if (canonical) return canonical;
+  }
+  if (token.includes("federalcapital")) return "FCT Abuja";
+  if (token.includes("portharcourt")) return "Rivers";
+  if (token.includes("abuja")) return "FCT Abuja";
+  return raw;
 };
 
 const moneyValues = {
@@ -1533,7 +1586,7 @@ const formatFlexibleMoney = (amount: number, code?: string) => {
   }
 };
 
-const normalizeAgentState = (value?: string | null) => (value ?? "").trim();
+const normalizeAgentState = (value?: string | null) => normalizeStateName(value ?? undefined);
 const normalizeAgentCity = (value?: string | null) => (value ?? "").trim();
 
 const agentPrimaryBaseState = (agent: Pick<DeliveryAgentRecord, "primaryBaseState" | "zone">) =>
@@ -4469,7 +4522,9 @@ type SmartStockDemandSignal = {
   state: string;
   stock: number;
   warehouseStock: number;
+  nonLocalAgentStock: number;
   totalAvailableStock: number;
+  networkDaysCover: number;
   hubCount: number;
   topHubName: string;
   topHubQty: number;
@@ -4541,7 +4596,7 @@ type FinanceSummaryDataset = {
 };
 
 // ── normalizeStateToken ────────────────────
-const normalizeStateToken = (value?: string) => (value ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+const normalizeStateToken = stateNameToken;
 
 // ── titleCaseStateLabel ────────────────────
 const titleCaseStateLabel = (value?: string) =>
@@ -4556,18 +4611,7 @@ const titleCaseStateLabel = (value?: string) =>
 const canonicalStateByToken = new Map<string, string>(
   nigeriaStates.map((state) => [normalizeStateToken(state), state])
 );
-
-// ── stateTokenAliases ────────────────────
-const stateTokenAliases: Record<string, string> = {
-  fct: "FCT Abuja",
-  abuja: "FCT Abuja",
-  federalcapitalterritory: "FCT Abuja",
-  federalcapitalterritoryabuja: "FCT Abuja",
-  portharcourt: "Rivers",
-  portharcourtrivers: "Rivers",
-  ph: "Rivers",
-  ibadan: "Oyo"
-};
+Object.entries(stateNameAliasesByToken).forEach(([token, state]) => canonicalStateByToken.set(token, state));
 
 // ── followUpQueueStatuses ────────────────────
 const followUpQueueStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Postponed"];
@@ -8535,23 +8579,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const stock = supply?.stock ?? 0;
       const hubCount = supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0;
       const warehouseStock = Math.max(0, Number(product.warehouseStock ?? 0));
-      const totalAvailableStock = stock + warehouseStock;
-      const hasWarehouseFallback = stock <= 0 && warehouseStock > 0;
+      const agentNetworkStock = Math.max(
+        productAgentStockSum(product.id),
+        Number(product.agentStock ?? 0),
+        stock
+      );
+      const nonLocalAgentStock = Math.max(0, agentNetworkStock - stock);
+      const totalAvailableStock = stock + warehouseStock + nonLocalAgentStock;
+      const hasDispatchFallback = stock <= 0 && totalAvailableStock > 0;
       const daysCover = velocity > 0 ? stock / velocity : Number.POSITIVE_INFINITY;
+      const networkDaysCover = velocity > 0 ? totalAvailableStock / velocity : Number.POSITIVE_INFINITY;
       const hasActiveDemand = recentUnits > 0 && (demand?.recentOrderIds.size ?? 0) > 0;
       const isLowSupply = stock <= Math.max(product.reorderPoint || 0, smartStockLowStockThreshold);
       const isProjectedTight = hasActiveDemand && daysCover <= smartStockWatchDaysCover;
       if (!hasActiveDemand || (!isLowSupply && !isProjectedTight)) return null;
 
-      const severity: SmartStockDemandSignal["severity"] = stock <= 0 && warehouseStock <= 0
+      const severity: SmartStockDemandSignal["severity"] = stock <= 0 && totalAvailableStock <= 0
         ? "stockout"
-        : hasWarehouseFallback
+        : hasDispatchFallback
           ? "watch"
           : daysCover <= smartStockCriticalDaysCover || stock <= 2
           ? "critical"
           : "watch";
-      const label = hasWarehouseFallback
-        ? "Warehouse dispatch needed"
+      const label = hasDispatchFallback
+        ? "Dispatch or transfer needed"
         : severity === "stockout"
           ? "True stockout risk"
           : severity === "critical"
@@ -8564,7 +8615,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         state,
         stock,
         warehouseStock,
+        nonLocalAgentStock,
         totalAvailableStock,
+        networkDaysCover,
         hubCount,
         topHubName: hubCount > 0 ? (supply?.topHubName || `${state} hub`) : "No local hub tracked",
         topHubQty: supply?.topHubQty ?? 0,
@@ -8577,7 +8630,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         daysCover,
         severity,
         label,
-        className: hasWarehouseFallback
+        className: hasDispatchFallback
           ? "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-100"
           : severity === "stockout"
           ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-100"
@@ -12916,9 +12969,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         state: signal.state,
         stock: signal.stock,
         warehouseStock: signal.warehouseStock,
+        nonLocalAgentStock: signal.nonLocalAgentStock,
+        totalAvailableStock: signal.totalAvailableStock,
         recentUnits: signal.recentUnits,
         openOrders: signal.openOrders,
         daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
+        networkDaysCover: Number.isFinite(signal.networkDaysCover) ? signal.networkDaysCover : undefined,
         lookbackDays: smartStockLookbackDays,
         severity: signal.severity,
         salesRepRecipientIds: Array.from(relatedRepIds)
@@ -38479,8 +38535,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
-                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Local stock</span>
-                              <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">
+                                {signal.totalAvailableStock > signal.stock ? "Available stock" : "Local stock"}
+                              </span>
+                              <strong className="text-gray-950 dark:text-white">{signal.totalAvailableStock > signal.stock ? signal.totalAvailableStock : signal.stock}</strong>
+                              {signal.totalAvailableStock > signal.stock && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-gray-600 dark:text-slate-300">
+                                  {signal.stock} local
+                                </span>
+                              )}
+                              {signal.nonLocalAgentStock > 0 && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-emerald-700 dark:text-emerald-200">
+                                  {signal.nonLocalAgentStock} other hubs
+                                </span>
+                              )}
                               {signal.warehouseStock > 0 && (
                                 <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
                                   {signal.warehouseStock} in warehouse
@@ -38493,12 +38561,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </div>
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
                               <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Cover</span>
-                              <strong className="text-gray-950 dark:text-white">{signal.daysCover === 0 ? "0d" : `${Math.max(1, Math.ceil(signal.daysCover))}d`}</strong>
+                              <strong className="text-gray-950 dark:text-white">
+                                {signal.stock <= 0 && signal.totalAvailableStock > 0
+                                  ? "Route"
+                                  : signal.daysCover === 0 ? "0d" : `${Math.max(1, Math.ceil(signal.daysCover))}d`}
+                              </strong>
+                              {signal.stock <= 0 && signal.totalAvailableStock > 0 && Number.isFinite(signal.networkDaysCover) && (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
+                                  {Math.max(1, Math.ceil(signal.networkDaysCover))}d network
+                                </span>
+                              )}
                             </div>
                           </div>
                           <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
-                            {signal.hubCount === 0 && signal.warehouseStock > 0
-                              ? `No local hub is tracked in ${signal.state}. Warehouse has ${signal.warehouseStock} available; assign or dispatch before delivery.`
+                            {signal.stock <= 0 && signal.totalAvailableStock > 0
+                              ? `No ready stock is sitting in ${signal.state}${signal.hubCount === 0 ? " because no local hub is tracked" : ""}. Network has ${signal.totalAvailableStock} available${signal.nonLocalAgentStock > 0 ? ` (${signal.nonLocalAgentStock} with other hubs/agents` : ""}${signal.warehouseStock > 0 ? `${signal.nonLocalAgentStock > 0 ? ", " : " ("}${signal.warehouseStock} in warehouse` : ""}${signal.nonLocalAgentStock > 0 || signal.warehouseStock > 0 ? ")" : ""}; transfer or dispatch before delivery.`
                               : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered. ` : ""}${signal.hubCount} hub${signal.hubCount === 1 ? "" : "s"} tracked in ${signal.state}; top hub has ${signal.topHubQty}.`}
                           </p>
                         </article>
