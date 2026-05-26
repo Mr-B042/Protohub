@@ -5851,11 +5851,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [adTrackingLabelSyncState, setAdTrackingLabelSyncState] = useState<"checking" | "shared" | "local-cache" | "error">("checking");
   const [adTrackingLabelSyncMessage, setAdTrackingLabelSyncMessage] = useState("");
   const [adTrackingCartJourneyMap, setAdTrackingCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
+  const adTrackingCartJourneyMapRef = useRef<Record<string, CartJourneyEvent[]>>({});
   const [adTrackingCartJourneyLoading, setAdTrackingCartJourneyLoading] = useState(false);
   const [abandonedCartJourneyMap, setAbandonedCartJourneyMap] = useState<Record<string, CartJourneyEvent[]>>({});
   const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
   const [selectedCartJourneyEvents, setSelectedCartJourneyEvents] = useState<CartJourneyEvent[]>([]);
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
+  useEffect(() => {
+    adTrackingCartJourneyMapRef.current = adTrackingCartJourneyMap;
+  }, [adTrackingCartJourneyMap]);
   const [adSpendWeekStart, setAdSpendWeekStart] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d);
   });
@@ -6034,7 +6038,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setSmartStockRules(nextSmartStockRules);
         smartStockRulesSyncedRef.current = nextSmartStockRules;
       } else {
-        smartStockRulesSyncedRef.current = sanitizeSmartStockRules(smartStockRules);
+        smartStockRulesSyncedRef.current = sanitizeSmartStockRules(
+          readStored<Partial<SmartStockRules>>(storageKeys.smartStockRules, DEFAULT_SMART_STOCK_RULES)
+        );
       }
       if (typeof res?.workingScheduleEnabled === "boolean") {
         setWorkingScheduleEnabled(res.workingScheduleEnabled);
@@ -6050,9 +6056,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setWorkingDayEnd(res.workingDayEnd);
       }
       if (res?.adTrackingLabels) {
+        const labelScope = auth.getUser()?.orgId ?? "default";
         setCampaignCardLabels(normalizeAdTrackingLabelMap(res.adTrackingLabels.campaigns));
         setCreativeCardLabels(normalizeAdTrackingLabelMap(res.adTrackingLabels.creatives));
-        setAdTrackingLabelsLoadedScope(adTrackingLabelScope);
+        setAdTrackingLabelsLoadedScope(labelScope);
         setAdTrackingLabelSyncState(res.adTrackingLabelsShared === false ? "local-cache" : "shared");
         setAdTrackingLabelSyncMessage(
           res.adTrackingLabelsShared === false
@@ -6248,13 +6255,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (typeof s.formOrderSummaryEnabled === "boolean") setFormOrderSummaryEnabled(s.formOrderSummaryEnabled);
       if (typeof s.formOrderSummaryTitle   === "string")  setFormOrderSummaryTitle(s.formOrderSummaryTitle);
     }).catch(() => { /* defaults stay */ });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Settings" || settingsPanel !== "email") return;
-    if (!authUser || !canManageMessagingSettings) {
+    if (!authUser?.id || !canManageMessagingSettings) {
       setEmailSettings(null);
       setEmailSettingsLoading(false);
       setEmailMessages([]);
@@ -6564,7 +6570,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Settings" || settingsPanel !== "sms") return;
-    if (!authUser || !canViewSmsHealth) {
+    if (!authUser?.id || !canViewSmsHealth) {
       setSmsSettings(null);
       setSmsSettingsLoading(false);
       setSmsMessages([]);
@@ -7221,23 +7227,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repRemittanceReceivedDate, setRepRemittanceReceivedDate] = useState(todayKey());
   const [repExtraExpenses, setRepExtraExpenses] = useState<{ type: ExpenseType; amount: string; description: string }[]>([]);
   const [financeProductFilter, setFinanceProductFilter] = useState<string[]>([]);
+  const financeProductFilterKey = financeProductFilter.join(",");
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
     if (financeTab !== "Weekly Accounting") return;
     void loadWeeklyAccountingData({ quiet: !!weeklyAccountingData });
-  }, [activePage, financeTab, weeklyAcctSunday, financeProductFilter.join(","), authUser?.id]);
+  }, [activePage, financeTab, weeklyAcctSunday, financeProductFilterKey, authUser?.id]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
     if (financeTab === "Weekly Accounting") return;
     void loadFinanceSummaryData({ quiet: !!financeSummaryData });
-  }, [activePage, financeTab, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
+  }, [activePage, financeTab, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilterKey, authUser?.id]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
     void loadFinanceRemittanceData({ quiet: financeRemittanceTransactions.length > 0 });
-  }, [activePage, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilter.join(","), authUser?.id]);
+  }, [activePage, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilterKey, authUser?.id]);
   const [bonusSettingsProductId, setBonusSettingsProductId] = useState<string | null>(null);
   const [stateAvailabilityProductId, setStateAvailabilityProductId] = useState<string | null>(null);
   const [crossSellTargetOrderId, setCrossSellTargetOrderId] = useState<string | null>(null);
@@ -7380,7 +7387,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
-    const cached = adTrackingCartJourneyMap[selectedCartId];
+    const cached = adTrackingCartJourneyMapRef.current[selectedCartId];
     if (cached) {
       setSelectedCartJourneyEvents(cached);
     }
@@ -7465,7 +7472,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setOrderNoteDraft("");
     setOrderFollowUpDate("");
     setOrderFollowUpTime(nextTimeValue());
-    setOrderScheduleDate(plannedParts.date || (selectedOrder ? scheduledKeyForOrder(selectedOrder) : "") || todayKey());
+    const scheduledDateKey = selectedOrder?.scheduledAt
+      ? normalizeDateKey(selectedOrder.scheduledAt)
+      : selectedOrder?.scheduledDate
+        ? normalizeDateKey(selectedOrder.scheduledDate)
+        : "";
+    setOrderScheduleDate(plannedParts.date || scheduledDateKey || todayKey());
     setOrderScheduleTime(plannedParts.time || nextTimeValue());
   }, [selectedOrderId, selectedOrder?.agentId, selectedOrder?.scheduledAt, selectedOrder?.scheduledDate]);
   useEffect(() => {
@@ -7704,7 +7716,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCreateOrderState(selectedOrder.state ?? "");
     setCreateOrderProductId(selectedOrder.productId ?? "");
     setCreateOrderPackageId(selectedOrder.packageId ?? "");
-    setCreateOrderQuantity(String(quantityForOrder(selectedOrder)));
+    const product = products.find((item) => item.id === selectedOrder.productId);
+    const packageRecord = product?.packages.find((item) => item.id === selectedOrder.packageId);
+    setCreateOrderQuantity(String(selectedOrder.quantity ?? packageRecord?.quantity ?? 1));
     setCreateOrderAmount(String(selectedOrder.amount ?? ""));
     setCreateOrderSource(selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource));
     setCreateOrderRepId(selectedOrder.assignedRepId ?? "auto");
@@ -7776,7 +7790,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (modal !== "updateStock" || stockProductId || products.length === 0) {
       return;
     }
-    const firstCatalogProduct = products.find((product) => !isComboLibraryProduct(product));
+    const firstCatalogProduct = products.find((product) => {
+      const hasExplicitComboType = (product.catalogType ?? "standard") === "combo_only";
+      if (hasExplicitComboType) return false;
+      const packageMixes = activeProductPackages(product).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0);
+      if (packageMixes.length === 0) return true;
+      const hasPricing = (product.pricings?.length ?? 0) > 0;
+      const hasWarehouseStock = Number(product.warehouseStock ?? 0) > 0;
+      const hasAgentStock = Number(product.agentStock ?? 0) > 0;
+      return hasPricing || hasWarehouseStock || hasAgentStock;
+    });
     if (!firstCatalogProduct) {
       return;
     }
@@ -7830,7 +7853,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
-  }, [modal, remittanceTargetOrderId]);
+  }, [modal, remittanceTargetOrderId, trackedOrders]);
   useEffect(() => {
     if (!selectedOrderId) return;
     setRepRemittanceReceivedDate(todayKey());
@@ -7888,9 +7911,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
   const previewPackages = previewProduct ? persistedActiveProductPackages(previewProduct) : [];
-  const publicEmbedParams = hashRoute.startsWith("#/order-form/embed")
-    ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
-    : null;
+  const publicEmbedParams = useMemo(
+    () => hashRoute.startsWith("#/order-form/embed")
+      ? new URLSearchParams(hashRoute.split("?")[1] ?? "")
+      : null,
+    [hashRoute]
+  );
   const publicProductId = publicEmbedParams?.get("product") ?? "";
   // Clamp the currency param to the allowed enum so a hostile URL can't smuggle
   // an arbitrary string into the order record.
@@ -7917,8 +7943,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showPublicEmbedLoading, setShowPublicEmbedLoading] = useState(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
   const publicProduct = products.find((product) => product.id === publicProductId);
-  const publicPackages = publicProduct ? activeProductPackages(publicProduct) : [];
-const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
+  const publicPackages = useMemo(() => publicProduct ? activeProductPackages(publicProduct) : [], [publicProduct]);
+  const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
   useEffect(() => {
     if (!publicEmbedParams || !dataLoading || publicProduct) {
       setShowPublicEmbedLoading(false);
@@ -8729,7 +8755,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setAdTrackingCartJourneyLoading(false);
       return;
     }
-    if (adTrackingJourneyCartIds.length === 0) {
+    if (!adTrackingJourneyCartIdsKey) {
       setAdTrackingCartJourneyMap({});
       setAdTrackingCartJourneyLoading(false);
       return;
@@ -8737,12 +8763,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    const cartIds = adTrackingJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAdTrackingCartJourneyLoading(true);
       }
       try {
-        const grouped = await cartsApi.journeyBulk(adTrackingJourneyCartIds);
+        const grouped = await cartsApi.journeyBulk(cartIds);
         if (cancelled) return;
         const normalized: Record<string, CartJourneyEvent[]> = {};
         for (const [cartId, events] of Object.entries(grouped ?? {})) {
@@ -9608,7 +9635,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setAbandonedCartJourneyLoading(false);
       return;
     }
-    if (abandonedJourneyCartIds.length === 0) {
+    if (!abandonedJourneyCartIdsKey) {
       setAbandonedCartJourneyMap({});
       setAbandonedCartJourneyLoading(false);
       return;
@@ -9616,12 +9643,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    const cartIds = abandonedJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAbandonedCartJourneyLoading(true);
       }
       try {
-        const grouped = await cartsApi.journeyBulk(abandonedJourneyCartIds);
+        const grouped = await cartsApi.journeyBulk(cartIds);
         if (cancelled) return;
         const normalized: Record<string, CartJourneyEvent[]> = {};
         for (const [cartId, events] of Object.entries(grouped ?? {})) {
@@ -12740,38 +12768,54 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     .filter((signal) => repSmartStockStates.size === 0 || repSmartStockStates.has(signal.state))
     .slice(0, 3);
   const canTriggerTeamStockRiskNotifications = realRole === "Owner" || realRole === "Admin" || realRole === "Inventory Manager";
-  const smartStockNotificationPayload = smartStockDemandSignals.slice(0, SMART_STOCK_NOTIFICATION_LIMIT).map((signal) => {
-    const relatedRepIds = new Set<string>();
-    trackedOrders.forEach((order) => {
-      if (!order.assignedRepId || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
-      if (normalizeAgentState(order.state) !== signal.state) return;
-      if (orderCreatedKey(order) < smartStockRecentStartKey) return;
-      relatedRepIds.add(order.assignedRepId);
-    });
-    if (
-      !canTriggerTeamStockRiskNotifications
-      && realRole === "Sales Rep"
-      && authUser?.id
-      && repSmartStockSignals.some((item) => item.productId === signal.productId && item.state === signal.state)
-    ) {
-      relatedRepIds.add(authUser.id);
-    }
-    return {
-      productId: signal.productId,
-      productName: signal.productName,
-      state: signal.state,
-      stock: signal.stock,
-      recentUnits: signal.recentUnits,
-      openOrders: signal.openOrders,
-      daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
-      lookbackDays: smartStockLookbackDays,
-      severity: signal.severity,
-      salesRepRecipientIds: Array.from(relatedRepIds)
-    };
-  }).filter((signal) => canTriggerTeamStockRiskNotifications || (authUser?.id ? signal.salesRepRecipientIds.includes(authUser.id) : false));
-  const smartStockNotificationKey = smartStockNotificationPayload
-    .map((signal) => `${smartStockTodayKey}:${signal.lookbackDays}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
-    .join("|");
+  const repSmartStockSignalKey = repSmartStockSignals.map((signal) => `${signal.productId}\u0000${signal.state}`).join("\u0001");
+  const smartStockNotificationPayload = useMemo(() => {
+    const repSignalKeys = new Set(repSmartStockSignalKey ? repSmartStockSignalKey.split("\u0001") : []);
+    return smartStockDemandSignals.slice(0, SMART_STOCK_NOTIFICATION_LIMIT).map((signal) => {
+      const relatedRepIds = new Set<string>();
+      trackedOrders.forEach((order) => {
+        if (!order.assignedRepId || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
+        if (normalizeAgentState(order.state) !== signal.state) return;
+        if (orderCreatedKey(order) < smartStockRecentStartKey) return;
+        relatedRepIds.add(order.assignedRepId);
+      });
+      if (
+        !canTriggerTeamStockRiskNotifications
+        && realRole === "Sales Rep"
+        && authUser?.id
+        && repSignalKeys.has(`${signal.productId}\u0000${signal.state}`)
+      ) {
+        relatedRepIds.add(authUser.id);
+      }
+      return {
+        productId: signal.productId,
+        productName: signal.productName,
+        state: signal.state,
+        stock: signal.stock,
+        recentUnits: signal.recentUnits,
+        openOrders: signal.openOrders,
+        daysCover: Number.isFinite(signal.daysCover) ? signal.daysCover : undefined,
+        lookbackDays: smartStockLookbackDays,
+        severity: signal.severity,
+        salesRepRecipientIds: Array.from(relatedRepIds)
+      };
+    }).filter((signal) => canTriggerTeamStockRiskNotifications || (authUser?.id ? signal.salesRepRecipientIds.includes(authUser.id) : false));
+  }, [
+    authUser?.id,
+    canTriggerTeamStockRiskNotifications,
+    realRole,
+    repSmartStockSignalKey,
+    smartStockDemandSignals,
+    smartStockLookbackDays,
+    smartStockRecentStartKey,
+    trackedOrders
+  ]);
+  const smartStockNotificationKey = useMemo(
+    () => smartStockNotificationPayload
+      .map((signal) => `${smartStockTodayKey}:${signal.lookbackDays}:${signal.productId}:${signal.state}:${signal.stock}:${signal.recentUnits}:${signal.openOrders}:${signal.severity}:${signal.salesRepRecipientIds.join(",")}`)
+      .join("|"),
+    [smartStockNotificationPayload, smartStockTodayKey]
+  );
   useEffect(() => {
     if (!auth.isLoggedIn() || !hasCompletedInitialDataLoad || !smartStockNotificationKey || smartStockNotificationPayload.length === 0) {
       return;
@@ -12809,7 +12853,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
         // The server also dedupes, so a later data refresh can safely retry.
         smartStockNotificationKeysRef.current.delete(smartStockNotificationKey);
       });
-  }, [smartStockNotificationKey, hasCompletedInitialDataLoad, canTriggerTeamStockRiskNotifications, realRole]);
+  }, [smartStockNotificationKey, smartStockNotificationPayload, hasCompletedInitialDataLoad, canTriggerTeamStockRiskNotifications, realRole]);
   const repDeliveredOrders = repOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const repRevenue = repDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const repPendingCount = repOrders.filter((order) => (order.status ?? "New") === "New").length;
@@ -12897,7 +12941,7 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
       setRepCartJourneyLoading(false);
       return;
     }
-    if (repJourneyCartIds.length === 0) {
+    if (!repJourneyCartIdsKey) {
       setRepCartJourneyMap({});
       setRepCartJourneyLoading(false);
       return;
@@ -12905,12 +12949,13 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    const cartIds = repJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setRepCartJourneyLoading(true);
       }
       try {
-        const grouped = await cartsApi.journeyBulk(repJourneyCartIds);
+        const grouped = await cartsApi.journeyBulk(cartIds);
         if (cancelled) return;
         const normalized: Record<string, CartJourneyEvent[]> = {};
         for (const [cartId, events] of Object.entries(grouped ?? {})) {
@@ -13231,27 +13276,39 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
   }, [activePage, repConsoleTab, currentRole, selectedRepUser?.id, repBonusWeekStart]);
   const repWorkspaceAlertCount = repNotifications.length + repWorkspaceSystemNotifications.filter((notification) => !notification.read).length;
   const repOrderDetail = trackedOrders.find((order) => order.id === repOrderDetailId);
+  const repOrderDetailRowId = repOrderDetail?.id ?? "";
+  const repOrderDetailScheduledAt = repOrderDetail?.scheduledAt;
+  const repOrderDetailScheduledDate = repOrderDetail?.scheduledDate;
+  const repOrderDetailLogisticsCost = repOrderDetail?.logisticsCost;
+  const repOrderDetailAmountRemitted = repOrderDetail?.amountRemitted;
+  const repOrderDetailAmount = repOrderDetail?.amount;
   useEffect(() => {
-    if (!repOrderDetailId || !repOrderDetail) {
+    if (!repOrderDetailId || !repOrderDetailRowId) {
       return;
     }
-    const plannedParts = splitMomentForInput(repOrderDetail.scheduledAt);
-    setRepScheduleDate(plannedParts.date || scheduledKeyForOrder(repOrderDetail) || todayKey());
+    const plannedParts = splitMomentForInput(repOrderDetailScheduledAt);
+    const scheduledDateKey = repOrderDetailScheduledAt
+      ? normalizeDateKey(repOrderDetailScheduledAt)
+      : repOrderDetailScheduledDate
+        ? normalizeDateKey(repOrderDetailScheduledDate)
+        : "";
+    setRepScheduleDate(plannedParts.date || scheduledDateKey || todayKey());
     setRepScheduleTime(plannedParts.time || nextTimeValue());
-    setRepDeliveryFee(repOrderDetail.logisticsCost != null ? String(repOrderDetail.logisticsCost) : "");
+    setRepDeliveryFee(repOrderDetailLogisticsCost != null ? String(repOrderDetailLogisticsCost) : "");
     setRepAmountToRemit(
-      repOrderDetail.amountRemitted != null
-        ? String(repOrderDetail.amountRemitted)
-        : String(Math.max(0, repOrderDetail.amount - (repOrderDetail.logisticsCost ?? 0)))
+      repOrderDetailAmountRemitted != null
+        ? String(repOrderDetailAmountRemitted)
+        : String(Math.max(0, (repOrderDetailAmount ?? 0) - (repOrderDetailLogisticsCost ?? 0)))
     );
     setRepExtraExpenses([]);
   }, [
     repOrderDetailId,
-    repOrderDetail?.amount,
-    repOrderDetail?.amountRemitted,
-    repOrderDetail?.logisticsCost,
-    repOrderDetail?.scheduledAt,
-    repOrderDetail?.scheduledDate
+    repOrderDetailRowId,
+    repOrderDetailAmount,
+    repOrderDetailAmountRemitted,
+    repOrderDetailLogisticsCost,
+    repOrderDetailScheduledAt,
+    repOrderDetailScheduledDate
   ]);
 
   const selectedPeriodLabel =
@@ -14915,7 +14972,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
     const id = setInterval(poll, 30_000);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Notification polling — refresh notifications every 30s ───────────
@@ -14950,7 +15006,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     };
     const id = setInterval(poll, 30_000);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch audit log when order details modal opens
@@ -14960,7 +15015,6 @@ const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCo
     } else {
       setOrderAuditLog([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modal, selectedOrderId]);
 
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
