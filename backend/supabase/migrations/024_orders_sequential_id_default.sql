@@ -8,7 +8,6 @@ create sequence if not exists orders_id_seq
   minvalue 1
   start with 1
   no cycle;
-
 do $$
 declare
   last_small_numeric_id bigint;
@@ -24,6 +23,5 @@ begin
     perform setval('orders_id_seq', last_small_numeric_id, true);
   end if;
 end $$;
-
 alter table orders
   alter column id set default nextval('orders_id_seq')::text;

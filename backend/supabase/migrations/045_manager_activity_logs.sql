@@ -11,12 +11,9 @@ create table if not exists manager_activity_logs (
   note text,
   created_at timestamptz not null default now()
 );
-
 create index if not exists idx_manager_activity_logs_org_created
   on manager_activity_logs (org_id, created_at desc);
-
 create index if not exists idx_manager_activity_logs_team_created
   on manager_activity_logs (team_id, created_at desc);
-
 create index if not exists idx_manager_activity_logs_manager_created
   on manager_activity_logs (manager_id, created_at desc);

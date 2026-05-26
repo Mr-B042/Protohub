@@ -27,9 +27,7 @@ create table if not exists public.cart_journey_events (
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
-
 create index if not exists cart_journey_events_org_cart_created_idx
   on public.cart_journey_events (org_id, cart_id, created_at asc);
-
 create index if not exists cart_journey_events_event_type_idx
   on public.cart_journey_events (event_type, created_at desc);

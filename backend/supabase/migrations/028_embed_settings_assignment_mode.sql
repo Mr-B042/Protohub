@@ -1,6 +1,5 @@
 alter table if exists embed_settings
   add column if not exists public_order_assignment_mode text not null default 'auto_assign';
-
 do $$
 begin
   if not exists (

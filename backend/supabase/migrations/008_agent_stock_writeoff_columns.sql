@@ -8,6 +8,5 @@
 alter table public.agent_stock
   add column if not exists defective integer not null default 0 check (defective >= 0),
   add column if not exists missing   integer not null default 0 check (missing   >= 0);
-
 alter table public.agents
   add column if not exists stock_capacity integer not null default 1000 check (stock_capacity > 0);

@@ -19,21 +19,16 @@ create table if not exists follow_up_tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 drop trigger if exists trg_follow_up_tasks_set_updated_at on follow_up_tasks;
 create trigger trg_follow_up_tasks_set_updated_at
 before update on follow_up_tasks
 for each row execute function set_updated_at();
-
 create index if not exists idx_follow_up_tasks_org_due
   on follow_up_tasks (org_id, due_at desc);
-
 create index if not exists idx_follow_up_tasks_order_status
   on follow_up_tasks (order_id, status, due_at desc);
-
 create index if not exists idx_follow_up_tasks_assigned_rep
   on follow_up_tasks (assigned_rep_id, status, due_at desc);
-
 create table if not exists order_contact_attempts (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references organizations(id) on delete cascade,
@@ -54,16 +49,12 @@ create table if not exists order_contact_attempts (
   is_serious_signal boolean,
   created_at timestamptz not null default now()
 );
-
 create index if not exists idx_order_contact_attempts_org_attempted
   on order_contact_attempts (org_id, attempted_at desc);
-
 create index if not exists idx_order_contact_attempts_order_attempted
   on order_contact_attempts (order_id, attempted_at desc);
-
 create index if not exists idx_order_contact_attempts_rep_attempted
   on order_contact_attempts (rep_id, attempted_at desc);
-
 alter table orders
   add column if not exists buyer_health text not null default 'healthy',
   add column if not exists follow_up_attempt_count integer not null default 0,
@@ -71,9 +62,7 @@ alter table orders
   add column if not exists last_contact_attempt_outcome text,
   add column if not exists next_follow_up_at timestamptz,
   add column if not exists overdue_follow_up_count integer not null default 0;
-
 create index if not exists idx_orders_buyer_health
   on orders (org_id, buyer_health);
-
 create index if not exists idx_orders_next_follow_up
   on orders (org_id, next_follow_up_at desc);

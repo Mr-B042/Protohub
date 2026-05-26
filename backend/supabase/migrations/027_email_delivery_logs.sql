@@ -17,25 +17,18 @@ create table if not exists email_messages (
   sent_at          timestamptz,
   created_at       timestamptz not null default now()
 );
-
 create index if not exists idx_email_messages_org_created
   on email_messages(org_id, created_at desc);
-
 create index if not exists idx_email_messages_org_status
   on email_messages(org_id, status, created_at desc);
-
 create index if not exists idx_email_messages_trigger
   on email_messages(org_id, trigger, created_at desc);
-
 create index if not exists idx_email_messages_recipient
   on email_messages(org_id, recipient_email, created_at desc);
-
 alter table email_messages enable row level security;
-
 create policy "Owner sees email logs"
   on email_messages for select
   using (org_id = auth_org_id() and auth_user_role() = 'Owner');
-
 create policy "System inserts email logs"
   on email_messages for insert
   with check (org_id = auth_org_id());

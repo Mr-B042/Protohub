@@ -13,7 +13,6 @@ create policy "Reps see own orders, others see all"
       or assigned_rep_id = auth.uid()
     )
   );
-
 -- Abandoned carts: match the API behavior so reps only receive their own
 -- assigned cart rows over Realtime.
 drop policy if exists "All org members see carts" on public.abandoned_carts;
@@ -26,7 +25,6 @@ create policy "Reps see own carts, others see all"
       or assigned_rep_id = auth.uid()
     )
   );
-
 -- System notifications: org-wide notifications plus rows explicitly
 -- addressed to the current user.
 drop policy if exists "All org members see notifications" on public.system_notifications;
@@ -39,7 +37,6 @@ create policy "All org members see notifications"
       or recipient_id = auth.uid()
     )
   );
-
 drop policy if exists "All org members mark read" on public.system_notifications;
 create policy "All org members mark read"
   on public.system_notifications for update
@@ -50,7 +47,6 @@ create policy "All org members mark read"
       or recipient_id = auth.uid()
     )
   );
-
 alter table public.orders               replica identity full;
 alter table public.system_notifications replica identity full;
 alter table public.products             replica identity full;
@@ -58,7 +54,6 @@ alter table public.product_packages     replica identity full;
 alter table public.product_pricings     replica identity full;
 alter table public.users                replica identity full;
 alter table public.abandoned_carts      replica identity full;
-
 do $$
 begin
   if not exists (

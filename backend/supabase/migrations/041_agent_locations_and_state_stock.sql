@@ -14,10 +14,8 @@ create table if not exists public.agent_locations (
   updated_at timestamptz not null default now(),
   unique (agent_id, state, city)
 );
-
 create index if not exists idx_agent_locations_agent on public.agent_locations(agent_id);
 create index if not exists idx_agent_locations_state_active on public.agent_locations(state, active);
-
 do $$
 begin
   if not exists (
@@ -30,7 +28,6 @@ begin
       for each row execute procedure public.set_updated_at();
   end if;
 end $$;
-
 create table if not exists public.agent_location_stock (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
@@ -44,11 +41,9 @@ create table if not exists public.agent_location_stock (
   updated_at timestamptz not null default now(),
   unique (agent_location_id, product_id)
 );
-
 create index if not exists idx_agent_location_stock_agent on public.agent_location_stock(agent_id);
 create index if not exists idx_agent_location_stock_location on public.agent_location_stock(agent_location_id);
 create index if not exists idx_agent_location_stock_product on public.agent_location_stock(product_id);
-
 do $$
 begin
   if not exists (
@@ -61,7 +56,6 @@ begin
       for each row execute procedure public.set_updated_at();
   end if;
 end $$;
-
 insert into public.agent_locations (org_id, agent_id, name, state, city, address, active, is_primary, notes)
 select distinct
   a.org_id,
@@ -91,7 +85,6 @@ where not exists (
     and lower(l.state) = lower(c.state)
     and lower(coalesce(l.city, '')) = lower(coalesce(c.city, ''))
 );
-
 insert into public.agent_locations (org_id, agent_id, name, state, city, address, active, is_primary, notes)
 select
   a.org_id,
@@ -107,7 +100,6 @@ from public.agents a
 where not exists (
   select 1 from public.agent_locations l where l.agent_id = a.id
 );
-
 with ranked as (
   select
     l.id,
@@ -127,7 +119,6 @@ update public.agent_locations l
 set is_primary = (ranked.rn = 1)
 from ranked
 where ranked.id = l.id;
-
 insert into public.agent_location_stock (org_id, agent_id, agent_location_id, product_id, quantity, defective, missing)
 select
   a.org_id,
@@ -146,13 +137,11 @@ where not exists (
   where ls.agent_location_id = l.id
     and ls.product_id = s.product_id
 );
-
 alter table public.orders
   add column if not exists agent_location_id uuid references public.agent_locations(id) on delete set null,
   add column if not exists agent_location_name_snapshot text,
   add column if not exists agent_location_state_snapshot text,
   add column if not exists agent_location_city_snapshot text;
-
 update public.orders o
 set
   agent_location_id = coalesce(
@@ -217,17 +206,14 @@ set
     )
   )
 where o.agent_id is not null;
-
 alter table public.stock_movements
   add column if not exists from_agent_location_id uuid references public.agent_locations(id) on delete set null,
   add column if not exists to_agent_location_id uuid references public.agent_locations(id) on delete set null;
-
 alter table public.waybill_records
   add column if not exists from_agent_id uuid references public.agents(id) on delete set null,
   add column if not exists to_agent_id uuid references public.agents(id) on delete set null,
   add column if not exists from_agent_location_id uuid references public.agent_locations(id) on delete set null,
   add column if not exists to_agent_location_id uuid references public.agent_locations(id) on delete set null;
-
 update public.waybill_records
 set
   to_agent_id = coalesce(to_agent_id, agent_id),

@@ -6,7 +6,6 @@ alter table public.payroll_runs
   add column if not exists label text,
   add column if not exists notes text,
   add column if not exists top_performer jsonb not null default 'null'::jsonb;
-
 update public.payroll_runs
 set label = coalesce(label, period)
 where label is null;

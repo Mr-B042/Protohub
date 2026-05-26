@@ -11,23 +11,17 @@ create table if not exists public.agent_balance_weekly_snapshots (
   updated_at timestamptz not null default now(),
   unique (org_id, week_start, agent_id, agent_location_id, product_id)
 );
-
 create trigger agent_balance_weekly_snapshots_updated_at
   before update on public.agent_balance_weekly_snapshots
   for each row execute function public.set_updated_at();
-
 create index if not exists idx_agent_balance_weekly_snapshots_org_week
   on public.agent_balance_weekly_snapshots(org_id, week_start);
-
 create index if not exists idx_agent_balance_weekly_snapshots_org_agent
   on public.agent_balance_weekly_snapshots(org_id, agent_id, agent_location_id);
-
 alter table public.agent_balance_weekly_snapshots enable row level security;
-
 create policy "Staff can see weekly balance snapshots"
   on public.agent_balance_weekly_snapshots for select
   using (org_id = auth_org_id() and auth_user_role() in ('Owner', 'Admin', 'Manager', 'Sales Rep', 'Inventory Manager'));
-
 create policy "Staff can manage weekly balance snapshots"
   on public.agent_balance_weekly_snapshots for all
   using (org_id = auth_org_id() and auth_user_role() in ('Owner', 'Admin', 'Manager', 'Sales Rep', 'Inventory Manager'));

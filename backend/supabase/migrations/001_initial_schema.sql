@@ -5,7 +5,6 @@
 
 -- Enable UUID generation
 create extension if not exists "pgcrypto";
-
 -- ── ORGANIZATIONS ─────────────────────────────────────────
 -- One row per business. Every other table references this.
 create table organizations (
@@ -14,11 +13,9 @@ create table organizations (
   owner_id    uuid,                          -- set after first user created
   created_at  timestamptz not null default now()
 );
-
 -- ── USERS ─────────────────────────────────────────────────
 -- Mirrors Supabase auth.users. Extended with role + org.
 create type user_role as enum ('Owner', 'Admin', 'Sales Rep', 'Inventory Manager');
-
 create table users (
   id          uuid primary key references auth.users(id) on delete cascade,
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -28,12 +25,10 @@ create table users (
   active      boolean not null default true,
   created_at  timestamptz not null default now()
 );
-
 -- Back-fill org owner once user exists
 alter table organizations
   add constraint fk_owner foreign key (owner_id)
   references users(id) on delete set null;
-
 -- ── PRODUCTS ──────────────────────────────────────────────
 create table products (
   id               uuid primary key default gen_random_uuid(),
@@ -49,10 +44,8 @@ create table products (
   created_at       timestamptz not null default now(),
   unique (org_id, sku)
 );
-
 -- ── PRODUCT PRICINGS ──────────────────────────────────────
 create type currency_code as enum ('NGN', 'USD', 'GBP');
-
 create table product_pricings (
   id             uuid primary key default gen_random_uuid(),
   product_id     uuid not null references products(id) on delete cascade,
@@ -63,7 +56,6 @@ create table product_pricings (
   created_at     timestamptz not null default now(),
   unique (product_id, currency)
 );
-
 -- ── PRODUCT PACKAGES ──────────────────────────────────────
 create table product_packages (
   id              uuid primary key default gen_random_uuid(),
@@ -79,10 +71,8 @@ create table product_packages (
   upsell_to_qty   integer,
   created_at      timestamptz not null default now()
 );
-
 -- ── DELIVERY AGENTS ───────────────────────────────────────
 create type agent_status as enum ('Active', 'Inactive', 'Suspended');
-
 create table agents (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -92,7 +82,6 @@ create table agents (
   status      agent_status not null default 'Active',
   created_at  timestamptz not null default now()
 );
-
 -- ── AGENT STOCK ───────────────────────────────────────────
 create table agent_stock (
   id          uuid primary key default gen_random_uuid(),
@@ -102,7 +91,6 @@ create table agent_stock (
   updated_at  timestamptz not null default now(),
   unique (agent_id, product_id)
 );
-
 -- ── ORDERS ────────────────────────────────────────────────
 create type order_status as enum (
   'New', 'Confirmed', 'In Process', 'Dispatched',
@@ -113,7 +101,6 @@ create type call_outcome as enum (
   'Confirmed', 'No Answer', 'Wrong Number',
   'Refused', 'Scheduled Callback', 'Not Reached'
 );
-
 create table orders (
   id                 text primary key,          -- preserves ORD-XXXX format
   org_id             uuid not null references organizations(id) on delete cascade,
@@ -148,13 +135,11 @@ create table orders (
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now()
 );
-
 -- ── STOCK MOVEMENTS ───────────────────────────────────────
 create type stock_movement_type as enum (
   'Stock Added', 'Distributed to Agent', 'Order Fulfilled',
   'Return', 'Correction', 'Waybill Out', 'Waybill In'
 );
-
 create table stock_movements (
   id            text primary key,
   org_id        uuid not null references organizations(id) on delete cascade,
@@ -170,12 +155,10 @@ create table stock_movements (
   note          text,
   created_at    timestamptz not null default now()
 );
-
 -- ── ABANDONED CARTS ───────────────────────────────────────
 create type cart_status as enum (
   'Open abandoned', 'Assigned', 'Contacted', 'Converted', 'Lost'
 );
-
 create table abandoned_carts (
   id               text primary key,
   org_id           uuid not null references organizations(id) on delete cascade,
@@ -196,7 +179,6 @@ create table abandoned_carts (
   last_activity    timestamptz not null default now(),
   created_at       timestamptz not null default now()
 );
-
 -- ── EXPENSES ──────────────────────────────────────────────
 create table expenses (
   id          text primary key,
@@ -209,7 +191,6 @@ create table expenses (
   paid_by     text,
   created_at  timestamptz not null default now()
 );
-
 -- ── PAY STRUCTURES ────────────────────────────────────────
 create table pay_structures (
   id             uuid primary key default gen_random_uuid(),
@@ -220,10 +201,8 @@ create table pay_structures (
   updated_at     timestamptz not null default now(),
   unique (org_id, user_id)
 );
-
 -- ── PAYROLL RUNS ──────────────────────────────────────────
 create type payroll_status as enum ('Draft', 'Approved', 'Paid');
-
 create table payroll_runs (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -233,10 +212,8 @@ create table payroll_runs (
   created_at  timestamptz not null default now(),
   approved_at timestamptz
 );
-
 -- ── WAYBILL RECORDS ───────────────────────────────────────
 create type waybill_status as enum ('In Transit', 'Received', 'Returned', 'Cancelled');
-
 create table waybill_records (
   id              text primary key,
   org_id          uuid not null references organizations(id) on delete cascade,
@@ -255,7 +232,6 @@ create table waybill_records (
   received_date   date,
   created_at      timestamptz not null default now()
 );
-
 -- ── CUSTOMER FLAGS ────────────────────────────────────────
 create table customer_flags (
   id          uuid primary key default gen_random_uuid(),
@@ -266,10 +242,8 @@ create table customer_flags (
   flagged_at  timestamptz not null default now(),
   unique (org_id, phone)
 );
-
 -- ── SYSTEM NOTIFICATIONS ──────────────────────────────────
 create type notification_type as enum ('low_stock', 'remittance_overdue', 'info');
-
 create table system_notifications (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -279,10 +253,8 @@ create table system_notifications (
   product_id  uuid references products(id) on delete set null,
   created_at  timestamptz not null default now()
 );
-
 -- ── STOCK COUNT SESSIONS ──────────────────────────────────
 create type session_status as enum ('Open', 'Closed');
-
 create table stock_count_sessions (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -292,7 +264,6 @@ create table stock_count_sessions (
   closed_at   timestamptz,
   created_at  timestamptz not null default now()
 );
-
 -- ── STOCK COUNT ENTRIES ───────────────────────────────────
 create type count_status as enum (
   'Pending', 'Agent Submitted', 'Admin Confirmed', 'Verified', 'Discrepancy'
@@ -300,7 +271,6 @@ create type count_status as enum (
 create type writeoff_reason as enum (
   'Damaged', 'Theft', 'Unreported Sale', 'Return to Warehouse', 'Other'
 );
-
 create table stock_count_entries (
   id                  uuid primary key default gen_random_uuid(),
   session_id          uuid not null references stock_count_sessions(id) on delete cascade,
@@ -320,7 +290,6 @@ create table stock_count_entries (
   admin_confirmed_at  timestamptz,
   verified_at         timestamptz
 );
-
 -- ── UPDATED_AT TRIGGERS ───────────────────────────────────
 create or replace function set_updated_at()
 returns trigger language plpgsql as $$
@@ -329,15 +298,12 @@ begin
   return new;
 end;
 $$;
-
 create trigger orders_updated_at
   before update on orders
   for each row execute function set_updated_at();
-
 create trigger agent_stock_updated_at
   before update on agent_stock
   for each row execute function set_updated_at();
-
 -- ── INDEXES ───────────────────────────────────────────────
 create index idx_orders_org_id         on orders(org_id);
 create index idx_orders_status         on orders(org_id, status);

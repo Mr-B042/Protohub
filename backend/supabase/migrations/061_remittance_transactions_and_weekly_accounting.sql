@@ -10,9 +10,7 @@ create table if not exists public.remittance_transactions (
   logged_by_name text,
   reason text
 );
-
 create index if not exists idx_remittance_transactions_org_received_at
   on public.remittance_transactions (org_id, received_at desc);
-
 create index if not exists idx_remittance_transactions_order_received_at
   on public.remittance_transactions (order_id, received_at desc);

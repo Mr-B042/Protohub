@@ -1,6 +1,5 @@
 alter table public.cart_journey_events
   drop constraint if exists cart_journey_events_event_type_check;
-
 alter table public.cart_journey_events
   add constraint cart_journey_events_event_type_check
   check (

@@ -12,4 +12,4 @@ begin
       add constraint embed_settings_public_form_mode_check
       check (public_form_mode in ('classic', 'guided_checkout'));
   end if;
-end $$;
+end $$;;

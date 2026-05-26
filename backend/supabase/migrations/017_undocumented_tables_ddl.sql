@@ -11,10 +11,8 @@ create table if not exists login_audit (
   ip         text,
   created_at timestamptz not null default now()
 );
-
 create index if not exists idx_login_audit_email
   on login_audit(email, created_at desc);
-
 -- ── order_audit ───────────────────────────────────────────
 create table if not exists order_audit (
   id          uuid primary key default gen_random_uuid(),
@@ -26,19 +24,16 @@ create table if not exists order_audit (
   note        text,
   created_at  timestamptz not null default now()
 );
-
 create index if not exists idx_order_audit_order
   on order_audit(order_id, created_at desc);
-
 create index if not exists idx_order_audit_org
   on order_audit(org_id, created_at desc);
-
 -- ── email_settings ────────────────────────────────────────
 create table if not exists email_settings (
   id               uuid primary key default gen_random_uuid(),
   org_id           uuid not null unique references organizations(id) on delete cascade,
   enabled          boolean not null default false,
-  provider         text not null default 'resend',
+  provider         text not null default 'mailjet',
   api_key_public   text not null default '',
   api_key_private  text not null default '',
   resend_api_key   text not null default '',
@@ -49,7 +44,6 @@ create table if not exists email_settings (
   templates        jsonb not null default '{}',
   updated_at       timestamptz
 );
-
 -- ── embed_settings ────────────────────────────────────────
 create table if not exists embed_settings (
   id                            uuid primary key default gen_random_uuid(),
@@ -77,7 +71,6 @@ create table if not exists embed_settings (
   form_order_summary_title      text not null default 'Your Order Summary',
   updated_at                    timestamptz
 );
-
 -- ── push_subscriptions ────────────────────────────────────
 create table if not exists push_subscriptions (
   id         uuid primary key default gen_random_uuid(),
@@ -89,7 +82,6 @@ create table if not exists push_subscriptions (
   created_at timestamptz not null default now(),
   unique (user_id, endpoint)
 );
-
 -- ── sales_teams ───────────────────────────────────────────
 create table if not exists sales_teams (
   id          uuid primary key default gen_random_uuid(),
@@ -100,10 +92,8 @@ create table if not exists sales_teams (
   member_ids  uuid[]  not null default '{}',
   created_at  timestamptz not null default now()
 );
-
 create index if not exists idx_sales_teams_org
   on sales_teams(org_id, created_at desc);
-
 -- ── rep_penalties ─────────────────────────────────────────
 create table if not exists rep_penalties (
   id                 uuid primary key default gen_random_uuid(),
@@ -119,9 +109,7 @@ create table if not exists rep_penalties (
   by_name            text,
   created_at         timestamptz not null default now()
 );
-
 create index if not exists idx_rep_penalties_org
   on rep_penalties(org_id, created_at desc);
-
 create index if not exists idx_rep_penalties_rep
   on rep_penalties(rep_id, period);

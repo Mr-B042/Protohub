@@ -11,14 +11,12 @@
 -- ── waybill_status ────────────────────────────────────────
 alter type waybill_status add value if not exists 'Defective';
 alter type waybill_status add value if not exists 'Missing';
-
 -- ── system_notifications ──────────────────────────────────
 alter table system_notifications
   add column if not exists recipient_id uuid references users(id) on delete cascade,
   add column if not exists link         text,
   add column if not exists order_id     text,
   add column if not exists title        text;
-
 -- Index so per-user notification queries stay fast
 create index if not exists idx_notifications_recipient
   on system_notifications(org_id, recipient_id, read, created_at desc);

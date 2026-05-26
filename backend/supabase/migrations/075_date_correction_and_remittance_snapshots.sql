@@ -56,4 +56,4 @@ create index if not exists idx_orders_created_correction_audit
   on public.orders (org_id, created_at_corrected_at desc);
 
 create index if not exists idx_orders_delivered_correction_audit
-  on public.orders (org_id, delivered_date_corrected_at desc);
+  on public.orders (org_id, delivered_date_corrected_at desc);;

@@ -30,4 +30,4 @@ create policy "Public embed outage inserts carts"
         and pkg.product_id = abandoned_carts.product_id
         and pkg.active = true
     )
-  );
+  );;

@@ -15,12 +15,9 @@ create table if not exists native_push_devices (
   disabled_at timestamptz,
   unique (token)
 );
-
 create index if not exists idx_native_push_devices_user
   on native_push_devices(user_id, created_at desc);
-
 create index if not exists idx_native_push_devices_org
   on native_push_devices(org_id, created_at desc);
-
 create index if not exists idx_native_push_devices_platform
   on native_push_devices(platform, provider, created_at desc);

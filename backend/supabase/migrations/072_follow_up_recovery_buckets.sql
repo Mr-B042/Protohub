@@ -17,9 +17,7 @@ alter table order_contact_attempts
       'wrong_number',
       'out_of_coverage'
     ));
-
 create index if not exists idx_order_contact_attempts_outcome_group
   on order_contact_attempts (org_id, outcome_group, attempted_at desc);
-
 create index if not exists idx_order_contact_attempts_recovery_bucket
   on order_contact_attempts (org_id, recovery_bucket, attempted_at desc);
