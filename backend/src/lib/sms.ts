@@ -47,25 +47,25 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
     body: "{{greeting}} {{customer}}, got your order {{order_id}} for {{product_name}} ({{currency}} {{amount}}). We'll call you shortly to confirm delivery. {{rep_contact}}"
   },
   order_status_change: {
-    body: "{{greeting}} {{customer}}, quick update on order {{order_id}}: status is now {{status}}. We'll keep you posted. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, quick update on order {{order_id}}: status is now {{status}}. We will keep you posted."
   },
   order_delivered: {
-    body: "{{greeting}} {{customer}}, glad your {{product_name}} arrived. Hope you love it — if anything's off, give us a call. Would also mean a lot if you tell a friend. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, your {{product_name}} has been delivered. We hope you enjoy it — kindly reach out if anything is not in order. A recommendation to a friend would mean a lot. {{rep_contact}}"
   },
   order_failed: {
-    body: "{{greeting}} {{customer}}, your {{product_name}} delivery wasn't completed today. Call us back if you'd still like to receive it. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, your {{product_name}} delivery was not completed today. Kindly reach out if you would still like to receive it. {{rep_contact}}"
   },
   order_cancelled: {
-    body: "{{greeting}} {{customer}}, your order for {{product_name}} has been cancelled. If you change your mind any time, just give us a call and we'll set it up again. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, your order for {{product_name}} has been cancelled. Kindly reach out anytime you wish to reorder. {{rep_contact}}"
   },
   order_rescheduled: {
-    body: "{{greeting}} {{customer}}, your {{product_name}} delivery is now set for {{scheduled_date}}. We'll call before we head out. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, your {{product_name}} delivery has been rescheduled for {{scheduled_date}}. Kindly expect our call before delivery. {{rep_contact}}"
   },
   order_not_picking: {
-    body: "{{greeting}} {{customer}}, tried calling about your {{product_name}} order but couldn't reach you. Please call us back when you're free. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, we tried reaching you about your {{product_name}} order but could not get through. Kindly call back when you are free. {{rep_contact}}"
   },
   order_not_ready: {
-    body: "{{greeting}} {{customer}}, no rush — we'll hold your {{product_name}} order and check back on {{scheduled_date}}. If anything changes, give us a call. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, no rush. We will hold your {{product_name}} order and check back on {{scheduled_date}}. {{rep_contact}}"
   },
   order_follow_up: {
     body: "{{greeting}} {{customer}}, kindly note we will reach back on {{scheduled_date}} regarding your {{product_name}} order. {{rep_contact}}"
@@ -228,6 +228,71 @@ function greetingForTimezone(timezone: string): string {
   } catch {
     return "Hi";
   }
+}
+
+// Render a scheduled date/timestamp in Nigerian conversational phrasing.
+// Accepts:
+//   - ISO timestamp ("2026-05-30T14:00:00+01:00") → "Friday at 2pm"
+//   - YYYY-MM-DD ("2026-05-30") → "Friday" (date-only, no time suffix)
+// Inputs that don't look like ISO dates pass through unchanged so caller
+// sentinels like "soon" survive.
+//
+// Time format follows Nigerian convention: lowercase "am/pm", no space,
+// minutes dropped when zero ("2pm" not "2:00pm", "9:30pm" stays as-is).
+function formatScheduledLabelNg(value: string, timezone: string): string {
+  if (!value || typeof value !== "string") return value;
+  if (!/^\d{4}-\d{2}-\d{2}/.test(value)) return value;
+  const tz = timezone || "Africa/Lagos";
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const parseSource = dateOnly ? `${value}T12:00:00+01:00` : value;
+  const date = new Date(parseSource);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const dayKeyFmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const targetKey = dayKeyFmt.format(date);
+  const now = new Date();
+  const todayKey = dayKeyFmt.format(now);
+  const tomorrowKey = dayKeyFmt.format(new Date(now.getTime() + 86_400_000));
+  const dayMs = 86_400_000;
+  const targetMid = new Date(`${targetKey}T00:00:00Z`).getTime();
+  const todayMid = new Date(`${todayKey}T00:00:00Z`).getTime();
+  const dayDiff = Math.round((targetMid - todayMid) / dayMs);
+
+  let dayLabel: string;
+  if (targetKey === todayKey) {
+    dayLabel = "today";
+  } else if (targetKey === tomorrowKey) {
+    dayLabel = "tomorrow";
+  } else if (dayDiff > 0 && dayDiff < 7) {
+    dayLabel = new Intl.DateTimeFormat("en-NG", { timeZone: tz, weekday: "long" }).format(date);
+  } else {
+    const parts = new Intl.DateTimeFormat("en-NG", {
+      timeZone: tz,
+      weekday: "short",
+      day: "numeric",
+      month: "short"
+    }).formatToParts(date);
+    const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
+    const day = parts.find((p) => p.type === "day")?.value ?? "";
+    const month = parts.find((p) => p.type === "month")?.value ?? "";
+    dayLabel = `${weekday} ${day} ${month}`.trim();
+  }
+
+  if (dateOnly) return dayLabel;
+
+  const timeStr = new Intl.DateTimeFormat("en-NG", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).format(date);
+  const cleanTime = timeStr.toLowerCase().replace(/\s/g, "").replace(/:00(am|pm)$/, "$1");
+  return `${dayLabel} at ${cleanTime}`;
 }
 
 // Re-evaluate the greeting prefix at actual send time. Used by the deferred /
@@ -764,7 +829,10 @@ async function dispatchSms(
     ...vars,
     greeting: vars.greeting ?? greetingForTimezone(settings.timezone ?? "Africa/Lagos"),
     store_name: vars.store_name ?? (await loadStoreName(orgId)),
-    amount: vars.amount ? formatAmountForLocale(vars.amount) : (vars.amount ?? "")
+    amount: vars.amount ? formatAmountForLocale(vars.amount) : (vars.amount ?? ""),
+    scheduled_date: vars.scheduled_date
+      ? formatScheduledLabelNg(vars.scheduled_date, settings.timezone ?? "Africa/Lagos")
+      : (vars.scheduled_date ?? "")
   };
 
   const hasRepContactPlaceholder =
