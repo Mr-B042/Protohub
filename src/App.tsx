@@ -7895,6 +7895,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       cancelled = true;
     };
   }, [modal, selectedCartId]);
+
+  // If the cart-details modal is open for a cart that isn't in the loaded list
+  // (notification deep-link, paginated out, etc.), refresh carts so it appears.
+  useEffect(() => {
+    if (modal !== "cartDetails" || !selectedCartId) return;
+    if (abandonedCarts.some((cart) => cart.id === selectedCartId)) return;
+    let cancelled = false;
+    void cartsApi.list().then((rows) => {
+      if (cancelled || !Array.isArray(rows)) return;
+      setAbandonedCarts(rows.map((c: any) => ({
+        id:           c.id,
+        customer:     c.customer ?? "",
+        phone:        c.phone ?? "",
+        whatsapp:     c.whatsapp ?? undefined,
+        email:        c.email ?? undefined,
+        city:         c.city ?? undefined,
+        state:        c.state ?? undefined,
+        productId:    c.productId ?? c.product_id ?? undefined,
+        packageId:    c.packageId ?? c.package_id ?? undefined,
+        productName:  c.productName ?? c.product_name ?? "",
+        packageName:  c.packageName ?? c.package_name ?? "",
+        amount:       Number(c.amount ?? 0),
+        currency:     c.currency ?? "NGN",
+        source:       c.source ?? "Website",
+        status:       c.status ?? "Open abandoned",
+        assignedRepId:c.assignedRepId ?? c.assigned_rep_id ?? undefined,
+        lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
+        createdAt:    c.createdAt ?? c.created_at ?? ""
+      })) as any);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [modal, selectedCartId, abandonedCarts]);
   useEffect(() => {
     if (modal !== "orderDetails" || !selectedOrder?.sourceCartId || !isOwnerOrAdmin) {
       setSelectedOrderJourneyLoading(false);
@@ -42032,6 +42064,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              <div className="px-6 py-5 flex flex-col gap-4"><p>Delete <strong>{selectedOrder.id}</strong> for {selectedOrder.customer}?</p><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={deleteSelectedOrder}>Delete Order</button></div></div>
 	            )}
 
+	            {modal === "cartDetails" && !selectedCart && (
+	              <div className="px-6 py-8 flex flex-col items-center gap-3 text-center text-gray-500">
+	                <div className="w-8 h-8 border-2 border-gray-200 border-t-[#1F8FE0] rounded-full animate-spin" />
+	                <p className="text-sm font-semibold text-gray-700 m-0">Fetching cart {selectedCartId}...</p>
+	                <p className="text-xs text-gray-400 m-0">If this cart no longer exists, you'll see an error in a moment.</p>
+	              </div>
+	            )}
 	            {modal === "cartDetails" && selectedCart && (() => {
 	              const product = products.find((p) => p.id === selectedCart.productId);
 	              const pkg     = product?.packages.find((pk) => pk.id === selectedCart.packageId);
