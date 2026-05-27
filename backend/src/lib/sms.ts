@@ -68,7 +68,7 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
     body: "{{greeting}} {{customer}}, no rush — we'll hold your {{product_name}} order and check back on {{scheduled_date}}. If anything changes, give us a call. — {{store_name}}"
   },
   order_follow_up: {
-    body: "{{greeting}} {{customer}}, just checking in on your {{product_name}} order. We'll touch base on {{scheduled_date}}. — {{store_name}}"
+    body: "{{greeting}} {{customer}}, kindly note we will reach back on {{scheduled_date}} regarding your {{product_name}} order. {{rep_contact}}"
   },
   // Staff-facing — terse, scannable on a lock-screen notification preview.
   // Action verb up front so the rep sees what to do without unlocking.
