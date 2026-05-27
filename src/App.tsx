@@ -18153,6 +18153,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const normalisedPackageStateRestrictions = packageStateFilterMode === "all" ? [] : packageStateRestrictions;
     const normalisedPackageImageUrls = normalisePackageImageUrls(packageImageUrls);
+    const legacyPackageImageUrl = normalisedPackageImageUrls[0]?.startsWith("data:image/")
+      ? ""
+      : normalisedPackageImageUrls[0] ?? "";
     if (packageImageSyncToTiers && !currentPackageFormIsComboLike) {
       showToast("Gallery copy is only for combo package tiers. Mark this package as a combo first.");
       return;
@@ -18183,7 +18186,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       stateRestrictions: normalisedPackageStateRestrictions,
       requiresStateStock: packageRequiresStateStock,
       featuredComboCard: packageFeaturedComboCard,
-      imageUrl: normalisedPackageImageUrls[0] ?? "",
+      imageUrl: legacyPackageImageUrl,
       imageUrls: normalisedPackageImageUrls,
       packageComponents: normalisedComponents,
       companionProducts: normalisedCompanions
