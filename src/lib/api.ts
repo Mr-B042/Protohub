@@ -342,6 +342,8 @@ export const productsApi = {
   createPricing: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/pricings`, body),
   createPackage: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/packages`, body),
   updatePackage: (productId: string, pkgId: string, body: unknown) => patch<any>(`/api/products/${productId}/packages/${pkgId}`, body),
+  uploadPackageImage: (dataUrl: string, filename?: string) =>
+    post<{ url: string; path: string }>(`/api/products/package-images/upload`, { dataUrl, filename }),
   deletePricing: (productId: string, currency: string) => del<void>(`/api/products/${productId}/pricings/${currency}`),
   deletePackage: (productId: string, pkgId: string) => del<void>(`/api/products/${productId}/packages/${pkgId}`)
 };

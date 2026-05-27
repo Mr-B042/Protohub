@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -219,6 +220,60 @@ router.get("/:id/packages", async (req, res) => {
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });
+
+// ── POST /api/products/package-images/upload ─────────────
+// Accepts a base64 data URL from the inventory editor and uploads it to the
+// `package-images` Supabase Storage bucket. Returns the public CDN URL so the
+// frontend can store just the URL on the package row (instead of inline base64).
+const PackageImageUploadSchema = z.object({
+  dataUrl: z.string().regex(/^data:image\/(png|jpe?g|webp|svg\+xml);base64,/i),
+  filename: z.string().max(200).optional()
+});
+const MIME_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/svg+xml": "svg"
+};
+router.post("/package-images/upload",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const parsed = PackageImageUploadSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+    const match = parsed.data.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+    if (!match) {
+      res.status(400).json({ error: "Invalid image data URL." });
+      return;
+    }
+    const mime = match[1].toLowerCase();
+    const ext = MIME_EXT[mime];
+    if (!ext) {
+      res.status(400).json({ error: `Unsupported image type: ${mime}.` });
+      return;
+    }
+    const buffer = Buffer.from(match[2], "base64");
+    if (buffer.length > 10 * 1024 * 1024) {
+      res.status(413).json({ error: "Image exceeds 10 MB limit." });
+      return;
+    }
+    const orgId = req.user!.orgId;
+    const objectName = `${orgId}/${randomUUID()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("package-images")
+      .upload(objectName, buffer, { contentType: mime, upsert: false });
+    if (uploadError) {
+      logger.error("package image upload failed", { orgId, objectName, error: uploadError.message });
+      res.status(500).json({ error: uploadError.message });
+      return;
+    }
+    const { data: publicData } = supabase.storage.from("package-images").getPublicUrl(objectName);
+    res.status(201).json({ url: publicData.publicUrl, path: objectName });
+  }
+);
 
 // ── POST /api/products/:id/packages ──────────────────────
 const CompanionSchema = z.object({

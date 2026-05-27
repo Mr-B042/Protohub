@@ -18130,9 +18130,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ): Promise<{ savedPackage: ProductPackage | null; gallerySaved: boolean }> => {
     const imageUrls = normalisePackageImageUrls(gallery.imageUrls);
     const imageUrl = gallery.imageUrl && !gallery.imageUrl.startsWith("data:image/") ? gallery.imageUrl : "";
-    if (imageUrls.length === 0 && !imageUrl) {
-      return { savedPackage: null, gallerySaved: true };
-    }
+    // Always PATCH — empty arrays/strings must reach the backend so deletions persist.
     try {
       const savedPackage = await productsApi.updatePackage(productId, packageId, { imageUrl, imageUrls });
       return { savedPackage: savedPackage as ProductPackage, gallerySaved: true };
@@ -43071,25 +43069,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             setPackageImageUploading((count) => count + files.length);
                             files.forEach((file) => {
                               const reader = new FileReader();
-                              reader.onload = (readerEvent) => {
-                                if (packageImageUploadTokenRef.current !== uploadToken) return;
+                              const finishOne = () => {
+                                if (packageImageUploadTokenRef.current === uploadToken) {
+                                  setPackageImageUploading((count) => Math.max(0, count - 1));
+                                }
+                              };
+                              reader.onload = async (readerEvent) => {
+                                if (packageImageUploadTokenRef.current !== uploadToken) { finishOne(); return; }
                                 const dataUrl = String(readerEvent.target?.result ?? "");
-                                if (!dataUrl) return;
-                                setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, dataUrl]));
+                                if (!dataUrl) { finishOne(); return; }
+                                try {
+                                  const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
+                                  if (packageImageUploadTokenRef.current !== uploadToken) return;
+                                  setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, url]));
+                                } catch (err: any) {
+                                  if (packageImageUploadTokenRef.current === uploadToken) {
+                                    showToast(`Could not upload ${file.name}: ${err?.message ?? "try again"}.`);
+                                  }
+                                } finally {
+                                  finishOne();
+                                }
                               };
                               reader.onerror = () => {
                                 if (packageImageUploadTokenRef.current === uploadToken) {
                                   showToast(`Could not load ${file.name}. Try another image.`);
                                 }
-                              };
-                              reader.onloadend = () => {
-                                if (packageImageUploadTokenRef.current === uploadToken) {
-                                  setPackageImageUploading((count) => Math.max(0, count - 1));
-                                }
+                                finishOne();
                               };
                               reader.readAsDataURL(file);
                             });
-                            showToast(`${files.length} package image${files.length === 1 ? "" : "s"} added.`);
+                            showToast(`Uploading ${files.length} package image${files.length === 1 ? "" : "s"}...`);
                             event.target.value = "";
                           }}
                         />
