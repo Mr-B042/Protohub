@@ -133,6 +133,20 @@ async function checkProductOrg(productId: string | string[], orgId: string, res:
   return true;
 }
 
+const isMissingPackageOfferSyncColumnError = (
+  error: { message?: string; details?: string; hint?: string } | null | undefined
+) => /offer_sync_/i.test(`${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`);
+
+const withoutPackageOfferSyncColumns = (payload: Record<string, unknown>) => {
+  const {
+    offer_sync_enabled,
+    offer_sync_source_product_id,
+    offer_sync_source_package_id,
+    ...fallback
+  } = payload;
+  return fallback;
+};
+
 // ── GET /api/products/:id/pricings ────────────────────────
 router.get("/:id/pricings", async (req, res) => {
   if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
@@ -293,31 +307,39 @@ router.post("/:id/packages",
       offerSyncSourceProductId,
       offerSyncSourcePackageId
     } = parsed.data;
-    const { data, error } = await supabase
+    const insertPayload = {
+      product_id: req.params.id,
+      name,
+      description,
+      quantity,
+      price,
+      currency,
+      display_order: displayOrder,
+      active,
+      state_filter_mode: stateFilterMode,
+      state_restrictions: stateFilterMode === "all" ? [] : stateRestrictions,
+      requires_state_stock: requiresStateStock,
+      featured_combo_card: featuredComboCard,
+      image_url: imageUrl ?? null,
+      image_urls: imageUrls.filter((url) => url && url.trim()),
+      companion_products: companionProducts,
+      package_components: packageComponents,
+      offer_sync_enabled: offerSyncEnabled,
+      offer_sync_source_product_id: offerSyncEnabled ? offerSyncSourceProductId ?? null : null,
+      offer_sync_source_package_id: offerSyncEnabled ? offerSyncSourcePackageId ?? null : null
+    };
+    let { data, error } = await supabase
       .from("product_packages")
-      .insert({
-        product_id: req.params.id,
-        name,
-        description,
-        quantity,
-        price,
-        currency,
-        display_order: displayOrder,
-        active,
-        state_filter_mode: stateFilterMode,
-        state_restrictions: stateFilterMode === "all" ? [] : stateRestrictions,
-        requires_state_stock: requiresStateStock,
-        featured_combo_card: featuredComboCard,
-        image_url: imageUrl ?? null,
-        image_urls: imageUrls.filter((url) => url && url.trim()),
-        companion_products: companionProducts,
-        package_components: packageComponents,
-        offer_sync_enabled: offerSyncEnabled,
-        offer_sync_source_product_id: offerSyncEnabled ? offerSyncSourceProductId ?? null : null,
-        offer_sync_source_package_id: offerSyncEnabled ? offerSyncSourcePackageId ?? null : null
-      })
+      .insert(insertPayload)
       .select()
       .single();
+    if (error && isMissingPackageOfferSyncColumnError(error)) {
+      ({ data, error } = await supabase
+        .from("product_packages")
+        .insert(withoutPackageOfferSyncColumns(insertPayload))
+        .select()
+        .single());
+    }
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.status(201).json(data);
   }
@@ -374,13 +396,25 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.offerSyncSourceProductId !== undefined) updates.offer_sync_source_product_id = parsed.data.offerSyncEnabled === false ? null : parsed.data.offerSyncSourceProductId;
     if (parsed.data.offerSyncSourcePackageId !== undefined) updates.offer_sync_source_package_id = parsed.data.offerSyncEnabled === false ? null : parsed.data.offerSyncSourcePackageId;
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("product_packages")
       .update(updates)
       .eq("id", req.params.pkgId)
       .eq("product_id", req.params.id)
       .select()
       .single();
+    if (error && isMissingPackageOfferSyncColumnError(error)) {
+      const fallbackUpdates = withoutPackageOfferSyncColumns(updates);
+      if (Object.keys(fallbackUpdates).length > 0) {
+        ({ data, error } = await supabase
+          .from("product_packages")
+          .update(fallbackUpdates)
+          .eq("id", req.params.pkgId)
+          .eq("product_id", req.params.id)
+          .select()
+          .single());
+      }
+    }
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: "Package not found." }); return; }
 
@@ -393,7 +427,7 @@ router.patch("/:id/packages/:pkgId",
         .eq("offer_sync_source_product_id", req.params.id)
         .eq("offer_sync_source_package_id", req.params.pkgId)
         .neq("id", req.params.pkgId);
-      if (linkedUpdateError) {
+      if (linkedUpdateError && !isMissingPackageOfferSyncColumnError(linkedUpdateError)) {
         logger.error("package offer sync propagation failed", {
           productId: req.params.id,
           packageId: req.params.pkgId,

@@ -5820,6 +5820,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageFeaturedComboCard, setPackageFeaturedComboCard] = useState(false);
   const [packageImageUrls, setPackageImageUrls] = useState<string[]>([]);
   const [packageImageUrlDraft, setPackageImageUrlDraft] = useState("");
+  const [packageSaving, setPackageSaving] = useState(false);
   const [packageImageUploading, setPackageImageUploading] = useState(0);
   const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
@@ -17940,6 +17941,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     packageImageUploadTokenRef.current += 1;
     setPackageImageUrls([]);
     setPackageImageUrlDraft("");
+    setPackageSaving(false);
     setPackageImageUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
@@ -18140,7 +18142,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  const savePackage = () => {
+  const savePackage = async () => {
+    if (packageSaving) return;
     if (!selectedProduct || !packageName.trim()) {
       showToast("Package name is required.");
       return;
@@ -18250,77 +18253,82 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (count > 0) showToast(`Free gift copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
       }
     };
-    setProducts((value) =>
-      value.map((product) =>
-        product.id === selectedProduct.id
-          ? {
+    setPackageSaving(true);
+    try {
+      if (modal === "addPackage") {
+        const savedPackage = await productsApi.createPackage(_pkgProdId, packageDetailsPayload) as ProductPackage;
+        const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, savedPackage.id, packageGalleryPayload, packageRecord.name);
+        const finalSavedPackage = galleryResult.savedPackage ?? savedPackage;
+        setProducts((prev) =>
+          prev.map((product) => {
+            if (product.id !== _pkgProdId) return product;
+            const savedImages = savedPackageCarouselImagePatch(finalSavedPackage, galleryResult.gallerySaved ? packageRecord : undefined);
+            return {
               ...product,
-              packages:
-                modal === "editPackage"
-                  ? product.packages.map((item) => (item.id === packageRecord.id ? packageRecord : item))
-                  : [...product.packages, packageRecord]
-            }
-          : product
-      )
-    );
-    resetPackageForm();
-    closeModal();
-    showToast(`Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.`);
-    if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, packageDetailsPayload)
-        .then(async (savedPackage: any) => {
-          const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, (savedPackage as ProductPackage).id, packageGalleryPayload, packageRecord.name);
-          const finalSavedPackage = galleryResult.savedPackage ?? (savedPackage as ProductPackage);
-          replaceTemporaryPackageId(_pkgProdId, packageRecord.id, finalSavedPackage);
-          if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
-            syncPackageAssetsToTiers((savedPackage as ProductPackage).id, galleryResult.gallerySaved).catch((err: any) => {
-              showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
-            });
-          }
-        })
-        .catch((err: any) => {
-          setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
-          showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
-        });
-    } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packageDetailsPayload)
-        .then(async (savedPackage: any) => {
-          const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, selectedPackage.id, packageGalleryPayload, packageRecord.name);
-          const finalSavedPackage = galleryResult.savedPackage ?? (savedPackage as ProductPackage);
-          setProducts((prev) =>
-            prev.map((product) => {
-              if (product.id !== _pkgProdId) return product;
-              return {
-                ...product,
-                packages: product.packages.map((pkg) => {
-                  if (pkg.id !== selectedPackage.id) return pkg;
-                  const savedImages = savedPackageCarouselImagePatch(finalSavedPackage, packageRecord);
-                  return {
-                    ...pkg,
-                    ...finalSavedPackage,
-                    packageComponents: finalSavedPackage.packageComponents ?? normalisedComponents,
-                    companionProducts: finalSavedPackage.companionProducts ?? normalisedCompanions,
-                    stateFilterMode: finalSavedPackage.stateFilterMode ?? packageRecord.stateFilterMode,
-                    stateRestrictions: finalSavedPackage.stateRestrictions ?? packageRecord.stateRestrictions,
-                    requiresStateStock: finalSavedPackage.requiresStateStock ?? packageRecord.requiresStateStock,
-                    featuredComboCard: finalSavedPackage.featuredComboCard ?? packageRecord.featuredComboCard,
-                    imageUrl: savedImages.imageUrl,
-                    imageUrls: savedImages.imageUrls
-                  };
-                })
-              };
-            })
-          );
-          if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
-            syncPackageAssetsToTiers(selectedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
-              showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
-            });
-          }
-        })
-        .catch((err: any) => {
-          setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
-          showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
-        });
+              packages: [
+                ...product.packages,
+                {
+                  ...packageRecord,
+                  ...finalSavedPackage,
+                  packageComponents: finalSavedPackage.packageComponents ?? normalisedComponents,
+                  companionProducts: finalSavedPackage.companionProducts ?? normalisedCompanions,
+                  stateFilterMode: finalSavedPackage.stateFilterMode ?? packageRecord.stateFilterMode,
+                  stateRestrictions: finalSavedPackage.stateRestrictions ?? packageRecord.stateRestrictions,
+                  requiresStateStock: finalSavedPackage.requiresStateStock ?? packageRecord.requiresStateStock,
+                  featuredComboCard: finalSavedPackage.featuredComboCard ?? packageRecord.featuredComboCard,
+                  imageUrl: savedImages.imageUrl,
+                  imageUrls: savedImages.imageUrls
+                }
+              ]
+            };
+          })
+        );
+        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+          syncPackageAssetsToTiers(savedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
+            showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+          });
+        }
+      } else if (modal === "editPackage" && selectedPackage) {
+        const savedPackage = await productsApi.updatePackage(_pkgProdId, selectedPackage.id, packageDetailsPayload) as ProductPackage;
+        const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, selectedPackage.id, packageGalleryPayload, packageRecord.name);
+        const finalSavedPackage = galleryResult.savedPackage ?? savedPackage;
+        setProducts((prev) =>
+          prev.map((product) => {
+            if (product.id !== _pkgProdId) return product;
+            return {
+              ...product,
+              packages: product.packages.map((pkg) => {
+                if (pkg.id !== selectedPackage.id) return pkg;
+                const savedImages = savedPackageCarouselImagePatch(finalSavedPackage, galleryResult.gallerySaved ? packageRecord : undefined);
+                return {
+                  ...pkg,
+                  ...finalSavedPackage,
+                  packageComponents: finalSavedPackage.packageComponents ?? normalisedComponents,
+                  companionProducts: finalSavedPackage.companionProducts ?? normalisedCompanions,
+                  stateFilterMode: finalSavedPackage.stateFilterMode ?? packageRecord.stateFilterMode,
+                  stateRestrictions: finalSavedPackage.stateRestrictions ?? packageRecord.stateRestrictions,
+                  requiresStateStock: finalSavedPackage.requiresStateStock ?? packageRecord.requiresStateStock,
+                  featuredComboCard: finalSavedPackage.featuredComboCard ?? packageRecord.featuredComboCard,
+                  imageUrl: savedImages.imageUrl,
+                  imageUrls: savedImages.imageUrls
+                };
+              })
+            };
+          })
+        );
+        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+          syncPackageAssetsToTiers(selectedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
+            showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+          });
+        }
+      }
+      showToast(`Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.`);
+      resetPackageForm();
+      closeModal();
+    } catch (err: any) {
+      showToast(`Failed to ${modal === "addPackage" ? "add" : "save"} package: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setPackageSaving(false);
     }
   };
 
@@ -43723,7 +43731,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                 </section>
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageImageUploading > 0} onClick={savePackage}>{packageImageUploading > 0 ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving} onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving || packageImageUploading > 0} onClick={savePackage}>{packageSaving ? "Saving package..." : packageImageUploading > 0 ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
               </div>
             )}
 
