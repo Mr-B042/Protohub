@@ -410,7 +410,7 @@ function packageIsComboLike(pkg: PublicPackage) {
 }
 
 function packageImageList(pkg: PublicPackage) {
-  return Array.from(new Set([...(pkg.imageUrls ?? []), pkg.imageUrl ?? ""].map((url) => url.trim()).filter(Boolean))).slice(0, 10);
+  return Array.from(new Set([...(pkg.imageUrls ?? []), pkg.imageUrl ?? ""].map((url) => url.trim()).filter(Boolean))).slice(0, 15);
 }
 
 function primaryPricing(product: PublicProduct) {

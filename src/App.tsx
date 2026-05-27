@@ -3759,7 +3759,7 @@ const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]
   mode === "allow" || mode === "block" ? mode : "all";
 const PACKAGE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
-  Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 10);
+  Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 15);
 const packageCarouselImages = (pkg: Pick<ProductPackage, "imageUrl" | "imageUrls">) => {
   const gallery = normalisePackageImageUrls(pkg.imageUrls);
   return gallery.length > 0 ? gallery : normalisePackageImageUrls([pkg.imageUrl]);
@@ -43139,7 +43139,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </p>
                         )}
                       </div>
-                      <span className="text-[11px] font-bold text-amber-800">{packageImageUrls.length}/10 images</span>
+                      <span className="text-[11px] font-bold text-amber-800">{packageImageUrls.length}/15 images</span>
                     </div>
                     <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${canSyncPackageGalleryToComboTiers ? "border-sky-100 bg-sky-50/70" : "border-gray-100 bg-gray-50"}`}>
                       <input
