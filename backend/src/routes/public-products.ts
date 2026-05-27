@@ -73,6 +73,7 @@ type DbPackage = {
 type DbProduct = {
   id: string; org_id: string;
   name: string; description: string | null;
+  package_description?: string | null;
   active: boolean; available_states: string[] | null;
   catalog_type?: "standard" | "combo_only" | null;
   can_be_cross_sell: boolean | null; can_be_free_gift: boolean | null;
@@ -170,6 +171,7 @@ const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<
   orgId:                       p.org_id,
   name:                        p.name,
   description:                 p.description ?? "",
+  packageDescription:          p.package_description ?? "",
   active:                      p.active,
   catalogType:                 p.catalog_type ?? "standard",
   availableStates:             p.available_states ?? [],
@@ -271,7 +273,7 @@ const buildCompanionSocialProof = async (product: DbProduct) => {
 };
 
 const PUBLIC_PRODUCT_SELECT = `
-  id, org_id, name, description, active, available_states, catalog_type,
+  id, org_id, name, description, package_description, active, available_states, catalog_type,
   can_be_cross_sell, can_be_free_gift,
   cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
   free_gift_product_ids, free_gift_state_restrictions,

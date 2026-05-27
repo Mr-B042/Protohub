@@ -8902,6 +8902,17 @@ article.public-order-card.public-form-clean .public-package-option__meta {
     font-size: 14px !important;
     line-height: 1.45 !important;
   }
+  article.public-order-card.public-form-clean .public-package-picker-note {
+    margin: -2px 0 10px !important;
+    padding: 10px 12px !important;
+    border: 1px solid #dbeafe !important;
+    border-radius: 14px !important;
+    background: #eff6ff !important;
+    color: #1e3a8a !important;
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+    font-weight: 700 !important;
+  }
   article.public-order-card.public-form-clean .package-picker-clean > .public-package-option--compact {
     display: flex !important;
     align-items: flex-start !important;
@@ -8932,7 +8943,11 @@ article.public-order-card.public-form-clean .public-package-option__meta {
     font-weight: 800 !important;
   }
   article.public-order-card.public-form-clean .public-package-option--compact .public-package-option__description {
-    display: none !important;
+    display: block !important;
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+    color: #4b5563 !important;
+    margin-top: 2px !important;
   }
   article.public-order-card.public-form-clean .public-package-option--compact .public-package-option__components {
     font-size: 12px !important;

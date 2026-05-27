@@ -93,6 +93,7 @@ type PublicProduct = {
   orgId: string;
   name: string;
   description: string;
+  packageDescription?: string;
   active: boolean;
   availableStates?: string[];
   freeGiftProductIds?: string[];
@@ -3409,6 +3410,24 @@ export default function PublicOrderFormPage() {
               <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", color: "#111827" }}>
                 SELECT YOUR PACKAGE *
               </div>
+              {publicProduct.packageDescription?.trim() && (
+                <p
+                  className="public-package-picker-note"
+                  style={{
+                    margin: "-2px 0 10px",
+                    padding: "10px 12px",
+                    border: "1px solid #dbeafe",
+                    borderRadius: 14,
+                    background: "#eff6ff",
+                    color: "#1e3a8a",
+                    fontSize: 13,
+                    lineHeight: 1.45,
+                    fontWeight: 700
+                  }}
+                >
+                  {publicProduct.packageDescription.trim()}
+                </p>
+              )}
               <div className="package-picker package-picker-clean" style={{ display: "grid", gap: 12 }}>
                 {orderablePublicPackages.length === 0 ? (
                   <div style={{ border: "1px solid #dbeafe", borderRadius: 18, padding: 16, background: "#eff6ff", color: "#1e3a8a" }}>
@@ -3448,6 +3467,8 @@ export default function PublicOrderFormPage() {
                     }));
                   };
                   const componentSummary = packageComponentSummary(item, products);
+                  const packageDescriptionText = item.description.trim();
+                  const packageDetailText = packageDescriptionText || componentSummary || `${item.quantity} ${item.quantity === 1 ? "unit" : "units"}`;
                   const freeGiftItems = packageFreeGiftItems(item, products);
                   const freeGiftQuantity = freeGiftItems.reduce((sum, gift) => sum + gift.quantity, 0);
                   const freeGiftBadge = `${freeGiftQuantity} FREE GIFT${freeGiftQuantity === 1 ? "" : "S"}`;
@@ -3591,10 +3612,10 @@ export default function PublicOrderFormPage() {
                             )}
                           </div>
                           <div className="public-package-option__title" style={{ fontWeight: 900, fontSize: 17, color: "#111827", lineHeight: 1.2 }}>{title}</div>
-                          <div className="public-package-option__description" style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
-                            {item.description || componentSummary || `${item.quantity} ${item.quantity === 1 ? "unit" : "units"}`}
+                          <div className={`public-package-option__description ${packageDescriptionText ? "public-package-option__description--custom" : "public-package-option__description--fallback"}`} style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
+                            {packageDetailText}
                           </div>
-                          {componentSummary && item.description && (
+                          {componentSummary && packageDescriptionText && (
                             <div className="public-package-option__components" style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
                           )}
                           {freeGiftItems.length > 0 && (
