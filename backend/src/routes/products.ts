@@ -244,7 +244,7 @@ const PackageSchema = z.object({
   price:        z.number().min(0),
   currency:     z.enum(["NGN", "USD", "GBP"]).default("NGN"),
   displayOrder: z.number().int().default(0),
-  active:       z.boolean().default(true),
+  active:       z.boolean().default(false),
   stateFilterMode:   z.enum(["all", "allow", "block"]).default("all"),
   stateRestrictions: z.array(z.string()).default([]),
   requiresStateStock: z.boolean().default(false),

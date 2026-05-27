@@ -5810,6 +5810,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packagePrice, setPackagePrice] = useState("0");
   const [packageCurrency, setPackageCurrency] = useState<ProductCurrencyCode>("NGN");
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
+  const [packageActive, setPackageActive] = useState(false);
   const [packageComponents, setPackageComponents] = useState<PackageComponent[]>([]);
   const [packageCompanions, setPackageCompanions] = useState<PackageCompanion[]>([]);
   const [packageStateFilterMode, setPackageStateFilterMode] = useState<"all" | "allow" | "block">("all");
@@ -17928,6 +17929,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice("0");
     setPackageCurrency("NGN");
     setPackageDisplayOrder("1");
+    setPackageActive(false);
     setPackageComponents([]);
     setPackageCompanions([]);
     setPackageStateFilterMode("all");
@@ -17961,6 +17963,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice(String(item.price));
     setPackageCurrency(item.currency);
     setPackageDisplayOrder(String(item.displayOrder));
+    setPackageActive(item.active !== false);
     setPackageComponents((item.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((item.companionProducts ?? []).map(normalisePackageCompanion));
     setPackageStateFilterMode(normalisePackageStateFilterMode(item.stateFilterMode));
@@ -18174,7 +18177,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       price: Math.max(0, Number(packagePrice) || 0),
       currency: packageCurrency,
       displayOrder: Math.max(1, Number(packageDisplayOrder) || 1),
-      active: modal === "editPackage" && selectedPackage ? selectedPackage.active : true,
+      active: packageActive,
       stateFilterMode: packageStateFilterMode,
       stateRestrictions: normalisedPackageStateRestrictions,
       requiresStateStock: packageRequiresStateStock,
@@ -18231,7 +18234,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     resetPackageForm();
     closeModal();
-    showToast(`Package "${packageRecord.name}" saved.`);
+    showToast(`Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.`);
     if (modal === "addPackage") {
       productsApi.createPackage(_pkgProdId, packagePayload)
         .then((savedPackage: any) => {
@@ -18304,6 +18307,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...item,
       id: makePackageId(),
       name: `${item.name} (Copy)`,
+      active: false,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
       packageComponents: item.packageComponents ? item.packageComponents.map((component) => normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })) : [],
       companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
@@ -18330,7 +18334,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setProducts((prev) => prev.map((p) => p.id === _dupProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
       showToast(`Failed to duplicate "${item.name}": ${err?.message ?? "please retry"}.`);
     });
-    showToast(`Duplicated "${item.name}".`);
+    showToast(`Duplicated "${item.name}" as a draft.`);
   };
 
   const duplicatePackageScaled = (item: ProductPackage, multiplier: number) => {
@@ -18350,6 +18354,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       id: makePackageId(),
       name: scalePackageNameForMultiplier(item.name, multiplier),
       description: autoDescription || item.description,
+      active: false,
       quantity: Math.max(1, item.quantity * multiplier),
       price: Math.round((item.price * multiplier + Number.EPSILON) * 100) / 100,
       displayOrder: (selectedProduct.packages.reduce((m, p) => Math.max(m, p.displayOrder), 0) || 0) + 1,
@@ -18382,10 +18387,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setProducts((prev) => prev.map((p) => p.id === _scaleProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
       showToast(`Failed to create x${multiplier} bundle: ${err?.message ?? "please retry"}.`);
     });
-    showToast(`Created "${clone.name}" as an x${multiplier} combo copy. Adjust the price if you want a bundle discount.`);
+    showToast(`Created "${clone.name}" as a draft x${multiplier} combo copy. Adjust it, then Go live when ready.`);
   };
 
-  // Toggle active/inactive — quick action from the package row.
+  // Toggle live/draft — quick action from the package row.
   const togglePackageActive = (item: ProductPackage) => {
     if (!selectedProduct) return;
     if (isTemporaryPackageId(item.id)) {
@@ -18400,13 +18405,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, active: next } : pkg) }
         : p)
     );
+    showToast(`${item.name} is now ${next ? "live on the customer form" : "saved as draft"}.`);
     productsApi.updatePackage(selectedProduct.id, item.id, { active: next }).catch((err: any) => {
       setProducts((value) =>
         value.map((p) => p.id === _tpProdId
           ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, active: prev } : pkg) }
           : p)
       );
-      showToast(`Failed to ${next ? "activate" : "deactivate"} package: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to ${next ? "publish" : "draft"} package: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -39476,9 +39482,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <button
                                   type="button"
                                   onClick={() => togglePackageActive(item)}
-                                  title={`Click to ${item.active ? "deactivate" : "activate"}`}
-                                  className={`!min-h-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold cursor-pointer transition-colors ${item.active ? "bg-green-50 text-green-700 hover:bg-green-100" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}
-                                >{item.active ? "Active" : "Inactive"}</button>
+                                  title={item.active ? "Hide this package from the public form" : "Go live with this package on the public form"}
+                                  className={`!min-h-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${item.active ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                                >{item.active ? "Live" : "Draft"}</button>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="flex items-center gap-1">
@@ -42806,6 +42812,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {(modal === "addPackage" || modal === "editPackage") && selectedProduct && (
               <div className="modal-form">
                 <p>{selectedProduct.name}</p>
+                <label className={`!flex-row items-start gap-3 rounded-xl border px-4 py-3 ${packageActive ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30"}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-1 w-4 h-4 accent-emerald-600"
+                    checked={packageActive}
+                    onChange={(event) => setPackageActive(event.target.checked)}
+                  />
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    <strong className={`block ${packageActive ? "text-emerald-800 dark:text-emerald-100" : "text-amber-800 dark:text-amber-100"}`}>
+                      {packageActive ? "Live on customer form" : "Draft package"}
+                    </strong>
+                    {packageActive
+                      ? "Customers can see and pick this package right now."
+                      : "Hidden from the public order form while you build, price, add images, or test it."}
+                  </div>
+                </label>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
