@@ -135,7 +135,7 @@ export async function packageHasAgentStateStock(
     .from("agents")
     .select("zone, primary_base_state, coverage:agent_coverage(state, active), locations:agent_locations(active, stock:agent_location_stock(product_id, quantity))")
     .eq("org_id", orgId)
-    .eq("active", true);
+    .eq("status", "Active");
   if (error) throw error;
 
   const availableByProduct = serviceableAgentStockByProductForState(
