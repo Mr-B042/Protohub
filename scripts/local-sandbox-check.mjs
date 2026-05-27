@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
@@ -74,6 +75,41 @@ function labelUrl(value) {
   }
 }
 
+function migrationVersionsFromFiles() {
+  const migrationsDir = path.join(backendRoot, "supabase", "migrations");
+  if (!fs.existsSync(migrationsDir)) return [];
+  return fs.readdirSync(migrationsDir)
+    .map((name) => name.match(/^(\d+)_.*\.sql$/)?.[1])
+    .filter(Boolean)
+    .sort();
+}
+
+function localMigrationDbUrl(env) {
+  if (env.LOCAL_SUPABASE_DB_URL) return env.LOCAL_SUPABASE_DB_URL;
+  try {
+    const parsed = new URL(env.SUPABASE_URL ?? "");
+    const isLocalSupabase = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+    if (!isLocalSupabase || parsed.port !== "54321") return "";
+    const host = parsed.hostname === "::1" ? "[::1]" : parsed.hostname;
+    return `postgresql://postgres:postgres@${host}:54322/postgres`;
+  } catch {
+    return "";
+  }
+}
+
+function appliedMigrationVersions(dbUrl) {
+  const output = execFileSync(
+    "psql",
+    [
+      dbUrl,
+      "-Atc",
+      "select version from supabase_migrations.schema_migrations order by version;"
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  return new Set(output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+}
+
 const frontendEnv = mergeEnv(
   parseEnvFile(path.join(repoRoot, ".env")),
   parseEnvFile(path.join(repoRoot, ".env.local")),
@@ -144,11 +180,30 @@ if (!readFalse(backendEnv.ENABLE_WHATSAPP_RUNTIME)) {
   warnings.push("ENABLE_WHATSAPP_RUNTIME is not disabled in env files. backend dev:local disables it at runtime.");
 }
 
+const migrationDbUrl = localMigrationDbUrl(backendEnv);
+if (migrationDbUrl) {
+  try {
+    const expectedVersions = migrationVersionsFromFiles();
+    const appliedVersions = appliedMigrationVersions(migrationDbUrl);
+    const missingVersions = expectedVersions.filter((version) => !appliedVersions.has(version));
+    if (missingVersions.length > 0) {
+      errors.push(
+        `local Supabase is missing migrations: ${missingVersions.join(", ")}. Run: cd backend && supabase db push --local --include-all --yes`
+      );
+    }
+  } catch (error) {
+    errors.push(
+      `could not verify local Supabase migrations (${error?.message ?? "unknown error"}). Start Supabase locally or set LOCAL_SUPABASE_DB_URL.`
+    );
+  }
+}
+
 console.log("Local sandbox check");
 console.log(`- Frontend API: ${labelUrl(frontendEnv.VITE_API_URL || "http://localhost:4000")}`);
 console.log(`- Backend data mode: ${backendEnv.LOCAL_DATA_MODE || "(not set)"}`);
 console.log(`- Backend mock/test flag: ${readBool(backendEnv.LOCAL_DATABASE_IS_MOCK) ? "yes" : "no"}`);
 console.log(`- Backend Supabase host: ${labelUrl(backendEnv.SUPABASE_URL)}`);
+console.log(`- Local migrations: ${migrationDbUrl ? "verified" : "not checked (non-local Supabase URL)"}`);
 
 for (const warning of warnings) {
   console.warn(`Warning: ${warning}`);
