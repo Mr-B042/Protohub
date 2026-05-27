@@ -4743,6 +4743,7 @@ const SMART_STOCK_DORMANT_DAYS = 21;
 const SMART_STOCK_CRITICAL_DAYS_COVER = 2;
 const SMART_STOCK_WATCH_DAYS_COVER = 5;
 const SMART_STOCK_NOTIFICATION_LIMIT = 6;
+const SMART_STOCK_LOW_STOCK_THRESHOLD_MAX = 999999;
 
 const DEFAULT_SMART_STOCK_RULES: SmartStockRules = {
   demandLookbackDays: SMART_STOCK_LOOKBACK_DAYS,
@@ -4769,7 +4770,7 @@ const sanitizeSmartStockRules = (value?: Partial<SmartStockRules> | null): Smart
     criticalDaysCover,
     clampSmartStockNumber(value?.watchDaysCover, DEFAULT_SMART_STOCK_RULES.watchDaysCover, 1, 60)
   );
-  const lowStockThreshold = clampSmartStockNumber(value?.lowStockThreshold, DEFAULT_SMART_STOCK_RULES.lowStockThreshold, 0, 1000);
+  const lowStockThreshold = clampSmartStockNumber(value?.lowStockThreshold, DEFAULT_SMART_STOCK_RULES.lowStockThreshold, 0, SMART_STOCK_LOW_STOCK_THRESHOLD_MAX);
   return { demandLookbackDays, dormantDays, criticalDaysCover, watchDaysCover, lowStockThreshold };
 };
 
@@ -8563,30 +8564,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     return legacyRows.length > 0 ? [...directRows, ...legacyRows] : directRows;
   };
-  const agentLowStockAlerts = smartStockLowStockThreshold <= 0
-    ? []
-    : inventoryStateHubRows
-        .flatMap(({ agent, location }) =>
-          stockRowsForStateHub(agent, location).flatMap((stock) => {
-            const quantity = Math.max(0, Number(stock.quantity ?? 0));
-            if (quantity <= 0 || quantity > smartStockLowStockThreshold) return [];
-            const product = catalogProductById.get(stock.productId);
-            if (!product) return [];
-            return [{
-              id: `${agent.id}::${location.id}::${stock.productId}`,
-              agentId: agent.id,
-              agentName: agent.name,
-              locationId: location.id,
-              locationName: agentLocationLabel(location),
-              state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
-              productId: product.id,
-              productName: product.name,
-              quantity,
-              threshold: smartStockLowStockThreshold
-            }];
-          })
-        )
-        .sort((a, b) => a.quantity - b.quantity || a.agentName.localeCompare(b.agentName) || a.productName.localeCompare(b.productName));
+  const agentLowStockAlerts = inventoryStateHubRows
+    .flatMap(({ agent, location }) =>
+      stockRowsForStateHub(agent, location).flatMap((stock) => {
+        const quantity = Math.max(0, Number(stock.quantity ?? 0));
+        if (quantity > smartStockLowStockThreshold) return [];
+        const product = catalogProductById.get(stock.productId);
+        if (!product) return [];
+        return [{
+          id: `${agent.id}::${location.id}::${stock.productId}`,
+          agentId: agent.id,
+          agentName: agent.name,
+          locationId: location.id,
+          locationName: agentLocationLabel(location),
+          state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
+          productId: product.id,
+          productName: product.name,
+          quantity,
+          threshold: smartStockLowStockThreshold
+        }];
+      })
+    )
+    .sort((a, b) => a.quantity - b.quantity || a.agentName.localeCompare(b.agentName) || a.productName.localeCompare(b.productName));
   const totalLowStockAlertCount = warehouseLowStockProducts.length + agentLowStockAlerts.length;
   const agentLowStockStateOptions = Array.from(new Set(agentLowStockAlerts.map((alert) => alert.state))).sort((a, b) => a.localeCompare(b));
   const agentLowStockSearchTerm = agentLowStockSearch.trim().toLowerCase();
@@ -18623,7 +18622,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     nextQty: number,
     location?: DeliveryAgentLocation | null
   ) => {
-    if (!agent || smartStockLowStockThreshold <= 0) return;
+    if (!agent) return;
     const safePrevious = Math.max(0, Number(previousQty ?? 0));
     const safeNext = Math.max(0, Number(nextQty ?? 0));
     if (safePrevious <= smartStockLowStockThreshold || safeNext > smartStockLowStockThreshold) return;
@@ -38299,7 +38298,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       { key: "dormantDays", label: "Dormant window", helper: "No orders for this many days means not urgent.", min: 1, max: 120 },
                       { key: "criticalDaysCover", label: "Critical cover", helper: "Red/orange when stock may not last this many days.", min: 1, max: 30 },
                       { key: "watchDaysCover", label: "Watch cover", helper: "Warn when stock may not last this many days.", min: 1, max: 60 },
-                      { key: "lowStockThreshold", label: "Low stock qty", helper: "State/hub quantity that counts as low.", min: 0, max: 1000 }
+                      { key: "lowStockThreshold", label: "Low stock qty", helper: "State/hub quantity that counts as low. Use 0 for stockout-only.", min: 0, max: SMART_STOCK_LOW_STOCK_THRESHOLD_MAX }
                     ] as const).map((field) => (
                       <label key={field.key} className="flex flex-col gap-1.5">
                         <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{field.label}</span>
@@ -38867,7 +38866,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex flex-col gap-1">
                     <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1F8FE0]">Agent Hubs Low Stock</h1>
-                    <p className="text-sm font-medium text-gray-500">Every agent hub product at or below {smartStockLowStockThreshold} units, organized so restocking decisions are easy.</p>
+                    <p className="text-sm font-medium text-gray-500">Every agent hub product at or below your chosen quantity, organized so restocking decisions are easy.</p>
                   </div>
                   <button className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50" onClick={openInventoryStateStockRoute}>
                     <MapPin className="h-4 w-4" />
@@ -38884,7 +38883,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div>
                         <h2 className="text-sm font-extrabold text-amber-950">Simple rule</h2>
                         <p className="m-0 mt-1 text-sm leading-6 text-amber-900">
-                          If a hub shows here, that agent is holding only a small quantity of that item. Restock the lowest quantities first, especially if the item is also receiving orders.
+                          Choose any quantity check you want. Use 0 for stockout-only, 1 for almost finished, or a bigger number when you want to plan restock earlier.
                         </p>
                       </div>
                     </div>
@@ -38910,7 +38909,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </section>
 
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Quantity check</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={SMART_STOCK_LOW_STOCK_THRESHOLD_MAX}
+                        value={smartStockLowStockThreshold}
+                        onChange={(event) => {
+                          const value = event.target.value === "" ? 0 : Number(event.target.value);
+                          setSmartStockRules((current) => sanitizeSmartStockRules({ ...current, lowStockThreshold: value }));
+                        }}
+                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                      />
+                      <span className="block text-[10px] leading-4 text-gray-400">Shows hubs with stock at or below this number.</span>
+                    </label>
                     <label className="space-y-1">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
                       <select
@@ -38976,7 +38990,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
                     <Archive className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                     <p className="text-sm font-bold text-gray-700">No low-stock agent hubs match this view</p>
-                    <p className="text-xs text-gray-500 mt-1">Try clearing filters or lowering the smart-stock threshold in Settings.</p>
+                    <p className="text-xs text-gray-500 mt-1">Try clearing filters or changing the quantity check above.</p>
                   </section>
                 ) : (
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -39090,7 +39104,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                   <strong className="block">Simple stock guide</strong>
-                  <span className="text-xs leading-5 text-blue-900">No stock = <strong>0</strong> unit. Low stock = <strong>1 to {smartStockLowStockThreshold}</strong> units. Enough = <strong>{smartStockLowStockThreshold + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</span>
+                  <span className="text-xs leading-5 text-blue-900">
+                    {smartStockLowStockThreshold <= 0
+                      ? <>Stockout watch = <strong>0</strong> unit. Enough = <strong>1+</strong> units. This view uses live agent hub stock, not warehouse stock.</>
+                      : <>No stock = <strong>0</strong> unit. Low stock = <strong>1 to {smartStockLowStockThreshold}</strong> units. Enough = <strong>{smartStockLowStockThreshold + 1}+</strong> units. This view uses live agent hub stock, not warehouse stock.</>}
+                  </span>
                 </div>
 
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
@@ -39375,46 +39393,62 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 text-sm">No packages found. Create a package before generating an embed form.</td></tr>
                         ) : (
                           [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder).map((item, sortedIdx, sortedArr) => {
+                            const packageComponentCount = item.packageComponents?.length ?? 0;
                             const freeGiftCount = (item.packageComponents ?? []).filter((component) => component.isFreeGift).length;
+                            const extraOfferCount = item.companionProducts?.length ?? 0;
+                            const hasStateRule = (item.stateFilterMode ?? "all") !== "all";
+                            const hasCarousel = isComboLikePackage(item) && (item.imageUrls?.length ?? 0) > 1;
+                            const hasContentBadges = packageComponentCount > 0 || freeGiftCount > 0 || extraOfferCount > 0;
+                            const hasRuleBadges = hasStateRule || item.requiresStateStock || item.featuredComboCard || hasCarousel;
                             return (
                             <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="px-4 py-4 font-bold text-gray-900">
-                                {item.name}
-                                {(item.packageComponents?.length ?? 0) > 0 && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 align-middle" title={`${item.packageComponents!.length} stock component${item.packageComponents!.length === 1 ? "" : "s"}`}>
-                                    {item.packageComponents!.length} stock item{item.packageComponents!.length === 1 ? "" : "s"}
-                                  </span>
-                                )}
-                                {freeGiftCount > 0 && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 align-middle" title={`${freeGiftCount} free gift${freeGiftCount === 1 ? "" : "s"} included`}>
-                                    {freeGiftCount} free gift{freeGiftCount === 1 ? "" : "s"}
-                                  </span>
-                                )}
-                                {(item.companionProducts?.length ?? 0) > 0 && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#1F8FE0] align-middle" title={`${item.companionProducts!.length} extra offer${item.companionProducts!.length === 1 ? "" : "s"}`}>
-                                    +{item.companionProducts!.length} offer{item.companionProducts!.length === 1 ? "" : "s"}
-                                  </span>
-                                )}
-                                {(item.stateFilterMode ?? "all") !== "all" && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 align-middle">
-                                    {item.stateFilterMode === "allow" ? "State-only" : "State-hidden"}
-                                  </span>
-                                )}
-                                {item.requiresStateStock && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 align-middle">
-                                    Stock-gated
-                                  </span>
-                                )}
-                                {item.featuredComboCard && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 align-middle">
-                                    Featured
-                                  </span>
-                                )}
-                                {isComboLikePackage(item) && (item.imageUrls?.length ?? 0) > 1 && (
-                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-700 align-middle">
-                                    Carousel
-                                  </span>
-                                )}
+                              <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
+                                <div className="flex flex-col gap-2">
+                                  <span className="leading-tight">{item.name}</span>
+                                  {hasContentBadges && (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {packageComponentCount > 0 && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 whitespace-nowrap" title={`${packageComponentCount} stock component${packageComponentCount === 1 ? "" : "s"}`}>
+                                          {packageComponentCount} stock item{packageComponentCount === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                      {freeGiftCount > 0 && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap" title={`${freeGiftCount} free gift${freeGiftCount === 1 ? "" : "s"} included`}>
+                                          {freeGiftCount} free gift{freeGiftCount === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                      {extraOfferCount > 0 && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-[#1F8FE0] whitespace-nowrap" title={`${extraOfferCount} extra offer${extraOfferCount === 1 ? "" : "s"}`}>
+                                          +{extraOfferCount} offer{extraOfferCount === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {hasRuleBadges && (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {hasStateRule && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 whitespace-nowrap" title={item.stateFilterMode === "allow" ? "Only selected states can see this package" : "Selected states cannot see this package"}>
+                                          {item.stateFilterMode === "allow" ? "State-only" : "State-hidden"}
+                                        </span>
+                                      )}
+                                      {item.requiresStateStock && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap" title="Requires available agent stock in the customer's state">
+                                          Stock-gated
+                                        </span>
+                                      )}
+                                      {item.featuredComboCard && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 whitespace-nowrap" title="Uses featured combo styling on the public form">
+                                          Featured
+                                        </span>
+                                      )}
+                                      {hasCarousel && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-700 whitespace-nowrap" title={`${item.imageUrls!.length} package images available`}>
+                                          Carousel
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-4 py-4 text-gray-600">
                                 {item.description || summarizePackageComponents(item.packageComponents, products) || "-"}
@@ -39800,8 +39834,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                              Agent hubs
-                              {smartStockLowStockThreshold > 0 ? ` <= ${smartStockLowStockThreshold}` : ""}
+                              Agent hubs &lt;= {smartStockLowStockThreshold}
                             </span>
                             <p className="m-0 mt-0.5 text-xs text-amber-700">Organized in the Agent Hubs tab by agent, hub, product, and urgency.</p>
                           </div>
