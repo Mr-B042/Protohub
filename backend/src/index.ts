@@ -187,7 +187,7 @@ const authRateLimit = rateLimit({
 });
 
 // ── Body parsing ──────────────────────────────────────────
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "12mb" }));
 
 // ── Request logger (before routes so every request is captured) ───
 app.use((req, _res, next) => {
@@ -246,7 +246,11 @@ app.use("/api/push",            pushRoutes);
 app.use("/api/users",           userRoutes);
 
 // ── Global error handler ──────────────────────────────────
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error & { status?: number; type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err.status === 413 || err.type === "entity.too.large") {
+    res.status(413).json({ error: "Upload is too large. Use fewer carousel images or compress them before saving." });
+    return;
+  }
   logger.error("unhandled error", { message: err.message, stack: err.stack?.split("\n")[1]?.trim() });
   res.status(500).json({ error: "Internal server error." });
 });

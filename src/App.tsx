@@ -56,11 +56,9 @@ import {
   ShoppingCart,
   Sun,
   Siren,
-  Tag,
   ToggleLeft,
   ToggleRight,
   TrendingUp,
-  Music2,
   Globe,
   Gauge,
   Gift,
@@ -76,9 +74,6 @@ import {
   ChevronDown,
   ChevronUp,
   MapPin,
-  Facebook,
-  Instagram,
-  Youtube,
   Mail,
   PieChart,
   BarChart3,
@@ -88,6 +83,7 @@ import {
   Laptop,
   Apple
 } from "lucide-react";
+import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
@@ -2034,6 +2030,56 @@ const adTrackingSourceLabel = (key: string) => {
         .join(" ");
   }
 };
+const orderDisplaySourceLabelFromKey = (key: string) => {
+  switch (key) {
+    case "fb":
+      return "Facebook";
+    case "ig":
+      return "Instagram";
+    case "an":
+      return "Audience Network";
+    case "th":
+      return "Threads";
+    case "ms":
+      return "Messenger";
+    case "wa":
+      return "WhatsApp";
+    case "tt":
+      return "TikTok";
+    case "website":
+      return "Website";
+    default:
+      return key
+        .split("-")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+  }
+};
+const orderDisplaySourceFor = (order: Pick<TrackedOrder, "source" | "utmSource">) => {
+  const utmKey = normalizeAdTrackingSource(order.utmSource);
+  if (utmKey) {
+    return {
+      key: utmKey,
+      label: orderDisplaySourceLabelFromKey(utmKey)
+    };
+  }
+
+  const storedSource = order.source?.trim() ?? "";
+  const storedKey = normalizeAdTrackingSource(storedSource);
+  if (storedKey) {
+    return {
+      key: storedKey,
+      label: orderDisplaySourceLabelFromKey(storedKey)
+    };
+  }
+
+  const fallbackLabel = storedSource || orderSourceFromUtm(order.utmSource);
+  return {
+    key: fallbackLabel ? fallbackLabel.toLowerCase().replace(/\s+/g, "-") : "website",
+    label: fallbackLabel || "Website"
+  };
+};
 const adTrackingSourceSortIndex = (key: string) => {
   const idx = AD_TRACKING_SOURCE_PRIORITY.indexOf(key);
   return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
@@ -3579,10 +3625,47 @@ const normalisePackageComponent = (component: Partial<PackageComponent>): Packag
   isFreeGift: Boolean(component.isFreeGift),
   note: component.note ?? ""
 });
+const clonePackageFreeGiftComponent = (component: PackageComponent): PackageComponent =>
+  normalisePackageComponent({
+    ...component,
+    componentId: undefined,
+    isFreeGift: true
+  });
+const replacePackageFreeGiftComponents = (
+  existingComponents: PackageComponent[] | undefined,
+  sourceFreeGiftComponents: PackageComponent[]
+) => [
+  ...(existingComponents ?? [])
+    .map(normalisePackageComponent)
+    .filter((component) => component.productId && !component.isFreeGift),
+  ...sourceFreeGiftComponents
+    .filter((component) => component.productId)
+    .map(clonePackageFreeGiftComponent)
+];
 const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
   mode === "allow" || mode === "block" ? mode : "all";
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
   Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 10);
+const packageCarouselImages = (pkg: Pick<ProductPackage, "imageUrl" | "imageUrls">) => {
+  const gallery = normalisePackageImageUrls(pkg.imageUrls);
+  return gallery.length > 0 ? gallery : normalisePackageImageUrls([pkg.imageUrl]);
+};
+const savedPackageCarouselImagePatch = (
+  savedPackage: Pick<ProductPackage, "imageUrl" | "imageUrls">,
+  fallbackPackage?: Pick<ProductPackage, "imageUrl" | "imageUrls">
+) => {
+  const savedGallery = Array.isArray(savedPackage.imageUrls)
+    ? normalisePackageImageUrls(savedPackage.imageUrls)
+    : null;
+  const savedLegacy = typeof savedPackage.imageUrl === "string" ? savedPackage.imageUrl : "";
+  const images = savedGallery
+    ? (savedGallery.length > 0 ? savedGallery : normalisePackageImageUrls([savedLegacy]))
+    : (savedLegacy ? normalisePackageImageUrls([savedLegacy]) : (fallbackPackage ? packageCarouselImages(fallbackPackage) : []));
+  return {
+    imageUrl: images[0] ?? "",
+    imageUrls: images
+  };
+};
 const companionMatchesState = (
   companion: Pick<PackageCompanion, "stateRestrictions" | "stateFilterMode">,
   state: string
@@ -3622,6 +3705,17 @@ const packageDescriptionSuggestion = (
     return includeFreeDelivery ? "Free delivery included" : "";
   }
   return includeFreeDelivery ? `${summary} · Free delivery included` : summary;
+};
+const isComboLikePackage = (pkg: Pick<ProductPackage, "name" | "stateFilterMode" | "requiresStateStock" | "featuredComboCard" | "packageComponents">) => {
+  const components = (pkg.packageComponents ?? []).filter((component) => component.productId);
+  const paidComponentCount = components.filter((component) => !component.isFreeGift).length;
+  return Boolean(
+    pkg.featuredComboCard ||
+      pkg.requiresStateStock ||
+      (pkg.stateFilterMode && pkg.stateFilterMode !== "all") ||
+      paidComponentCount > 1 ||
+      /combo/i.test(pkg.name)
+  );
 };
 const scalePackageNameForMultiplier = (name: string, multiplier: number) => {
   const trimmed = name.trim();
@@ -5597,6 +5691,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageFeaturedComboCard, setPackageFeaturedComboCard] = useState(false);
   const [packageImageUrls, setPackageImageUrls] = useState<string[]>([]);
   const [packageImageUrlDraft, setPackageImageUrlDraft] = useState("");
+  const [packageImageUploading, setPackageImageUploading] = useState(0);
+  const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
+  const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
+  const packageImageUploadTokenRef = useRef(0);
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
@@ -7525,6 +7623,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
+  const currentPackageFormIsComboLike = isComboLikePackage({
+    name: packageName,
+    stateFilterMode: packageStateFilterMode,
+    requiresStateStock: packageRequiresStateStock,
+    featuredComboCard: packageFeaturedComboCard,
+    packageComponents
+  });
+  const packageGallerySyncTargetCount = selectedProduct
+    ? selectedProduct.packages.filter((pkg) =>
+        isComboLikePackage(pkg) &&
+        !(modal === "editPackage" && selectedPackage && pkg.id === selectedPackage.id) &&
+        !isTemporaryPackageId(pkg.id)
+      ).length
+    : 0;
+  const canSyncPackageGalleryToComboTiers = currentPackageFormIsComboLike && packageGallerySyncTargetCount > 0;
+  const packageFreeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
+  const canSyncPackageFreeGiftsToComboTiers =
+    currentPackageFormIsComboLike && packageFreeGiftCount > 0 && packageGallerySyncTargetCount > 0;
+  useEffect(() => {
+    if (packageImageSyncToTiers && !canSyncPackageGalleryToComboTiers) {
+      setPackageImageSyncToTiers(false);
+    }
+  }, [packageImageSyncToTiers, canSyncPackageGalleryToComboTiers]);
+  useEffect(() => {
+    if (packageFreeGiftSyncToTiers && !canSyncPackageFreeGiftsToComboTiers) {
+      setPackageFreeGiftSyncToTiers(false);
+    }
+  }, [packageFreeGiftSyncToTiers, canSyncPackageFreeGiftsToComboTiers]);
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
@@ -8062,8 +8188,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageStateRestrictions(Array.isArray(selectedPackage.stateRestrictions) ? selectedPackage.stateRestrictions : []);
     setPackageRequiresStateStock(Boolean(selectedPackage.requiresStateStock));
     setPackageFeaturedComboCard(Boolean(selectedPackage.featuredComboCard));
-    setPackageImageUrls(normalisePackageImageUrls([...(selectedPackage.imageUrls ?? []), selectedPackage.imageUrl]));
+    packageImageUploadTokenRef.current += 1;
+    setPackageImageUrls(packageCarouselImages(selectedPackage));
     setPackageImageUrlDraft("");
+    setPackageImageUploading(0);
+    setPackageImageSyncToTiers(false);
+    setPackageFreeGiftSyncToTiers(false);
   }, [modal, selectedPackage]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
@@ -8959,6 +9089,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ...row,
     deliveryRate: row.orderCount > 0 ? Math.round((row.deliveredCount / row.orderCount) * 100) : 0
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
+  const adTrackingOrderSourceOptions = adTrackingSourceBreakdown(trackedCampaignOrders.map((order) => order.utmSource));
   const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
     if (order.sourceCartId && !map.has(order.sourceCartId)) {
       map.set(order.sourceCartId, order);
@@ -9139,10 +9270,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     recoveryRate: row.cartCount > 0 ? Math.round((row.recoveredCount / row.cartCount) * 100) : 0,
     deliveredRate: row.cartCount > 0 ? Math.round((row.deliveredCount / row.cartCount) * 100) : 0
   })).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
-  const adTrackingAvailableSourceOptions = adTrackingSourceBreakdown([
-    ...trackedCampaignOrders.map((order) => order.utmSource),
-    ...attributedCampaignBaseCarts.map(({ attribution, cart }) => attribution.utmSource ?? cart.source)
-  ]);
+  const adTrackingCartSourceOptions = adTrackingSourceBreakdown(
+    attributedCampaignBaseCarts.map(({ attribution, cart }) => attribution.utmSource ?? cart.source)
+  );
+  const adTrackingAvailableSourceOptions = (() => {
+    const baseOptions = adTrackingTab === "Abandoned Carts" ? adTrackingCartSourceOptions : adTrackingOrderSourceOptions;
+    const next = [...baseOptions];
+    if (adTrackingSourceFilter !== "all" && !next.some((source) => source.key === adTrackingSourceFilter)) {
+      next.push({ key: adTrackingSourceFilter, label: adTrackingSourceLabel(adTrackingSourceFilter), count: 0 });
+    }
+    return next;
+  })();
   useEffect(() => {
     if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
       setAdTrackingCartJourneyLoading(false);
@@ -17495,8 +17633,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageStateRestrictions([]);
     setPackageRequiresStateStock(false);
     setPackageFeaturedComboCard(false);
+    packageImageUploadTokenRef.current += 1;
     setPackageImageUrls([]);
     setPackageImageUrlDraft("");
+    setPackageImageUploading(0);
+    setPackageImageSyncToTiers(false);
+    setPackageFreeGiftSyncToTiers(false);
     setSelectedPackageId("");
   };
 
@@ -17524,8 +17666,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageStateRestrictions(Array.isArray(item.stateRestrictions) ? item.stateRestrictions : []);
     setPackageRequiresStateStock(Boolean(item.requiresStateStock));
     setPackageFeaturedComboCard(Boolean(item.featuredComboCard));
-    setPackageImageUrls(normalisePackageImageUrls([...(item.imageUrls ?? []), item.imageUrl]));
+    packageImageUploadTokenRef.current += 1;
+    setPackageImageUrls(packageCarouselImages(item));
     setPackageImageUrlDraft("");
+    setPackageImageUploading(0);
+    setPackageImageSyncToTiers(false);
+    setPackageFreeGiftSyncToTiers(false);
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -17537,10 +17683,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ? product
           : {
               ...product,
-              packages: product.packages.map((pkg) =>
-                pkg.id !== tempId
-                  ? pkg
-                  : {
+              packages: product.packages.map((pkg) => {
+                if (pkg.id !== tempId) return pkg;
+                const savedImages = savedPackageCarouselImagePatch(savedPackage, pkg);
+                return {
                       ...pkg,
                       ...savedPackage,
                       packageComponents: savedPackage.packageComponents ?? pkg.packageComponents ?? [],
@@ -17549,14 +17695,124 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions ?? [],
                       requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock ?? false,
                       featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard ?? false,
-                      imageUrl: savedPackage.imageUrl ?? pkg.imageUrl ?? "",
-                      imageUrls: savedPackage.imageUrls ?? pkg.imageUrls ?? []
-                    }
-              )
+                      imageUrl: savedImages.imageUrl,
+                      imageUrls: savedImages.imageUrls
+                    };
+              })
             }
       )
     );
     setSelectedPackageId((current) => (current === tempId ? savedPackage.id : current));
+  };
+
+  const syncPackageGalleryToSiblingTiers = async (
+    productId: string,
+    sourcePackageId: string,
+    imageUrls: string[],
+    productSnapshot: Product
+  ) => {
+    const targetPackageIds = productSnapshot.packages
+      .filter((pkg) => pkg.id !== sourcePackageId && isComboLikePackage(pkg) && !isTemporaryPackageId(pkg.id))
+      .map((pkg) => pkg.id);
+    if (targetPackageIds.length === 0) return 0;
+
+    const galleryPatch = {
+      imageUrl: imageUrls[0] ?? "",
+      imageUrls
+    };
+    const savedSiblings = await Promise.all(
+      targetPackageIds.map((pkgId) => productsApi.updatePackage(productId, pkgId, galleryPatch))
+    );
+    const savedById = new Map(savedSiblings.map((pkg: ProductPackage) => [pkg.id, pkg]));
+    const targetIdSet = new Set(targetPackageIds);
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id !== productId
+          ? product
+          : {
+              ...product,
+              packages: product.packages.map((pkg) => {
+                if (!targetIdSet.has(pkg.id)) return pkg;
+                const savedPackage = savedById.get(pkg.id);
+                if (!savedPackage) return { ...pkg, ...galleryPatch };
+                const savedImages = savedPackageCarouselImagePatch(savedPackage, { ...pkg, ...galleryPatch });
+                return {
+                  ...pkg,
+                  ...savedPackage,
+                  packageComponents: savedPackage.packageComponents ?? pkg.packageComponents,
+                  companionProducts: savedPackage.companionProducts ?? pkg.companionProducts,
+                  stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode,
+                  stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions,
+                  requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock,
+                  featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard,
+                  imageUrl: savedImages.imageUrl,
+                  imageUrls: savedImages.imageUrls
+                };
+              })
+            }
+      )
+    );
+    return targetPackageIds.length;
+  };
+
+  const syncPackageFreeGiftsToSiblingTiers = async (
+    productId: string,
+    sourcePackageId: string,
+    freeGiftComponents: PackageComponent[],
+    productSnapshot: Product
+  ) => {
+    const sourceGiftComponents = freeGiftComponents.filter((component) => component.productId && component.isFreeGift);
+    if (sourceGiftComponents.length === 0) return 0;
+
+    const targetPackages = productSnapshot.packages.filter(
+      (pkg) => pkg.id !== sourcePackageId && isComboLikePackage(pkg) && !isTemporaryPackageId(pkg.id)
+    );
+    if (targetPackages.length === 0) return 0;
+
+    const componentPatchByPackageId = new Map(
+      targetPackages.map((pkg) => [
+        pkg.id,
+        replacePackageFreeGiftComponents(pkg.packageComponents, sourceGiftComponents)
+      ])
+    );
+    const savedSiblings = await Promise.all(
+      targetPackages.map((pkg) =>
+        productsApi.updatePackage(productId, pkg.id, {
+          packageComponents: componentPatchByPackageId.get(pkg.id) ?? []
+        })
+      )
+    );
+    const savedById = new Map(savedSiblings.map((pkg: ProductPackage) => [pkg.id, pkg]));
+    const targetIdSet = new Set(targetPackages.map((pkg) => pkg.id));
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id !== productId
+          ? product
+          : {
+              ...product,
+              packages: product.packages.map((pkg) => {
+                if (!targetIdSet.has(pkg.id)) return pkg;
+                const savedPackage = savedById.get(pkg.id);
+                const packageComponents = savedPackage?.packageComponents ?? componentPatchByPackageId.get(pkg.id) ?? pkg.packageComponents;
+                if (!savedPackage) return { ...pkg, packageComponents };
+                const savedImages = savedPackageCarouselImagePatch(savedPackage, pkg);
+                return {
+                  ...pkg,
+                  ...savedPackage,
+                  packageComponents,
+                  companionProducts: savedPackage.companionProducts ?? pkg.companionProducts,
+                  stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode,
+                  stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions,
+                  requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock,
+                  featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard,
+                  imageUrl: savedImages.imageUrl,
+                  imageUrls: savedImages.imageUrls
+                };
+              })
+            }
+      )
+    );
+    return targetPackages.length;
   };
 
   const savePackage = () => {
@@ -17570,6 +17826,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     if (modal === "editPackage" && selectedPackage && isTemporaryPackageId(selectedPackage.id)) {
       showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
+    if (packageImageUploading > 0) {
+      showToast("Package images are still loading. Wait a second, then save again.");
       return;
     }
 
@@ -17588,6 +17848,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const normalisedPackageStateRestrictions = packageStateFilterMode === "all" ? [] : packageStateRestrictions;
     const normalisedPackageImageUrls = normalisePackageImageUrls(packageImageUrls);
+    if (packageImageSyncToTiers && !currentPackageFormIsComboLike) {
+      showToast("Gallery copy is only for combo package tiers. Mark this package as a combo first.");
+      return;
+    }
+    if (packageImageSyncToTiers && normalisedPackageImageUrls.length === 0) {
+      showToast("Add at least one package image before copying the gallery to other tiers.");
+      return;
+    }
+    const normalisedFreeGiftComponents = normalisedComponents.filter((component) => component.isFreeGift);
+    if (packageFreeGiftSyncToTiers && !currentPackageFormIsComboLike) {
+      showToast("Free gift copy is only for combo package tiers. Mark this package as a combo first.");
+      return;
+    }
+    if (packageFreeGiftSyncToTiers && normalisedFreeGiftComponents.length === 0) {
+      showToast("Tick at least one component as a free gift before copying gifts to other combo tiers.");
+      return;
+    }
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
@@ -17626,6 +17903,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const _pkgProdId = selectedProduct.id;
     const productSnapshot = selectedProduct;
+    const shouldSyncPackageImagesToTiers = packageImageSyncToTiers && currentPackageFormIsComboLike && normalisedPackageImageUrls.length > 0;
+    const shouldSyncPackageFreeGiftsToTiers = packageFreeGiftSyncToTiers && currentPackageFormIsComboLike && normalisedFreeGiftComponents.length > 0;
+    const syncPackageAssetsToTiers = async (sourcePackageId: string) => {
+      if (shouldSyncPackageImagesToTiers) {
+        const count = await syncPackageGalleryToSiblingTiers(_pkgProdId, sourcePackageId, normalisedPackageImageUrls, productSnapshot);
+        if (count > 0) showToast(`Gallery copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
+      }
+      if (shouldSyncPackageFreeGiftsToTiers) {
+        const count = await syncPackageFreeGiftsToSiblingTiers(_pkgProdId, sourcePackageId, normalisedFreeGiftComponents, productSnapshot);
+        if (count > 0) showToast(`Free gift copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
+      }
+    };
     setProducts((value) =>
       value.map((product) =>
         product.id === selectedProduct.id
@@ -17646,16 +17935,53 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productsApi.createPackage(_pkgProdId, packagePayload)
         .then((savedPackage: any) => {
           replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
+          if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+            syncPackageAssetsToTiers((savedPackage as ProductPackage).id).catch((err: any) => {
+              showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+            });
+          }
         })
         .catch((err: any) => {
           setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
           showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
         });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packagePayload).catch((err: any) => {
-        setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
-        showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
-      });
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packagePayload)
+        .then((savedPackage: any) => {
+          setProducts((prev) =>
+            prev.map((product) => {
+              if (product.id !== _pkgProdId) return product;
+              return {
+                ...product,
+                packages: product.packages.map((pkg) => {
+                  if (pkg.id !== selectedPackage.id) return pkg;
+                  const savedImages = savedPackageCarouselImagePatch(savedPackage as ProductPackage, packageRecord);
+                  return {
+                    ...pkg,
+                    ...(savedPackage as ProductPackage),
+                    packageComponents: (savedPackage as ProductPackage).packageComponents ?? normalisedComponents,
+                    companionProducts: (savedPackage as ProductPackage).companionProducts ?? normalisedCompanions,
+                    stateFilterMode: (savedPackage as ProductPackage).stateFilterMode ?? packageRecord.stateFilterMode,
+                    stateRestrictions: (savedPackage as ProductPackage).stateRestrictions ?? packageRecord.stateRestrictions,
+                    requiresStateStock: (savedPackage as ProductPackage).requiresStateStock ?? packageRecord.requiresStateStock,
+                    featuredComboCard: (savedPackage as ProductPackage).featuredComboCard ?? packageRecord.featuredComboCard,
+                    imageUrl: savedImages.imageUrl,
+                    imageUrls: savedImages.imageUrls
+                  };
+                })
+              };
+            })
+          );
+          if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+            syncPackageAssetsToTiers(selectedPackage.id).catch((err: any) => {
+              showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+            });
+          }
+        })
+        .catch((err: any) => {
+          setProducts((prev) => prev.map((p) => p.id === _pkgProdId ? productSnapshot : p));
+          showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
+        });
     }
   };
 
@@ -22353,7 +22679,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             const latestNote = latestTimelineNoteForOrder(order);
             const nextFollowUp = nextFollowUpForOrder(order);
             const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
-            const sourceLabel = order.source ?? orderSourceFromUtm(order.utmSource);
+            const sourceMeta = orderDisplaySourceFor(order);
+            const sourceLabel = sourceMeta.label;
             const locationLabel = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
             const responseLabel = responseTimeForOrder(order);
             const workflowLabel = order.response ?? "Awaiting confirmation";
@@ -22404,7 +22731,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
-                    <Globe className="h-3.5 w-3.5 shrink-0 text-[#1F8FE0]" /> <span className="min-w-0 break-words">{sourceLabel}</span>
+                    <OrderSourceLogo source={sourceLabel} className="h-4 w-4 shrink-0" aria-hidden="true" /> <span className="min-w-0 break-words">{sourceLabel}</span>
                   </span>
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
                     <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500" /> <span className="min-w-0 break-words">{responseLabel}</span>
@@ -22501,6 +22828,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const latestNote = latestTimelineNoteForOrder(order);
               const nextFollowUp = nextFollowUpForOrder(order);
               const bonusOpportunity = repBonusOpportunityByOrderId.get(order.id);
+              const sourceMeta = orderDisplaySourceFor(order);
               return (
                 <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors">
                   <td className="px-4 py-4 font-bold text-[#1F8FE0]">{order.id}</td>
@@ -22513,7 +22841,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </td>
                   <td className={`px-4 py-4 text-center text-xs font-medium ${orderMutedTextClass}`}>
-                    {order.source ?? orderSourceFromUtm(order.utmSource)}
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <OrderSourceLogo source={sourceMeta.label} className="h-5 w-5 shrink-0" aria-hidden="true" />
+                      <span>{sourceMeta.label}</span>
+                    </span>
                   </td>
                   <td className="px-4 py-4 text-center">
                     {renderOrderStatusSummary(order, "center")}
@@ -23277,7 +23608,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 <div className={`p-3 rounded-lg ${orderPanelMutedClass}`}>
                   <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Source</span>
-                  <span className={`text-sm font-bold ${orderTitleTextClass}`}>{order.source ?? orderSourceFromUtm(order.utmSource)}</span>
+                  <span className={`inline-flex items-center gap-2 text-sm font-bold ${orderTitleTextClass}`}>
+                    <OrderSourceLogo source={orderDisplaySourceFor(order).label} className="h-5 w-5 shrink-0" aria-hidden="true" />
+                    <span>{orderDisplaySourceFor(order).label}</span>
+                  </span>
                 </div>
                 <div className={`col-span-2 p-3 rounded-lg ${orderPanelMutedClass}`}>
                   <span className={`block text-[10px] font-bold uppercase tracking-widest mb-0.5 ${orderFaintTextClass}`}>Location</span>
@@ -24353,16 +24687,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
     const isOwner = user.role === "Owner";
     const permGroups = ["Orders", "Inventory", "Operations", "Finance", "Admin"] as const;
-    const canManageScope = !isOwner && (currentRole === "Owner" || currentRole === "Admin");
-    const rolePages = allowedPagesFor(user.role, user.extraPages ?? []);
-    const canSeeWeekendStockSummary = hasWeekendStockSummaryPermission(userPerms) || rolePages.includes(WEEKEND_STOCK_SUMMARY_PAGE);
-    const scopeMode = user.agentBalanceScopeMode ?? "all";
-    const scopedStates = user.agentBalanceStateScope ?? [];
-    const scopedAgentIds = user.agentBalanceAgentIds ?? [];
-    const assignedAgentIds = user.assignedAgentIds ?? [];
-    const teamScope = teamForManagedUser(user);
-    const suggestedStateAssignedAgentIds = agentIdsForStateScope(scopedStates);
-    const suggestedTeamAssignedAgentIds = suggestedAssignedAgentIdsForTeam(user);
 
     return (
       <div className="px-4 sm:px-6 py-4 bg-blue-50/30">
@@ -24484,192 +24808,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               );
             })()}
             <p className="text-[11px] text-gray-400 mt-3">Default pages for {user.role}: {(roleAllowedPages[user.role] ?? []).join(", ") || "none"}.</p>
-          </div>
-        )}
-
-        {canManageScope && canSeeWeekendStockSummary && (
-          <div className="mt-5 pt-4 border-t border-blue-100">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Weekend stock summary access scope</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Choose whether <strong>{user.name}</strong> sees all agents, only selected states, only selected agents, or only their owned assigned-agent list inside the Weekend Stock Summary page.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-2">
-              {[
-                { key: "all", title: "Full agent access", desc: "See every agent hub in the weekly stock summary." },
-                { key: "states", title: "Selected states", desc: "Only show agent hubs in the states you tick below." },
-                { key: "agents", title: "Selected agents", desc: "Only show the exact agents you tick below." },
-                { key: "assigned_agents", title: "Assigned agents", desc: "Only show the agents explicitly owned by this user below." }
-              ].map((option) => {
-                const active = scopeMode === option.key;
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    className={`!min-h-0 rounded-xl border px-4 py-3 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
-                    onClick={() => updateUserAgentBalanceScope(user, {
-                      agentBalanceScopeMode: option.key as "all" | "states" | "agents" | "assigned_agents",
-                      agentBalanceStateScope: option.key === "states" ? scopedStates : (option.key === "all" ? [] : scopedStates),
-                      agentBalanceAgentIds: option.key === "agents" ? scopedAgentIds : (option.key === "all" ? [] : scopedAgentIds)
-                    })}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{option.title}</span>
-                      {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0]" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block" />}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1 mb-0">{option.desc}</p>
-                  </button>
-                );
-              })}
-            </div>
-
-            {scopeMode === "states" && (
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Allowed states</p>
-                  <button
-                    type="button"
-                    className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
-                    onClick={() => updateUserAgentBalanceScope(user, { agentBalanceStateScope: nigeriaStates.slice() })}
-                  >
-                    Select all states
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {nigeriaStates.map((state) => {
-                    const active = scopedStates.includes(state);
-                    return (
-                      <button
-                        key={state}
-                        type="button"
-                        className={`!min-h-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${active ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 bg-white hover:bg-gray-50"}`}
-                        onClick={() => updateUserAgentBalanceScope(user, {
-                          agentBalanceStateScope: active
-                            ? scopedStates.filter((item) => item !== state)
-                            : [...scopedStates, state]
-                        })}
-                      >
-                        {state}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-gray-400 m-0">Only agent hubs in the selected states will appear for this user.</p>
-              </div>
-            )}
-
-            {scopeMode === "agents" && (
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Allowed agents</p>
-                  <button
-                    type="button"
-                    className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
-                    onClick={() => updateUserAgentBalanceScope(user, { agentBalanceAgentIds: agents.map((agent) => agent.id) })}
-                  >
-                    Select all agents
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {agents
-                    .slice()
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((agent) => {
-                      const active = scopedAgentIds.includes(agent.id);
-                      return (
-                        <button
-                          key={agent.id}
-                          type="button"
-                          className={`!min-h-0 flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
-                          onClick={() => updateUserAgentBalanceScope(user, {
-                            agentBalanceAgentIds: active
-                              ? scopedAgentIds.filter((id) => id !== agent.id)
-                              : [...scopedAgentIds, agent.id]
-                          })}
-                        >
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-900 m-0">{agent.name}</p>
-                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{agentPrimaryBaseState(agent) || "No base state yet"}</p>
-                          </div>
-                          {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0] shrink-0" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block shrink-0 mt-0.5" />}
-                        </button>
-                      );
-                    })}
-                </div>
-                <p className="text-[11px] text-gray-400 m-0">This user will only see weekly stock summaries for the agents you tick here.</p>
-              </div>
-            )}
-
-            {scopeMode === "assigned_agents" && (
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 m-0">Owned agents</p>
-                  <div className="flex items-center gap-3 flex-wrap justify-end">
-                    <button
-                      type="button"
-                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline disabled:text-gray-300 disabled:no-underline"
-                      disabled={suggestedStateAssignedAgentIds.length === 0}
-                      onClick={() => updateUserAssignedAgents(user, suggestedStateAssignedAgentIds)}
-                    >
-                      Use selected states
-                    </button>
-                    <button
-                      type="button"
-                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline disabled:text-gray-300 disabled:no-underline"
-                      disabled={suggestedTeamAssignedAgentIds.length === 0}
-                      onClick={() => updateUserAssignedAgents(user, suggestedTeamAssignedAgentIds)}
-                    >
-                      Use team product agents
-                    </button>
-                    <button
-                      type="button"
-                      className="!min-h-0 text-xs text-[#1F8FE0] font-medium hover:underline"
-                      onClick={() => updateUserAssignedAgents(user, agents.map((agent) => agent.id))}
-                    >
-                      Assign all agents
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[11px] text-gray-600 leading-relaxed">
-                  <span className="font-semibold text-gray-800">Smart fill:</span>{" "}
-                  `Use selected states` pulls in agents whose base/hub state matches this user’s saved state scope.{" "}
-                  `Use team product agents` pulls in agents currently carrying products from this user’s sales-team scope.
-                  {!teamScope ? " This user is not attached to any sales team yet." : teamScope.productIds.length === 0 ? ` Team "${teamScope.name}" has no product scope yet, so product-based suggestions are empty.` : ` Team "${teamScope.name}" is available for product-based suggestions.`}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {agents
-                    .slice()
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((agent) => {
-                      const active = assignedAgentIds.includes(agent.id);
-                      return (
-                        <button
-                          key={agent.id}
-                          type="button"
-                          className={`!min-h-0 flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-white shadow-sm" : "border-gray-200 bg-white hover:border-blue-200"}`}
-                          onClick={() => updateUserAssignedAgents(
-                            user,
-                            active
-                              ? assignedAgentIds.filter((id) => id !== agent.id)
-                              : [...assignedAgentIds, agent.id]
-                          )}
-                        >
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-900 m-0">{agent.name}</p>
-                            <p className="text-[11px] text-gray-500 mt-1 mb-0">{agentPrimaryBaseState(agent) || "No base state yet"}</p>
-                          </div>
-                          {active ? <CheckCircle2 className="w-4 h-4 text-[#1F8FE0] shrink-0" /> : <span className="w-4 h-4 rounded-full border border-gray-300 inline-block shrink-0 mt-0.5" />}
-                        </button>
-                      );
-                    })}
-                </div>
-                <p className="text-[11px] text-gray-400 m-0">Use this when you want Protohub to auto-scope the weekly stock summary to the agents this user actually owns. You can smart-fill first, then fine-tune manually.</p>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -26438,7 +26576,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   ) : (
                     pagedOrderRows.map((order) => {
-                      const source = order.source ?? orderSourceFromUtm(order.utmSource);
+                      const sourceMeta = orderDisplaySourceFor(order);
+                      const sourceLabel = sourceMeta.label;
                       const status = order.status ?? "New";
                       const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                       const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
@@ -26446,15 +26585,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                       const rt = (() => { void responseTick; return responseTimeColor(order, status); })();
                       const callOutcome = (order.callOutcome ?? "").trim();
-                      const sourceIcon = (() => {
-                        const s = (source ?? "").toLowerCase();
-                        const cls = "h-4 w-4 shrink-0";
-                        if (s.includes("facebook")) return <Facebook className={`${cls} text-[#1877F2]`} aria-hidden="true" />;
-                        if (s.includes("instagram")) return <Instagram className={`${cls} text-pink-500`} aria-hidden="true" />;
-                        if (s.includes("youtube")) return <Youtube className={`${cls} text-red-500`} aria-hidden="true" />;
-                        if (s.includes("whatsapp")) return <WhatsAppIcon className={`${cls} text-[#25D366]`} aria-hidden="true" />;
-                        return <Globe className={`${cls} text-sky-500 dark:text-sky-300`} aria-hidden="true" />;
-                      })();
+                      const sourceIcon = (
+                        <OrderSourceLogo
+                          source={sourceLabel}
+                          className="h-5 w-5 shrink-0"
+                          aria-hidden="true"
+                        />
+                      );
                       return (
                         <article
                           key={order.id}
@@ -26498,7 +26635,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <div className="grid grid-cols-2 gap-2">
                               <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
                                 {sourceIcon}
-                                <span className="min-w-0 break-words">{source}</span>
+                                <span className="min-w-0 break-words">{sourceLabel}</span>
                               </span>
                               <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
                                 <MapPin className="h-4 w-4 shrink-0 text-emerald-500 dark:text-emerald-300" />
@@ -26605,7 +26742,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <tr><td colSpan={currentRole === "Sales Rep" ? 8 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
-                          const source = order.source ?? orderSourceFromUtm(order.utmSource);
+                          const sourceMeta = orderDisplaySourceFor(order);
                           const status = order.status ?? "New";
                           const isTerminal = CLOSED_ORDER_STATUSES.has(status as Exclude<OrderStatus, "All Orders">);
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
@@ -26632,15 +26769,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
                               <td className="px-4 py-3.5">
-                                {(() => {
-                                  const s = (source ?? "").toLowerCase();
-                                  const cls = "w-5 h-5";
-                                  if (s.includes("facebook")) return <Facebook className={`${cls} text-[#1877F2]`} aria-label="Facebook" />;
-                                  if (s.includes("instagram")) return <Instagram className={`${cls} text-pink-500`} aria-label="Instagram" />;
-                                  if (s.includes("youtube")) return <Youtube className={`${cls} text-red-500`} aria-label="YouTube" />;
-                                  if (s.includes("whatsapp")) return <WhatsAppIcon className={`${cls} text-[#25D366]`} aria-label="WhatsApp" />;
-                                  return <Globe className={`${cls} ${orderFaintTextClass}`} aria-label={source} />;
-                                })()}
+                                <span className="inline-flex" title={sourceMeta.label}>
+                                  <OrderSourceLogo
+                                    source={sourceMeta.label}
+                                    className="h-9 w-9"
+                                    aria-label={sourceMeta.label}
+                                  />
+                                </span>
                               </td>
                               <td className="px-4 py-3.5">
                                 {renderOrderStatusSummary(order)}
@@ -33889,12 +34024,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <option value="GBP">£ British Pound</option>
                   </select>
                   {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                  <select
+                    className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors"
+                    aria-label="Tracked source"
+                    value={adTrackingSourceFilter}
+                    onChange={(e) => setAdTrackingSourceFilter(e.target.value)}
+                  >
+                    <option value="all">All sources</option>
+                    {adTrackingAvailableSourceOptions.map((source) => (
+                      <option key={source.key} value={source.key}>{source.label} ({source.count})</option>
+                    ))}
+                  </select>
                   <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                     <input
                       value={adTrackingSearch}
                       onChange={(event) => setAdTrackingSearch(event.target.value)}
-                      placeholder="Search campaign, creative, or label..."
+                      placeholder="Search campaign, creative, source, or label..."
                       className="h-10 sm:h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     />
                   </label>
@@ -33922,6 +34068,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </article>
                   );
                 })}
+              </section>
+
+              <section className="space-y-4" aria-label="Tracked order sources">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-800">Source Analytics</h2>
+                  <p className="text-xs text-gray-400">Compare tracked orders by `utm_source` so you can spot the channels that deliver and the ones that mostly stay undelivered.</p>
+                </div>
+                {adTrackingOrderSourceStats.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                    No tracked sources matched the current filters yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {adTrackingOrderSourceStats.map((source) => (
+                      <article key={`order-source-${source.key}`} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Source</p>
+                            <h3 className="m-0 mt-1 text-xl font-bold text-gray-900">{source.label}</h3>
+                          </div>
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                            {source.orderCount} orders
+                          </span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
+                            <div className="font-semibold text-gray-900">{source.deliveredCount}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivery rate</div>
+                            <div className="font-semibold text-gray-900">{source.deliveryRate}%</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400">Undelivered</div>
+                            <div className="font-semibold text-gray-900">{source.undeliveredCount}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400">Revenue</div>
+                            <div className="font-semibold text-gray-900">{formatMoney(source.revenue)}</div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex flex-col sm:flex-row items-start gap-4">
@@ -34009,7 +34201,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <div className="font-semibold text-gray-900">{formatMoney(row.revenue)}</div>
                             </div>
                           </div>
-                          <div className="text-xs text-gray-500">Top source: <span className="font-semibold text-gray-700 break-all">{row.topSource}</span></div>
+                          <div className="space-y-1">
+                            <div className="text-xs text-gray-500">Top source: <span className="font-semibold text-gray-700 break-all">{row.topSource}</span></div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-400">Sources</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {row.sourceBreakdown.map((source) => (
+                                <span key={`${row.id}-${source.key}`} className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                                  {source.label} {source.count}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </article>
                     ))}
@@ -34080,6 +34282,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <span className="inline-flex shrink-0 items-center rounded-full bg-green-50 text-green-700 px-2.5 py-1 text-xs font-semibold">Creative</span>
                           </div>
                           <div className="text-xs text-gray-500">Campaign: <span className="font-semibold text-gray-700 break-all">{campaignCardLabelFor(row.campaignId) || row.campaignId}</span></div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {row.sourceBreakdown.map((source) => (
+                              <span key={`${row.id}-${source.key}`} className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                                {source.label} {source.count}
+                              </span>
+                            ))}
+                          </div>
                           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-100 text-sm">
                             <div>
                               <div className="text-[10px] uppercase tracking-wider text-gray-400">Orders</div>
@@ -34132,6 +34341,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           const creativeId = order.utmContent?.trim() || "";
                           const campaignLabel = campaignCardLabelFor(campaignId);
                           const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                          const sourceKey = normalizeAdTrackingSource(order.utmSource);
+                          const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : order.utmSource;
 
                           return (
                             <article key={order.id} className="space-y-3 px-4 py-4">
@@ -34152,7 +34363,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   {status}
                                 </span>
                                 <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                  {order.utmSource}
+                                  {sourceLabel}
                                 </span>
                               </div>
 
@@ -34199,6 +34410,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const creativeId = order.utmContent?.trim() || "";
                               const campaignLabel = campaignCardLabelFor(campaignId);
                               const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                              const sourceKey = normalizeAdTrackingSource(order.utmSource);
+                              const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : order.utmSource;
 
                               return (
                                 <tr key={order.id} className="transition-colors hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
@@ -34214,7 +34427,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   </td>
                                   <td className="px-5 py-4">
                                     <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                      {order.utmSource}
+                                      {sourceLabel}
                                     </span>
                                   </td>
                                   <td className="px-5 py-4">
@@ -34292,6 +34505,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <option key={status} value={status}>{status}</option>
                           ))}
                         </select>
+                        <select
+                          className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          aria-label="Tracked source"
+                          value={adTrackingSourceFilter}
+                          onChange={(e) => setAdTrackingSourceFilter(e.target.value)}
+                        >
+                          <option value="all">All sources</option>
+                          {adTrackingAvailableSourceOptions.map((source) => (
+                            <option key={source.key} value={source.key}>{source.label} ({source.count})</option>
+                          ))}
+                        </select>
                         <label className="relative w-full sm:min-w-[260px] sm:flex-1 sm:max-w-md">
                           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                           <input
@@ -34331,6 +34555,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       })}
                     </section>
 
+                    <section className="space-y-4" aria-label="Tracked cart sources">
+                      <div>
+                        <h2 className="text-sm font-bold text-gray-800">Source Analytics</h2>
+                        <p className="text-xs text-gray-400">Compare abandoned carts by `utm_source` so you can see which channels recover and which ones mostly stall out.</p>
+                      </div>
+                      {adTrackingCartSourceStats.length === 0 ? (
+                        <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
+                          No tracked cart sources matched the current filters yet.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {adTrackingCartSourceStats.map((source) => (
+                            <article key={`cart-source-${source.key}`} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Source</p>
+                                  <h3 className="m-0 mt-1 text-xl font-bold text-gray-900">{source.label}</h3>
+                                </div>
+                                <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                                  {source.cartCount} carts
+                                </span>
+                              </div>
+                              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400">Recovered</div>
+                                  <div className="font-semibold text-gray-900">{source.recoveredCount}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400">Recovery rate</div>
+                                  <div className="font-semibold text-gray-900">{source.recoveryRate}%</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</div>
+                                  <div className="font-semibold text-gray-900">{source.deliveredCount}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400">Not recovered</div>
+                                  <div className="font-semibold text-gray-900">{source.unrecoveredCount}</div>
+                                </div>
+                              </div>
+                              <div className="mt-3 text-xs font-medium text-gray-500">
+                                Captured value {formatMoney(source.value)} · delivered from {source.deliveredRate}% of carts
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="px-5 py-4 border-b border-gray-100">
@@ -34347,10 +34620,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const label = campaignCardLabelFor(row.id);
                               return (
                                 <div key={`cart-campaign-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 space-y-1.5">
                                     <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
                                     {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
-                                    <p className="m-0 mt-1 text-xs text-gray-400">{row.topSource} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                    <p className="m-0 text-xs text-gray-400">Top source: {row.topSource}</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {row.sourceBreakdown.map((source) => (
+                                        <span key={`${row.id}-${source.key}`} className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                                          {source.label} {source.count}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    <p className="m-0 text-xs text-gray-400">{row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
                                   </div>
                                   <div className="text-right shrink-0">
                                     <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
@@ -34379,10 +34660,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const campaignLabel = campaignCardLabelFor(row.campaignId);
                               return (
                                 <div key={`cart-creative-${row.id}`} className="px-5 py-3 flex items-start justify-between gap-4">
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 space-y-1.5">
                                     <p className="m-0 text-sm font-semibold text-gray-900 truncate">{label || row.id}</p>
                                     {label && label !== row.id && <p className="m-0 mt-0.5 text-xs text-gray-500 truncate">{row.id}</p>}
-                                    <p className="m-0 mt-1 text-xs text-gray-400 truncate">{campaignLabel || row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                    <p className="m-0 text-xs text-gray-400 truncate">{campaignLabel || row.campaignId} · {row.recoveredCount} recovered · {row.deliveredCount} delivered</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {row.sourceBreakdown.map((source) => (
+                                        <span key={`${row.id}-${source.key}`} className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                                          {source.label} {source.count}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
                                   <div className="text-right shrink-0">
                                     <p className="m-0 text-sm font-bold text-gray-900">{row.cartCount}</p>
@@ -34417,6 +34705,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const creativeId = attribution.utmContent?.trim() || "";
                               const campaignLabel = campaignCardLabelFor(campaignId);
                               const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                              const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
+                              const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
                               const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                               const statusTone = cart.status === "Converted"
                                 ? "bg-emerald-100 text-emerald-700"
@@ -34442,7 +34732,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <div className="grid grid-cols-2 gap-3 text-sm">
                                     <div>
                                       <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
-                                      <div className="font-semibold text-gray-900">{attribution.utmSource || cart.source}</div>
+                                      <div className="font-semibold text-gray-900">{sourceLabel}</div>
                                     </div>
                                     <div>
                                       <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
@@ -34483,6 +34773,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   const creativeId = attribution.utmContent?.trim() || "";
                                   const campaignLabel = campaignCardLabelFor(campaignId);
                                   const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                                  const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
+                                  const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
                                   const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                                   const statusTone = cart.status === "Converted"
                                     ? "bg-emerald-100 text-emerald-700"
@@ -34507,7 +34799,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                         {conversionStatus && <div className="mt-1 text-[11px] text-gray-500">{conversionStatus}</div>}
                                       </td>
                                       <td className="px-5 py-4 min-w-[150px]">
-                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{attribution.utmSource || cart.source}</span>
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">{sourceLabel}</span>
                                       </td>
                                       <td className="px-5 py-4 min-w-[220px]">
                                         <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
@@ -35043,7 +35335,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-4 py-4"><span className={`role-pill ${isOwner ? "owner-pill" : ""}`}>{user.role}</span></td>
                                 <td className="px-4 py-4">
                                   <button
-                                    className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold transition-colors hover:bg-blue-50 hover:border-blue-300 hover:text-[#1F8FE0] border-gray-200 text-gray-600 bg-gray-50"
+                                    className="!min-h-0 inline-flex items-center gap-1.5 text-sm font-semibold text-[#1F8FE0] transition-colors hover:text-[#1560a8]"
                                     onClick={() => setExpandedPermissionsUserId(isExpanded ? null : user.id)}
                                   >
                                     {isOwner ? "All" : userPerms.length}/{permissionDefs.length}
@@ -38509,13 +38801,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         {selectedProduct.packages.length === 0 ? (
                           <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 text-sm">No packages found. Create a package before generating an embed form.</td></tr>
                         ) : (
-                          [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder).map((item, sortedIdx, sortedArr) => (
+                          [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder).map((item, sortedIdx, sortedArr) => {
+                            const freeGiftCount = (item.packageComponents ?? []).filter((component) => component.isFreeGift).length;
+                            return (
                             <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">
                                 {item.name}
                                 {(item.packageComponents?.length ?? 0) > 0 && (
                                   <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 align-middle" title={`${item.packageComponents!.length} stock component${item.packageComponents!.length === 1 ? "" : "s"}`}>
                                     {item.packageComponents!.length} stock item{item.packageComponents!.length === 1 ? "" : "s"}
+                                  </span>
+                                )}
+                                {freeGiftCount > 0 && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 align-middle" title={`${freeGiftCount} free gift${freeGiftCount === 1 ? "" : "s"} included`}>
+                                    {freeGiftCount} free gift{freeGiftCount === 1 ? "" : "s"}
                                   </span>
                                 )}
                                 {(item.companionProducts?.length ?? 0) > 0 && (
@@ -38538,7 +38837,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     Featured
                                   </span>
                                 )}
-                                {(item.imageUrls?.length ?? 0) > 1 && (
+                                {isComboLikePackage(item) && (item.imageUrls?.length ?? 0) > 1 && (
                                   <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-700 align-middle">
                                     Carousel
                                   </span>
@@ -38596,7 +38895,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </div>
                               </td>
                             </tr>
-                          ))
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -40083,18 +40383,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                        {renderOrderStatusSummary(selectedOrder)}
 	                      </div>
 	                    </div>
-	                    <div>
-	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Source</p>
-	                      <div className="flex items-center gap-1.5 mt-0.5">
-	                        {(() => {
-	                          const src = selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource);
-	                          if (src === "WhatsApp") return <WhatsAppIcon className="w-4 h-4 shrink-0 text-[#25D366]" />;
-	                          if (src === "TikTok") return <Music2 className="w-4 h-4 shrink-0 text-gray-900" />;
-	                          if (src === "Facebook") return <span className="w-4 h-4 shrink-0 rounded-full bg-[#1877F2] text-white text-[10px] font-bold flex items-center justify-center">f</span>;
-	                          if (src === "Website") return <Globe className="w-4 h-4 shrink-0 text-gray-500" />;
-	                          return <Tag className="w-4 h-4 shrink-0 text-gray-500" />;
-	                        })()}
-	                        <span className={`text-sm font-semibold ${orderTitleTextClass}`}>{selectedOrder.source ?? orderSourceFromUtm(selectedOrder.utmSource)}</span>
+	                      <div>
+	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Source</p>
+	                        <div className="flex items-center gap-1.5 mt-0.5">
+	                        <OrderSourceLogo
+	                          source={orderDisplaySourceFor(selectedOrder).label}
+	                          className="h-6 w-6 shrink-0"
+	                          aria-hidden="true"
+	                        />
+	                        <span className={`text-sm font-semibold ${orderTitleTextClass}`}>{orderDisplaySourceFor(selectedOrder).label}</span>
 	                      </div>
 	                    </div>
 	                    <div>
@@ -41981,9 +42278,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div>
                         <p className="m-0 text-sm font-bold text-gray-900">Package image carousel</p>
                         <p className="m-0 text-[11px] text-gray-500">Optional. Add 2 or more images if this combo needs a slide preview. One image shows as a single picture.</p>
+                        {packageImageUploading > 0 && (
+                          <p className="m-0 mt-1 text-[11px] font-bold text-amber-700">
+                            Loading {packageImageUploading} image{packageImageUploading === 1 ? "" : "s"}... wait before saving.
+                          </p>
+                        )}
                       </div>
                       <span className="text-[11px] font-bold text-amber-800">{packageImageUrls.length}/10 images</span>
                     </div>
+                    <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${canSyncPackageGalleryToComboTiers ? "border-sky-100 bg-sky-50/70" : "border-gray-100 bg-gray-50"}`}>
+                      <input
+                        type="checkbox"
+                        className="mt-1 w-4 h-4 accent-[#1F8FE0]"
+                        checked={packageImageSyncToTiers}
+                        disabled={!canSyncPackageGalleryToComboTiers}
+                        onChange={(event) => setPackageImageSyncToTiers(event.target.checked)}
+                      />
+                      <span className="text-sm text-gray-700">
+                        <strong className="block text-gray-900">Use this same gallery for other combo tiers only</strong>
+                        {!currentPackageFormIsComboLike
+                          ? "This copy option is only for combo packages. Mark it as featured, state-only, stock-gated, or add multiple stock items first."
+                          : packageGallerySyncTargetCount > 0
+                            ? `When you save, these images copy to ${packageGallerySyncTargetCount} other combo tier${packageGallerySyncTargetCount === 1 ? "" : "s"} only. Single-set packages will not be touched.`
+                            : "No other saved combo tiers are available yet. Create another combo tier first, then copy the gallery across."}
+                      </span>
+                    </label>
                     <div className="grid grid-cols-1 sm:grid-cols-[1fr,auto,auto] gap-2">
                       <input
                         type="url"
@@ -42013,23 +42332,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <input
                           type="file"
                           accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          multiple
                           className="hidden"
                           onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
-                            if (file.size > 600_000) {
-                              showToast("Package image must be under 600 KB.");
+                            const files = Array.from(event.target.files ?? []);
+                            if (files.length === 0) return;
+                            const oversized = files.find((file) => file.size > 600_000);
+                            if (oversized) {
+                              showToast("Each package image must be under 600 KB.");
                               event.target.value = "";
                               return;
                             }
-                            const reader = new FileReader();
-                            reader.onload = (readerEvent) => {
-                              const dataUrl = String(readerEvent.target?.result ?? "");
-                              if (!dataUrl) return;
-                              setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, dataUrl]));
-                              showToast("Package image added.");
-                            };
-                            reader.readAsDataURL(file);
+                            const uploadToken = packageImageUploadTokenRef.current;
+                            setPackageImageUploading((count) => count + files.length);
+                            files.forEach((file) => {
+                              const reader = new FileReader();
+                              reader.onload = (readerEvent) => {
+                                if (packageImageUploadTokenRef.current !== uploadToken) return;
+                                const dataUrl = String(readerEvent.target?.result ?? "");
+                                if (!dataUrl) return;
+                                setPackageImageUrls((prev) => normalisePackageImageUrls([...prev, dataUrl]));
+                              };
+                              reader.onerror = () => {
+                                if (packageImageUploadTokenRef.current === uploadToken) {
+                                  showToast(`Could not load ${file.name}. Try another image.`);
+                                }
+                              };
+                              reader.onloadend = () => {
+                                if (packageImageUploadTokenRef.current === uploadToken) {
+                                  setPackageImageUploading((count) => Math.max(0, count - 1));
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                            showToast(`${files.length} package image${files.length === 1 ? "" : "s"} added.`);
                             event.target.value = "";
                           }}
                         />
@@ -42043,7 +42379,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <button
                               type="button"
                               className="absolute top-1 right-1 !min-h-0 inline-flex items-center justify-center rounded-full bg-white/95 border border-red-100 text-red-600 w-7 h-7 shadow-sm"
-                              onClick={() => setPackageImageUrls((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                              onClick={() => {
+                                packageImageUploadTokenRef.current += 1;
+                                setPackageImageUploading(0);
+                                setPackageImageUrls((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+                              }}
                               title="Remove image"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -42120,6 +42460,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       onClick={() => setPackageComponents((prev) => [...prev, normalisePackageComponent({ productId: "", quantity: 1, isFreeGift: false })])}
                     >+ Add Component</button>
                   </div>
+                  <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${canSyncPackageFreeGiftsToComboTiers ? "border-emerald-100 bg-emerald-50/70" : "border-gray-100 bg-gray-50"}`}>
+                    <input
+                      type="checkbox"
+                      className="mt-1 w-4 h-4 accent-emerald-600"
+                      checked={packageFreeGiftSyncToTiers}
+                      disabled={!canSyncPackageFreeGiftsToComboTiers}
+                      onChange={(event) => setPackageFreeGiftSyncToTiers(event.target.checked)}
+                    />
+                    <span className="text-sm text-gray-700">
+                      <strong className="block text-gray-900">Copy free gifts to other combo tiers only</strong>
+                      {!currentPackageFormIsComboLike
+                        ? "This copy option is only for combo packages. Mark it as featured, state-only, stock-gated, or add multiple paid stock items first."
+                        : packageFreeGiftCount === 0
+                          ? "Tick one component as Free gift first, then save to copy it across your other combo tiers."
+                          : packageGallerySyncTargetCount > 0
+                            ? `When you save, ${packageFreeGiftCount} free gift${packageFreeGiftCount === 1 ? "" : "s"} will be copied to ${packageGallerySyncTargetCount} other combo tier${packageGallerySyncTargetCount === 1 ? "" : "s"}. Paid stock items, prices, states, and images stay untouched. You can edit each tier later.`
+                            : "No other saved combo tiers are available yet. Create another combo tier first, then copy gifts across."}
+                    </span>
+                  </label>
                   {packageComponents.length === 0 ? (
                     <p className="text-xs text-gray-400 italic m-0">No stock components added. This package will use the main product quantity for stock.</p>
                   ) : (
@@ -42648,7 +43007,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   )}
                 </section>
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePackage}>{modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageImageUploading > 0} onClick={savePackage}>{packageImageUploading > 0 ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
               </div>
             )}
 
@@ -43459,7 +43818,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            })()}
 
 	            {modal === "salesRepDetails" && selectedSalesRep && (
-	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
+	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {orderDisplaySourceFor(order).label}</p>)}</section><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                         const rows = [
                           [`Sales Rep Report — ${selectedSalesRep.name}`],

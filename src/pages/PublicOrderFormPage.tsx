@@ -71,9 +71,12 @@ type PublicPackage = {
 
 type PublicPackageComponent = {
   componentId?: string;
+  component_id?: string;
   productId: string;
+  product_id?: string;
   quantity: number;
   isFreeGift?: boolean;
+  is_free_gift?: boolean;
   note?: string;
 };
 
@@ -365,14 +368,44 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
   const components = pkg.packageComponents ?? [];
   if (components.length === 0) return "";
   return components
-    .filter((component) => component.productId)
+    .filter((component) => component.productId || component.product_id)
     .slice(0, 4)
     .map((component) => {
-      const productName = products.find((product) => product.id === component.productId)?.name ?? "Item";
+      const productId = component.productId || component.product_id || "";
+      const isFreeGift = Boolean(component.isFreeGift ?? component.is_free_gift);
+      const productName = products.find((product) => product.id === productId)?.name ?? "Item";
       const qty = Math.max(1, Number(component.quantity) || 1);
-      return `${component.isFreeGift ? "FREE " : ""}${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`;
+      return `${isFreeGift ? "FREE " : ""}${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`;
     })
     .join(" + ");
+}
+
+function packageFreeGiftItems(pkg: PublicPackage, products: PublicProduct[]) {
+  return (pkg.packageComponents ?? [])
+    .filter((component) => (component.productId || component.product_id) && Boolean(component.isFreeGift ?? component.is_free_gift))
+    .map((component) => {
+      const productId = component.productId || component.product_id || "";
+      const productName = products.find((product) => product.id === productId)?.name ?? "Free gift";
+      const qty = Math.max(1, Number(component.quantity) || 1);
+      return {
+        id: component.componentId || component.component_id || productId,
+        name: productName,
+        quantity: qty,
+        label: `${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`
+      };
+    });
+}
+
+function packageIsComboLike(pkg: PublicPackage) {
+  const components = (pkg.packageComponents ?? []).filter((component) => component.productId || component.product_id);
+  const paidComponentCount = components.filter((component) => !Boolean(component.isFreeGift ?? component.is_free_gift)).length;
+  return Boolean(
+    pkg.featuredComboCard ||
+      pkg.requiresStateStock ||
+      (pkg.stateFilterMode && pkg.stateFilterMode !== "all") ||
+      paidComponentCount > 1 ||
+      /combo/i.test(pkg.name)
+  );
 }
 
 function packageImageList(pkg: PublicPackage) {
@@ -900,6 +933,7 @@ export default function PublicOrderFormPage() {
   const [packageAvailabilityById, setPackageAvailabilityById] = useState<Record<string, PublicPackageAvailability>>({});
   const [packageAvailabilityLoading, setPackageAvailabilityLoading] = useState(false);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
+  const [packageCarouselIndexById, setPackageCarouselIndexById] = useState<Record<string, number>>({});
   const [isCompactUpsellViewport, setIsCompactUpsellViewport] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 680px)").matches : false
   );
@@ -3394,13 +3428,46 @@ export default function PublicOrderFormPage() {
                 ) : orderablePublicPackages.map((item) => {
                   const isSelected = orderFormPackageId === item.id;
                   const title = settings.showPackageName ? item.name : `${publicProduct.name} x${item.quantity}`;
-                  const imageUrls = packageImageList(item);
+                  const isComboPackage = packageIsComboLike(item);
+                  const imageUrls = isComboPackage ? packageImageList(item) : [];
                   const hasCarousel = imageUrls.length > 1;
+                  const activeCarouselIndex = imageUrls.length > 0
+                    ? Math.min(packageCarouselIndexById[item.id] ?? 0, imageUrls.length - 1)
+                    : 0;
+                  const activeImageUrl = imageUrls[activeCarouselIndex] ?? imageUrls[0];
+                  const updateCarouselIndex = (
+                    nextIndex: number,
+                    event: { preventDefault: () => void; stopPropagation: () => void }
+                  ) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!hasCarousel) return;
+                    setPackageCarouselIndexById((prev) => ({
+                      ...prev,
+                      [item.id]: (nextIndex + imageUrls.length) % imageUrls.length
+                    }));
+                  };
                   const componentSummary = packageComponentSummary(item, products);
-                  const isFeatured = item.featuredComboCard || hasCarousel;
+                  const freeGiftItems = packageFreeGiftItems(item, products);
+                  const freeGiftQuantity = freeGiftItems.reduce((sum, gift) => sum + gift.quantity, 0);
+                  const freeGiftBadge = `${freeGiftQuantity} FREE GIFT${freeGiftQuantity === 1 ? "" : "S"}`;
+                  const isFeatured = item.featuredComboCard || (isComboPackage && hasCarousel);
                   return (
-                    <label
+                    <div
                       key={item.id}
+                      role="radio"
+                      aria-checked={isSelected}
+                      tabIndex={0}
+                      className={`public-package-option${isFeatured ? " public-package-option--featured" : " public-package-option--compact"}${imageUrls.length > 0 ? " public-package-option--with-media" : ""}${isSelected ? " public-package-option--selected" : ""}`}
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest("button")) return;
+                        setOrderFormPackageId(item.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        setOrderFormPackageId(item.id);
+                      }}
                       style={{
                         display: "grid",
                         gap: 12,
@@ -3413,27 +3480,86 @@ export default function PublicOrderFormPage() {
                       }}
                     >
                       {imageUrls.length > 0 && (
-                        <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: hasCarousel ? 4 : 0, scrollSnapType: "x mandatory" }}>
-                          {imageUrls.map((url, imageIndex) => (
-                            <img
-                              key={`${item.id}-image-${imageIndex}`}
-                              src={url}
-                              alt={`${title} preview ${imageIndex + 1}`}
-                              style={{
-                                width: hasCarousel ? 180 : "100%",
-                                minWidth: hasCarousel ? 180 : "100%",
-                                height: hasCarousel ? 150 : 190,
-                                objectFit: "cover",
-                                borderRadius: 16,
-                                border: "1px solid rgba(148, 163, 184, 0.28)",
-                                background: "#f8fafc",
-                                scrollSnapAlign: "start"
-                              }}
-                            />
-                          ))}
+                        <div className="public-package-option__media" style={{ position: "relative", display: "grid", gap: 8 }}>
+                          <img
+                            className="public-package-option__image"
+                            src={activeImageUrl}
+                            alt={`${title} preview ${activeCarouselIndex + 1}`}
+                            style={{
+                              width: "100%",
+                              minWidth: "100%",
+                              height: 190,
+                              objectFit: "cover",
+                              borderRadius: 16,
+                              border: "1px solid rgba(148, 163, 184, 0.28)",
+                              background: "#f8fafc"
+                            }}
+                          />
+                          {isSelected && isComboPackage && (
+                            <span className="public-package-option__selected-ribbon">
+                              Selected combo
+                            </span>
+                          )}
+                          {hasCarousel && (
+                            <>
+                              <button
+                                type="button"
+                                className="public-package-option__side-nav public-package-option__side-nav--prev"
+                                aria-label={`Show previous ${title} photo`}
+                                onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
+                              />
+                              <button
+                                type="button"
+                                className="public-package-option__side-nav public-package-option__side-nav--next"
+                                aria-label={`Show next ${title} photo`}
+                                onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
+                              />
+                              <div className="public-package-option__photo-dots" aria-label={`${title} photo selector`}>
+                                {imageUrls.map((_, imageIndex) => (
+                                  <button
+                                    key={`${item.id}-dot-${imageIndex}`}
+                                    type="button"
+                                    className={imageIndex === activeCarouselIndex ? "is-active" : ""}
+                                    aria-label={`Show ${title} photo ${imageIndex + 1}`}
+                                    onClick={(event) => updateCarouselIndex(imageIndex, event)}
+                                  />
+                                ))}
+                              </div>
+                              <div className="public-package-option__thumbnails" aria-label={`${title} photos`}>
+                                {imageUrls.map((imageUrl, imageIndex) => (
+                                  <button
+                                    key={`${item.id}-thumb-${imageIndex}`}
+                                    type="button"
+                                    className={imageIndex === activeCarouselIndex ? "is-active" : ""}
+                                    aria-label={`Show ${title} photo ${imageIndex + 1}`}
+                                    onClick={(event) => updateCarouselIndex(imageIndex, event)}
+                                  >
+                                    <img src={imageUrl} alt="" aria-hidden="true" />
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="public-package-option__gallery-nav" aria-label={`${title} photo navigation`}>
+                                <button
+                                  type="button"
+                                  aria-label={`Show previous ${title} photo`}
+                                  onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
+                                >
+                                  Previous
+                                </button>
+                                <span>Tap thumbnails or use Next</span>
+                                <button
+                                  type="button"
+                                  aria-label={`Show next ${title} photo`}
+                                  onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
-                      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "start", gap: 12 }}>
+                      <div className="public-package-option__meta" style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "start", gap: 12 }}>
                         <input
                           type="radio"
                           name="public-package"
@@ -3441,9 +3567,19 @@ export default function PublicOrderFormPage() {
                           onChange={() => setOrderFormPackageId(item.id)}
                           style={{ marginTop: 4, accentColor: "#1F8FE0" }}
                         />
-                        <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {isFeatured && (
+                        <div className="public-package-option__copy" style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                          <div className="public-package-option__badges" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {isSelected && isComboPackage && (
+                              <span className="public-package-option__selected-chip">
+                                Selected combo
+                              </span>
+                            )}
+                            {freeGiftQuantity > 0 && (
+                              <span className="public-package-option__gift-chip">
+                                {freeGiftBadge}
+                              </span>
+                            )}
+                            {item.featuredComboCard && (
                               <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
                                 FEATURED COMBO
                               </span>
@@ -3454,24 +3590,30 @@ export default function PublicOrderFormPage() {
                               </span>
                             )}
                           </div>
-                          <div style={{ fontWeight: 900, fontSize: 17, color: "#111827", lineHeight: 1.2 }}>{title}</div>
-                          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
+                          <div className="public-package-option__title" style={{ fontWeight: 900, fontSize: 17, color: "#111827", lineHeight: 1.2 }}>{title}</div>
+                          <div className="public-package-option__description" style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
                             {item.description || componentSummary || `${item.quantity} ${item.quantity === 1 ? "unit" : "units"}`}
                           </div>
                           {componentSummary && item.description && (
-                            <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
+                            <div className="public-package-option__components" style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
+                          )}
+                          {freeGiftItems.length > 0 && (
+                            <div className="public-package-option__free-gifts">
+                              <strong>Free gift included:</strong>
+                              <span>{freeGiftItems.map((gift) => gift.label).join(" + ")}</span>
+                            </div>
                           )}
                           {hasCarousel && (
-                            <div style={{ fontSize: 12, color: "#92400e", fontWeight: 800 }}>
-                              Swipe to see {imageUrls.length} pictures
+                            <div className="public-package-option__swipe" style={{ fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+                              Tap any photo thumbnail to view all {imageUrls.length} pictures
                             </div>
                           )}
                         </div>
-                        <strong style={{ fontSize: 18, color: "#111827", whiteSpace: "nowrap", lineHeight: 1.2 }}>
+                        <strong className="public-package-option__price" style={{ fontSize: 18, color: "#111827", whiteSpace: "nowrap", lineHeight: 1.2 }}>
                           {formatProductMoney(item.price, item.currency)}
                         </strong>
                       </div>
-                    </label>
+                    </div>
                   );
                 })}
               </div>

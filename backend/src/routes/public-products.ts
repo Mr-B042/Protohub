@@ -50,9 +50,12 @@ type CompanionSocialProof = {
 };
 type DbPackageComponent = {
   componentId?: string;
+  component_id?: string;
   productId: string;
+  product_id?: string;
   quantity: number;
   isFreeGift?: boolean;
+  is_free_gift?: boolean;
   note?: string;
 };
 type DbPackage = {
@@ -150,13 +153,16 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
     promoIsMostAdded: c.promoIsMostAdded === true,
     socialProof: companionSocialProofByProductId?.[c.productId] ?? null
   })}),
-  packageComponents: (p.package_components ?? []).map((component) => ({
-    componentId: component.componentId ?? "",
-    productId: component.productId,
-    quantity: component.quantity,
-    isFreeGift: component.isFreeGift ?? false,
-    note: component.note ?? ""
-  }))
+  packageComponents: (p.package_components ?? []).map((component) => {
+    const productId = component.productId ?? component.product_id ?? "";
+    return {
+      componentId: component.componentId ?? component.component_id ?? "",
+      productId,
+      quantity: component.quantity,
+      isFreeGift: component.isFreeGift ?? component.is_free_gift ?? false,
+      note: component.note ?? ""
+    };
+  })
 });
 
 const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
@@ -330,6 +336,10 @@ router.get("/:id", readRateLimit, async (req, res) => {
     ...((product.packages ?? [])
       .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
       .map((companion) => companion.productId)
+      .filter(Boolean)),
+    ...((product.packages ?? [])
+      .flatMap((pkg) => (pkg.active ? (pkg.package_components ?? []) : []))
+      .map((component) => component.productId ?? component.product_id)
       .filter(Boolean))
   ]);
   let related: DbProduct[] = [];
