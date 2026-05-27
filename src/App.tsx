@@ -1476,7 +1476,8 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
+    "Sales Rep Workspace", "Call Rep Console", "Follow-up Queue", "Closed Orders",
+    "Weekend Stock Summary", "Notifications", "Settings"
   ],
   "Inventory Manager": [
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
