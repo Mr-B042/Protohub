@@ -18120,6 +18120,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return targetPackages.length;
   };
 
+  const savePackageGalleryAfterDetails = async (
+    productId: string,
+    packageId: string,
+    gallery: { imageUrl?: string; imageUrls?: string[] },
+    packageNameForToast: string
+  ): Promise<{ savedPackage: ProductPackage | null; gallerySaved: boolean }> => {
+    const imageUrls = normalisePackageImageUrls(gallery.imageUrls);
+    const imageUrl = gallery.imageUrl && !gallery.imageUrl.startsWith("data:image/") ? gallery.imageUrl : "";
+    if (imageUrls.length === 0 && !imageUrl) {
+      return { savedPackage: null, gallerySaved: true };
+    }
+    try {
+      const savedPackage = await productsApi.updatePackage(productId, packageId, { imageUrl, imageUrls });
+      return { savedPackage: savedPackage as ProductPackage, gallerySaved: true };
+    } catch (err: any) {
+      showToast(`"${packageNameForToast}" saved as draft, but images did not save: ${err?.message ?? "try smaller images"}.`);
+      return { savedPackage: null, gallerySaved: false };
+    }
+  };
+
   const savePackage = () => {
     if (!selectedProduct || !packageName.trim()) {
       showToast("Package name is required.");
@@ -18208,15 +18228,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       packageComponents: normalisedComponents,
       companionProducts: normalisedCompanions
     };
+    const { imageUrl: packagePayloadImageUrl, imageUrls: packagePayloadImageUrls, ...packageDetailsPayload } = packagePayload;
+    const packageGalleryPayload = {
+      imageUrl: packagePayloadImageUrl,
+      imageUrls: packagePayloadImageUrls
+    };
 
     const _pkgProdId = selectedProduct.id;
     const productSnapshot = selectedProduct;
     const shouldSyncPackageImagesToTiers = packageImageSyncToTiers && currentPackageFormIsComboLike && normalisedPackageImageUrls.length > 0;
     const shouldSyncPackageFreeGiftsToTiers = packageFreeGiftSyncToTiers && currentPackageFormIsComboLike && normalisedFreeGiftComponents.length > 0;
-    const syncPackageAssetsToTiers = async (sourcePackageId: string) => {
-      if (shouldSyncPackageImagesToTiers) {
+    const syncPackageAssetsToTiers = async (sourcePackageId: string, gallerySaved: boolean) => {
+      if (shouldSyncPackageImagesToTiers && gallerySaved) {
         const count = await syncPackageGalleryToSiblingTiers(_pkgProdId, sourcePackageId, normalisedPackageImageUrls, productSnapshot);
         if (count > 0) showToast(`Gallery copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
+      } else if (shouldSyncPackageImagesToTiers && !gallerySaved) {
+        showToast("Gallery copy skipped because the image save failed.");
       }
       if (shouldSyncPackageFreeGiftsToTiers) {
         const count = await syncPackageFreeGiftsToSiblingTiers(_pkgProdId, sourcePackageId, normalisedFreeGiftComponents, productSnapshot);
@@ -18240,11 +18267,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     closeModal();
     showToast(`Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.`);
     if (modal === "addPackage") {
-      productsApi.createPackage(_pkgProdId, packagePayload)
-        .then((savedPackage: any) => {
-          replaceTemporaryPackageId(_pkgProdId, packageRecord.id, savedPackage as ProductPackage);
+      productsApi.createPackage(_pkgProdId, packageDetailsPayload)
+        .then(async (savedPackage: any) => {
+          const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, (savedPackage as ProductPackage).id, packageGalleryPayload, packageRecord.name);
+          const finalSavedPackage = galleryResult.savedPackage ?? (savedPackage as ProductPackage);
+          replaceTemporaryPackageId(_pkgProdId, packageRecord.id, finalSavedPackage);
           if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
-            syncPackageAssetsToTiers((savedPackage as ProductPackage).id).catch((err: any) => {
+            syncPackageAssetsToTiers((savedPackage as ProductPackage).id, galleryResult.gallerySaved).catch((err: any) => {
               showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
             });
           }
@@ -18254,8 +18283,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           showToast(`Failed to add package: ${err?.message ?? "please retry"}.`);
         });
     } else if (modal === "editPackage" && selectedPackage) {
-      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packagePayload)
-        .then((savedPackage: any) => {
+      productsApi.updatePackage(_pkgProdId, selectedPackage.id, packageDetailsPayload)
+        .then(async (savedPackage: any) => {
+          const galleryResult = await savePackageGalleryAfterDetails(_pkgProdId, selectedPackage.id, packageGalleryPayload, packageRecord.name);
+          const finalSavedPackage = galleryResult.savedPackage ?? (savedPackage as ProductPackage);
           setProducts((prev) =>
             prev.map((product) => {
               if (product.id !== _pkgProdId) return product;
@@ -18263,16 +18294,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 ...product,
                 packages: product.packages.map((pkg) => {
                   if (pkg.id !== selectedPackage.id) return pkg;
-                  const savedImages = savedPackageCarouselImagePatch(savedPackage as ProductPackage, packageRecord);
+                  const savedImages = savedPackageCarouselImagePatch(finalSavedPackage, packageRecord);
                   return {
                     ...pkg,
-                    ...(savedPackage as ProductPackage),
-                    packageComponents: (savedPackage as ProductPackage).packageComponents ?? normalisedComponents,
-                    companionProducts: (savedPackage as ProductPackage).companionProducts ?? normalisedCompanions,
-                    stateFilterMode: (savedPackage as ProductPackage).stateFilterMode ?? packageRecord.stateFilterMode,
-                    stateRestrictions: (savedPackage as ProductPackage).stateRestrictions ?? packageRecord.stateRestrictions,
-                    requiresStateStock: (savedPackage as ProductPackage).requiresStateStock ?? packageRecord.requiresStateStock,
-                    featuredComboCard: (savedPackage as ProductPackage).featuredComboCard ?? packageRecord.featuredComboCard,
+                    ...finalSavedPackage,
+                    packageComponents: finalSavedPackage.packageComponents ?? normalisedComponents,
+                    companionProducts: finalSavedPackage.companionProducts ?? normalisedCompanions,
+                    stateFilterMode: finalSavedPackage.stateFilterMode ?? packageRecord.stateFilterMode,
+                    stateRestrictions: finalSavedPackage.stateRestrictions ?? packageRecord.stateRestrictions,
+                    requiresStateStock: finalSavedPackage.requiresStateStock ?? packageRecord.requiresStateStock,
+                    featuredComboCard: finalSavedPackage.featuredComboCard ?? packageRecord.featuredComboCard,
                     imageUrl: savedImages.imageUrl,
                     imageUrls: savedImages.imageUrls
                   };
@@ -18281,7 +18312,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             })
           );
           if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
-            syncPackageAssetsToTiers(selectedPackage.id).catch((err: any) => {
+            syncPackageAssetsToTiers(selectedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
               showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
             });
           }
@@ -18320,6 +18351,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id ? { ...p, packages: [...p.packages, clone] } : p)
     );
+    const cloneGalleryPayload = {
+      imageUrl: clone.imageUrl ?? "",
+      imageUrls: clone.imageUrls ?? []
+    };
     productsApi.createPackage(selectedProduct.id, {
       name: clone.name, description: clone.description,
       quantity: clone.quantity, price: clone.price, currency: clone.currency,
@@ -18328,12 +18363,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       stateRestrictions: clone.stateRestrictions ?? [],
       requiresStateStock: Boolean(clone.requiresStateStock),
       featuredComboCard: Boolean(clone.featuredComboCard),
-      imageUrl: clone.imageUrl ?? "",
-      imageUrls: clone.imageUrls ?? [],
       packageComponents: clone.packageComponents,
       companionProducts: clone.companionProducts
-    }).then((savedPackage: any) => {
-      replaceTemporaryPackageId(_dupProdId, clone.id, savedPackage as ProductPackage);
+    }).then(async (savedPackage: any) => {
+      const galleryResult = await savePackageGalleryAfterDetails(_dupProdId, (savedPackage as ProductPackage).id, cloneGalleryPayload, clone.name);
+      replaceTemporaryPackageId(_dupProdId, clone.id, galleryResult.savedPackage ?? (savedPackage as ProductPackage));
     }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _dupProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
       showToast(`Failed to duplicate "${item.name}": ${err?.message ?? "please retry"}.`);
@@ -18369,6 +18403,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id ? { ...p, packages: [...p.packages, clone] } : p)
     );
+    const cloneGalleryPayload = {
+      imageUrl: clone.imageUrl ?? "",
+      imageUrls: clone.imageUrls ?? []
+    };
     productsApi.createPackage(selectedProduct.id, {
       name: clone.name,
       description: clone.description,
@@ -18381,12 +18419,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       stateRestrictions: clone.stateRestrictions ?? [],
       requiresStateStock: Boolean(clone.requiresStateStock),
       featuredComboCard: Boolean(clone.featuredComboCard),
-      imageUrl: clone.imageUrl ?? "",
-      imageUrls: clone.imageUrls ?? [],
       packageComponents: clone.packageComponents,
       companionProducts: clone.companionProducts
-    }).then((savedPackage: any) => {
-      replaceTemporaryPackageId(_scaleProdId, clone.id, savedPackage as ProductPackage);
+    }).then(async (savedPackage: any) => {
+      const galleryResult = await savePackageGalleryAfterDetails(_scaleProdId, (savedPackage as ProductPackage).id, cloneGalleryPayload, clone.name);
+      replaceTemporaryPackageId(_scaleProdId, clone.id, galleryResult.savedPackage ?? (savedPackage as ProductPackage));
     }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _scaleProdId ? { ...p, packages: p.packages.filter((pkg) => pkg.id !== clone.id) } : p));
       showToast(`Failed to create x${multiplier} bundle: ${err?.message ?? "please retry"}.`);
