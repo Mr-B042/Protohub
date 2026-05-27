@@ -13,6 +13,12 @@ const mediaImageSchema = z.union([
   z.string().regex(/^data:image\//).max(800000),
   z.literal("")
 ]).optional();
+const packageMediaImageSchema = z.union([
+  z.string().url().max(2048),
+  // A 5 MB uploaded file expands when encoded as a data URL.
+  z.string().regex(/^data:image\//).max(7_100_000),
+  z.literal("")
+]).optional();
 
 // ── GET /api/products ─────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -249,8 +255,8 @@ const PackageSchema = z.object({
   stateRestrictions: z.array(z.string()).default([]),
   requiresStateStock: z.boolean().default(false),
   featuredComboCard: z.boolean().default(false),
-  imageUrl:          mediaImageSchema,
-  imageUrls:         z.array(mediaImageSchema.unwrap()).max(10).default([]),
+  imageUrl:          packageMediaImageSchema,
+  imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(10).default([]),
   companionProducts: z.array(CompanionSchema).default([]),
   packageComponents: z.array(PackageComponentSchema).default([]),
   offerSyncEnabled: z.boolean().default(false),
@@ -330,8 +336,8 @@ const PackageUpdateSchema = z.object({
   stateRestrictions: z.array(z.string()).optional(),
   requiresStateStock: z.boolean().optional(),
   featuredComboCard: z.boolean().optional(),
-  imageUrl:          mediaImageSchema,
-  imageUrls:         z.array(mediaImageSchema.unwrap()).max(10).optional(),
+  imageUrl:          packageMediaImageSchema,
+  imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(10).optional(),
   companionProducts: z.array(CompanionSchema).optional(),
   packageComponents: z.array(PackageComponentSchema).optional(),
   offerSyncEnabled: z.boolean().optional(),

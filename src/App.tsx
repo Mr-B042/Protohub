@@ -3739,6 +3739,7 @@ const replacePackageFreeGiftComponents = (
 ];
 const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
   mode === "allow" || mode === "block" ? mode : "all";
+const PACKAGE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
   Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 10);
 const packageCarouselImages = (pkg: Pick<ProductPackage, "imageUrl" | "imageUrls">) => {
@@ -43012,9 +43013,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           onChange={(event) => {
                             const files = Array.from(event.target.files ?? []);
                             if (files.length === 0) return;
-                            const oversized = files.find((file) => file.size > 600_000);
+                            const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
                             if (oversized) {
-                              showToast("Each package image must be under 600 KB.");
+                              showToast("Each package image must be under 5 MB.");
                               event.target.value = "";
                               return;
                             }
