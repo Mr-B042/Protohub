@@ -203,7 +203,7 @@ type PendingUpsellOffer = {
 type PublicOrderSubmissionState = {
   orderId: string;
   customer: string;
-  mode: "confirmed_order" | "outage_capture" | "browser_queue" | "preview_only";
+  mode: "confirmed_order" | "outage_capture" | "browser_queue" | "preview_only" | "local_test";
 };
 
 type QueuedPublicOrderSubmission = {
@@ -887,6 +887,11 @@ export default function PublicOrderFormPage() {
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
   const publicEmbedLabel = (params?.get("embed_label") ?? "").trim().slice(0, 120);
   const publicEmbedIsPreview = params?.get("preview") === "1";
+  const publicEmbedIsLocalTest = publicEmbedIsPreview && typeof window !== "undefined" && (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "::1"
+  );
   const rawPublicRedirect = params?.get("redirect_url") ?? "";
   const publicRedirectUrl = useMemo(() => {
     if (!rawPublicRedirect) return "";
@@ -2130,6 +2135,13 @@ export default function PublicOrderFormPage() {
     setPublicOrderSubmitted({ orderId: "Preview only", customer, mode: "preview_only" });
   }
 
+  function finishLocalTestJourney(customer: string) {
+    setPublicUpsellOffer(null);
+    exitTrackedRef.current = true;
+    const testOrderId = `LOCAL-TEST-${Date.now().toString(36).toUpperCase()}`;
+    setPublicOrderSubmitted({ orderId: testOrderId, customer, mode: "local_test" });
+  }
+
   function shouldCapturePublicOrderOutage(error: any) {
     const status = typeof error?.status === "number" ? error.status : null;
     if (status == null || status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504) {
@@ -2339,7 +2351,11 @@ export default function PublicOrderFormPage() {
 
     if (publicEmbedIsPreview) {
       resetOrderForm();
-      finishPreviewJourney(customerName);
+      if (publicEmbedIsLocalTest) {
+        finishLocalTestJourney(customerName);
+      } else {
+        finishPreviewJourney(customerName);
+      }
       return;
     }
 
@@ -3045,7 +3061,7 @@ export default function PublicOrderFormPage() {
               lineHeight: 1.45
             }}
           >
-            <strong>Preview mode</strong> · This form is open for testing only. Submissions here do not create real orders or abandoned-cart records.
+            <strong>{publicEmbedIsLocalTest ? "Local test mode" : "Preview mode"}</strong> · {publicEmbedIsLocalTest ? "Submissions on localhost will show a successful test order ID, but will not create real orders, notifications, stock movements, or abandoned-cart records." : "This form is open for testing only. Submissions here do not create real orders or abandoned-cart records."}
           </div>
         ) : null}
         {publicUpsellOffer ? (
@@ -3130,18 +3146,20 @@ export default function PublicOrderFormPage() {
                   Thank you{publicOrderSubmitted.customer ? `, ${publicOrderSubmitted.customer.split(" ")[0]}` : ""}!
                 </h1>
                 <p style={{ margin: 0, fontSize: 15, color: "#374151", maxWidth: 440, lineHeight: 1.5 }}>
-                  {publicOrderSubmitted.mode === "preview_only"
+                  {publicOrderSubmitted.mode === "local_test"
+                    ? "Localhost test submission completed successfully. No real order, notification, stock movement, or abandoned-cart record was created."
+                    : publicOrderSubmitted.mode === "preview_only"
                     ? "This preview submission was processed as a test only. No real order was created and nothing was recorded in your live order list."
                     : publicOrderSubmitted.mode === "browser_queue"
                     ? "We saved your request in this browser and will keep retrying automatically while the order system is offline. Please keep this tab open if possible."
                     : publicOrderSubmitted.mode === "outage_capture"
                     ? "We saved your request while the order system was temporarily offline. Our team will contact you shortly to confirm the details and arrange delivery."
-                    : "Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery."}
+                  : "Your order has been received and is being processed. Our team will contact you shortly to confirm the details and arrange delivery."}
                 </p>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f3f4f6", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "#374151" }}>
-                  {publicOrderSubmitted.mode === "preview_only" ? "Mode" : publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
+                  {publicOrderSubmitted.mode === "local_test" ? "Test Order ID" : publicOrderSubmitted.mode === "preview_only" ? "Mode" : publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
                 </div>
-                {publicRedirectUrl ? (
+                {publicRedirectUrl && publicOrderSubmitted.mode !== "local_test" ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>Redirecting…</p>
                 ) : (
                   <button
