@@ -1476,8 +1476,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Call Rep Console", "Follow-up Queue", "Closed Orders",
-    "Weekend Stock Summary", "Notifications", "Settings"
+    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
   ],
   "Inventory Manager": [
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
@@ -4724,6 +4723,7 @@ const isNativePushShell = (() => {
   return false;
 })();
 const nativePushTroubleshootingDisabled = isNativePushShell;
+const SHOW_GLOBAL_PUSH_BANNER = false;
 
 // ── ORDER_DETAILS_POLL_MS ────────────────────
 const ORDER_DETAILS_POLL_MS = 10_000;
@@ -7246,7 +7246,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPushSubscriptionHosts([...new Set((subscriptions ?? []).map((subscription) => subscription.host).filter(Boolean))]);
     setPushSubscribed(isSubscribed);
     const dismissed = respectBannerDismissal ? sessionStorage.getItem("pushBannerDismissed") : null;
-    const shouldShowBanner = configured && !pushNeedsStandaloneInstall && !isSubscribed && perm === "default" && !dismissed;
+    // Keep the dashboard shell stable across production and localhost.
+    // Users can still enable/test push from Settings; the global banner is too
+    // environment-sensitive and makes the app feel different between devices.
+    const shouldShowBanner = SHOW_GLOBAL_PUSH_BANNER && configured && !pushNeedsStandaloneInstall && !isSubscribed && perm === "default" && !dismissed;
     setShowPushBanner(shouldShowBanner);
   };
   const [pushLoading, setPushLoading] = useState(false);
