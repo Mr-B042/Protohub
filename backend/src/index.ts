@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
+import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
@@ -312,6 +313,21 @@ cron.schedule("*/5 * * * *", async () => {
     await syncDueOrderFollowUpNotifications();
   } catch (e) {
     logger.error("cron: order follow-up notification sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Smart low-stock alerts — every hour ──────────────────
+// Fires only for (state, product) pairs that sold this week AND are < 3 days
+// of stock at the current sell rate. 24-hour dedupe prevents notification spam.
+cron.schedule("0 * * * *", async () => {
+  logger.info("cron: scanning for smart stock alerts");
+  try {
+    const summary = await runSmartStockAlerts();
+    if (summary.firedAlerts > 0) {
+      logger.info("cron: smart stock alerts fired", summary);
+    }
+  } catch (e) {
+    logger.error("cron: smart stock alert scan crashed", { error: (e as Error).message });
   }
 });
 

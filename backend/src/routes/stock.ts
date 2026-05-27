@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendLowStockEmail } from "../lib/mailer.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
 import { sendPushToRoles } from "../lib/push.js";
+import { runSmartStockAlerts } from "../lib/smart-stock-alerts.js";
 
 const movementId = () => `MOV-${randomUUID()}`;
 
@@ -455,6 +456,21 @@ router.patch("/count-sessions/:id/close",
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json(data);
+  }
+);
+
+// ── POST /api/stock/smart-alerts/run ─────────────────────
+// Manual trigger for the smart low-stock alert scan. Same logic as the
+// hourly cron. Useful for owners/admins to refresh alerts on demand.
+router.post("/smart-alerts/run",
+  requireRole("Owner", "Admin"),
+  async (_req, res) => {
+    try {
+      const summary = await runSmartStockAlerts();
+      res.json(summary);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Smart stock alert scan failed." });
+    }
   }
 );
 
