@@ -430,7 +430,8 @@ export const stockApi = {
   createSession: (body: unknown) => post<any>("/api/stock/count-sessions", body),
   updateEntry: (entryId: string, body: unknown) => patch<any>(`/api/stock/count-entries/${entryId}`, body),
   adjustEntry: (entryId: string, body: unknown) => post<any>(`/api/stock/count-entries/${entryId}/adjust`, body),
-  closeSession: (sessionId: string) => patch<any>(`/api/stock/count-sessions/${sessionId}/close`, {})
+  closeSession: (sessionId: string) => patch<any>(`/api/stock/count-sessions/${sessionId}/close`, {}),
+  runSmartAlerts: () => post<{ scannedOrgs: number; firedAlerts: number }>(`/api/stock/smart-alerts/run`, {})
 };
 
 // ── Expenses ──────────────────────────────────────────────
