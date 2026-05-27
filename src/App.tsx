@@ -126,6 +126,24 @@ import {
   revenueData,
   summaryCards
 } from "./data";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors
+} from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  arrayMove,
+  rectSortingStrategy
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
@@ -5581,6 +5599,61 @@ const normalizeAdTrackingLabelMap = (value: unknown): Record<string, string> => 
   return next;
 };
 
+// Single image card in the package gallery — sortable via @dnd-kit. The drag
+// listeners attach to the whole card, but PointerSensor has an 8px activation
+// distance so a click on the trash button isn't interpreted as a drag start.
+function SortablePackageImage({
+  url,
+  index,
+  isMain,
+  onRemove
+}: {
+  url: string;
+  index: number;
+  isMain: boolean;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    zIndex: isDragging ? 50 : "auto",
+    cursor: isDragging ? "grabbing" : "grab",
+    touchAction: "none"
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="relative rounded-lg border border-amber-100 bg-amber-50 overflow-hidden"
+    >
+      <img
+        src={url}
+        alt={`Package image ${index + 1}`}
+        className="w-full h-24 object-cover bg-white pointer-events-none select-none"
+        draggable={false}
+      />
+      {isMain && (
+        <span className="absolute top-1 left-1 inline-flex items-center px-1.5 py-0.5 rounded-md bg-white/95 border border-amber-200 text-[9px] font-bold text-amber-800 uppercase tracking-wider shadow-sm pointer-events-none">
+          Main
+        </span>
+      )}
+      <button
+        type="button"
+        className="absolute top-1 right-1 !min-h-0 inline-flex items-center justify-center rounded-full bg-white/95 border border-red-100 text-red-600 w-7 h-7 shadow-sm"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => { event.stopPropagation(); onRemove(); }}
+        title="Remove image"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
 export function App({ onLogout }: { onLogout?: () => void }) {
   const authUser = auth.getUser();
   useEffect(() => {
@@ -5826,6 +5899,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
   const packageImageUploadTokenRef = useRef(0);
+  // Drag-and-drop sensors for the package image gallery. PointerSensor needs an
+  // 8px activation distance so a click on the trash button doesn't start a drag.
+  // TouchSensor needs a long-press (250 ms) so a tap on the trash isn't a drag.
+  const packageImageSortableSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const handlePackageImageDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setPackageImageUrls((prev) => {
+      const oldIndex = prev.indexOf(String(active.id));
+      const newIndex = prev.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
+  };
   const [selectedPackageId, setSelectedPackageId] = useState("");
   const [packageDescriptionDraft, setPackageDescriptionDraft] = useState("");
   const [salesPeriod, setSalesPeriod] = useState<Period>("This Month");
@@ -43147,25 +43238,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </label>
                     </div>
                     {packageImageUrls.length > 0 && (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {packageImageUrls.map((url, index) => (
-                          <div key={`${url}-${index}`} className="relative rounded-lg border border-amber-100 bg-amber-50 overflow-hidden">
-                            <img src={url} alt={`Package image ${index + 1}`} className="w-full h-24 object-cover bg-white" />
-                            <button
-                              type="button"
-                              className="absolute top-1 right-1 !min-h-0 inline-flex items-center justify-center rounded-full bg-white/95 border border-red-100 text-red-600 w-7 h-7 shadow-sm"
-                              onClick={() => {
-                                packageImageUploadTokenRef.current += 1;
-                                setPackageImageUploading(0);
-                                setPackageImageUrls((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
-                              }}
-                              title="Remove image"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                      <>
+                        <p className="text-[11px] text-amber-800/80 -mt-1">Drag any image to reorder. The first image is your main one — shown on the order form and as the product thumbnail.</p>
+                        <DndContext sensors={packageImageSortableSensors} collisionDetection={closestCenter} onDragEnd={handlePackageImageDragEnd}>
+                          <SortableContext items={packageImageUrls} strategy={rectSortingStrategy}>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {packageImageUrls.map((url, index) => (
+                                <SortablePackageImage
+                                  key={url}
+                                  url={url}
+                                  index={index}
+                                  isMain={index === 0}
+                                  onRemove={() => {
+                                    packageImageUploadTokenRef.current += 1;
+                                    setPackageImageUploading(0);
+                                    setPackageImageUrls((prev) => prev.filter((item) => item !== url));
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          </SortableContext>
+                        </DndContext>
+                      </>
                     )}
                   </div>
                 </section>
