@@ -66,26 +66,26 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
   const totalOpenOrders = sorted.reduce((sum, signal) => sum + signal.openOrders, 0);
   const lookbackDays = Math.max(1, Math.round(sorted[0]?.lookbackDays ?? 7));
   const headline = stockoutCount > 0
-    ? `${stockoutCount} local stockout risk${stockoutCount === 1 ? "" : "s"} need attention now`
+    ? `${stockoutCount} serviceable stock risk${stockoutCount === 1 ? "" : "s"} need attention now`
     : criticalCount > 0
-      ? `${criticalCount} critical fast-moving stock risk${criticalCount === 1 ? "" : "s"}`
-      : `${watchCount} moving stock item${watchCount === 1 ? "" : "s"} to watch`;
+      ? `${criticalCount} critical fast-moving stock coverage risk${criticalCount === 1 ? "" : "s"}`
+      : `${watchCount} moving stock coverage item${watchCount === 1 ? "" : "s"} to watch`;
   const topLines = sorted.slice(0, 3).map((signal) => {
     const warehouse = Number(signal.warehouseStock ?? 0);
     const cover = Number.isFinite(signal.daysCover)
-      ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d agent-state cover`
+      ? `${Math.max(0, Math.ceil(Number(signal.daysCover)))}d service cover`
       : "cover unknown";
     const open = signal.openOrders > 0 ? `, ${signal.openOrders} open` : "";
     const warehouseText = signal.stock <= 0 && warehouse > 0
       ? `, ${warehouse} warehouse reserve`
       : "";
-    return `${signal.productName} in ${signal.state}: ${signal.stock} agent stock in state${warehouseText}, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
+    return `${signal.productName} for ${signal.state}: ${signal.stock} serviceable with covered agents${warehouseText}, ${signal.recentUnits} ordered/${lookbackDays}d, ${cover}${open}`;
   });
   const remaining = sorted.length > topLines.length
     ? ` +${sorted.length - topLines.length} more in Inventory Dashboard.`
     : "";
   const openText = totalOpenOrders > 0
-    ? ` ${totalOpenOrders} open order${totalOpenOrders === 1 ? "" : "s"} may need local stock when confirmed/delivered.`
+    ? ` ${totalOpenOrders} open order${totalOpenOrders === 1 ? "" : "s"} may need serviceable agent stock when confirmed/delivered.`
     : "";
   return `${headline}.${openText} ${topLines.join(" • ")}${remaining}`.trim();
 };

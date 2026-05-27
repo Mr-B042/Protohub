@@ -48,6 +48,76 @@ const packageRequirements = (pkg: PackageAvailabilityPackage, fallbackProductId:
   }];
 };
 
+type PackageAvailabilityAgentCoverageRow = {
+  state?: string | null;
+  active?: boolean | null;
+};
+
+type PackageAvailabilityAgentLocationStockRow = {
+  product_id?: string | null;
+  quantity?: number | null;
+};
+
+type PackageAvailabilityAgentLocationRow = {
+  active?: boolean | null;
+  stock?: PackageAvailabilityAgentLocationStockRow[] | null;
+};
+
+type PackageAvailabilityAgentRecord = {
+  zone?: string | null;
+  primary_base_state?: string | null;
+  coverage?: PackageAvailabilityAgentCoverageRow[] | null;
+  locations?: PackageAvailabilityAgentLocationRow[] | null;
+};
+
+const coverageStatesForAgentAvailability = (agent: PackageAvailabilityAgentRecord) => {
+  const explicitStates = Array.isArray(agent.coverage)
+    ? agent.coverage
+        .filter((row) => row?.active !== false)
+        .map((row) => normalizeStateName(row?.state))
+        .filter(Boolean)
+    : [];
+  if (explicitStates.length > 0) {
+    return Array.from(new Set(explicitStates));
+  }
+  const fallback = normalizeStateName(agent.primary_base_state ?? agent.zone);
+  return fallback ? [fallback] : [];
+};
+
+const activeLocationsForAgentAvailability = (agent: PackageAvailabilityAgentRecord) => {
+  const rows = Array.isArray(agent.locations) ? agent.locations : [];
+  const activeRows = rows.filter((row) => row?.active !== false);
+  return activeRows.length > 0 ? activeRows : rows;
+};
+
+export function serviceableAgentStockByProductForState(
+  agents: PackageAvailabilityAgentRecord[],
+  state: string | null | undefined
+) {
+  const normalizedState = normalizeStateName(state);
+  const availableByProduct = new Map<string, number>();
+  if (!normalizedState) return availableByProduct;
+
+  for (const agent of agents) {
+    const coveredStates = coverageStatesForAgentAvailability(agent);
+    if (!coveredStates.includes(normalizedState)) continue;
+
+    for (const location of activeLocationsForAgentAvailability(agent)) {
+      const stockRows = Array.isArray(location.stock) ? location.stock : [];
+      for (const row of stockRows) {
+        const rowProductId = String(row.product_id ?? "");
+        if (!rowProductId) continue;
+        availableByProduct.set(
+          rowProductId,
+          (availableByProduct.get(rowProductId) ?? 0) + Math.max(0, Number(row.quantity ?? 0))
+        );
+      }
+    }
+  }
+
+  return availableByProduct;
+}
+
 export async function packageHasAgentStateStock(
   orgId: string,
   productId: string,
@@ -62,25 +132,16 @@ export async function packageHasAgentStateStock(
   if (requirements.length === 0) return false;
 
   const { data, error } = await supabase
-    .from("agent_locations")
-    .select("state, active, stock:agent_location_stock(product_id, quantity)")
+    .from("agents")
+    .select("zone, primary_base_state, coverage:agent_coverage(state, active), locations:agent_locations(active, stock:agent_location_stock(product_id, quantity))")
     .eq("org_id", orgId)
     .eq("active", true);
   if (error) throw error;
 
-  const availableByProduct = new Map<string, number>();
-  for (const location of data ?? []) {
-    if (normalizeStateName(location.state) !== normalizedState) continue;
-    const stockRows = Array.isArray(location.stock) ? location.stock : [];
-    for (const row of stockRows) {
-      const rowProductId = String(row.product_id ?? "");
-      if (!rowProductId) continue;
-      availableByProduct.set(
-        rowProductId,
-        (availableByProduct.get(rowProductId) ?? 0) + Math.max(0, Number(row.quantity ?? 0))
-      );
-    }
-  }
+  const availableByProduct = serviceableAgentStockByProductForState(
+    (data ?? []) as PackageAvailabilityAgentRecord[],
+    normalizedState
+  );
 
   return requirements.every((requirement) =>
     (availableByProduct.get(requirement.productId) ?? 0) >= requirement.quantity

@@ -86,6 +86,9 @@ const numericAmount = (value: unknown) => {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const roundMoney = (value: number) => Math.round(value * 100) / 100;
+const hasOwn = (record: Record<string, unknown>, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key);
 
 const remittanceReceivedAtToIso = (value: unknown) => {
   if (value === undefined) return undefined;
@@ -1322,7 +1325,7 @@ router.patch("/:id", async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
-  const remittanceReason = typeof (req.body.remittance_reason ?? req.body.remittanceReason) === "string"
+  let remittanceReason = typeof (req.body.remittance_reason ?? req.body.remittanceReason) === "string"
     ? String(req.body.remittance_reason ?? req.body.remittanceReason).trim().slice(0, 240)
     : "";
   if (remittanceReceivedAt === null) {
@@ -1411,6 +1414,27 @@ router.patch("/:id", async (req, res) => {
   for (const [dbKey, inputKeys] of Object.entries(allowed)) {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
+    }
+  }
+  const touchesRemittanceMoney = hasOwn(updates, "amount_remitted");
+  if (touchesRemittanceMoney) {
+    const nextOrderAmount = numericAmount(hasOwn(updates, "amount") ? updates.amount : current.amount);
+    const nextLogisticsCost = numericAmount(hasOwn(updates, "logistics_cost") ? updates.logistics_cost : current.logistics_cost);
+    const nextAmountRemitted = numericAmount(hasOwn(updates, "amount_remitted") ? updates.amount_remitted : current.amount_remitted);
+    const expectedRemittance = Math.max(0, roundMoney(nextOrderAmount - nextLogisticsCost));
+    const remittanceVariance = roundMoney(nextAmountRemitted - expectedRemittance);
+    if (remittanceVariance !== 0) {
+      if (req.user!.role !== "Owner") {
+        res.status(403).json({ error: "Owner approval is required before short or excess remittance cash can enter finance." });
+        return;
+      }
+      if (!remittanceReason) {
+        res.status(400).json({ error: "A remittance variance reason is required for short or excess cash." });
+        return;
+      }
+      if (!/owner approved/i.test(remittanceReason)) {
+        remittanceReason = `${remittanceReason} · Owner approved by ${req.user!.name}`.slice(0, 500);
+      }
     }
   }
   const requestedTerminalSafeKeys = new Set(Object.keys(updates));

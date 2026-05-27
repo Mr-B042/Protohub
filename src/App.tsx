@@ -1616,6 +1616,18 @@ const formatFlexibleMoney = (amount: number, code?: string) => {
   }
 };
 
+const remittanceVarianceReasons = [
+  { value: "waybill_logistics", label: "Waybill / logistics fee" },
+  { value: "extra_delivery_fee", label: "Extra delivery fee" },
+  { value: "customer_paid_less", label: "Customer paid less / discount" },
+  { value: "partial_cash", label: "Partial cash received" },
+  { value: "agent_shortage", label: "Agent shortage / missing cash" },
+  { value: "excess_cash", label: "Excess cash / overpayment" },
+  { value: "correction", label: "Correction / other" }
+] as const;
+const remittanceVarianceReasonLabel = (value: string) =>
+  remittanceVarianceReasons.find((reason) => reason.value === value)?.label ?? "";
+
 const normalizeAgentState = (value?: string | null) => normalizeStateName(value ?? undefined);
 const normalizeAgentCity = (value?: string | null) => (value ?? "").trim();
 
@@ -1740,6 +1752,49 @@ const agentLocationStockRowsWithQuantity = (
   return location.stock.filter((row) => Number(row.quantity ?? 0) > 0);
 };
 
+const activeAgentLocationRows = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null
+) => {
+  const rows = agentLocationRows(agent);
+  const activeRows = rows.filter((location) => location.active !== false);
+  return activeRows.length > 0 ? activeRows : rows;
+};
+
+const agentLocationProductStockQuantity = (
+  location: Pick<DeliveryAgentLocation, "stock"> | null | undefined,
+  productId: string | null | undefined
+) => {
+  if (!location || !productId) return 0;
+  return location.stock.reduce((sum, row) => (
+    row.productId === productId ? sum + Math.max(0, Number(row.quantity ?? 0)) : sum
+  ), 0);
+};
+
+const locationHasPositiveStock = (location: Pick<DeliveryAgentLocation, "stock"> | null | undefined) =>
+  Boolean(location?.stock.some((row) => Number(row.quantity ?? 0) > 0));
+
+const reportableAgentLocations = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null
+) => {
+  const rows = activeAgentLocationRows(agent);
+  const stockedRows = rows.filter((location) => locationHasPositiveStock(location));
+  const primary = rows.find((location) => location.isPrimary) ?? rows[0] ?? null;
+  if (stockedRows.length > 0) {
+    if (!primary || stockedRows.some((location) => location.id === primary.id)) return stockedRows;
+    return [primary, ...stockedRows];
+  }
+  return primary ? [primary] : [];
+};
+
+const agentCoversState = (
+  agent: Pick<DeliveryAgentRecord, "coverage" | "primaryBaseState" | "zone"> | undefined | null,
+  state?: string | null
+) => {
+  const wantedState = normalizeAgentState(state);
+  if (!wantedState || !agent) return false;
+  return agentCoverageStates(agent).some((coveredState) => coveredState.toLowerCase() === wantedState.toLowerCase());
+};
+
 const preferredReconcileLocation = (
   agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null
 ) => agentLocationRows(agent).find((location) => (location.stock ?? []).some((row) => Number(row.quantity ?? 0) > 0))
@@ -1787,6 +1842,33 @@ const agentLocationInventory = (
       totalValue: items.reduce((sum, item) => sum + item.value, 0)
     };
   });
+
+const bestAgentFulfillmentLocationMatch = (
+  agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address">,
+  state?: string | null,
+  city?: string | null,
+  productId?: string | null
+) => {
+  const wantedState = normalizeAgentState(state).toLowerCase();
+  const wantedCity = normalizeAgentCity(city).toLowerCase();
+  const locations = activeAgentLocationRows(agent);
+  if (locations.length === 0) return null;
+  const sorted = locations.slice().sort((a, b) => {
+    const aStock = agentLocationProductStockQuantity(a, productId);
+    const bStock = agentLocationProductStockQuantity(b, productId);
+    if ((aStock > 0 ? 1 : 0) !== (bStock > 0 ? 1 : 0)) return (bStock > 0 ? 1 : 0) - (aStock > 0 ? 1 : 0);
+    if (aStock !== bStock) return bStock - aStock;
+    if ((a.isPrimary ? 1 : 0) !== (b.isPrimary ? 1 : 0)) return (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
+    const aStateMatch = wantedState && normalizeAgentState(a.state).toLowerCase() === wantedState ? 1 : 0;
+    const bStateMatch = wantedState && normalizeAgentState(b.state).toLowerCase() === wantedState ? 1 : 0;
+    if (aStateMatch !== bStateMatch) return bStateMatch - aStateMatch;
+    const aCityMatch = wantedCity && normalizeAgentCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
+    const bCityMatch = wantedCity && normalizeAgentCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
+    if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
+    return agentLocationLabel(a).localeCompare(agentLocationLabel(b));
+  });
+  return sorted[0] ?? null;
+};
 
 const bestAgentLocationMatch = (
   agent: Pick<DeliveryAgentRecord, "locations" | "coverage" | "primaryBaseState" | "zone" | "address">,
@@ -1873,7 +1955,7 @@ const buildAgentOrderMatch = (
   const wantedState = normalizeAgentState(state).toLowerCase();
   const wantedCity = normalizeAgentCity(city).toLowerCase();
   const coverageMatch = bestAgentCoverageMatch(agent, state, city);
-  const locationMatch = bestAgentLocationMatch(agent, state, city, productId);
+  const locationMatch = bestAgentFulfillmentLocationMatch(agent, state, city, productId);
   const matchedState = normalizeAgentState(coverageMatch?.state).toLowerCase();
   const matchedCity = normalizeAgentCity(coverageMatch?.city).toLowerCase();
   const stockQty = productId
@@ -7547,9 +7629,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
+  const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
+  const [remittanceVarianceNote, setRemittanceVarianceNote] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
   const [remittanceBatchAmount, setRemittanceBatchAmount] = useState("");
   const [remittanceBatchReceivedDate, setRemittanceBatchReceivedDate] = useState(todayKey());
+  const [remittanceBatchVarianceReason, setRemittanceBatchVarianceReason] = useState("");
+  const [remittanceBatchVarianceNote, setRemittanceBatchVarianceNote] = useState("");
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
@@ -8222,6 +8308,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
+    setRemittanceVarianceReason("");
+    setRemittanceVarianceNote("");
   }, [modal, remittanceTargetOrderId, trackedOrders]);
   useEffect(() => {
     if (!selectedOrderId) return;
@@ -8354,13 +8442,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter((o) => o.productId === productId && (o.status ?? "New") === "Delivered")
       .reduce((sum, o) => sum + quantityForOrder(o), 0);
   const totalProductStockLive = (product: Product) => product.warehouseStock + productAgentStockSum(product.id);
+  const catalogProductById = new Map(catalogProducts.map((product) => [product.id, product]));
   const productInventoryValueLive = (product: Product) =>
     totalProductStockLive(product) * (primaryPricing(product)?.sellingPrice ?? 0);
   const inventoryValue = catalogProducts.reduce((sum, product) => sum + productInventoryValueLive(product), 0);
   const totalInventoryUnits = catalogProducts.reduce((sum, product) => sum + totalProductStockLive(product), 0);
   const agentInventoryUnits = catalogProducts.reduce((sum, product) => sum + productAgentStockSum(product.id), 0);
   const distributionRate = totalInventoryUnits === 0 ? 0 : Math.round((agentInventoryUnits / totalInventoryUnits) * 100);
-  const lowStockProducts = catalogProducts.filter((product) => product.warehouseStock <= product.reorderPoint);
+  const warehouseLowStockProducts = catalogProducts.filter((product) => product.warehouseStock <= product.reorderPoint);
   const historyAgentOptions = Array.from(
     new Set(
       stockMovements
@@ -8403,7 +8492,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return matchesProduct && matchesType && matchesAgent && matchesStart && matchesEnd && matchesDrill;
   });
   const inventoryStateHubRows = agents.flatMap((agent) =>
-    agentLocationRows(agent).map((location) => ({
+    reportableAgentLocations(agent).map((location) => ({
       agent,
       agentId: agent.id,
       agentName: agent.name,
@@ -8446,6 +8535,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     return legacyRows.length > 0 ? [...directRows, ...legacyRows] : directRows;
   };
+  const agentLowStockAlerts = smartStockLowStockThreshold <= 0
+    ? []
+    : inventoryStateHubRows
+        .flatMap(({ agent, location }) =>
+          stockRowsForStateHub(agent, location).flatMap((stock) => {
+            const quantity = Math.max(0, Number(stock.quantity ?? 0));
+            if (quantity <= 0 || quantity > smartStockLowStockThreshold) return [];
+            const product = catalogProductById.get(stock.productId);
+            if (!product) return [];
+            return [{
+              id: `${agent.id}::${location.id}::${stock.productId}`,
+              agentId: agent.id,
+              agentName: agent.name,
+              locationId: location.id,
+              locationName: agentLocationLabel(location),
+              state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
+              productId: product.id,
+              productName: product.name,
+              quantity,
+              threshold: smartStockLowStockThreshold
+            }];
+          })
+        )
+        .sort((a, b) => a.quantity - b.quantity || a.agentName.localeCompare(b.agentName) || a.productName.localeCompare(b.productName));
+  const totalLowStockAlertCount = warehouseLowStockProducts.length + agentLowStockAlerts.length;
   const stateStockStateOptions = Array.from(
     new Set(
       inventoryStateHubRows
@@ -8815,13 +8929,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       smartStockDemandByKey.set(key, bucket);
     });
   });
-  const smartStockHubCountByState = new Map<string, number>();
+  const smartStockPhysicalHubCountByState = new Map<string, number>();
   inventoryStateHubRows.forEach(({ location }) => {
     const state = normalizeAgentState(location.state);
     if (!state) return;
-    smartStockHubCountByState.set(state, (smartStockHubCountByState.get(state) ?? 0) + 1);
+    smartStockPhysicalHubCountByState.set(state, (smartStockPhysicalHubCountByState.get(state) ?? 0) + 1);
   });
-  const smartStockSupplyByKey = new Map<string, {
+  const smartStockPhysicalSupplyByKey = new Map<string, {
     stock: number;
     hubCount: number;
     topHubName: string;
@@ -8835,9 +8949,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const key = smartStockKey(stock.productId, state);
       smartStockStateByKey.set(key, state);
       const quantity = Math.max(0, Number(stock.quantity ?? 0));
-      const bucket = smartStockSupplyByKey.get(key) ?? {
+      const bucket = smartStockPhysicalSupplyByKey.get(key) ?? {
         stock: 0,
-        hubCount: smartStockHubCountByState.get(state) ?? 0,
+        hubCount: smartStockPhysicalHubCountByState.get(state) ?? 0,
         topHubName: "",
         topHubQty: 0
       };
@@ -8846,10 +8960,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         bucket.topHubName = agentLocationLabel(location);
         bucket.topHubQty = quantity;
       }
-      smartStockSupplyByKey.set(key, bucket);
+      smartStockPhysicalSupplyByKey.set(key, bucket);
     });
   });
-  const smartStockSignalKeys = new Set([...smartStockDemandByKey.keys(), ...smartStockSupplyByKey.keys()]);
+  const smartStockServiceableSupplyByKey = new Map<string, {
+    stock: number;
+    hubCount: number;
+    topHubName: string;
+    topHubQty: number;
+  }>();
+  Array.from(smartStockDemandByKey.keys()).forEach((key) => {
+    const [productId] = key.split("::");
+    const state = smartStockStateByKey.get(key) ?? "";
+    if (!productId || !state) return;
+    const bucket = {
+      stock: 0,
+      hubCount: 0,
+      topHubName: "",
+      topHubQty: 0
+    };
+    activeAgents.forEach((agent) => {
+      if (!agentCoversState(agent, state)) return;
+      reportableAgentLocations(agent).forEach((location) => {
+        const quantity = Math.max(0, Number(stockRowsForStateHub(agent, location).find((stock) => stock.productId === productId)?.quantity ?? 0));
+        if (quantity <= 0) return;
+        bucket.stock += quantity;
+        bucket.hubCount += 1;
+        if (quantity > bucket.topHubQty) {
+          bucket.topHubName = agentLocationLabel(location);
+          bucket.topHubQty = quantity;
+        }
+      });
+    });
+    smartStockServiceableSupplyByKey.set(key, bucket);
+  });
+  const smartStockSignalKeys = new Set([...smartStockDemandByKey.keys()]);
   const smartStockDemandSignals = Array.from(smartStockSignalKeys)
     .map((key): SmartStockDemandSignal | null => {
       const [productId] = key.split("::");
@@ -8857,11 +9002,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const state = smartStockStateByKey.get(key) ?? "";
       if (!product || !state) return null;
       const demand = smartStockDemandByKey.get(key);
-      const supply = smartStockSupplyByKey.get(key);
+      const supply = smartStockServiceableSupplyByKey.get(key);
       const recentUnits = demand?.recentUnits ?? 0;
       const velocity = recentUnits / smartStockLookbackDays;
       const stock = supply?.stock ?? 0;
-      const hubCount = supply?.hubCount ?? smartStockHubCountByState.get(state) ?? 0;
+      const hubCount = supply?.hubCount ?? 0;
       const warehouseStock = Math.max(0, Number(product.warehouseStock ?? 0));
       const totalAvailableStock = stock + warehouseStock;
       const hasWarehouseFallback = stock <= 0 && warehouseStock > 0;
@@ -8894,7 +9039,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         warehouseStock,
         totalAvailableStock,
         hubCount,
-        topHubName: hubCount > 0 ? (supply?.topHubName || `${state} agent stock`) : "No agent stock tracked",
+        topHubName: hubCount > 0 ? (supply?.topHubName || "Covered agent hub") : "No stocked hub yet",
         topHubQty: supply?.topHubQty ?? 0,
         recentUnits,
         recentOrders: demand?.recentOrderIds.size ?? 0,
@@ -8922,7 +9067,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || b.recentUnits - a.recentUnits
         || a.productName.localeCompare(b.productName);
     });
-  const dormantLowStockSignals = Array.from(smartStockSupplyByKey.entries())
+  const dormantLowStockSignals = Array.from(smartStockPhysicalSupplyByKey.entries())
     .map(([key, supply]) => {
       const [productId] = key.split("::");
       const product = smartStockProductById.get(productId);
@@ -11161,14 +11306,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const remittanceBatchAmountValue = Math.max(0, Number(remittanceBatchAmount) || 0);
   const remittanceBatchAllocationPreview = (() => {
     let remaining = remittanceBatchAmountValue;
-    return remittanceBatchOrders.map((order) => {
+    const rows = remittanceBatchOrders.map((order) => {
       const outstanding = orderRemittanceOutstanding(order);
       const applied = Math.max(0, Math.min(remaining, outstanding));
       remaining = Math.max(0, remaining - applied);
-      return { order, outstanding, applied, after: Math.max(0, outstanding - applied) };
+      return { order, outstanding, applied, excessApplied: 0, after: roundCash(outstanding - applied) };
     });
+    if (remaining > 0 && rows.length > 0) {
+      const lastIndex = rows.length - 1;
+      const last = rows[lastIndex];
+      rows[lastIndex] = {
+        ...last,
+        applied: roundCash(last.applied + remaining),
+        excessApplied: roundCash(remaining),
+        after: roundCash(last.after - remaining)
+      };
+    }
+    return rows;
   })();
-  const remittanceBatchUnappliedAmount = Math.max(0, remittanceBatchAmountValue - remittanceBatchOutstandingTotal);
+  const remittanceBatchShortAmount = Math.max(0, roundCash(remittanceBatchOutstandingTotal - remittanceBatchAmountValue));
+  const remittanceBatchExcessAmount = Math.max(0, roundCash(remittanceBatchAmountValue - remittanceBatchOutstandingTotal));
+  const remittanceBatchHasVariance = remittanceBatchShortAmount > 0 || remittanceBatchExcessAmount > 0;
+  const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && realRole !== "Owner";
+  const remittanceBatchOwnerApprovalGranted = remittanceBatchHasVariance && realRole === "Owner";
+  const financeRemittanceEditableOrders = financeDeliveredRows
+    .slice()
+    .sort((a, b) => {
+      const aOutstanding = orderRemittanceOutstanding(a);
+      const bOutstanding = orderRemittanceOutstanding(b);
+      const aNeedsAttention = aOutstanding > 0 ? 1 : 0;
+      const bNeedsAttention = bOutstanding > 0 ? 1 : 0;
+      return bNeedsAttention - aNeedsAttention
+        || bOutstanding - aOutstanding
+        || remittanceOrderSortValue(b) - remittanceOrderSortValue(a)
+        || a.customer.localeCompare(b.customer);
+    });
 
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
@@ -11252,6 +11424,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
+  const buildRemittanceVarianceReason = (args: {
+    scope: "Single order" | "Batch";
+    category: string;
+    note: string;
+    expected: number;
+    received: number;
+    logisticsCost?: number;
+    currency: ProductCurrencyCode;
+  }) => {
+    const variance = roundCash(args.received - args.expected);
+    const categoryLabel = remittanceVarianceReasonLabel(args.category)
+      || (variance > 0 ? "Excess cash / overpayment" : variance < 0 ? "Cash variance" : "Balanced remittance");
+    const varianceLabel = variance > 0
+      ? `excess ${formatProductMoney(variance, args.currency)}`
+      : variance < 0
+        ? `short ${formatProductMoney(Math.abs(variance), args.currency)}`
+        : "balanced";
+    return [
+      `${args.scope} remittance: ${categoryLabel}`,
+      args.note.trim(),
+      `Expected ${formatProductMoney(args.expected, args.currency)}`,
+      `received ${formatProductMoney(args.received, args.currency)}`,
+      varianceLabel,
+      args.logisticsCost !== undefined ? `logistics ${formatProductMoney(args.logisticsCost, args.currency)}` : ""
+    ].filter(Boolean).join(" · ");
+  };
+
   const recordRemittance = () => {
     const order = trackedOrders.find((o) => o.id === remittanceTargetOrderId);
     if (!order) { showToast("Order not found."); return; }
@@ -11259,22 +11458,53 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const newLogistics = remittanceLogisticsCost.trim() === "" ? (order.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
     const expected = Math.max(0, order.amount - newLogistics);
+    const variance = roundCash(newRemitted - expected);
+    const hasVariance = variance !== 0;
+    if (hasVariance && realRole !== "Owner") {
+      showToast("Owner approval is required before short or excess cash can enter the system.");
+      return;
+    }
+    if (hasVariance && !remittanceVarianceReason) {
+      showToast("Select the cash variance reason before saving.");
+      return;
+    }
+    if (remittanceVarianceReason === "correction" && variance !== 0 && remittanceVarianceNote.trim().length < 3) {
+      showToast("Add a short note for the correction reason.");
+      return;
+    }
+    const remittanceReason = buildRemittanceVarianceReason({
+      scope: "Single order",
+      category: remittanceVarianceReason,
+      note: remittanceVarianceNote,
+      expected,
+      received: newRemitted,
+      logisticsCost: newLogistics,
+      currency: order.currency
+    });
+    const approvedRemittanceReason = hasVariance ? `${remittanceReason} · Owner approved by ${ownerName}` : remittanceReason;
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
     const prevOrders = trackedOrders;
+    const varianceNote = variance > 0
+      ? ` Excess cash ${formatMoney(variance)} owner-approved and recorded.`
+      : variance < 0
+        ? ` Short by ${formatMoney(Math.abs(variance))}. Owner-approved reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
+        : "";
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.`), ...orderNotesFor(o)]
+      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.${varianceNote}`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
     closeModal();
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     setRemittanceReceivedDate(todayKey());
-    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
-    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate }).then(() => {
+    setRemittanceVarianceReason("");
+    setRemittanceVarianceNote("");
+    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? " Owner approval recorded." : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
+    ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate, remittance_reason: approvedRemittanceReason }).then(() => {
       void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
@@ -11289,12 +11519,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceLogisticsCost(String(order.logisticsCost ?? ""));
     setRemittanceAmount(String(order.amountRemitted ?? ""));
     setRemittanceReceivedDate(todayKey());
+    setRemittanceVarianceReason("");
+    setRemittanceVarianceNote("");
     openFinanceRemittanceRoute(order.id);
   };
   const openRecordBatchRemittance = (partnerKey: string) => {
     setRemittanceBatchPartnerKeyValue(partnerKey);
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
+    setRemittanceBatchVarianceReason("");
+    setRemittanceBatchVarianceNote("");
     setModal("recordBatchRemittance");
   };
   const recordBatchRemittance = async () => {
@@ -11314,8 +11548,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Enter the total amount remitted by the logistics partner.");
       return;
     }
-    if (remittanceBatchAmountValue > remittanceBatchOutstandingTotal) {
-      showToast(`The remitted amount cannot exceed ${formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))} for this batch.`);
+    if (remittanceBatchHasVariance && realRole !== "Owner") {
+      showToast("Owner approval is required before short or excess batch cash can enter the system.");
+      return;
+    }
+    if (remittanceBatchHasVariance && !remittanceBatchVarianceReason) {
+      showToast("Select the batch cash variance reason before saving.");
+      return;
+    }
+    if (remittanceBatchVarianceReason === "correction" && remittanceBatchHasVariance && remittanceBatchVarianceNote.trim().length < 3) {
+      showToast("Add a short note for the correction reason.");
       return;
     }
     const allocations = remittanceBatchAllocationPreview.filter((entry) => entry.applied > 0);
@@ -11323,6 +11565,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("There is nothing to allocate in this remittance batch.");
       return;
     }
+    const batchCurrency = remittanceRowCurrency(remittanceBatchTargetRow);
+    const batchReason = buildRemittanceVarianceReason({
+      scope: "Batch",
+      category: remittanceBatchVarianceReason,
+      note: remittanceBatchVarianceNote,
+      expected: remittanceBatchOutstandingTotal,
+      received: remittanceBatchAmountValue,
+      currency: batchCurrency
+    });
+    const approvedBatchReason = remittanceBatchHasVariance ? `${batchReason} · Owner approved by ${ownerName}` : batchReason;
     const previousOrders = trackedOrders;
     const optimisticMap = new Map(allocations.map((entry) => {
       const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
@@ -11332,11 +11584,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : nextAmountRemitted >= orderAmountToRemit(entry.order)
             ? "Paid"
             : "Partial";
+      const lineNote = entry.excessApplied > 0
+        ? ` Includes owner-approved excess cash ${formatMoney(entry.excessApplied)}.`
+        : "";
       return [entry.order.id, {
         ...entry.order,
         amountRemitted: nextAmountRemitted,
         remittanceStatus: nextStatus,
-        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.`), ...orderNotesFor(entry.order)]
+        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.${remittanceBatchHasVariance ? " Owner approval recorded." : ""}${lineNote}`), ...orderNotesFor(entry.order)]
       }];
     }));
     setTrackedOrders((prev) => prev.map((order) => optimisticMap.get(order.id) ?? order));
@@ -11344,7 +11599,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceBatchPartnerKeyValue("");
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
-    showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.`);
+    setRemittanceBatchVarianceReason("");
+    setRemittanceBatchVarianceNote("");
+    showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, batchCurrency)} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.${remittanceBatchHasVariance ? " Owner approval recorded." : ""}${remittanceBatchExcessAmount > 0 ? ` Excess ${formatProductMoney(remittanceBatchExcessAmount, batchCurrency)} recorded.` : ""}`);
     try {
       await Promise.all(allocations.map((entry) => {
         const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
@@ -11357,7 +11614,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         return ordersApi.update(entry.order.id, {
           amount_remitted: nextAmountRemitted,
           remittance_status: nextStatus,
-          remittance_received_at: remittanceBatchReceivedDate
+          remittance_received_at: remittanceBatchReceivedDate,
+          remittance_reason: `${approvedBatchReason} · ${entry.excessApplied > 0 ? `excess applied to ${entry.order.id}` : `allocated to ${entry.order.id}`}`
         });
       }));
       void loadFinanceSummaryData({ quiet: true });
@@ -18311,6 +18569,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })[0]?.id;
   };
 
+  const maybePushAgentLowStockNotification = (
+    product: Product,
+    agent: DeliveryAgentRecord | undefined,
+    previousQty: number,
+    nextQty: number,
+    location?: DeliveryAgentLocation | null
+  ) => {
+    if (!agent || smartStockLowStockThreshold <= 0) return;
+    const safePrevious = Math.max(0, Number(previousQty ?? 0));
+    const safeNext = Math.max(0, Number(nextQty ?? 0));
+    if (safePrevious <= smartStockLowStockThreshold || safeNext > smartStockLowStockThreshold) return;
+    const locationSuffix = location ? ` · ${agentLocationLabel(location)}` : "";
+    pushSystemNotification({
+      type: "low_stock",
+      title: "Low Agent Stock",
+      message: `Low stock: ${product.name} — ${agent.name}${locationSuffix} down to ${safeNext} unit${safeNext === 1 ? "" : "s"} (hub threshold: ${smartStockLowStockThreshold})`,
+      productId: product.id,
+      link: `/dashboard/admin/agents/${agent.id}`
+    });
+  };
+
   const deductProductStockForOrder = (order: TrackedOrder) => {
     if (!order.productId || order.stockDeducted) {
       return;
@@ -18323,6 +18602,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const quantity = quantityForOrder(order);
     const sourceStock = order.agentId ? agentStock.find((stock) => stock.agentId === order.agentId && stock.productId === product.id) : undefined;
+    const sourceAgent = order.agentId ? agents.find((agent) => agent.id === order.agentId) : undefined;
+    const sourceLocation = sourceAgent
+      ? bestAgentFulfillmentLocationMatch(sourceAgent, order.state, order.city, product.id)
+      : null;
+    const previousLocationQty = sourceLocation
+      ? agentLocationProductStockQuantity(sourceLocation, product.id)
+      : Math.max(0, Number(sourceStock?.quantity ?? 0));
     const nextBalance = order.agentId ? Math.max(0, (sourceStock?.quantity ?? 0) - quantity) : Math.max(0, product.warehouseStock - quantity);
     setProducts((value) =>
       value.map((item) =>
@@ -18370,6 +18656,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           link: "/dashboard/admin/inventory/state-stock"
         });
       }
+    } else {
+      maybePushAgentLowStockNotification(
+        product,
+        sourceAgent,
+        previousLocationQty,
+        Math.max(0, previousLocationQty - quantity),
+        sourceLocation
+      );
     }
   };
 
@@ -20170,11 +20464,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setStockMovements((value) => value.filter((m) => m.id !== movementId));
       showToast(`Failed to assign stock to ${_assAgentName}: ${err?.message ?? "please retry"}.`);
     });
-    pushSystemNotification({
-      type: "info",
-      title: "Stock assigned to agent",
-      message: `${quantity} × ${product.name} → ${_assAgentName} (warehouse now ${product.warehouseStock - quantity})`,
-      productId: product.id,
+      pushSystemNotification({
+        type: "info",
+        title: "Stock assigned to agent",
+        message: `${quantity} × ${product.name} → ${_assAgentName} (warehouse now ${product.warehouseStock - quantity})`,
+        productId: product.id,
       link: `/dashboard/admin/agents/${_assAgId}`
     });
   };
@@ -20358,6 +20652,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         productId: product.id,
         link: `/dashboard/admin/agents/${selectedAgent.id}`
       });
+      maybePushAgentLowStockNotification(product, selectedAgent, currentQuantity, nextQuantity, targetLocation);
     }
   };
 
@@ -20688,6 +20983,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       productId: product.id,
       link: `/dashboard/admin/waybill`
     });
+    if (waybillFromType === "Agent") {
+      maybePushAgentLowStockNotification(
+        product,
+        fromAgent ?? undefined,
+        fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0,
+        Math.max(0, (fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0) - qty),
+        fromLocation
+      );
+    }
   };
 
   // When marking received, an admin can:
@@ -23988,7 +24292,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Hot stock signals</h2>
-                    <p className="text-xs text-orange-800 mt-0.5 dark:text-orange-100/80">These are products customers are asking for now, but stock is tight in your active states.</p>
+                    <p className="text-xs text-orange-800 mt-0.5 dark:text-orange-100/80">These are products customers are asking for now, but covered-agent stock is tight in your active states.</p>
                   </div>
                   <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
                     Demand-aware
@@ -24003,13 +24307,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600 dark:text-orange-200">{signal.label}</span>
                           <h3 className="mt-1 text-sm font-extrabold text-gray-900 dark:text-white">{signal.productName}</h3>
                           <p className="text-xs text-gray-500 dark:text-slate-300">
-                            {signal.state} · {signal.stock} local{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
+                            {signal.state} · {signal.stock} serviceable{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
                           </p>
                         </div>
                         <Flame className="h-4 w-4 shrink-0 text-orange-500" />
                       </div>
                       <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
-                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days. {signal.hubCount === 0 && signal.warehouseStock > 0 ? "Ask admin to dispatch from warehouse before delivery." : signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
+                        {signal.recentUnits} unit{signal.recentUnits === 1 ? "" : "s"} ordered in {smartStockLookbackDays} days. {signal.hubCount === 0 && signal.warehouseStock > 0 ? "Ask admin to dispatch from warehouse to an agent covering this state." : signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} still need handling.` : "Keep confirming serious buyers first."}
                       </p>
                     </article>
                   ))}
@@ -33242,12 +33546,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </div>
 
-                  {/* Per-order outstanding list */}
+                  {/* Per-order remittance editor */}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                       <div>
-                        <h2 className="text-sm font-bold text-gray-800">Outstanding Orders</h2>
-                        <p className="text-xs text-gray-400">Delivered orders with money still owed by the logistics partner</p>
+                        <h2 className="text-sm font-bold text-gray-800">Delivered Orders Remittance</h2>
+                        <p className="text-xs text-gray-400">Open any delivered order here to adjust remittance, including excess or underpaid cash already saved.</p>
                       </div>
                       {highlightedRemittanceBatchRow && (
                         <button
@@ -33260,14 +33564,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       )}
                     </div>
                     {(() => {
-                      const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid").sort((a, b) => orderRemittanceOutstanding(b) - orderRemittanceOutstanding(a));
-                      if (outstanding.length === 0) {
-                        return <div className="sm:hidden px-5 py-12 text-center text-sm text-gray-400 italic">All delivered orders are fully remitted. 🎉</div>;
+                      const deliveredOrders = financeRemittanceEditableOrders;
+                      if (deliveredOrders.length === 0) {
+                        return <div className="sm:hidden px-5 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</div>;
                       }
                       const OS_PAGE = 25;
-                      const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
+                      const osTotalPages = Math.ceil(deliveredOrders.length / OS_PAGE);
                       const osPageClamped = Math.min(outstandingPage, osTotalPages);
-                      const pagedOutstanding = outstanding.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
+                      const pagedOutstanding = deliveredOrders.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
                       return (
                         <div className="sm:hidden divide-y divide-gray-100">
                           {pagedOutstanding.map((order) => {
@@ -33307,7 +33611,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
                                   </div>
                                 </div>
-                                <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> Record Remittance</button>
+                                <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}</button>
                               </article>
                             );
                           })}
@@ -33323,14 +33627,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {(() => {
-                            const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid").sort((a, b) => orderRemittanceOutstanding(b) - orderRemittanceOutstanding(a));
-                            if (outstanding.length === 0) {
-                              return <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">All delivered orders are fully remitted. 🎉</td></tr>;
+                            const deliveredOrders = financeRemittanceEditableOrders;
+                            if (deliveredOrders.length === 0) {
+                              return <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>;
                             }
                             const OS_PAGE = 25;
-                            const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
+                            const osTotalPages = Math.ceil(deliveredOrders.length / OS_PAGE);
                             const osPageClamped = Math.min(outstandingPage, osTotalPages);
-                            const pagedOutstanding = outstanding.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
+                            const pagedOutstanding = deliveredOrders.slice((osPageClamped - 1) * OS_PAGE, osPageClamped * OS_PAGE);
                             return pagedOutstanding.map((order) => {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
@@ -33349,7 +33653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td className="px-4 py-3 font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</td>
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
-                                  <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> Record</button></td>
+                                  <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button></td>
                                 </tr>
                               );
                             });
@@ -33358,7 +33662,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </table>
                     </div>
                     {(() => {
-                      const outstanding = financeDeliveredRows.filter((o) => orderRemittanceOutstanding(o) > 0 || orderRemittanceStatus(o) !== "Paid");
+                      const outstanding = financeRemittanceEditableOrders;
                       const OS_PAGE = 25;
                       const osTotalPages = Math.ceil(outstanding.length / OS_PAGE);
                       if (osTotalPages <= 1) return null;
@@ -38582,7 +38886,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div>
                       <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Demand-aware state stock signals</h2>
                       <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-100/80">
-                        This shows states where customers are ordering a product and local stock may run out soon.
+                        This shows states where customers are ordering a product and serviceable agent stock may run out soon.
                       </p>
                     </div>
                     <span className="inline-flex w-fit items-center rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-200">
@@ -38605,7 +38909,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <p className="text-xs font-semibold text-gray-700 dark:text-slate-300">{signal.state} · {signal.topHubName}</p>
                             </div>
                             <span className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-[11px] font-extrabold text-gray-900 dark:bg-white/10 dark:text-white">
-                              {signal.stock} local{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
+                              {signal.stock} serviceable{signal.warehouseStock > 0 ? ` · ${signal.warehouseStock} warehouse` : ""}
                             </span>
                           </div>
                           <p className="mt-2 text-xs leading-5 text-gray-700 dark:text-slate-300">
@@ -39151,7 +39455,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                             <div className="rounded-lg bg-white/70 px-2 py-2 dark:bg-white/10">
-                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Agent stock in state</span>
+                              <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-slate-300">Serviceable agent stock</span>
                               <strong className="text-gray-950 dark:text-white">{signal.stock}</strong>
                               {signal.warehouseStock > 0 && (
                                 <span className="mt-0.5 block text-[10px] font-semibold text-sky-700 dark:text-sky-200">
@@ -39170,8 +39474,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </div>
                           <p className="mt-3 text-xs leading-5 text-gray-700 dark:text-slate-300">
                             {signal.stock <= 0
-                              ? `No agent stock is recorded in ${signal.state}${signal.hubCount === 0 ? " yet" : ""}.${signal.warehouseStock > 0 ? ` Warehouse has ${signal.warehouseStock}; dispatch to an agent in ${signal.state} before delivery.` : " Confirm carefully or assign stock to an agent in this state."}`
-                              : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need agent stock when confirmed/delivered. ` : ""}${signal.hubCount} agent stock point${signal.hubCount === 1 ? "" : "s"} tracked in ${signal.state}; top point has ${signal.topHubQty}.`}
+                              ? `No serviceable agent stock is mapped to ${signal.state}${signal.hubCount === 0 ? " yet" : ""}.${signal.warehouseStock > 0 ? ` Warehouse has ${signal.warehouseStock}; dispatch to an agent covering ${signal.state} before delivery.` : " Confirm carefully or assign stock to an agent who covers this state."}`
+                              : `${signal.openOrders > 0 ? `${signal.openOrders} open order${signal.openOrders === 1 ? "" : "s"} may need agent stock when confirmed/delivered. ` : ""}${signal.hubCount} stocked hub${signal.hubCount === 1 ? "" : "s"} can currently serve ${signal.state}; best hub has ${signal.topHubQty}.`}
                           </p>
                         </article>
                       ))}
@@ -39197,16 +39501,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   )}
                 </section>
 
-                <div className={`flex items-start gap-4 rounded-xl border p-4 shadow-sm ${lowStockProducts.length === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
-                  <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${lowStockProducts.length === 0 ? "bg-green-100 text-green-600" : "bg-amber-100 text-amber-600"}`}><AlertTriangle className="w-4 h-4" /></span>
+                <div className={`flex items-start gap-4 rounded-xl border p-4 shadow-sm ${totalLowStockAlertCount === 0 ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`} aria-label="Low stock alerts">
+                  <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${totalLowStockAlertCount === 0 ? "bg-green-100 text-green-600" : "bg-amber-100 text-amber-600"}`}><AlertTriangle className="w-4 h-4" /></span>
                   <div className="flex-1 min-w-0">
-                    <h2 className={`text-sm font-bold ${lowStockProducts.length === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
-                    <p className={`text-xs mt-0.5 ${lowStockProducts.length === 0 ? "text-green-600" : "text-amber-600"}`}>{lowStockProducts.length === 0 ? "All products are currently above reorder point." : `${lowStockProducts.length} product${lowStockProducts.length === 1 ? "" : "s"} at or below reorder point.`}</p>
-                    {lowStockProducts.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {lowStockProducts.map((product) => (
-                          <span key={product.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">{product.name}: {product.warehouseStock}/{product.reorderPoint}</span>
-                        ))}
+                    <h2 className={`text-sm font-bold ${totalLowStockAlertCount === 0 ? "text-green-800" : "text-amber-800"}`}>Low stock alerts</h2>
+                    <p className={`text-xs mt-0.5 ${totalLowStockAlertCount === 0 ? "text-green-600" : "text-amber-600"}`}>
+                      {totalLowStockAlertCount === 0
+                        ? "Warehouse products and agent hub balances are currently above their low-stock thresholds."
+                        : `${warehouseLowStockProducts.length} warehouse product${warehouseLowStockProducts.length === 1 ? "" : "s"} + ${agentLowStockAlerts.length} agent hub alert${agentLowStockAlerts.length === 1 ? "" : "s"} need attention.`}
+                    </p>
+                    {warehouseLowStockProducts.length > 0 && (
+                      <div className="mt-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">Warehouse</span>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {warehouseLowStockProducts.map((product) => (
+                            <span key={product.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                              {product.name}: {product.warehouseStock}/{product.reorderPoint}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {agentLowStockAlerts.length > 0 && (
+                      <div className="mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                          Agent hubs
+                          {smartStockLowStockThreshold > 0 ? ` <= ${smartStockLowStockThreshold}` : ""}
+                        </span>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {agentLowStockAlerts.map((alert) => (
+                            <span key={alert.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">
+                              {alert.agentName} · {alert.locationName} · {alert.productName}: {alert.quantity}/{alert.threshold}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -41379,7 +41707,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    ) : (
 	                      <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto">
 	                        {visibleRows.map(({ agent, stockQty, sameState }) => {
-                            const matchedLocation = bestAgentLocationMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId);
+                            const matchedLocation = bestAgentFulfillmentLocationMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId);
 	                          const ok = stockQty >= orderQty;
 	                          const empty = stockQty === 0;
 	                          const isSelected = createOrderAgentId === agent.id;
@@ -44543,36 +44871,87 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               );
             })()}
 
-            {modal === "recordRemittance" && remittanceTargetOrder && (
-              <div className="modal-form">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Customer</span><strong className="text-sm font-semibold text-gray-900">{remittanceTargetOrder.customer}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
+            {modal === "recordRemittance" && remittanceTargetOrder && (() => {
+              const logisticsValue = remittanceLogisticsCost.trim() === "" ? (remittanceTargetOrder.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
+              const receivedValue = remittanceAmount.trim() === "" ? (remittanceTargetOrder.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
+              const expectedValue = Math.max(0, remittanceTargetOrder.amount - logisticsValue);
+              const variance = roundCash(receivedValue - expectedValue);
+              const isShort = variance < 0;
+              const isExcess = variance > 0;
+              const ownerApprovalRequired = (isShort || isExcess) && realRole !== "Owner";
+              const ownerApprovalGranted = (isShort || isExcess) && realRole === "Owner";
+              return (
+                <div className="modal-form">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Customer</span><strong className="text-sm font-semibold text-gray-900">{remittanceTargetOrder.customer}</strong></article>
+                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
+                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
+                  </div>
+                  <label>
+                    <span>Logistics Cost (paid to partner)</span>
+                    <input value={remittanceLogisticsCost} onChange={(e) => setRemittanceLogisticsCost(e.target.value)} inputMode="decimal" placeholder="e.g. 4000" />
+                  </label>
+                  <label>
+                    <span>Amount Remitted (cash actually received from partner)</span>
+                    <input value={remittanceAmount} onChange={(e) => setRemittanceAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 61500" />
+                  </label>
+                  <label>
+                    <span>Cash Received Date</span>
+                    <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
+                  </label>
+                  <div className={`rounded-xl border px-3 py-3 text-sm ${isShort ? "border-amber-200 bg-amber-50 text-amber-900" : isExcess ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Expected</span><strong>{formatProductMoney(expectedValue, remittanceTargetOrder.currency)}</strong></div>
+                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Received</span><strong>{formatProductMoney(receivedValue, remittanceTargetOrder.currency)}</strong></div>
+                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Difference</span><strong>{isShort ? `Short ${formatProductMoney(Math.abs(variance), remittanceTargetOrder.currency)}` : isExcess ? `Excess ${formatProductMoney(variance, remittanceTargetOrder.currency)}` : "Balanced"}</strong></div>
+                    </div>
+                    <p className="m-0 mt-2 text-xs">
+                      {isShort
+                        ? ownerApprovalRequired
+                          ? "Cash is below expected. Owner approval is required before this can enter finance."
+                          : "Cash is below expected. Select why before saving; this save will record Owner approval."
+                        : isExcess
+                          ? ownerApprovalRequired
+                            ? "Extra cash found. Owner approval is required before this can enter finance."
+                            : "Extra cash will be recorded on this order as an Owner-approved excess remittance."
+                          : "Cash received matches the expected remittance."}
+                    </p>
+                    {ownerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this variance.</p>}
+                    {ownerApprovalRequired && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
+                  </div>
+                  {(isShort || isExcess) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label>
+                        <span>{isShort ? "Reason for short cash *" : "Reason for excess cash *"}</span>
+                        <select value={remittanceVarianceReason} onChange={(e) => setRemittanceVarianceReason(e.target.value)}>
+                          <option value="">Select a reason...</option>
+                          {remittanceVarianceReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Reason note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, agent overpaid..." />
+                      </label>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                    If the difference is a real waybill/logistics fee, enter it under <strong>Logistics Cost</strong> so the expected cash is reduced correctly.<br />
+                    <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, expectedValue - receivedValue), remittanceTargetOrder.currency)}<br />
+                    <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
+                  </p>
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    <button
+                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={recordRemittance}
+                      disabled={ownerApprovalRequired}
+                    >
+                      {ownerApprovalRequired ? "Owner Approval Required" : ownerApprovalGranted ? "Approve & Save Remittance" : "Save Remittance"}
+                    </button>
+                  </div>
                 </div>
-                <label>
-                  <span>Logistics Cost (paid to partner)</span>
-                  <input value={remittanceLogisticsCost} onChange={(e) => setRemittanceLogisticsCost(e.target.value)} inputMode="decimal" placeholder="e.g. 4000" />
-                </label>
-                <label>
-                  <span>Amount Remitted (cash actually received from partner)</span>
-                  <input value={remittanceAmount} onChange={(e) => setRemittanceAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 61500" />
-                </label>
-                <label>
-                  <span>Cash Received Date</span>
-                  <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
-                </label>
-                <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <strong>Expected to receive:</strong> {formatProductMoney(Math.max(0, remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)), remittanceTargetOrder.currency)} (Order amount − logistics cost)<br />
-                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, (remittanceTargetOrder.amount - (Number(remittanceLogisticsCost) || 0)) - (Number(remittanceAmount) || 0)), remittanceTargetOrder.currency)}<br />
-                  <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
-                </p>
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordRemittance}>Save Remittance</button>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
               <div className="modal-form">
@@ -44593,19 +44972,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <span>Cash Received Date</span>
                   <input type="date" value={remittanceBatchReceivedDate} onChange={(e) => setRemittanceBatchReceivedDate(e.target.value)} />
                 </label>
-                <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <strong>Already received:</strong> {formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Outstanding before this:</strong> {formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, remittanceBatchOutstandingTotal - remittanceBatchAmountValue), remittanceRowCurrency(remittanceBatchTargetRow))}<br />
-                  <strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.
-                </p>
+                <div className={`rounded-xl border px-3 py-3 text-sm ${remittanceBatchShortAmount > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : remittanceBatchExcessAmount > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Already received</span><strong>{formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
+                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Outstanding</span><strong>{formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
+                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">This cash</span><strong>{formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
+                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Difference</span><strong>{remittanceBatchShortAmount > 0 ? `Short ${formatProductMoney(remittanceBatchShortAmount, remittanceRowCurrency(remittanceBatchTargetRow))}` : remittanceBatchExcessAmount > 0 ? `Excess ${formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}` : "Balanced"}</strong></div>
+                  </div>
+                  <p className="m-0 mt-2 text-xs">
+                    {remittanceBatchShortAmount > 0
+                      ? remittanceBatchNeedsOwnerApproval
+                        ? "Cash is below the batch outstanding. Owner approval is required before this can enter finance."
+                        : "Cash is below the batch outstanding. Select why before saving; this save will record Owner approval."
+                      : remittanceBatchExcessAmount > 0
+                        ? remittanceBatchNeedsOwnerApproval
+                          ? "Extra cash found. Owner approval is required before this can enter finance."
+                          : "Extra cash will be recorded on the final order in this batch as an Owner-approved excess remittance."
+                        : "This batch exactly settles the current outstanding cash."}
+                  </p>
+                  {remittanceBatchOwnerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this batch variance.</p>}
+                  {remittanceBatchNeedsOwnerApproval && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
+                  <p className="m-0 mt-1 text-xs"><strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.</p>
+                </div>
+                {(remittanceBatchShortAmount > 0 || remittanceBatchExcessAmount > 0) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label>
+                      <span>{remittanceBatchShortAmount > 0 ? "Reason for short batch cash *" : "Reason for excess cash *"}</span>
+                      <select value={remittanceBatchVarianceReason} onChange={(e) => setRemittanceBatchVarianceReason(e.target.value)}>
+                        <option value="">Select a reason...</option>
+                        {remittanceVarianceReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Reason note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, agent sent extra cash..." />
+                    </label>
+                  </div>
+                )}
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
                     <strong className="text-sm text-gray-900">Allocation preview</strong>
                     <p className="text-xs text-gray-500 mt-1">This shows how the total remittance will settle the partner&apos;s outstanding delivered orders.</p>
                   </div>
                   <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
-                    {remittanceBatchAllocationPreview.map(({ order, outstanding, applied, after }) => (
+                    {remittanceBatchAllocationPreview.map(({ order, outstanding, applied, excessApplied, after }) => (
                       <div key={order.id} className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))] gap-3 text-sm">
                         <div>
                           <div className="font-semibold text-[#1F8FE0]">{order.id}</div>
@@ -44619,23 +45029,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <div>
                           <span className="text-[10px] uppercase tracking-wider text-gray-400">Applied now</span>
                           <div className="font-semibold text-green-700">{formatProductMoney(applied, order.currency)}</div>
+                          {excessApplied > 0 && <div className="text-[11px] font-semibold text-emerald-700">includes {formatProductMoney(excessApplied, order.currency)} excess</div>}
                         </div>
                         <div>
                           <span className="text-[10px] uppercase tracking-wider text-gray-400">After save</span>
-                          <div className={`font-semibold ${after > 0 ? "text-amber-700" : "text-gray-500"}`}>{formatProductMoney(after, order.currency)}</div>
+                          <div className={`font-semibold ${after > 0 ? "text-amber-700" : after < 0 ? "text-emerald-700" : "text-gray-500"}`}>
+                            {after < 0 ? `Excess ${formatProductMoney(Math.abs(after), order.currency)}` : formatProductMoney(after, order.currency)}
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-                {remittanceBatchUnappliedAmount > 0 && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    The entered amount is higher than this batch&apos;s current outstanding by {formatProductMoney(remittanceBatchUnappliedAmount, remittanceRowCurrency(remittanceBatchTargetRow))}. Reduce the remitted total or widen the date range before saving.
+                {remittanceBatchExcessAmount > 0 && (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                    Excess cash of {formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))} will be attached to the final allocation above. That keeps the ledger balanced instead of throwing the cash away.
                   </p>
                 )}
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={recordBatchRemittance}>Save Batch Remittance</button>
+                  <button
+                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={recordBatchRemittance}
+                    disabled={remittanceBatchNeedsOwnerApproval}
+                  >
+                    {remittanceBatchNeedsOwnerApproval ? "Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : "Save Batch Remittance"}
+                  </button>
                 </div>
               </div>
             )}

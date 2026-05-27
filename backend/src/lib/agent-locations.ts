@@ -199,6 +199,12 @@ export async function resolveAgentLocationForOrder(
   const productId = args.productId ? String(args.productId) : "";
 
   const sorted = pool.slice().sort((a, b) => {
+    const aStock = productId ? locationStockForProduct(a, productId) : 0;
+    const bStock = productId ? locationStockForProduct(b, productId) : 0;
+    if ((aStock > 0 ? 1 : 0) !== (bStock > 0 ? 1 : 0)) return (bStock > 0 ? 1 : 0) - (aStock > 0 ? 1 : 0);
+    if (aStock !== bStock) return bStock - aStock;
+    if ((a.is_primary ? 1 : 0) !== (b.is_primary ? 1 : 0)) return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
+
     const aStateMatch = wantedState && normalizeState(a.state).toLowerCase() === wantedState ? 1 : 0;
     const bStateMatch = wantedState && normalizeState(b.state).toLowerCase() === wantedState ? 1 : 0;
     if (aStateMatch !== bStateMatch) return bStateMatch - aStateMatch;
@@ -206,12 +212,6 @@ export async function resolveAgentLocationForOrder(
     const aCityMatch = wantedCity && normalizeCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
     const bCityMatch = wantedCity && normalizeCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
     if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
-
-    const aHasStock = productId && locationStockForProduct(a, productId) > 0 ? 1 : 0;
-    const bHasStock = productId && locationStockForProduct(b, productId) > 0 ? 1 : 0;
-    if (aHasStock !== bHasStock) return bHasStock - aHasStock;
-
-    if ((a.is_primary ? 1 : 0) !== (b.is_primary ? 1 : 0)) return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
     return a.name.localeCompare(b.name);
   });
 
