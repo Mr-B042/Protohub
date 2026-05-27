@@ -7632,6 +7632,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [followUpNextActionTime, setFollowUpNextActionTime] = useState(() => nextTimeValue());
   const [followUpNextActionNote, setFollowUpNextActionNote] = useState("");
   const [callQueueIndex, setCallQueueIndex] = useState(0);
+  const [callQueueSearch, setCallQueueSearch] = useState("");
   const [callQueueNote, setCallQueueNote] = useState("");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
   const [repConsoleRepId, setRepConsoleRepId] = useState("all");
@@ -10543,6 +10544,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (status !== "New") return false;
       if (authUser && authUser.role === "Sales Rep") return order.assignedRepId === authUser.id;
       return true;
+    })
+    .filter((order) => {
+      const q = callQueueSearch.trim().toLowerCase();
+      if (!q) return true;
+      const phoneDigits = q.replace(/\D/g, "");
+      const orderPhoneDigits = (order.phone ?? "").replace(/\D/g, "");
+      const orderWhatsappDigits = (order.whatsapp ?? "").replace(/\D/g, "");
+      return (
+        order.id.toLowerCase().includes(q)
+        || (order.customer ?? "").toLowerCase().includes(q)
+        || (phoneDigits.length > 0 && (orderPhoneDigits.includes(phoneDigits) || orderWhatsappDigits.includes(phoneDigits)))
+      );
     })
     .sort((a, b) => new Date(a.createdAt ?? a.date).getTime() - new Date(b.createdAt ?? b.date).getTime());
   const callQueueOrder = callQueue[callQueueIndex] as TrackedOrder | undefined;
@@ -23870,10 +23883,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <p className="text-sm font-medium text-gray-500">Work through new orders — call, confirm, next.</p>
         </header>
 
+        {/* Search */}
+        <label className="relative flex items-center">
+          <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
+          <span className="sr-only">Search call queue</span>
+          <input
+            className="w-full pl-9 pr-9 h-10 border border-gray-200 rounded-full text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
+            value={callQueueSearch}
+            onChange={(e) => { setCallQueueSearch(e.target.value); setCallQueueIndex(0); }}
+            placeholder="Order #, name, phone…"
+          />
+          {callQueueSearch && (
+            <button
+              type="button"
+              onClick={() => { setCallQueueSearch(""); setCallQueueIndex(0); }}
+              className="!min-h-0 absolute right-2 w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100"
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </label>
+
         {/* Queue bar */}
         <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3">
           <span className="text-sm font-bold text-gray-700">
-            {total === 0 ? "No orders in queue" : `${position} of ${total} remaining`}
+            {total === 0
+              ? (callQueueSearch ? `No orders match "${callQueueSearch}"` : "No orders in queue")
+              : `${position} of ${total}${callQueueSearch ? " matching" : " remaining"}`}
           </span>
           <div className="flex items-center gap-2">
             <button
