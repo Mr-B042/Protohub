@@ -3520,39 +3520,68 @@ export default function PublicOrderFormPage() {
                     >
                       {imageUrls.length > 0 && (
                         <div className="public-package-option__media" style={{ position: "relative", display: "grid", gap: 8 }}>
-                          <img
-                            className="public-package-option__image"
-                            src={activeImageUrl}
-                            alt={`${title} preview ${activeCarouselIndex + 1}`}
+                          <div
                             style={{
+                              position: "relative",
                               width: "100%",
-                              minWidth: "100%",
-                              height: 190,
-                              objectFit: "cover",
+                              aspectRatio: "1 / 1",
                               borderRadius: 16,
+                              overflow: "hidden",
                               border: "1px solid rgba(148, 163, 184, 0.28)",
                               background: "#f8fafc"
                             }}
-                          />
-                          {isSelected && isComboPackage && (
-                            <span className="public-package-option__selected-ribbon">
-                              Selected combo
-                            </span>
-                          )}
+                          >
+                            <img
+                              src={activeImageUrl}
+                              alt=""
+                              aria-hidden="true"
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                                filter: "blur(28px) brightness(0.92)",
+                                transform: "scale(1.15)",
+                                opacity: 0.65
+                              }}
+                            />
+                            <img
+                              className="public-package-option__image"
+                              src={activeImageUrl}
+                              alt={`${title} preview ${activeCarouselIndex + 1}`}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "contain"
+                              }}
+                            />
+                            {isSelected && isComboPackage && (
+                              <span className="public-package-option__selected-ribbon">
+                                Selected combo
+                              </span>
+                            )}
+                            {hasCarousel && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="public-package-option__side-nav public-package-option__side-nav--prev"
+                                  aria-label={`Show previous ${title} photo`}
+                                  onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
+                                />
+                                <button
+                                  type="button"
+                                  className="public-package-option__side-nav public-package-option__side-nav--next"
+                                  aria-label={`Show next ${title} photo`}
+                                  onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
+                                />
+                              </>
+                            )}
+                          </div>
                           {hasCarousel && (
                             <>
-                              <button
-                                type="button"
-                                className="public-package-option__side-nav public-package-option__side-nav--prev"
-                                aria-label={`Show previous ${title} photo`}
-                                onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
-                              />
-                              <button
-                                type="button"
-                                className="public-package-option__side-nav public-package-option__side-nav--next"
-                                aria-label={`Show next ${title} photo`}
-                                onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
-                              />
                               <div className="public-package-option__photo-dots" aria-label={`${title} photo selector`}>
                                 {imageUrls.map((_, imageIndex) => (
                                   <button
