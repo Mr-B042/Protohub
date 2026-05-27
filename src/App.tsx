@@ -1440,6 +1440,19 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Viewer":            ["view_finance", "view_reports"],
 };
 
+const defaultPermissionsForRole = (role: EditableUserRole | undefined): UserPermission[] =>
+  sanitizeUserPermissionList(role ? defaultPermsByRole[role] ?? [] : []);
+
+const resolvedPermissionsForRole = (
+  role: EditableUserRole | undefined,
+  permissions: readonly (UserPermission | string)[] | undefined | null
+): UserPermission[] => {
+  if (role === "Owner") return defaultPermissionsForRole("Owner");
+  const explicitPermissions = sanitizeUserPermissionList(permissions);
+  if (explicitPermissions.length > 0) return explicitPermissions;
+  return defaultPermissionsForRole(role);
+};
+
 // ── Role-based page access ───────────────────────────────
 // Each role gets a curated set of pages. Owner sees everything.
 // The Owner can grant extra pages to a specific user via
@@ -4378,7 +4391,10 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
     active: user.active !== false,
     created: user.createdAt ?? user.created ?? "",
     lastSeenAt: user.lastSeenAt ?? undefined,
-    permissions: sanitizeUserPermissionList(Array.isArray(user.permissions) ? user.permissions : undefined),
+    permissions: resolvedPermissionsForRole(
+      (user.role ?? "Viewer") as EditableUserRole,
+      Array.isArray(user.permissions) ? user.permissions : undefined
+    ),
     extraPages: sanitizeActivePageList(Array.isArray(user.extraPages) ? user.extraPages : undefined),
     agentBalanceScopeMode:
       user.agentBalanceScopeMode === "states"
@@ -10396,28 +10412,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
       .map((agent) => agent.id);
   };
-  const userWeekendStockSummaryScopeSummary = (user: ManagedUser) => {
-    const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
-    const rolePages = allowedPagesFor(user.role, user.extraPages ?? []);
-    const canSeeWeekendStockSummary = hasWeekendStockSummaryPermission(userPerms) || rolePages.includes(WEEKEND_STOCK_SUMMARY_PAGE);
-    if (!canSeeWeekendStockSummary) {
-      return { label: "Not enabled", detail: "No stock summary access" };
-    }
-    const scopeMode = user.agentBalanceScopeMode ?? "all";
-    if (scopeMode === "states") {
-      const count = user.agentBalanceStateScope?.length ?? 0;
-      return { label: `${count} state${count === 1 ? "" : "s"}`, detail: "State-scoped summary" };
-    }
-    if (scopeMode === "agents") {
-      const count = user.agentBalanceAgentIds?.length ?? 0;
-      return { label: `${count} agent${count === 1 ? "" : "s"}`, detail: "Direct agent picks" };
-    }
-    if (scopeMode === "assigned_agents") {
-      const count = user.assignedAgentIds?.length ?? 0;
-      return { label: `${count} assigned`, detail: "Owned agent list" };
-    }
-      return { label: "All agents", detail: "Full stock summary" };
-  };
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
   const agentBalanceWeekEnd = weekEndFromStartKey(agentBalanceWeekStart);
@@ -14937,7 +14931,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             active: u.active,
             created: u.createdAt ?? u.created_at ?? "",
             lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
-            permissions: sanitizeUserPermissionList(Array.isArray(u.permissions) ? u.permissions : undefined),
+            permissions: resolvedPermissionsForRole(
+              (u.role ?? "Viewer") as EditableUserRole,
+              Array.isArray(u.permissions) ? u.permissions : undefined
+            ),
             extraPages: sanitizeActivePageList(Array.isArray(u.extraPages ?? u.extra_pages) ? (u.extraPages ?? u.extra_pages) : undefined),
             agentBalanceScopeMode: (() => {
               const rawScopeMode = u.agentBalanceScopeMode ?? u.agent_balance_scope_mode;
@@ -19872,6 +19869,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const defaultPermissions = defaultPermissionsForRole(salesRepRole);
     const rep: ManagedUser = {
       id: `rep-${Date.now().toString(36)}`,
       name: salesRepName.trim(),
@@ -19879,7 +19877,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       phone: salesRepPhone.trim(),
       role: salesRepRole,
       active: salesRepActive,
-      created: nowIso()
+      created: nowIso(),
+      permissions: defaultPermissions
     };
     const _repLocalId = rep.id;
     setUsers((value) => [...value, rep]);
@@ -19895,12 +19894,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email === rep.email);
-          if (saved) setUsers((prev) => prev.map((u) => u.id === _repLocalId ? {
-            ...u,
-            id: saved.id,
-            phone: saved.phone ?? rep.phone,
-            lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt
-          } : u));
+          if (saved) {
+            setUsers((prev) => prev.map((u) => u.id === _repLocalId ? {
+              ...u,
+              id: saved.id,
+              phone: saved.phone ?? rep.phone,
+              lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt,
+              permissions: defaultPermissions
+            } : u));
+            teamApi.update(saved.id, { permissions: defaultPermissions }).catch(() => undefined);
+          }
         }).catch(() => {});
       })
       .catch((err: any) => {
@@ -21289,7 +21292,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const prevUsers = users;
     setUsers((prev) => prev.map((u) => {
       if (u.id !== userId || u.role === "Owner") return u;
-      const perms = sanitizeUserPermissionList(u.permissions ?? defaultPermsByRole[u.role] ?? []);
+      const perms = resolvedPermissionsForRole(u.role, u.permissions);
       return {
         ...u,
         permissions: perms.includes(permission)
@@ -21300,7 +21303,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Permissions updated.");
     const user = users.find((u) => u.id === userId);
     if (user && user.role !== "Owner") {
-      const perms = sanitizeUserPermissionList(user.permissions ?? defaultPermsByRole[user.role] ?? []);
+      const perms = resolvedPermissionsForRole(user.role, user.permissions);
       const nextPerms = perms.includes(permission)
         ? perms.filter((p) => p !== permission)
         : [...perms, permission];
@@ -21645,6 +21648,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    const defaultPermissions = defaultPermissionsForRole(newUserRole);
     const id = `${Date.now()}-${slugify(userEmail.trim())}`;
     setUsers((value) => [
       ...value,
@@ -21655,7 +21659,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         phone: userPhone.trim(),
         role: newUserRole,
         active: newUserActive,
-        created: nowIso()
+        created: nowIso(),
+        permissions: defaultPermissions
       }
     ]);
     setUserPhone("");
@@ -21667,12 +21672,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email?.toLowerCase() === userEmail.trim().toLowerCase());
-          if (saved) setUsers((prev) => prev.map((u) => u.id === id ? {
-            ...u,
-            id: saved.id,
-            phone: saved.phone ?? u.phone,
-            lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt
-          } : u));
+          if (saved) {
+            setUsers((prev) => prev.map((u) => u.id === id ? {
+              ...u,
+              id: saved.id,
+              phone: saved.phone ?? u.phone,
+              lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt,
+              permissions: defaultPermissions
+            } : u));
+            teamApi.update(saved.id, { permissions: defaultPermissions }).catch(() => undefined);
+          }
         }).catch(() => {});
       })
       .catch((err: any) => {
@@ -24684,7 +24693,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const renderUserPermissionsPanel = (user: ManagedUser) => {
-    const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+    const userPerms = resolvedPermissionsForRole(user.role, user.permissions);
     const isOwner = user.role === "Owner";
     const permGroups = ["Orders", "Inventory", "Operations", "Finance", "Admin"] as const;
 
@@ -24703,7 +24712,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 return;
               }
               const prevUsers = users;
-              const defaultPerms = sanitizeUserPermissionList(defaultPermsByRole[user.role] ?? []);
+              const defaultPerms = defaultPermissionsForRole(user.role);
               setUsers((prev) => prev.map((u) => u.id === user.id ? { ...u, permissions: defaultPerms } : u));
               teamApi.update(user.id, { permissions: defaultPerms }).catch((err: any) => {
                 setUsers(prevUsers);
@@ -35200,11 +35209,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</div>
                   ) : (
                     pagedFilteredUsers.map((user) => {
-                      const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+                      const userPerms = resolvedPermissionsForRole(user.role, user.permissions);
                       const isOwner = user.role === "Owner";
                       const isExpanded = expandedPermissionsUserId === user.id;
                       const presence = userPresenceMeta(user);
-                      const scopeSummary = userWeekendStockSummaryScopeSummary(user);
                       return (
                         <article key={user.id} className="p-4 space-y-4">
                           <div className="flex items-start justify-between gap-3">
@@ -35248,11 +35256,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </div>
                               </>
                             )}
-                            <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
-                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Agent Scope</span>
-                              <strong className="text-sm text-gray-900">{scopeSummary.label}</strong>
-                              <p className="mt-1 mb-0 text-[11px] text-gray-500">{scopeSummary.detail}</p>
-                            </div>
                           </div>
 
                           <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
@@ -35300,7 +35303,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           "Name & Email",
                           "Role",
                           "Permissions",
-                          "Agent Scope",
                           ...(ownerCanSeeUserPresence ? ["Presence", "Last Seen"] : []),
                           ownerCanSeeUserPresence ? "Account" : "Status",
                           "Created",
@@ -35312,14 +35314,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </thead>
                     <tbody>
                       {filteredUsers.length === 0 ? (
-                      <tr><td colSpan={ownerCanSeeUserPresence ? 9 : 7} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
+                      <tr><td colSpan={ownerCanSeeUserPresence ? 8 : 6} className="px-4 py-12 text-center text-gray-400 font-medium italic">No users found</td></tr>
                       ) : (
                         pagedFilteredUsers.map((user) => {
-                          const userPerms = user.permissions ?? defaultPermsByRole[user.role] ?? [];
+                          const userPerms = resolvedPermissionsForRole(user.role, user.permissions);
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
                           const presence = userPresenceMeta(user);
-                          const scopeSummary = userWeekendStockSummaryScopeSummary(user);
                           return (
                             <Fragment key={user.id}>
                               <tr className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
@@ -35341,10 +35342,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     {isOwner ? "All" : userPerms.length}/{permissionDefs.length}
                                     <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                                   </button>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <div className="font-semibold text-gray-900">{scopeSummary.label}</div>
-                                  <div className="text-[11px] text-gray-500">{scopeSummary.detail}</div>
                                 </td>
                                 {ownerCanSeeUserPresence && (
                                   <>
