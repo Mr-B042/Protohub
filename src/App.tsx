@@ -26179,20 +26179,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 const stockNotifications = systemNotifications
                   .filter((n) => n.type === "low_stock" && typeof n.link === "string" && n.link.includes("/state-stock") && new Date(n.createdAt).getTime() >= cutoff);
                 const uniquePairs = Array.from(new Map(stockNotifications.map((n) => [n.link ?? n.id, n])).values());
-                if (uniquePairs.length === 0 && !smartStockScanLoading) return null;
+                const hasAlerts = uniquePairs.length > 0;
+                const accentClass = hasAlerts ? "border-amber-200" : "border-gray-200";
+                const iconBgClass = hasAlerts ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600";
                 return (
-                  <section className="bg-white rounded-xl border border-amber-200 shadow-sm p-5 flex flex-col gap-4" aria-label="Smart stock health">
+                  <section className={`bg-white rounded-xl border ${accentClass} shadow-sm p-5 flex flex-col gap-4`} aria-label="Smart stock health">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-                          <AlertTriangle className="w-5 h-5" />
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBgClass}`}>
+                          {hasAlerts ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
                         </div>
                         <div>
                           <h2 className="text-base font-bold text-gray-900 m-0">Smart stock health</h2>
                           <p className="text-xs text-gray-500 m-0 mt-0.5">
-                            {uniquePairs.length === 0
-                              ? "No agent-hub stock at risk based on the last 7 days of sales."
-                              : `${uniquePairs.length} agent-hub state${uniquePairs.length === 1 ? "" : "s"} at risk based on the last 7 days of sales.`}
+                            {hasAlerts
+                              ? `${uniquePairs.length} agent-hub state${uniquePairs.length === 1 ? "" : "s"} at risk based on the last 7 days of sales.`
+                              : "No agent-hub stock at risk based on the last 7 days of sales."}
                           </p>
                         </div>
                       </div>
@@ -26200,12 +26202,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         type="button"
                         disabled={smartStockScanLoading}
                         onClick={runSmartStockScan}
-                        className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-800 rounded-md hover:bg-amber-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {smartStockScanLoading ? "Scanning..." : "Scan now"}
                       </button>
                     </div>
-                    {uniquePairs.length > 0 && (
+                    {hasAlerts && (
                       <ul className="flex flex-col gap-2 m-0 p-0 list-none">
                         {uniquePairs.slice(0, 6).map((n) => (
                           <li key={n.id} className="flex items-start justify-between gap-3 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100">
