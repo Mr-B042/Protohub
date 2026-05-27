@@ -13072,86 +13072,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRepAmountToRemit(String(Math.max(0, orderAmount - fee - newTotal)));
   };
   const saveRepDeliveryDetails = (order: TrackedOrder) => {
-    if (!isDateValue(repRemittanceReceivedDate)) {
-      showToast("Choose a valid remittance received date.");
-      return;
-    }
     const fee = Math.max(0, Number(repDeliveryFee) || 0);
-    const remit = Math.max(0, Number(repAmountToRemit) || 0);
-    const expected = Math.max(0, order.amount - fee);
-    const status: "Pending" | "Partial" | "Paid" = remit <= 0 ? "Pending" : remit >= expected ? "Paid" : "Partial";
-    const validExtras = repExtraExpenses.filter((e) => Number(e.amount) > 0);
     const nextNotes = [
-      orderTimelineNote(`Delivery fee ${formatProductMoney(fee, order.currency)} · remitted ${formatProductMoney(remit, order.currency)} (${status}) on ${repRemittanceReceivedDate}.`, { by: repScopeName }),
+      orderTimelineNote(`Delivery fee set to ${formatProductMoney(fee, order.currency)}.`, { by: repScopeName }),
       ...orderNotesFor(order)
     ];
     const orderSnapshot = order;
-    const expensesSnapshot = expenses;
-    const extraExpenseDrafts = repExtraExpenses;
-    const today = todayKey();
-    const newExpenses: ExpenseRecord[] = validExtras.map((e) => ({
-      id: makeExpenseId(),
-      type: e.type,
-      amount: Number(e.amount) || 0,
-      currency,
-      date: today,
-      productId: order.productId,
-      productName: order.productName,
-      description: `${e.description.trim() || `${e.type} for order ${order.id}`} (auto-logged from rep console)`
-    }));
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: fee,
-      amountRemitted: remit,
-      remittanceStatus: status,
       notes: nextNotes
     } : o));
-    if (newExpenses.length > 0) {
-      setExpenses((prev) => [...newExpenses, ...prev]);
-    }
-    setRepExtraExpenses([]);
     ordersApi.update(order.id, {
       logistics_cost: fee,
-      amount_remitted: remit,
-      remittance_status: status,
-      remittance_received_at: repRemittanceReceivedDate,
       timeline_notes: nextNotes
-    }).then(async () => {
+    }).then(() => {
       void loadFinanceSummaryData({ quiet: true });
-      void loadFinanceRemittanceData({ quiet: true });
       void loadWeeklyAccountingData({ quiet: true });
-      if (newExpenses.length === 0) {
-        showToast(`${order.id} delivery details saved.`);
-        return;
-      }
-
-      const persistedExpenseIds = new Set<string>();
-      for (const expense of newExpenses) {
-        try {
-          await expensesApi.create({
-            id: expense.id,
-            date: expense.date,
-            category: expense.type,
-            description: expense.description,
-            amount: expense.amount,
-            currency: expense.currency,
-            productId: expense.productId
-          });
-          persistedExpenseIds.add(expense.id);
-        } catch (err: any) {
-          const stagedIds = new Set(newExpenses.map((item) => item.id));
-          setExpenses((prev) => prev.filter((item) => !stagedIds.has(item.id) || persistedExpenseIds.has(item.id)));
-          showToast(`Delivery details saved, but ${order.id} has unsynced extra expenses: ${err?.message ?? "please retry"}.`);
-          return;
-        }
-      }
-
-      showToast(`${order.id} delivery details saved · ${newExpenses.length} expense${newExpenses.length === 1 ? "" : "s"} added.`);
+      showToast(`${order.id} delivery fee saved.`);
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? orderSnapshot : o));
-      setExpenses(expensesSnapshot);
-      setRepExtraExpenses(extraExpenseDrafts);
-      showToast(`Delivery details for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
+      showToast(`Delivery fee for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
     });
   };
   const productProfitabilityRows = products.map((product) => {
@@ -23792,16 +23733,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       {/* Delivery Fee & Remittance — POD cash reconciliation, editable by reps */}
       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4 border-l-emerald-500">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-bold text-gray-900">Delivery Fee & Remittance</h2>
-            <p className="text-xs text-gray-400 font-medium">Add the courier's delivery fee — Amount to Remit auto-fills. Optionally log extra expenses (storekeeper, waybill, etc.).</p>
-          </div>
-          <span className={`status-pill status-${slugify(order.remittanceStatus ?? (order.amountRemitted == null ? "Pending" : (order.amountRemitted >= order.amount - (order.logisticsCost ?? 0) ? "Paid" : "Partial")))}`}>{order.remittanceStatus ?? (order.amountRemitted == null ? "Pending" : (order.amountRemitted >= order.amount - (order.logisticsCost ?? 0) ? "Paid" : "Partial"))}</span>
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">Delivery Fee</h2>
+          <p className="text-xs text-gray-400 font-medium">Log the courier's delivery fee for this order.</p>
         </div>
         <div className="p-5 space-y-5">
-          {/* Top row — order amount (read), delivery fee (input), amount to remit (auto + editable) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order Amount</label>
               <div className="h-10 px-3 flex items-center bg-gray-50 border border-gray-200 rounded-md">
@@ -23814,75 +23751,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 type="text"
                 inputMode="decimal"
                 value={repDeliveryFee}
-                onChange={(e) => updateRepDeliveryFee(e.target.value, order.amount)}
+                onChange={(e) => setRepDeliveryFee(e.target.value)}
                 placeholder="e.g. 4000"
                 className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
-                Amount to Remit ({productCurrencies[order.currency].symbol})
-                <button type="button" className="!min-h-0 text-[10px] font-semibold text-[#1F8FE0] hover:underline" onClick={() => setRepAmountToRemit(String(repAutoAmountToRemit(order.amount)))}>Reset to auto</button>
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={repAmountToRemit}
-                onChange={(e) => setRepAmountToRemit(e.target.value)}
-                placeholder="auto-calculated"
-                className="w-full h-10 px-3 border border-emerald-300 bg-emerald-50/40 rounded-md text-sm font-semibold text-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <p className="text-[10px] text-gray-400">Auto = Order − Delivery − Extras. Override if partner remits a different amount.</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cash Received Date</label>
-              <input
-                type="date"
-                value={repRemittanceReceivedDate}
-                onChange={(e) => setRepRemittanceReceivedDate(e.target.value)}
-                className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-              />
-              <p className="text-[10px] text-gray-400">This date drives cash-week reporting.</p>
-            </div>
-          </div>
-
-          {/* Extra expenses (optional) */}
-          <div className="border-t border-gray-100 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-gray-800">Extra Expenses <span className="text-gray-400 font-normal">(optional)</span></h3>
-                <p className="text-xs text-gray-400">e.g. storekeeper fee, waybill, additional delivery surcharge — auto-saved to Expenses on save.</p>
-              </div>
-              <button type="button" onClick={addRepExtraExpense} className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors">
-                <Plus className="w-3 h-3" /> Add expense
-              </button>
-            </div>
-            {repExtraExpenses.length === 0 ? (
-              <p className="text-xs text-gray-400 italic px-1 py-2">No extra expenses logged.</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {repExtraExpenses.map((extra, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded-lg p-2">
-                    <select value={extra.type} onChange={(e) => updateRepExtraExpense(i, "type", e.target.value, order.amount)} className="col-span-3 h-9 px-2 border border-gray-200 rounded-md text-xs bg-white focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]">
-                      {expenseTypes.map((t) => <option key={t}>{t}</option>)}
-                    </select>
-                    <input value={extra.amount} onChange={(e) => updateRepExtraExpense(i, "amount", e.target.value, order.amount)} inputMode="decimal" placeholder="Amount" className="col-span-3 h-9 px-2 border border-gray-200 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
-                    <input value={extra.description} onChange={(e) => updateRepExtraExpense(i, "description", e.target.value, order.amount)} placeholder="Note (optional, e.g. 'storekeeper at Abuja hub')" className="col-span-5 h-9 px-2 border border-gray-200 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
-                    <button type="button" onClick={() => removeRepExtraExpense(i, order.amount)} className="!min-h-0 col-span-1 h-9 flex items-center justify-center text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors" aria-label="Remove expense">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-                <div className="text-xs text-gray-500 px-1 mt-1">
-                  Extras subtotal: <strong className="text-gray-900">{formatProductMoney(repExtrasTotal, order.currency)}</strong>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="flex items-center justify-end pt-2 border-t border-gray-100">
             <button onClick={() => saveRepDeliveryDetails(order)} className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-md text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm">
-              <HandCoins className="w-4 h-4" /> Save Delivery & Remittance
+              <HandCoins className="w-4 h-4" /> Save Delivery Fee
             </button>
           </div>
         </div>
