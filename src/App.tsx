@@ -179,7 +179,7 @@ type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate";
 type ManagerQueueActionType = "reviewed_queue" | "nudged_rep" | "escalated_order";
 type NotificationFilter = "All" | "Unread";
-type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount" | "state-stock";
+type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount" | "state-stock" | "agent-hubs";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
@@ -4860,6 +4860,31 @@ const stateStockStatusMeta = (quantity: number, lowThreshold = STATE_STOCK_LOW_T
           className: "border-emerald-200 bg-emerald-50 text-emerald-700"
         };
 
+const agentHubLowStockStatusMeta = (quantity: number, lowThreshold = STATE_STOCK_LOW_THRESHOLD) => {
+  if (quantity <= 1) {
+    return {
+      label: "Restock now",
+      className: "border-rose-200 bg-rose-50 text-rose-700",
+      dotClassName: "bg-rose-500",
+      helper: "Only one or none left in this hub."
+    };
+  }
+  if (quantity <= Math.max(2, Math.ceil(lowThreshold / 2))) {
+    return {
+      label: "Very low",
+      className: "border-orange-200 bg-orange-50 text-orange-700",
+      dotClassName: "bg-orange-500",
+      helper: "This hub can run out quickly."
+    };
+  }
+  return {
+    label: "Watch",
+    className: "border-amber-200 bg-amber-50 text-amber-700",
+    dotClassName: "bg-amber-500",
+    helper: "Below the hub threshold."
+  };
+};
+
 // ── FinanceSummaryDataset ────────────────────
 type FinanceSummaryDataset = {
   dateFrom: string;
@@ -5755,13 +5780,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // and look like "I clicked pricing, got nothing." Coerce to dashboard
     // when there's no product to show.
     const stored = readPref<InventoryView>("protohub.inventory.view", "dashboard", (raw) =>
-      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" || raw === "state-stock" ? raw : null
+      raw === "dashboard" || raw === "combos" || raw === "history" || raw === "pricing" || raw === "packages" || raw === "stockcount" || raw === "state-stock" || raw === "agent-hubs" ? raw : null
     );
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
   const [stateStockSearch, setStateStockSearch] = useState("");
+  const [agentLowStockProductId, setAgentLowStockProductId] = useState("");
+  const [agentLowStockStateFilter, setAgentLowStockStateFilter] = useState("");
+  const [agentLowStockSearch, setAgentLowStockSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [stockProductId, setStockProductId] = useState("");
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
@@ -8560,6 +8588,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         )
         .sort((a, b) => a.quantity - b.quantity || a.agentName.localeCompare(b.agentName) || a.productName.localeCompare(b.productName));
   const totalLowStockAlertCount = warehouseLowStockProducts.length + agentLowStockAlerts.length;
+  const agentLowStockStateOptions = Array.from(new Set(agentLowStockAlerts.map((alert) => alert.state))).sort((a, b) => a.localeCompare(b));
+  const agentLowStockSearchTerm = agentLowStockSearch.trim().toLowerCase();
+  const filteredAgentLowStockAlerts = agentLowStockAlerts.filter((alert) => {
+    const matchesProduct = !agentLowStockProductId || alert.productId === agentLowStockProductId;
+    const matchesState = !agentLowStockStateFilter || alert.state === agentLowStockStateFilter;
+    const haystack = `${alert.agentName} ${alert.locationName} ${alert.productName} ${alert.state}`.toLowerCase();
+    const matchesSearch = !agentLowStockSearchTerm || haystack.includes(agentLowStockSearchTerm);
+    return matchesProduct && matchesState && matchesSearch;
+  });
+  const agentLowStockCriticalCount = filteredAgentLowStockAlerts.filter((alert) => alert.quantity <= 1).length;
+  const agentLowStockHubCount = new Set(filteredAgentLowStockAlerts.map((alert) => alert.locationId)).size;
+  const agentLowStockAgentCount = new Set(filteredAgentLowStockAlerts.map((alert) => alert.agentId)).size;
+  const agentLowStockProductCount = new Set(filteredAgentLowStockAlerts.map((alert) => alert.productId)).size;
   const stateStockStateOptions = Array.from(
     new Set(
       inventoryStateHubRows
@@ -14641,6 +14682,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (section === "inventory" && parts[3] === "state-stock") {
       setActivePage("Inventory");
       setInventoryView("state-stock");
+      return;
+    }
+
+    if (section === "inventory" && parts[3] === "agent-hubs") {
+      setActivePage("Inventory");
+      setInventoryView("agent-hubs");
       return;
     }
 
@@ -22459,7 +22506,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     syncHashRoute("#/dashboard/admin/agents/new");
   };
 
-  const openAdminAgentAssignStockRoute = (agentId: string) => {
+  const openAdminAgentAssignStockRoute = (agentId: string, productId?: string, locationId?: string) => {
     const agent = agents.find((item) => item.id === agentId);
     setActivePage("Agents");
     setSelectedAgentId(agentId);
@@ -22470,6 +22517,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } else {
       setModal("assignAgentStock");
     }
+    if (productId) setAssignStockProductId(productId);
+    if (locationId) setAssignStockLocationId(locationId);
     syncHashRoute(`#/dashboard/admin/agents/${agentId}/assign-stock`);
   };
 
@@ -22668,6 +22717,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setInventoryView("state-stock");
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory/state-stock");
+  };
+  const openInventoryAgentHubsRoute = () => {
+    setActivePage("Inventory");
+    setInventoryView("agent-hubs");
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory/agent-hubs");
   };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
@@ -38806,6 +38861,223 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </section>
               </div>
+            ) : inventoryView === "agent-hubs" ? (
+              <div className="space-y-6">
+                <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div className="flex flex-col gap-1">
+                    <button className="flex items-center gap-1 text-sm text-[#1F8FE0] font-medium hover:underline w-fit" onClick={openInventoryDashboard}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
+                    <h1 className="text-2xl font-bold text-[#1F8FE0]">Agent Hubs Low Stock</h1>
+                    <p className="text-sm font-medium text-gray-500">Every agent hub product at or below {smartStockLowStockThreshold} units, organized so restocking decisions are easy.</p>
+                  </div>
+                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50" onClick={openInventoryStateStockRoute}>
+                    <MapPin className="h-4 w-4" />
+                    View State Stock
+                  </button>
+                </header>
+
+                <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50 p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                        <Archive className="h-5 w-5" />
+                      </span>
+                      <div>
+                        <h2 className="text-sm font-extrabold text-amber-950">Simple rule</h2>
+                        <p className="m-0 mt-1 text-sm leading-6 text-amber-900">
+                          If a hub shows here, that agent is holding only a small quantity of that item. Restock the lowest quantities first, especially if the item is also receiving orders.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                      Agent hubs &lt;= {smartStockLowStockThreshold}
+                    </span>
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Agent hub low-stock summary">
+                  {[
+                    { label: "Rows in view", value: filteredAgentLowStockAlerts.length, helper: `${agentLowStockAlerts.length} total low hub row${agentLowStockAlerts.length === 1 ? "" : "s"}` },
+                    { label: "Critical", value: agentLowStockCriticalCount, helper: "0 or 1 unit left" },
+                    { label: "Agents affected", value: agentLowStockAgentCount, helper: "delivery partners to restock" },
+                    { label: "Products affected", value: agentLowStockProductCount, helper: `${agentLowStockHubCount} hub${agentLowStockHubCount === 1 ? "" : "s"} in view` }
+                  ].map((card) => (
+                    <article key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{card.label}</p>
+                      <strong className="text-2xl font-bold text-gray-900 block my-1">{card.value}</strong>
+                      <p className="text-[10px] text-gray-400 font-medium">{card.helper}</p>
+                    </article>
+                  ))}
+                </section>
+
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
+                      <select
+                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        value={agentLowStockProductId}
+                        onChange={(event) => setAgentLowStockProductId(event.target.value)}
+                      >
+                        <option value="">All products</option>
+                        {catalogProducts
+                          .filter((product) => agentLowStockAlerts.some((alert) => alert.productId === product.id))
+                          .slice()
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map((product) => (
+                            <option key={product.id} value={product.id}>{product.name}</option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">State</span>
+                      <select
+                        className="w-full h-11 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        value={agentLowStockStateFilter}
+                        onChange={(event) => setAgentLowStockStateFilter(event.target.value)}
+                      >
+                        <option value="">All states</option>
+                        {agentLowStockStateOptions.map((state) => (
+                          <option key={state} value={state}>{state}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Search</span>
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          value={agentLowStockSearch}
+                          onChange={(event) => setAgentLowStockSearch(event.target.value)}
+                          placeholder="Search agent, hub, product"
+                          className="w-full h-11 pl-9 pr-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                        />
+                      </div>
+                    </label>
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Actions</span>
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => {
+                          setAgentLowStockProductId("");
+                          setAgentLowStockStateFilter("");
+                          setAgentLowStockSearch("");
+                        }}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Clear filters
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {dataLoading ? (
+                  <TableSkeleton cols={7} rows={6} />
+                ) : filteredAgentLowStockAlerts.length === 0 ? (
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
+                    <Archive className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-bold text-gray-700">No low-stock agent hubs match this view</p>
+                    <p className="text-xs text-gray-500 mt-1">Try clearing filters or lowering the smart-stock threshold in Settings.</p>
+                  </section>
+                ) : (
+                  <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="flex flex-col gap-1 border-b border-gray-100 px-4 py-4 sm:px-5">
+                      <h2 className="text-sm font-bold text-gray-900">Hub restock list</h2>
+                      <p className="text-xs text-gray-500">Sorted by lowest quantity first. Use “Assign stock” to top up that exact agent and hub.</p>
+                    </div>
+
+                    <div className="sm:hidden divide-y divide-gray-100">
+                      {filteredAgentLowStockAlerts.map((alert) => {
+                        const status = agentHubLowStockStatusMeta(alert.quantity, alert.threshold);
+                        return (
+                          <article key={alert.id} className="px-4 py-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className={`h-2.5 w-2.5 rounded-full ${status.dotClassName}`} />
+                                  <h3 className="m-0 text-sm font-extrabold text-gray-900">{alert.productName}</h3>
+                                </div>
+                                <p className="m-0 mt-1 text-xs text-gray-500">{alert.agentName} · {alert.locationName}</p>
+                                <p className="m-0 mt-0.5 text-[11px] text-gray-400">{alert.state}</p>
+                              </div>
+                              <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${status.className}`}>{status.label}</span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3 text-xs">
+                              <div>
+                                <span className="block font-bold uppercase tracking-wide text-gray-400">Current</span>
+                                <strong className="text-base text-gray-950">{alert.quantity}</strong>
+                              </div>
+                              <div>
+                                <span className="block font-bold uppercase tracking-wide text-gray-400">Threshold</span>
+                                <strong className="text-base text-gray-950">{alert.threshold}</strong>
+                              </div>
+                            </div>
+                            <p className="m-0 mt-2 text-xs text-gray-500">{status.helper}</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100" onClick={() => openAdminAgentAssignStockRoute(alert.agentId, alert.productId, alert.locationId)}>
+                                <PackagePlus className="h-3.5 w-3.5" />
+                                Assign stock
+                              </button>
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAdminAgentDetail(alert.agentId)}>
+                                <Eye className="h-3.5 w-3.5" />
+                                Agent
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                            {["Urgency", "Agent", "Hub", "State", "Product", "Qty", "Action"].map((heading) => (
+                              <th key={heading} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{heading}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {filteredAgentLowStockAlerts.map((alert) => {
+                            const status = agentHubLowStockStatusMeta(alert.quantity, alert.threshold);
+                            return (
+                              <tr key={alert.id} className="hover:bg-gray-50 transition-colors">
+                                <td className="px-4 py-3">
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold ${status.className}`}>
+                                    <span className={`h-2 w-2 rounded-full ${status.dotClassName}`} />
+                                    {status.label}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 font-semibold text-gray-900">{alert.agentName}</td>
+                                <td className="px-4 py-3 text-gray-700">{alert.locationName}</td>
+                                <td className="px-4 py-3 text-gray-600">{alert.state}</td>
+                                <td className="px-4 py-3 text-gray-900">{alert.productName}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-col">
+                                    <strong className="text-gray-950">{alert.quantity}/{alert.threshold}</strong>
+                                    <span className="text-[11px] text-gray-400">{status.helper}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100" onClick={() => openAdminAgentAssignStockRoute(alert.agentId, alert.productId, alert.locationId)}>
+                                      <PackagePlus className="h-3.5 w-3.5" />
+                                      Assign stock
+                                    </button>
+                                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAdminAgentDetail(alert.agentId)}>
+                                      <Eye className="h-3.5 w-3.5" />
+                                      View agent
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
+              </div>
             ) : inventoryView === "state-stock" ? (
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -39363,6 +39635,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-violet-200 text-violet-700 text-sm font-semibold hover:bg-violet-50 transition-colors" onClick={openInventoryCombosRoute}><Boxes className="w-4 h-4" /> Combo Library</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryHistoryRoute}><History className="w-4 h-4" /> Stock History</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={openInventoryStateStockRoute}><MapPin className="w-4 h-4" /> State Stock</button>
+                      <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-amber-200 text-amber-700 text-sm font-semibold hover:bg-amber-50 transition-colors" onClick={openInventoryAgentHubsRoute}><Archive className="w-4 h-4" /> Agent Hubs</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryUpdateStockRoute()}><RefreshCw className="w-4 h-4" /> Update Stock</button>
                       <button className="!min-h-0 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => openInventoryStockCountRoute(stockCounts.find((s) => s.status === "Open")?.id ?? null)}><ClipboardCheck className="w-4 h-4" /> Stock Count</button>
                     </div>
@@ -39524,16 +39797,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     )}
                     {agentLowStockAlerts.length > 0 && (
                       <div className="mt-3">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                          Agent hubs
-                          {smartStockLowStockThreshold > 0 ? ` <= ${smartStockLowStockThreshold}` : ""}
-                        </span>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          {agentLowStockAlerts.map((alert) => (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                              Agent hubs
+                              {smartStockLowStockThreshold > 0 ? ` <= ${smartStockLowStockThreshold}` : ""}
+                            </span>
+                            <p className="m-0 mt-0.5 text-xs text-amber-700">Organized in the Agent Hubs tab by agent, hub, product, and urgency.</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex w-fit items-center justify-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-50"
+                            onClick={openInventoryAgentHubsRoute}
+                          >
+                            Open Agent Hubs
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {agentLowStockAlerts.slice(0, 6).map((alert) => (
                             <span key={alert.id} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">
                               {alert.agentName} · {alert.locationName} · {alert.productName}: {alert.quantity}/{alert.threshold}
                             </span>
                           ))}
+                          {agentLowStockAlerts.length > 6 && (
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center rounded-full border border-orange-200 bg-white px-2.5 py-0.5 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-50"
+                              onClick={openInventoryAgentHubsRoute}
+                            >
+                              +{agentLowStockAlerts.length - 6} more
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
