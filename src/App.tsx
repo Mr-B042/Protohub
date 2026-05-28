@@ -30495,6 +30495,339 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </article>
                   </section>
 
+                  {/* ── Agent Performance dashboard ─────────────────
+                       Every metric derived from existing trackedOrders +
+                       agentStock + stockMovements. Period-scoped via the
+                       same agentsPeriod/agentsDateRange selector above;
+                       lifetime totals shown as secondary lines. */}
+                  {(() => {
+                    const todayMs = Date.now();
+                    const DAY_MS = 86_400_000;
+                    const stockUnits = stockRecords.reduce((s, r) => s + r.quantity, 0);
+                    const defectiveUnits = agentStock
+                      .filter((s) => s.agentId === agent.id)
+                      .reduce((sum, s) => sum + (s.defective ?? 0), 0);
+                    const missingUnits = agentStock
+                      .filter((s) => s.agentId === agent.id)
+                      .reduce((sum, s) => sum + (s.missing ?? 0), 0);
+                    const defectiveValue = agentIssueValueFor(agent.id, "defective");
+                    const missingValue   = agentIssueValueFor(agent.id, "missing");
+                    const totalIssueUnits = defectiveUnits + missingUnits;
+                    const totalIssueValue = defectiveValue + missingValue;
+
+                    // Fulfillment time: createdAt → deliveredDate (in days)
+                    const deliveredWithTimes = delivered
+                      .map((o) => {
+                        const created = o.createdAt ?? o.date;
+                        const finished = o.deliveredDate;
+                        if (!created || !finished) return null;
+                        const days = (new Date(finished).getTime() - new Date(created).getTime()) / DAY_MS;
+                        return Number.isFinite(days) && days >= 0 ? days : null;
+                      })
+                      .filter((d): d is number => d != null);
+                    const avgFulfillmentDays = deliveredWithTimes.length === 0
+                      ? null
+                      : deliveredWithTimes.reduce((s, d) => s + d, 0) / deliveredWithTimes.length;
+
+                    // On-time rate via existing helper
+                    const scheduledOutcomes = delivered.map((o) => deliveryScheduleOutcomeForOrder(o));
+                    const scheduledCount = scheduledOutcomes.filter((o) => o.kind !== "unscheduled").length;
+                    const onTimeCount = scheduledOutcomes.filter((o) => o.kind === "on_time").length;
+                    const lateCount = scheduledOutcomes.filter((o) => o.kind === "late").length;
+                    const onTimeRate = scheduledCount === 0 ? null : Math.round((onTimeCount / scheduledCount) * 100);
+
+                    // Best day in period
+                    const bestDay = chartData.reduce(
+                      (best, day) => (day.Delivered > best.Delivered ? day : best),
+                      { label: "—", Delivered: 0, Cancelled: 0 }
+                    );
+
+                    // Current consecutive-success streak walking back from today.
+                    // Counts delivered as +1, failed/cancelled as a break.
+                    const streakOrders = [...allAgentOrders]
+                      .filter((o) => ["Delivered", "Cancelled", "Failed"].includes(o.status ?? "New"))
+                      .sort((a, b) => new Date(b.deliveredDate ?? b.createdAt ?? b.date ?? 0).getTime() - new Date(a.deliveredDate ?? a.createdAt ?? a.date ?? 0).getTime());
+                    let streak = 0;
+                    for (const o of streakOrders) {
+                      if ((o.status ?? "New") === "Delivered") streak += 1;
+                      else break;
+                    }
+
+                    // Recent failed streak (for alert)
+                    let recentFailedStreak = 0;
+                    for (const o of streakOrders) {
+                      if (["Cancelled", "Failed"].includes(o.status ?? "New")) recentFailedStreak += 1;
+                      else break;
+                    }
+
+                    // Average order value
+                    const aov = delivered.length === 0 ? 0 : delivered.reduce((s, o) => s + o.amount, 0) / delivered.length;
+
+                    // Net contribution = revenue − defective value − missing value
+                    const revenue = delivered.reduce((s, o) => s + o.amount, 0);
+                    const netContribution = revenue - totalIssueValue;
+
+                    // Capacity utilization
+                    const capacity = (agent as any).stockCapacity ?? (agent as any).stock_capacity ?? 1000;
+                    const capacityPct = capacity > 0 ? Math.round((stockUnits / capacity) * 100) : 0;
+
+                    // Days of stock at current sell-velocity (period)
+                    const periodDays = Math.max(1, rangeDays);
+                    const dailyDeliveredUnits = delivered.reduce((s, o) => s + quantityForOrder(o), 0) / periodDays;
+                    const daysOfStock = dailyDeliveredUnits > 0 ? Math.round(stockUnits / dailyDeliveredUnits) : null;
+
+                    // Stock turnover = units delivered / avg inventory
+                    const avgInventoryUnits = stockUnits; // approximation — current is best proxy
+                    const turnover = avgInventoryUnits === 0 ? null
+                      : Math.round((delivered.reduce((s, o) => s + quantityForOrder(o), 0) / avgInventoryUnits) * 100) / 100;
+
+                    // Shrinkage rate against ever-received units (from stock_movements inbound)
+                    const inboundTypes = new Set(["Waybill In", "Stock Added", "Return"]);
+                    const everReceived = stockMovements
+                      .filter((m: any) => (m.agentId === agent.id || m.agent === agent.name) && inboundTypes.has(m.type))
+                      .reduce((s: number, m: any) => s + Math.abs(m.qty ?? 0), 0);
+                    const shrinkageRate = everReceived > 0
+                      ? Math.round((totalIssueUnits / everReceived) * 100)
+                      : null;
+
+                    // Lifetime totals
+                    const lifetimeDelivered = allAgentOrders.filter((o) => (o.status ?? "New") === "Delivered");
+                    const lifetimeRevenue = lifetimeDelivered.reduce((s, o) => s + o.amount, 0);
+                    const lifetimeUnits = lifetimeDelivered.reduce((s, o) => s + quantityForOrder(o), 0);
+                    const lifetimeSuccessRate = allAgentOrders.length === 0 ? 0
+                      : Math.round((lifetimeDelivered.length / allAgentOrders.length) * 100);
+
+                    // Org rank vs other agents (period scope, using agentRows which is already computed)
+                    const sortByRev = [...agentRows].sort((a, b) => b.revenue - a.revenue);
+                    const sortBySuccess = [...agentRows].sort((a, b) => b.successRate - a.successRate);
+                    const sortByDeliveries = [...agentRows].sort((a, b) => b.deliveries - a.deliveries);
+                    const rankBy = (sorted: typeof agentRows) => sorted.findIndex((r) => r.agent.id === agent.id) + 1;
+                    const revenueRank = rankBy(sortByRev);
+                    const successRank = rankBy(sortBySuccess);
+                    const deliveriesRank = rankBy(sortByDeliveries);
+                    const totalAgents = agentRows.length;
+
+                    // Operational metrics
+                    const onboardedAt = (agent as any).createdAt ?? (agent as any).created ?? "";
+                    const daysSinceOnboarded = onboardedAt
+                      ? Math.max(0, Math.floor((todayMs - new Date(onboardedAt).getTime()) / DAY_MS))
+                      : null;
+                    const lastActivityOrder = [...allAgentOrders].sort((a, b) =>
+                      new Date(b.deliveredDate ?? b.createdAt ?? b.date ?? 0).getTime()
+                      - new Date(a.deliveredDate ?? a.createdAt ?? a.date ?? 0).getTime()
+                    )[0];
+                    const lastActivityAt = lastActivityOrder?.deliveredDate ?? lastActivityOrder?.createdAt ?? lastActivityOrder?.date;
+                    const daysSinceLastActivity = lastActivityAt
+                      ? Math.floor((todayMs - new Date(lastActivityAt).getTime()) / DAY_MS)
+                      : null;
+                    const activeSkus = stockRecords.length;
+                    const coverageStates = agentCoverageStates(agent).length;
+                    const satelliteCount = agentLocationRows(agent).length;
+
+                    // Pending order aging
+                    const oldestPending = active
+                      .map((o) => o.createdAt ?? o.date)
+                      .filter(Boolean)
+                      .map((d) => (todayMs - new Date(d!).getTime()) / DAY_MS)
+                      .reduce((max, age) => Math.max(max, age), 0);
+
+                    // ── Alerts: derived, threshold-based ──
+                    type Alert = { level: "high" | "medium"; msg: string };
+                    const alerts: Alert[] = [];
+                    if (shrinkageRate != null && shrinkageRate >= 10) {
+                      alerts.push({ level: "high", msg: `Shrinkage ${shrinkageRate}% of ever-received stock — investigate defective + missing reports.` });
+                    } else if (shrinkageRate != null && shrinkageRate >= 5) {
+                      alerts.push({ level: "medium", msg: `Shrinkage ${shrinkageRate}% — keep an eye on defective + missing trends.` });
+                    }
+                    if (daysOfStock != null && daysOfStock < 3 && dailyDeliveredUnits > 0) {
+                      alerts.push({ level: daysOfStock === 0 ? "high" : "medium", msg: `Only ${daysOfStock} day${daysOfStock === 1 ? "" : "s"} of stock left at the current sell rate.` });
+                    }
+                    if (recentFailedStreak >= 3) {
+                      alerts.push({ level: "high", msg: `${recentFailedStreak} failed/cancelled in a row — call the agent.` });
+                    }
+                    if (oldestPending >= 7) {
+                      alerts.push({ level: "medium", msg: `Pending order aged ${Math.floor(oldestPending)} days — chase it.` });
+                    }
+                    if (daysSinceLastActivity != null && daysSinceLastActivity >= 7 && agent.active) {
+                      alerts.push({ level: "medium", msg: `No deliveries in ${daysSinceLastActivity} days — confirm the agent is still working.` });
+                    }
+                    if (lateCount > 0 && onTimeRate != null && onTimeRate < 60) {
+                      alerts.push({ level: "medium", msg: `Only ${onTimeRate}% of scheduled orders delivered on time (${lateCount} late this period).` });
+                    }
+
+                    const Tile = ({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" }) => {
+                      const toneClass = tone === "good" ? "text-emerald-600"
+                        : tone === "warn" ? "text-amber-600"
+                        : tone === "bad" ? "text-rose-600"
+                        : "text-gray-900";
+                      return (
+                        <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">{label}</p>
+                          <p className={`text-2xl font-extrabold m-0 mt-1 ${toneClass}`}>{value}</p>
+                          {sub ? <p className="text-[11px] text-gray-400 mt-1.5 m-0">{sub}</p> : null}
+                        </article>
+                      );
+                    };
+
+                    return (
+                      <>
+                        {/* Alerts */}
+                        {alerts.length > 0 && (
+                          <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <AlertTriangle className="w-4 h-4 text-amber-600" />
+                              <h3 className="text-sm font-bold text-amber-950 m-0">Alerts for this agent</h3>
+                            </div>
+                            <ul className="m-0 pl-5 space-y-1">
+                              {alerts.map((a, i) => (
+                                <li key={i} className={`text-xs ${a.level === "high" ? "text-rose-800 font-semibold" : "text-amber-900"}`}>
+                                  {a.msg}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        )}
+
+                        {/* Org rank ribbon */}
+                        {totalAgents > 1 && (
+                          <section className="rounded-xl border border-gray-200 bg-gradient-to-r from-blue-50 to-emerald-50 p-4">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Leaderboard rank (this period)</p>
+                            <div className="flex items-center gap-6 mt-2 flex-wrap text-sm">
+                              <span className="font-bold text-gray-900">#{revenueRank} of {totalAgents} <span className="text-gray-500 font-medium">by revenue</span></span>
+                              <span className="font-bold text-gray-900">#{deliveriesRank} of {totalAgents} <span className="text-gray-500 font-medium">by deliveries</span></span>
+                              <span className="font-bold text-gray-900">#{successRank} of {totalAgents} <span className="text-gray-500 font-medium">by success rate</span></span>
+                            </div>
+                          </section>
+                        )}
+
+                        {/* Delivery performance metrics */}
+                        <section>
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Delivery performance</h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <Tile
+                              label="Avg fulfillment"
+                              value={avgFulfillmentDays != null ? `${avgFulfillmentDays.toFixed(1)} d` : "—"}
+                              sub={`Across ${deliveredWithTimes.length} delivered`}
+                            />
+                            <Tile
+                              label="On-time rate"
+                              value={onTimeRate != null ? `${onTimeRate}%` : "—"}
+                              sub={`${onTimeCount}/${scheduledCount} scheduled`}
+                              tone={onTimeRate != null && onTimeRate >= 80 ? "good" : onTimeRate != null && onTimeRate < 60 ? "bad" : "default"}
+                            />
+                            <Tile
+                              label="Best day"
+                              value={bestDay.Delivered}
+                              sub={bestDay.Delivered > 0 ? bestDay.label : "No deliveries yet"}
+                            />
+                            <Tile
+                              label="Current streak"
+                              value={streak}
+                              sub={streak > 0 ? "successful in a row" : "ended"}
+                              tone={streak >= 5 ? "good" : "default"}
+                            />
+                            <Tile
+                              label="Avg order value"
+                              value={formatMoney(aov)}
+                              sub={`${delivered.length} delivered`}
+                            />
+                            <Tile
+                              label="Net contribution"
+                              value={formatMoney(netContribution)}
+                              sub={`Revenue − shrinkage`}
+                              tone={netContribution < 0 ? "bad" : "default"}
+                            />
+                            <Tile
+                              label="Late deliveries"
+                              value={lateCount}
+                              sub={`Past promised date`}
+                              tone={lateCount === 0 ? "good" : lateCount >= 3 ? "warn" : "default"}
+                            />
+                            <Tile
+                              label="Pending aging"
+                              value={oldestPending > 0 ? `${Math.floor(oldestPending)} d` : "—"}
+                              sub={active.length === 0 ? "No active orders" : `${active.length} active`}
+                              tone={oldestPending >= 7 ? "warn" : "default"}
+                            />
+                          </div>
+                        </section>
+
+                        {/* Stock health metrics */}
+                        <section>
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Stock health</h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <Tile
+                              label="Capacity used"
+                              value={`${capacityPct}%`}
+                              sub={`${stockUnits} / ${capacity} units`}
+                              tone={capacityPct >= 90 ? "warn" : capacityPct < 20 ? "warn" : "default"}
+                            />
+                            <Tile
+                              label="Days of stock"
+                              value={daysOfStock != null ? `${daysOfStock} d` : "—"}
+                              sub={dailyDeliveredUnits > 0 ? `${dailyDeliveredUnits.toFixed(1)} units/day` : "No velocity yet"}
+                              tone={daysOfStock != null && daysOfStock < 3 ? "bad" : daysOfStock != null && daysOfStock < 7 ? "warn" : "good"}
+                            />
+                            <Tile
+                              label="Turnover"
+                              value={turnover != null ? `${turnover}×` : "—"}
+                              sub={`Delivered units ÷ inventory`}
+                            />
+                            <Tile
+                              label="Shrinkage rate"
+                              value={shrinkageRate != null ? `${shrinkageRate}%` : "—"}
+                              sub={`${totalIssueUnits} of ${everReceived} received`}
+                              tone={shrinkageRate != null && shrinkageRate >= 10 ? "bad" : shrinkageRate != null && shrinkageRate >= 5 ? "warn" : "good"}
+                            />
+                            <Tile
+                              label="Defective"
+                              value={defectiveUnits}
+                              sub={formatMoney(defectiveValue)}
+                              tone={defectiveUnits > 0 ? "warn" : "default"}
+                            />
+                            <Tile
+                              label="Missing"
+                              value={missingUnits}
+                              sub={formatMoney(missingValue)}
+                              tone={missingUnits > 0 ? "bad" : "default"}
+                            />
+                            <Tile
+                              label="Active SKUs"
+                              value={activeSkus}
+                              sub="Products on hand"
+                            />
+                            <Tile
+                              label="Coverage"
+                              value={coverageStates}
+                              sub={`states · ${satelliteCount} location${satelliteCount === 1 ? "" : "s"}`}
+                            />
+                          </div>
+                        </section>
+
+                        {/* Lifetime & tenure */}
+                        <section>
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Lifetime totals</h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <Tile label="Lifetime delivered" value={lifetimeDelivered.length} sub={`${lifetimeUnits} units`} />
+                            <Tile label="Lifetime revenue" value={formatMoney(lifetimeRevenue)} />
+                            <Tile label="Lifetime success" value={`${lifetimeSuccessRate}%`} sub={`${allAgentOrders.length} total orders`} />
+                            <Tile
+                              label="Days onboarded"
+                              value={daysSinceOnboarded != null ? daysSinceOnboarded : "—"}
+                              sub={onboardedAt ? `Joined ${formatMoment(onboardedAt)}` : ""}
+                            />
+                            <Tile
+                              label="Last activity"
+                              value={daysSinceLastActivity != null ? `${daysSinceLastActivity} d ago` : "—"}
+                              sub={lastActivityAt ? formatMoment(lastActivityAt) : "No orders yet"}
+                              tone={daysSinceLastActivity != null && daysSinceLastActivity >= 7 ? "warn" : "default"}
+                            />
+                          </div>
+                        </section>
+                      </>
+                    );
+                  })()}
+
                   {/* Delivery Performance chart */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                     <div className="flex items-center justify-between mb-4">
@@ -31118,6 +31451,110 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   );
                 })}
               </section>
+
+              {/* ── Agent leaderboard (period-scoped) ─────────────────
+                   Top 3 + bottom 3 across four headline metrics.
+                   Click any row to jump into the agent's detail view. */}
+              {agentRows.length >= 2 && (() => {
+                const sortRev = [...agentRows].sort((a, b) => b.revenue - a.revenue).filter((r) => r.revenue > 0);
+                const sortDeliv = [...agentRows].sort((a, b) => b.deliveries - a.deliveries).filter((r) => r.deliveries > 0);
+                const sortSuccess = [...agentRows]
+                  .filter((r) => r.totalOrders >= 3)
+                  .sort((a, b) => b.successRate - a.successRate);
+                const sortShrinkage = [...agentRows]
+                  .map((r) => ({ ...r, shrinkageValue: r.defectiveValue + r.missingValue }))
+                  .filter((r) => r.shrinkageValue > 0)
+                  .sort((a, b) => b.shrinkageValue - a.shrinkageValue);
+
+                const LeaderboardRow = ({ rank, row, value, tone }: { rank: number; row: typeof agentRows[number]; value: string; tone?: "good" | "bad" }) => (
+                  <button
+                    type="button"
+                    onClick={() => openAdminAgentDetail(row.agent.id)}
+                    className="!min-h-0 w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors text-left"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${rank === 1 ? "bg-amber-100 text-amber-700" : rank === 2 ? "bg-gray-100 text-gray-700" : rank === 3 ? "bg-orange-100 text-orange-700" : "bg-gray-50 text-gray-500"}`}>
+                        {rank}
+                      </span>
+                      <span className="text-sm font-semibold text-gray-900 truncate">{row.agent.name}</span>
+                    </span>
+                    <span className={`text-sm font-bold shrink-0 ml-2 ${tone === "bad" ? "text-rose-600" : tone === "good" ? "text-emerald-600" : "text-gray-900"}`}>{value}</span>
+                  </button>
+                );
+
+                const LeaderColumn = ({
+                  title,
+                  hint,
+                  rows,
+                  format,
+                  emptyText,
+                  tone
+                }: {
+                  title: string;
+                  hint: string;
+                  rows: typeof agentRows;
+                  format: (r: typeof agentRows[number]) => string;
+                  emptyText: string;
+                  tone?: "good" | "bad";
+                }) => (
+                  <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900 m-0">{title}</h3>
+                      <p className="text-[11px] text-gray-400 m-0">{hint}</p>
+                    </div>
+                    {rows.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic px-1">{emptyText}</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {rows.slice(0, 3).map((row, i) => (
+                          <LeaderboardRow key={row.agent.id} rank={i + 1} row={row} value={format(row)} tone={tone} />
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+
+                return (
+                  <section aria-label="Agent leaderboard" className="space-y-2">
+                    <div className="flex items-baseline justify-between flex-wrap gap-2">
+                      <h2 className="text-base font-bold text-gray-900 m-0">Agent leaderboard</h2>
+                      <p className="text-xs text-gray-500 m-0">Top performers for the selected period. Click any name for the full performance breakdown.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                      <LeaderColumn
+                        title="🏆 By revenue"
+                        hint="Delivered order amount"
+                        rows={sortRev}
+                        format={(r) => formatMoney(r.revenue)}
+                        emptyText="No revenue yet in this period."
+                      />
+                      <LeaderColumn
+                        title="📦 By deliveries"
+                        hint="Successfully delivered orders"
+                        rows={sortDeliv}
+                        format={(r) => `${r.deliveries}`}
+                        emptyText="No deliveries yet in this period."
+                      />
+                      <LeaderColumn
+                        title="🎯 By success rate"
+                        hint="Min 3 orders, sorted by delivery %"
+                        rows={sortSuccess}
+                        format={(r) => `${r.successRate}%`}
+                        emptyText="Need at least 3 orders per agent."
+                        tone="good"
+                      />
+                      <LeaderColumn
+                        title="🚨 Highest shrinkage"
+                        hint="Defective + missing value"
+                        rows={sortShrinkage}
+                        format={(r) => formatMoney(r.defectiveValue + r.missingValue)}
+                        emptyText="All clean — no shrinkage flagged."
+                        tone="bad"
+                      />
+                    </div>
+                  </section>
+                );
+              })()}
 
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                 <label className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] w-full sm:flex-1 sm:max-w-xs min-w-0">
