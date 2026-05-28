@@ -372,7 +372,12 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     .eq("org_id", req.user!.orgId)
     .gte("created_at", selectedRange.startIso)
     .lt("created_at", selectedRange.endExclusiveIso)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    // Explicit ceiling — without this, PostgREST silently caps at 1000 rows
+    // and a busy day (323+ carts × multiple events) gets truncated to the
+    // oldest events, making "viewed today" undercount and "last seen at"
+    // report the latest event in the first 1000 (often ~1h into the day).
+    .limit(10000);
   let rangeFeedQuery = supabase
     .from("cart_journey_events")
     .select("*")
@@ -619,6 +624,38 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (liveEventTypes.has("submit_attempted")) summary.submitAttemptsLiveWindow += 1;
     if (liveEventTypes.has("order_submitted")) summary.conversionsLiveWindow += 1;
     if (liveEventTypes.has("redirect_triggered")) summary.redirectsLiveWindow += 1;
+
+    // Overlay the freshest event timestamps on summary.last*At. The earlier
+    // pass over rangeByCart can miss the most recent events on busy days
+    // because the range query has no .limit() and Supabase silently caps it
+    // at 1000 rows ascending — meaning busy orgs only see the oldest 1000
+    // events of the day and summary.lastViewedAt ends up ~1h after the
+    // day started. liveByCart comes from a DESC-ordered, last-24h query
+    // that always carries the truly latest events, so we use it to keep
+    // "Last seen live" honest even when rangeEvents is truncated.
+    // Clipped to selectedRange so a quiet "Today" doesn't inherit yesterday's
+    // last activity from the broader 24h window.
+    for (const event of events) {
+      const eventType = String(event.event_type ?? "");
+      const createdAt = typeof event.created_at === "string" ? event.created_at : null;
+      if (!createdAt) continue;
+      if (createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) continue;
+      if (eventType === "form_opened" && (!summary.lastViewedAt || createdAt > summary.lastViewedAt)) {
+        summary.lastViewedAt = createdAt;
+      }
+      if (isInteractionEvent(eventType) && (!summary.lastInteractionAt || createdAt > summary.lastInteractionAt)) {
+        summary.lastInteractionAt = createdAt;
+      }
+      if (eventType === "submit_attempted" && (!summary.lastSubmitAttemptAt || createdAt > summary.lastSubmitAttemptAt)) {
+        summary.lastSubmitAttemptAt = createdAt;
+      }
+      if (eventType === "order_submitted" && (!summary.lastConversionAt || createdAt > summary.lastConversionAt)) {
+        summary.lastConversionAt = createdAt;
+      }
+      if (eventType === "redirect_triggered" && (!summary.lastRedirectAt || createdAt > summary.lastRedirectAt)) {
+        summary.lastRedirectAt = createdAt;
+      }
+    }
   }
 
   summary.interactionRate = summary.viewedToday > 0 ? Math.round((summary.interactedToday / summary.viewedToday) * 100) : 0;
