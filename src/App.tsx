@@ -545,6 +545,10 @@ type Product = {
   crossSellStateRestrictions?: { [productId: string]: string[] };
   freeGiftProductIds?: string[];
   freeGiftStateRestrictions?: { [productId: string]: string[] };
+  // Products whose packages appear ALONGSIDE this product's packages on
+  // the same embed form as either/or choices (single-tool vs combo bundle,
+  // not add-ons). Order attribution still flows from pkg.product_id.
+  alternativeProductIds?: string[];
   formCustomText?: string;
 };
 type CrossSellLine = {
@@ -12525,7 +12529,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     cross_sell_price_overrides: product.crossSellPriceOverrides ?? {},
     cross_sell_state_restrictions: product.crossSellStateRestrictions ?? {},
     free_gift_product_ids: product.freeGiftProductIds ?? [],
-    free_gift_state_restrictions: product.freeGiftStateRestrictions ?? {}
+    free_gift_state_restrictions: product.freeGiftStateRestrictions ?? {},
+    alternative_product_ids: product.alternativeProductIds ?? []
   });
 
   const saveProductSalesSettings = (
@@ -12598,6 +12603,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         crossSellProductIds: enabled ? [...selected, targetProductId] : selected.filter((id) => id !== targetProductId)
       };
     }, "Failed to save cross-sell settings");
+  };
+
+  const toggleProductAlternativeTarget = (productId: string, targetProductId: string, enabled: boolean) => {
+    saveProductSalesSettings(productId, (product) => {
+      const selected = product.alternativeProductIds ?? [];
+      return {
+        ...product,
+        alternativeProductIds: enabled ? [...selected, targetProductId] : selected.filter((id) => id !== targetProductId)
+      };
+    }, "Failed to save alternative products");
   };
 
   const setProductCrossSellPriceOverride = (productId: string, targetProductId: string, amount?: number) => {
@@ -47337,6 +47352,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   </details>
                                 )}
                               </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </section>
+
+                  <section className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex flex-col gap-2">
+                    <div>
+                      <strong className="text-sm">Alternative products on this product's order form</strong>
+                      <p className="text-[11px] text-gray-500">Picked here, the listed products' packages appear on {product.name}'s embed form as either/or choices alongside {product.name}'s own packages (single-tool vs combo bundle). The order at submit time attributes to whichever product owns the picked package — not an add-on.</p>
+                    </div>
+                    {(() => {
+                      const eligibles = products.filter((p) => p.id !== product.id);
+                      const selected = product.alternativeProductIds ?? [];
+                      if (eligibles.length === 0) {
+                        return <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No other products yet. Create another product first, then come back to link it as an alternative.</p>;
+                      }
+                      return (
+                        <div className="flex flex-col gap-1.5">
+                          {eligibles.map((ap) => {
+                            const on = selected.includes(ap.id);
+                            const altPackageCount = (ap.packages ?? []).filter((pkg) => pkg.active).length;
+                            return (
+                              <label key={ap.id} className={`flex items-center gap-2 px-2.5 py-2 text-xs rounded-lg border cursor-pointer ${on ? "bg-blue-50 border-blue-300" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
+                                <input type="checkbox" checked={on} onChange={() => toggleProductAlternativeTarget(product.id, ap.id, !on)} />
+                                <span className="font-medium">{ap.name}</span>
+                                <span className="text-gray-500">· {altPackageCount} package{altPackageCount === 1 ? "" : "s"}{!ap.active ? " · inactive" : ""}</span>
+                              </label>
                             );
                           })}
                         </div>

@@ -91,6 +91,7 @@ router.patch("/:id",
                      "cross_sell_product_ids", "cross_sell_price_overrides",
                      "cross_sell_state_restrictions",
                      "free_gift_product_ids", "free_gift_state_restrictions",
+                     "alternative_product_ids",
                      "form_custom_text", "package_description"];
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {

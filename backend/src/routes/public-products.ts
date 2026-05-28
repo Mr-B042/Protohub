@@ -84,6 +84,7 @@ type DbProduct = {
   cross_sell_price_overrides: Record<string, number> | null;
   free_gift_product_ids: string[] | null;
   free_gift_state_restrictions: Record<string, string[]> | null;
+  alternative_product_ids: string[] | null;
   form_custom_text: string | null;
   pricings: DbPricing[];
   packages: DbPackage[];
@@ -186,6 +187,7 @@ const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<
   crossSellPriceOverrides:     p.cross_sell_price_overrides ?? {},
   freeGiftProductIds:          p.free_gift_product_ids ?? [],
   freeGiftStateRestrictions:   p.free_gift_state_restrictions ?? {},
+  alternativeProductIds:       p.alternative_product_ids ?? [],
   formCustomText:              p.form_custom_text ?? "",
   pricings:                    (p.pricings ?? []).map(sanitisePricing),
   packages:                    (p.packages ?? []).filter((pkg) => pkg.active).map((pkg) => sanitisePackage(pkg, companionSocialProofByProductId))
@@ -281,6 +283,7 @@ const PUBLIC_PRODUCT_SELECT = `
   can_be_cross_sell, can_be_free_gift,
   cross_sell_product_ids, cross_sell_state_restrictions, cross_sell_price_overrides,
   free_gift_product_ids, free_gift_state_restrictions,
+  alternative_product_ids,
   form_custom_text,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
   packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, companion_products, package_components)
@@ -334,11 +337,14 @@ router.get("/:id", readRateLimit, async (req, res) => {
   const product = rawProduct as unknown as DbProduct;
   const companionSocialProofByProductId = await buildCompanionSocialProof(product);
 
-  // Resolve cross-sells + free gifts in one batched fetch so the form gets a
-  // complete payload in one round trip.
+  // Resolve cross-sells + free gifts + alternative products in one batched
+  // fetch so the form gets a complete payload in one round trip. Alternative
+  // products' packages are surfaced on this product's package picker as
+  // either/or choices (single tool vs combo bundle), not add-ons.
   const referenced = new Set<string>([
     ...(product.cross_sell_product_ids ?? []),
     ...(product.free_gift_product_ids ?? []),
+    ...(product.alternative_product_ids ?? []),
     ...((product.packages ?? [])
       .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
       .map((companion) => companion.productId)
