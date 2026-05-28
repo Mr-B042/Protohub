@@ -231,8 +231,11 @@ export async function sendPushToSubscriptions(
 
   const results = await Promise.allSettled(
     subscriptions.map(async (sub) => {
+      const endpointHost = (() => {
+        try { return new URL(sub.endpoint).host; } catch { return "unknown"; }
+      })();
       try {
-        await webpush.sendNotification(
+        const sendResult = await webpush.sendNotification(
           {
             endpoint: sub.endpoint,
             keys: { p256dh: sub.p256dh, auth: sub.auth }
@@ -244,10 +247,28 @@ export async function sendPushToSubscriptions(
             topic: pushTopicForPayload(payload)
           }
         );
+        // Verbose logging — every attempt prints the push-service response so
+        // we can see whether FCM/Mozilla/Apple actually accepted the push.
+        // statusCode is what the push service returned (201 = accepted, 410
+        // = gone, 403 = vapid mismatch, etc.). body is any error detail.
+        console.log(
+          `[push] OK label=${logLabel} sub=${sub.id} host=${endpointHost} ` +
+          `status=${sendResult?.statusCode ?? "?"} ` +
+          `body=${(sendResult?.body ?? "").toString().slice(0, 200)}`
+        );
       } catch (err: any) {
-        const body = typeof err?.body === "string" ? err.body.toLowerCase() : "";
-        const vapidMismatch = err?.statusCode === 403 && body.includes("vapid credentials");
+        const body = typeof err?.body === "string" ? err.body : "";
+        const bodyLower = body.toLowerCase();
+        const vapidMismatch = err?.statusCode === 403 && bodyLower.includes("vapid credentials");
+        console.error(
+          `[push] FAIL label=${logLabel} sub=${sub.id} host=${endpointHost} ` +
+          `status=${err?.statusCode ?? "?"} ` +
+          `name=${err?.name ?? "?"} ` +
+          `message=${(err?.message ?? "").toString().slice(0, 300)} ` +
+          `body=${body.slice(0, 300)}`
+        );
         if (err.statusCode === 410 || err.statusCode === 404 || vapidMismatch) {
+          console.warn(`[push] cleaning up stale/mismatch subscription sub=${sub.id} reason=${err.statusCode}${vapidMismatch ? "/vapid" : ""}`);
           await supabase.from("push_subscriptions").delete().eq("id", sub.id);
         }
         throw err;
@@ -260,6 +281,8 @@ export async function sendPushToSubscriptions(
   const delivered = attempted - failed;
   if (failed > 0) {
     console.warn(`[push] ${failed}/${subscriptions.length} web push deliveries failed for ${logLabel}`);
+  } else {
+    console.log(`[push] ${delivered}/${attempted} web push deliveries accepted by push service for ${logLabel}`);
   }
   return { attempted, delivered, failed };
 }
