@@ -1342,15 +1342,18 @@ export async function sendNewOrderSms(
     const itemQty = Number.isFinite(item.quantity) && (item.quantity ?? 0) > 0
       ? Math.floor(item.quantity as number)
       : 1;
-    const itemDisplayName = orderDisplayName({
-      product_name: (item.productName ?? "").trim(),
-      package_name: item.packageName ?? null
-    });
-    if (!itemDisplayName.trim()) continue;
+    // Use raw productName for add-ons. It's already formatted upstream
+    // (public-orders.ts:493) as "Product · Package" when a package
+    // applies, so threading it through orderDisplayName would duplicate
+    // the package name into "Product · Package — Package".
+    const itemDisplayName = (item.productName ?? "").trim();
+    if (!itemDisplayName) continue;
     const itemUnit = unitWord(itemQty, item.packageId ?? null);
     itemBlockLines.push(`- ${itemQty} ${itemUnit} of ${itemDisplayName}`);
-    const itemDescription = (packageMetaById.get(item.packageId ?? "")?.description ?? "").trim();
-    if (itemDescription) itemBlockLines.push(`  ${itemDescription}`);
+    // Deliberate: no description sub-line for add-ons. Descriptions are
+    // marketing copy meant for the main combo offer; surfacing them on
+    // every add-on inflates the SMS by 1-2 segments per add-on and
+    // duplicates information the customer didn't engage with.
   }
   const orderItemsBlock = itemBlockLines.join("\n");
   return dispatchSms(
