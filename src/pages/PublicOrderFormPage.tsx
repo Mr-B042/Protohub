@@ -142,10 +142,15 @@ type PublicCartJourneyEventType =
   | "form_opened"
   | "first_interaction"
   | "package_selected"
+  | "tier_switched"
   | "state_selected"
   | "additional_item_preview_opened"
   | "additional_item_added"
   | "additional_item_removed"
+  | "image_viewed"
+  | "field_hesitated"
+  | "submit_idle"
+  | "back_button_pressed"
   | "submit_attempted"
   | "submit_blocked_missing_name"
   | "submit_blocked_missing_phone"
@@ -990,6 +995,16 @@ export default function PublicOrderFormPage() {
   const lastExpandedCardProductIdRef = useRef<string | null>(null);
   const firstInteractionTrackedRef = useRef(false);
   const exitTrackedRef = useRef(false);
+  // Next-level journey tracking refs.
+  const lastFieldTouchedRef = useRef<string>("");
+  const fieldTypingValueRef = useRef<Partial<Record<string, string>>>({});
+  const fieldHesitationTrackedRef = useRef<Set<string>>(new Set());
+  const submitIdleTimerRef = useRef<number | null>(null);
+  const submitIdleFiredRef = useRef(false);
+  const lastTrackedImageIndexRef = useRef<Record<string, number>>({});
+  const imageDwellTimersRef = useRef<Record<string, number>>({});
+  const backButtonFiredRef = useRef(false);
+  const tierSwitchCountRef = useRef(0);
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const submitActionRef = useRef<HTMLDivElement | null>(null);
   const additionalItemNextStepRef = useRef<HTMLDivElement | null>(null);
@@ -1711,6 +1726,120 @@ export default function PublicOrderFormPage() {
     setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
   }, [chosenPackage, orderFormState]);
 
+  // Field-level touch + hesitation tracking. Watches all customer-typed
+  // fields and (a) records the most recently touched one (for form_exited's
+  // lastFieldTouched metadata) and (b) fires "field_hesitated" once per field
+  // when the customer types ≥ 3 characters then clears them — a strong
+  // indecision signal reps can act on.
+  useEffect(() => {
+    if (publicEmbedIsPreview) return;
+    const fields: Record<string, string> = {
+      name: orderFormName,
+      phone: orderFormPhone,
+      whatsapp: orderFormWhatsapp,
+      email: orderFormEmail,
+      address: orderFormAddress,
+      city: orderFormCity,
+      state: orderFormState
+    };
+    for (const [key, value] of Object.entries(fields)) {
+      const previous = fieldTypingValueRef.current[key] ?? "";
+      if (previous === value) continue;
+      if (value.trim().length > 0) {
+        lastFieldTouchedRef.current = key;
+      } else if (previous.trim().length >= 3 && !fieldHesitationTrackedRef.current.has(key)) {
+        fieldHesitationTrackedRef.current.add(key);
+        trackCartJourney("field_hesitated", {
+          dedupeKey: `field_hesitated:${key}`,
+          metadata: {
+            field: key,
+            clearedAfterChars: previous.length
+          }
+        });
+      }
+      fieldTypingValueRef.current[key] = value;
+    }
+  }, [orderFormName, orderFormPhone, orderFormWhatsapp, orderFormEmail, orderFormAddress, orderFormCity, orderFormState, publicEmbedIsPreview]);
+
+  // Submit-idle tracking: if the customer scrolls the submit area into view
+  // and lingers there 30 seconds without pressing submit, fire submit_idle.
+  // High-signal hesitation event — rep knows the customer was right at the
+  // finish line but bailed.
+  useEffect(() => {
+    if (publicEmbedIsPreview || publicOrderSubmitted) return;
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") return;
+    const node = submitActionRef.current;
+    if (!node) return;
+    let timer: number | null = null;
+    const startTimer = () => {
+      if (submitIdleFiredRef.current || timer) return;
+      timer = window.setTimeout(() => {
+        if (submitIdleFiredRef.current || publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+        submitIdleFiredRef.current = true;
+        trackCartJourney("submit_idle", {
+          metadata: {
+            secondsOnPage: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000)),
+            packageName: chosenPackage?.name ?? null,
+            lastFieldTouched: lastFieldTouchedRef.current || null,
+            additionalItems: orderFormCrossSells.length
+          }
+        });
+      }, 30_000);
+      submitIdleTimerRef.current = timer;
+    };
+    const stopTimer = () => {
+      if (timer) {
+        window.clearTimeout(timer);
+        timer = null;
+        submitIdleTimerRef.current = null;
+      }
+    };
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) startTimer();
+        else stopTimer();
+      }
+    }, { threshold: 0.3 });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      stopTimer();
+    };
+  }, [publicEmbedIsPreview, publicOrderSubmitted, chosenPackage?.name, orderFormCrossSells.length]);
+
+  // Carousel image-view tracking. Each time a package's carousel index changes,
+  // start a 1.5s dwell timer (per package). If the customer stays on the image
+  // long enough, fire "image_viewed" — useful for the rep to know which photo
+  // hooked the customer. Each (packageId, imageIndex) only fires once.
+  useEffect(() => {
+    if (publicEmbedIsPreview || !publicProduct) return;
+    const timers = imageDwellTimersRef.current;
+    Object.entries(packageCarouselIndexById).forEach(([packageId, currentIndex]) => {
+      if (lastTrackedImageIndexRef.current[packageId] === currentIndex) return;
+      if (timers[packageId]) {
+        window.clearTimeout(timers[packageId]);
+        delete timers[packageId];
+      }
+      timers[packageId] = window.setTimeout(() => {
+        lastTrackedImageIndexRef.current[packageId] = currentIndex;
+        const pkg = publicPackages.find((p) => p.id === packageId);
+        trackCartJourney("image_viewed", {
+          dedupeKey: `image_viewed:${packageId}:${currentIndex}`,
+          packageId,
+          metadata: {
+            packageName: pkg?.name ?? null,
+            imageIndex: currentIndex,
+            totalImages: pkg ? packageImageList(pkg).length : 0
+          }
+        });
+        delete timers[packageId];
+      }, 1500);
+    });
+    return () => {
+      Object.values(timers).forEach((handle) => window.clearTimeout(handle));
+    };
+  }, [packageCarouselIndexById, publicProduct?.id, publicEmbedIsPreview, publicPackages]);
+
   useEffect(() => {
     const formTouched = Boolean(
       orderFormName.trim() ||
@@ -1883,23 +2012,38 @@ export default function PublicOrderFormPage() {
 
   useEffect(() => {
     if (!chosenPackage) return;
-    if (!lastTrackedPackageIdRef.current) {
+    const previousPackageId = lastTrackedPackageIdRef.current;
+    if (!previousPackageId) {
+      // First package selection — captured by form_opened metadata, no event here.
       lastTrackedPackageIdRef.current = chosenPackage.id;
       return;
     }
-    if (lastTrackedPackageIdRef.current === chosenPackage.id) return;
+    if (previousPackageId === chosenPackage.id) return;
+    // Every subsequent hop fires tier_switched (no dedupe — we want the full
+    // trail so reps can see "looked at 6 sets, dropped to 3 sets, then bailed").
+    const previousPkg = publicPackages.find((p) => p.id === previousPackageId);
+    tierSwitchCountRef.current += 1;
     lastTrackedPackageIdRef.current = chosenPackage.id;
-    trackCartJourney("package_selected", {
-      dedupeKey: `package_selected:${chosenPackage.id}`,
+    const direction = !previousPkg || previousPkg.price === chosenPackagePrice
+      ? "lateral"
+      : chosenPackagePrice > previousPkg.price
+        ? "upgrade"
+        : "downgrade";
+    trackCartJourney("tier_switched", {
       packageId: chosenPackage.id,
       metadata: {
-        packageName: chosenPackage.name,
-        quantity: chosenPackage.quantity,
-        amount: chosenPackagePrice,
+        switchNumber: tierSwitchCountRef.current,
+        fromPackageId: previousPackageId,
+        fromPackageName: previousPkg?.name ?? null,
+        toPackageId: chosenPackage.id,
+        toPackageName: chosenPackage.name,
+        fromAmount: previousPkg?.price ?? null,
+        toAmount: chosenPackagePrice,
+        direction,
         source: orderSourceFromUtm(publicUtmSource)
       }
     });
-  }, [chosenPackage, publicUtmSource]);
+  }, [chosenPackage, publicUtmSource, publicPackages, chosenPackagePrice]);
 
   useEffect(() => {
     const normalizedState = normalizeStateName(orderFormState);
@@ -1944,7 +2088,9 @@ export default function PublicOrderFormPage() {
           metadata: {
             customerName: orderFormName.trim() || null,
             additionalItems: orderFormCrossSells.length,
-            source: orderSourceFromUtm(publicUtmSource)
+            source: orderSourceFromUtm(publicUtmSource),
+            secondsOnPage: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000)),
+            lastFieldTouched: lastFieldTouchedRef.current || null
           }
         },
         { keepalive: true }
@@ -1961,13 +2107,30 @@ export default function PublicOrderFormPage() {
       }
     };
 
+    const handlePopState = () => {
+      if (publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+      if (backButtonFiredRef.current) return;
+      backButtonFiredRef.current = true;
+      trackCartJourney("back_button_pressed", {
+        metadata: {
+          packageName: chosenPackage?.name ?? null,
+          customerName: orderFormName.trim() || null,
+          lastFieldTouched: lastFieldTouchedRef.current || null,
+          secondsOnPage: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000))
+        },
+        keepalive: true
+      });
+    };
+
     window.addEventListener("pagehide", handlePageHide);
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("popstate", handlePopState);
     return () => {
       if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current);
       if (redirectTimerRef.current) window.clearTimeout(redirectTimerRef.current);
       window.removeEventListener("pagehide", handlePageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("popstate", handlePopState);
     };
   }, [
     attemptRecoveredAutoSubmit,

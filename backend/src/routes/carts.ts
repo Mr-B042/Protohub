@@ -157,10 +157,15 @@ const resolvePulseEmbedLabel = (embedLabelValue: unknown, productNameValue: unkn
 const isInteractionEvent = (eventType: string) =>
   eventType === "first_interaction"
   || eventType === "package_selected"
+  || eventType === "tier_switched"
   || eventType === "state_selected"
   || eventType === "additional_item_preview_opened"
   || eventType === "additional_item_added"
   || eventType === "additional_item_removed"
+  || eventType === "image_viewed"
+  || eventType === "field_hesitated"
+  || eventType === "submit_idle"
+  || eventType === "back_button_pressed"
   || eventType === "submit_attempted"
   || eventType.startsWith("submit_blocked_");
 

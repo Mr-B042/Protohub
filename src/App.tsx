@@ -978,10 +978,15 @@ type CartJourneyEvent = {
     | "form_opened"
     | "first_interaction"
     | "package_selected"
+    | "tier_switched"
     | "state_selected"
     | "additional_item_preview_opened"
     | "additional_item_added"
     | "additional_item_removed"
+    | "image_viewed"
+    | "field_hesitated"
+    | "submit_idle"
+    | "back_button_pressed"
     | "submit_attempted"
     | CartJourneyBlockedEventType
     | "order_submitted"
@@ -5245,10 +5250,15 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
     case "form_opened": return "Journey started";
     case "first_interaction": return "First interaction";
     case "package_selected": return "Package changed";
+    case "tier_switched": return "Switched between tiers";
     case "state_selected": return "State selected";
     case "additional_item_preview_opened": return "Viewed additional item";
     case "additional_item_added": return "Added additional item";
     case "additional_item_removed": return "Removed additional item";
+    case "image_viewed": return "Viewed package photo";
+    case "field_hesitated": return "Hesitated on a field";
+    case "submit_idle": return "Lingered near submit";
+    case "back_button_pressed": return "Pressed back";
     case "submit_attempted": return "Tried to submit";
     case "order_submitted": return "Order submitted";
     case "redirect_triggered": return "Redirect fired";
@@ -5340,8 +5350,54 @@ const cartJourneyDetail = (event: CartJourneyEvent) => {
       return outcomeCode
         ? `${actorName || "Rep"} logged a ${channel || "follow-up"} contact attempt: ${outcomeCode}${nextActionType ? ` · next ${nextActionType.replace(/_/g, " ")}` : ""}`
         : `${actorName || "Rep"} logged a follow-up attempt.`;
-    case "form_exited":
-      return additionalItems && additionalItems > 0 ? `Left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}` : "Left before submitting";
+    case "form_exited": {
+      const secondsOnPage = typeof metadata.secondsOnPage === "number" ? metadata.secondsOnPage : null;
+      const lastFieldTouched = typeof metadata.lastFieldTouched === "string" ? metadata.lastFieldTouched : "";
+      const time = secondsOnPage != null && secondsOnPage > 0
+        ? secondsOnPage >= 60
+          ? `${Math.floor(secondsOnPage / 60)}m ${secondsOnPage % 60}s on page`
+          : `${secondsOnPage}s on page`
+        : "";
+      const fieldNote = lastFieldTouched ? `last touched ${lastFieldTouched}` : "";
+      const itemNote = additionalItems && additionalItems > 0
+        ? `left after adding ${additionalItems} additional item${additionalItems === 1 ? "" : "s"}`
+        : "left before submitting";
+      return [itemNote, time, fieldNote].filter(Boolean).join(" · ");
+    }
+    case "tier_switched": {
+      const fromName = typeof metadata.fromPackageName === "string" ? metadata.fromPackageName : "Previous tier";
+      const toName = typeof metadata.toPackageName === "string" ? metadata.toPackageName : packageName || "Next tier";
+      const direction = typeof metadata.direction === "string" ? metadata.direction : "";
+      const arrow = direction === "upgrade" ? "↑" : direction === "downgrade" ? "↓" : "→";
+      return `${fromName} ${arrow} ${toName}`;
+    }
+    case "image_viewed": {
+      const imageIndex = typeof metadata.imageIndex === "number" ? metadata.imageIndex : null;
+      const totalImages = typeof metadata.totalImages === "number" ? metadata.totalImages : null;
+      const pkg = packageName ? ` on ${packageName}` : "";
+      return imageIndex != null
+        ? `Photo ${imageIndex + 1}${totalImages ? ` of ${totalImages}` : ""}${pkg}`
+        : `Looked at photos${pkg}`;
+    }
+    case "field_hesitated": {
+      const field = typeof metadata.field === "string" ? metadata.field : "a field";
+      const cleared = typeof metadata.clearedAfterChars === "number" ? metadata.clearedAfterChars : null;
+      return cleared != null
+        ? `Typed ${cleared} characters in "${field}" then cleared it`
+        : `Cleared the "${field}" field after typing`;
+    }
+    case "submit_idle": {
+      const lastFieldTouched = typeof metadata.lastFieldTouched === "string" ? metadata.lastFieldTouched : "";
+      const itemNote = additionalItems && additionalItems > 0 ? `${additionalItems} additional item${additionalItems === 1 ? "" : "s"} ready` : "";
+      const fieldNote = lastFieldTouched ? `last touched ${lastFieldTouched}` : "";
+      return [itemNote, "stayed 30s near submit without pressing", fieldNote].filter(Boolean).join(" · ");
+    }
+    case "back_button_pressed": {
+      const secondsOnPage = typeof metadata.secondsOnPage === "number" ? metadata.secondsOnPage : null;
+      const lastFieldTouched = typeof metadata.lastFieldTouched === "string" ? metadata.lastFieldTouched : "";
+      const time = secondsOnPage != null && secondsOnPage > 0 ? `${secondsOnPage}s in` : "";
+      return [time, lastFieldTouched ? `last touched ${lastFieldTouched}` : "", "navigated back from the form"].filter(Boolean).join(" · ");
+    }
     default:
       return productName || packageName || stateName || "";
   }
