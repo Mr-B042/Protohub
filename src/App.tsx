@@ -16053,6 +16053,92 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           .catch(() => undefined);
       }, 300);
     };
+    let agentsReloadTimer: number | null = null;
+    const queueAgentsReload = () => {
+      if (agentsReloadTimer) return;
+      agentsReloadTimer = window.setTimeout(() => {
+        agentsReloadTimer = null;
+        agentsApi.list()
+          .then((rows: any) => {
+            if (cancelled || !Array.isArray(rows)) return;
+            const normalised = (rows as any[]).map((a: any) => ({
+              ...a,
+              active: typeof a.active === "boolean" ? a.active : (a.status ?? "Active") === "Active",
+              address: a.address ?? "",
+              created: a.created ?? a.createdAt ?? a.created_at ?? ""
+            }));
+            setAgents(normalised as any);
+            const flat = normalised.flatMap((a: any) =>
+              (a.stock ?? []).map((s: any) => ({ agentId: a.id, productId: s.productId ?? s.product_id, quantity: s.quantity }))
+            );
+            if (flat.length) setAgentStock(flat as any);
+          })
+          .catch(() => undefined);
+      }, 300);
+    };
+    let stockMovementsReloadTimer: number | null = null;
+    const queueStockMovementsReload = () => {
+      if (stockMovementsReloadTimer) return;
+      stockMovementsReloadTimer = window.setTimeout(() => {
+        stockMovementsReloadTimer = null;
+        stockApi.movements({ limit: "500" })
+          .then((result: any) => {
+            if (cancelled || !Array.isArray(result?.data)) return;
+            setStockMovements((result.data as any[]).map((m: any) => ({
+              id:           m.id,
+              date:         m.date         ?? m.createdAt   ?? m.created_at,
+              createdAt:    m.createdAt    ?? m.created_at,
+              productId:    m.productId    ?? m.product_id  ?? "",
+              productName:  m.productName  ?? m.product_name ?? "",
+              type:         m.type,
+              qty:          Number(m.qty ?? 0),
+              balanceAfter: Number(m.balanceAfter ?? m.balance_after ?? 0),
+              agent:        m.agent ?? (m.agentId   ?? m.agent_id) ?? undefined,
+              agentId:      m.agentId   ?? m.agent_id   ?? undefined,
+              order:        m.order ?? m.orderId ?? m.order_id ?? undefined,
+              orderId:      m.orderId   ?? m.order_id   ?? undefined,
+              by:           m.by ?? m.byName ?? m.by_name ?? "System",
+              byName:       m.byName    ?? m.by_name    ?? undefined,
+              note:         m.note ?? undefined,
+              waybillId:    m.waybillId ?? m.waybill_id ?? undefined,
+              fromLocation: m.fromLocation ?? m.from_location ?? undefined,
+              toLocation:   m.toLocation   ?? m.to_location   ?? undefined
+            })) as any);
+          })
+          .catch(() => undefined);
+      }, 300);
+    };
+    let expensesReloadTimer: number | null = null;
+    const queueExpensesReload = () => {
+      if (expensesReloadTimer) return;
+      expensesReloadTimer = window.setTimeout(() => {
+        expensesReloadTimer = null;
+        expensesApi.list()
+          .then((rows: any) => {
+            if (cancelled || !Array.isArray(rows)) return;
+            setExpenses((rows as any[]).map((e: any) => ({
+              ...e,
+              createdAt: e.createdAt ?? e.created_at ?? "",
+              type: e.type ?? e.category ?? "Other",
+              productName: e.productName ?? ""
+            })) as any);
+          })
+          .catch(() => undefined);
+      }, 300);
+    };
+    let waybillsReloadTimer: number | null = null;
+    const queueWaybillsReload = () => {
+      if (waybillsReloadTimer) return;
+      waybillsReloadTimer = window.setTimeout(() => {
+        waybillsReloadTimer = null;
+        waybillsApi.list()
+          .then((rows: any) => {
+            if (cancelled || !Array.isArray(rows)) return;
+            setWaybillRecords(rows as any);
+          })
+          .catch(() => undefined);
+      }, 300);
+    };
     const channel = realtimeClient.channel(`protohub-live-${currentUser?.id ?? "session"}`);
 
     channel.on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
@@ -16149,6 +16235,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         queueProductsReload();
       });
     }
+
+    // Migration 091: live updates for the dashboard's most-watched data
+    // slices. Each subscription triggers a debounced reload of the slice
+    // it owns (mirrors the products/packages/pricings pattern above).
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "agents" }, () => {
+      queueAgentsReload();
+    });
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "agent_stock" }, () => {
+      queueAgentsReload();
+    });
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "stock_movements" }, () => {
+      queueStockMovementsReload();
+    });
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
+      queueExpensesReload();
+    });
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "waybill_records" }, () => {
+      queueWaybillsReload();
+    });
+    // order_field_edits is in the realtime publication but not subscribed
+    // here yet — the order details modal already re-fetches field-edits
+    // on open. Subscribe later if/when we want a live audit timeline.
 
     void syncRealtimeAuth().then(() => {
       if (cancelled) return;
