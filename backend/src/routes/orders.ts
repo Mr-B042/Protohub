@@ -1584,6 +1584,59 @@ router.patch("/:id", async (req, res) => {
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
 
+  // ── Per-field audit trail ────────────────────────────────
+  // order_audit only tracks status changes. This catches everything else
+  // (product/package/quantity/amount/customer/etc.) so manual edits like
+  // the one that rewrote orders #379 and #387 leave a traceable record.
+  // Fire-and-forget — audit failures must never block the actual update.
+  try {
+    const TRACKED_AUDIT_FIELDS = [
+      "customer", "phone", "whatsapp", "email",
+      "address", "city", "state",
+      "product_id", "product_name", "package_id", "package_name",
+      "quantity", "amount", "currency",
+      "logistics_cost", "amount_remitted", "remittance_status",
+      "assigned_rep_id", "agent_id", "agent_location_id",
+      "delivered_date", "scheduled_date", "scheduled_at"
+    ] as const;
+    const normalize = (value: unknown) =>
+      value === undefined || value === "" ? null : (value as any);
+    const auditRows = TRACKED_AUDIT_FIELDS
+      .filter((field) => Object.prototype.hasOwnProperty.call(updates, field))
+      .map((field) => ({
+        field,
+        before: normalize((current as Record<string, unknown>)[field]),
+        after: normalize((data as Record<string, unknown>)[field])
+      }))
+      .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after))
+      .map(({ field, before, after }) => ({
+        order_id:        req.params.id,
+        org_id:          req.user!.orgId,
+        changed_by:      req.user!.id,
+        changed_by_name: req.user!.name,
+        field_name:      field,
+        from_value:      before,
+        to_value:        after
+      }));
+    if (auditRows.length > 0) {
+      const { error: auditError } = await supabase
+        .from("order_field_edits")
+        .insert(auditRows);
+      if (auditError) {
+        logger.warn("order_field_edits insert failed", {
+          orderId: req.params.id,
+          fieldCount: auditRows.length,
+          error: auditError.message
+        });
+      }
+    }
+  } catch (auditErr) {
+    logger.warn("order_field_edits trail crashed", {
+      orderId: req.params.id,
+      error: (auditErr as Error).message
+    });
+  }
+
   await logRemittanceDelta({
     orgId: req.user!.orgId,
     orderId: req.params.id,
