@@ -44,7 +44,7 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
 // carts close materially better when the message reads like a real person.
 export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   order_new: {
-    body: "{{greeting}} {{customer}}, got your order {{order_id}} for {{product_name}} ({{currency}} {{amount}}). We'll call you shortly to confirm delivery. {{rep_contact}}"
+    body: "{{greeting}} {{customer}}, your order is received (ref {{order_id}}). {{product_name}} ({{currency}} {{amount}}). We'll call you shortly to confirm delivery. {{rep_contact}}"
   },
   order_status_change: {
     body: "{{greeting}} {{customer}}, quick update on order {{order_id}}: status is now {{status}}. We will keep you posted."
