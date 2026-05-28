@@ -30824,6 +30824,358 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             />
                           </div>
                         </section>
+
+                        {/* ── Time/day patterns (period-scoped) ───────── */}
+                        {(() => {
+                          const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                          // Count deliveries per weekday of deliveredDate
+                          const byWeekday = new Array(7).fill(0) as number[];
+                          for (const o of delivered) {
+                            const d = o.deliveredDate ?? o.createdAt ?? o.date;
+                            if (!d) continue;
+                            const wd = new Date(d).getDay();
+                            if (wd >= 0 && wd < 7) byWeekday[wd] += 1;
+                          }
+                          const peakWeekday = byWeekday.reduce(
+                            (best, count, i) => (count > best.count ? { day: WEEKDAY_NAMES[i], count } : best),
+                            { day: "—", count: 0 }
+                          );
+                          const maxWeekday = Math.max(1, ...byWeekday);
+                          const weekdayDeliveries = byWeekday.slice(1, 6).reduce((s, n) => s + n, 0); // Mon-Fri
+                          const weekendDeliveries = byWeekday[0] + byWeekday[6]; // Sun + Sat
+                          const totalWeekDelivered = weekdayDeliveries + weekendDeliveries;
+                          const weekendShare = totalWeekDelivered === 0
+                            ? 0
+                            : Math.round((weekendDeliveries / totalWeekDelivered) * 100);
+
+                          // Same-day + next-day rates
+                          const dayKey = (iso?: string) => iso ? iso.slice(0, 10) : "";
+                          const deliveredWithKeys = delivered
+                            .map((o) => ({ created: dayKey(o.createdAt ?? o.date), finished: dayKey(o.deliveredDate) }))
+                            .filter((p) => p.created && p.finished);
+                          const sameDayCount = deliveredWithKeys.filter((p) => p.created === p.finished).length;
+                          const nextDayCount = deliveredWithKeys.filter((p) => {
+                            if (!p.created || !p.finished) return false;
+                            const a = new Date(`${p.created}T00:00:00`).getTime();
+                            const b = new Date(`${p.finished}T00:00:00`).getTime();
+                            return Math.round((b - a) / DAY_MS) === 1;
+                          }).length;
+                          const sameDayRate = deliveredWithKeys.length === 0 ? null
+                            : Math.round((sameDayCount / deliveredWithKeys.length) * 100);
+                          const nextDayRate = deliveredWithKeys.length === 0 ? null
+                            : Math.round((nextDayCount / deliveredWithKeys.length) * 100);
+
+                          if (delivered.length === 0) return null;
+                          return (
+                            <section>
+                              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Time / day patterns</h3>
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                                  <div className="flex items-baseline justify-between">
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Day-of-week delivery distribution</p>
+                                    <p className="text-[11px] text-gray-400 m-0">{peakWeekday.count > 0 ? `Peak: ${peakWeekday.day}` : ""}</p>
+                                  </div>
+                                  <div className="grid grid-cols-7 gap-1.5 mt-3 items-end h-24">
+                                    {WEEKDAY_NAMES.map((name, i) => {
+                                      const h = Math.round((byWeekday[i] / maxWeekday) * 100);
+                                      const isPeak = byWeekday[i] === peakWeekday.count && byWeekday[i] > 0;
+                                      return (
+                                        <div key={name} className="flex flex-col items-center gap-1 h-full justify-end">
+                                          <div
+                                            className={`w-full rounded-t-md ${isPeak ? "bg-emerald-500" : (i === 0 || i === 6) ? "bg-amber-300" : "bg-blue-400"}`}
+                                            style={{ height: `${Math.max(6, h)}%` }}
+                                            title={`${name}: ${byWeekday[i]} delivered`}
+                                          />
+                                          <span className="text-[10px] font-semibold text-gray-500">{name}</span>
+                                          <span className="text-[10px] font-bold text-gray-900">{byWeekday[i]}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <p className="text-[11px] text-gray-500 mt-2 m-0">
+                                    Weekend share: <strong className="text-gray-900">{weekendShare}%</strong> · Weekdays: {weekdayDeliveries} · Weekends: {weekendDeliveries}
+                                  </p>
+                                </article>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <Tile
+                                    label="Same-day rate"
+                                    value={sameDayRate != null ? `${sameDayRate}%` : "—"}
+                                    sub={`${sameDayCount} of ${deliveredWithKeys.length} dated`}
+                                    tone={sameDayRate != null && sameDayRate >= 30 ? "good" : "default"}
+                                  />
+                                  <Tile
+                                    label="Next-day rate"
+                                    value={nextDayRate != null ? `${nextDayRate}%` : "—"}
+                                    sub={`${nextDayCount} of ${deliveredWithKeys.length} dated`}
+                                    tone={nextDayRate != null && nextDayRate >= 50 ? "good" : "default"}
+                                  />
+                                  <Tile
+                                    label="Best day"
+                                    value={peakWeekday.day}
+                                    sub={peakWeekday.count > 0 ? `${peakWeekday.count} deliveries` : "—"}
+                                  />
+                                  <Tile
+                                    label="Weekend lean"
+                                    value={`${weekendShare}%`}
+                                    sub={weekendShare >= 40 ? "Weekend-strong" : weekendShare <= 15 ? "Weekday-strong" : "Balanced"}
+                                  />
+                                </div>
+                              </div>
+                            </section>
+                          );
+                        })()}
+
+                        {/* ── Geographic breakdown (period-scoped) ───── */}
+                        {(() => {
+                          const byState = new Map<string, { total: number; delivered: number; revenue: number; failed: number }>();
+                          const byCity = new Map<string, { total: number; delivered: number; revenue: number }>();
+                          for (const o of periodAgentOrders) {
+                            const stateKey = (o.state ?? "").trim() || "Unknown";
+                            const cityKey = `${(o.city ?? "").trim() || "Unknown city"} · ${stateKey}`;
+                            const stateEntry = byState.get(stateKey) ?? { total: 0, delivered: 0, revenue: 0, failed: 0 };
+                            const cityEntry = byCity.get(cityKey) ?? { total: 0, delivered: 0, revenue: 0 };
+                            stateEntry.total += 1;
+                            cityEntry.total += 1;
+                            if ((o.status ?? "New") === "Delivered") {
+                              stateEntry.delivered += 1;
+                              stateEntry.revenue += o.amount;
+                              cityEntry.delivered += 1;
+                              cityEntry.revenue += o.amount;
+                            }
+                            if (["Cancelled", "Failed"].includes(o.status ?? "New")) {
+                              stateEntry.failed += 1;
+                            }
+                            byState.set(stateKey, stateEntry);
+                            byCity.set(cityKey, cityEntry);
+                          }
+                          const stateRows = Array.from(byState.entries())
+                            .map(([state, v]) => ({
+                              state,
+                              ...v,
+                              successRate: v.total === 0 ? 0 : Math.round((v.delivered / v.total) * 100)
+                            }))
+                            .sort((a, b) => b.revenue - a.revenue);
+                          const cityRows = Array.from(byCity.entries())
+                            .map(([key, v]) => ({ key, ...v }))
+                            .sort((a, b) => b.total - a.total)
+                            .slice(0, 5);
+                          const mostProfitable = stateRows[0];
+                          const worstSuccess = [...stateRows]
+                            .filter((r) => r.total >= 2)
+                            .sort((a, b) => a.successRate - b.successRate)[0];
+                          const failedConcentration = [...stateRows]
+                            .filter((r) => r.failed > 0)
+                            .sort((a, b) => b.failed - a.failed)[0];
+
+                          if (stateRows.length === 0) return null;
+                          return (
+                            <section>
+                              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Geographic breakdown</h3>
+                              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                                {mostProfitable ? (
+                                  <Tile
+                                    label="Most profitable state"
+                                    value={mostProfitable.state}
+                                    sub={`${formatMoney(mostProfitable.revenue)} · ${mostProfitable.successRate}% success`}
+                                    tone="good"
+                                  />
+                                ) : null}
+                                {worstSuccess && worstSuccess.successRate < 60 ? (
+                                  <Tile
+                                    label="Hardest state"
+                                    value={worstSuccess.state}
+                                    sub={`${worstSuccess.successRate}% success · ${worstSuccess.failed} failed`}
+                                    tone="bad"
+                                  />
+                                ) : null}
+                                {failedConcentration && failedConcentration.failed >= 2 ? (
+                                  <Tile
+                                    label="Failure concentration"
+                                    value={`${failedConcentration.failed}`}
+                                    sub={`failed in ${failedConcentration.state}`}
+                                    tone="warn"
+                                  />
+                                ) : null}
+                              </div>
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+                                <article className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                                  <div className="px-4 py-3 border-b border-gray-100">
+                                    <p className="text-sm font-bold text-gray-900 m-0">By state</p>
+                                    <p className="text-[11px] text-gray-400 m-0">{stateRows.length} state{stateRows.length === 1 ? "" : "s"} in period</p>
+                                  </div>
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-gray-50 text-gray-500 text-[10px] uppercase tracking-wider">
+                                      <tr>
+                                        <th className="text-left px-4 py-2 font-semibold">State</th>
+                                        <th className="text-right px-4 py-2 font-semibold">Total</th>
+                                        <th className="text-right px-4 py-2 font-semibold">Delivered</th>
+                                        <th className="text-right px-4 py-2 font-semibold">Success</th>
+                                        <th className="text-right px-4 py-2 font-semibold">Revenue</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {stateRows.map((row) => (
+                                        <tr key={row.state} className="hover:bg-gray-50">
+                                          <td className="px-4 py-2 font-semibold text-gray-900">{row.state}</td>
+                                          <td className="px-4 py-2 text-right text-gray-700">{row.total}</td>
+                                          <td className="px-4 py-2 text-right text-gray-700">{row.delivered}</td>
+                                          <td className={`px-4 py-2 text-right font-semibold ${row.successRate >= 80 ? "text-emerald-600" : row.successRate < 60 ? "text-rose-600" : "text-gray-700"}`}>{row.successRate}%</td>
+                                          <td className="px-4 py-2 text-right font-bold text-gray-900">{formatMoney(row.revenue)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </article>
+                                <article className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                                  <div className="px-4 py-3 border-b border-gray-100">
+                                    <p className="text-sm font-bold text-gray-900 m-0">Top cities</p>
+                                    <p className="text-[11px] text-gray-400 m-0">Highest order volume in period</p>
+                                  </div>
+                                  {cityRows.length === 0 ? (
+                                    <p className="px-4 py-6 text-xs text-gray-400">No city data yet.</p>
+                                  ) : (
+                                    <ul className="m-0 divide-y divide-gray-100">
+                                      {cityRows.map((c, i) => (
+                                        <li key={c.key} className="px-4 py-2 flex items-center justify-between">
+                                          <span className="flex items-center gap-2 min-w-0">
+                                            <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-600 shrink-0">{i + 1}</span>
+                                            <span className="text-sm font-semibold text-gray-900 truncate">{c.key}</span>
+                                          </span>
+                                          <span className="text-xs text-gray-500 shrink-0 ml-2">
+                                            <span className="font-bold text-gray-900">{c.delivered}</span> / {c.total} · {formatMoney(c.revenue)}
+                                          </span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </article>
+                              </div>
+                            </section>
+                          );
+                        })()}
+
+                        {/* ── Comparative (vs peers + cohort + best week) ─ */}
+                        {(() => {
+                          const myState = agentPrimaryBaseState(agent);
+
+                          // Peer comparison: other agents whose primary base state matches
+                          const stateRows = myState
+                            ? agentRows.filter((r) => r.agent.id !== agent.id && agentPrimaryBaseState(r.agent) === myState)
+                            : [];
+                          const peerAvg = (key: "successRate" | "deliveries" | "revenue") => {
+                            if (stateRows.length === 0) return null;
+                            return stateRows.reduce((s, r) => s + (r as any)[key], 0) / stateRows.length;
+                          };
+                          const mineRow = agentRows.find((r) => r.agent.id === agent.id);
+
+                          // Cohort comparison: agents whose onboarding month matches this one
+                          const onboardYM = onboardedAt ? onboardedAt.slice(0, 7) : null;
+                          const cohortRows = onboardYM
+                            ? agentRows.filter((r) => {
+                                const peerOnboard = (r.agent as any).createdAt ?? (r.agent as any).created ?? "";
+                                return r.agent.id !== agent.id && peerOnboard.slice(0, 7) === onboardYM;
+                              })
+                            : [];
+                          const cohortAvgRevenue = cohortRows.length === 0
+                            ? null
+                            : cohortRows.reduce((s, r) => s + r.revenue, 0) / cohortRows.length;
+                          const cohortAvgSuccess = cohortRows.length === 0
+                            ? null
+                            : cohortRows.reduce((s, r) => s + r.successRate, 0) / cohortRows.length;
+
+                          // Best week ever (lifetime) — ISO week bucketing
+                          const isoWeekKey = (iso: string) => {
+                            const d = new Date(iso);
+                            if (!Number.isFinite(d.getTime())) return "";
+                            // Get Thursday of the week (ISO week date)
+                            const thu = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+                            thu.setUTCDate(thu.getUTCDate() + 3 - ((thu.getUTCDay() + 6) % 7));
+                            const yearStart = new Date(Date.UTC(thu.getUTCFullYear(), 0, 1));
+                            const week = Math.ceil((((thu.getTime() - yearStart.getTime()) / DAY_MS) + 1) / 7);
+                            return `${thu.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+                          };
+                          const weekly = new Map<string, { delivered: number; revenue: number; sample: string }>();
+                          for (const o of lifetimeDelivered) {
+                            const stamp = o.deliveredDate ?? o.createdAt ?? o.date;
+                            if (!stamp) continue;
+                            const wk = isoWeekKey(stamp);
+                            if (!wk) continue;
+                            const entry = weekly.get(wk) ?? { delivered: 0, revenue: 0, sample: stamp };
+                            entry.delivered += 1;
+                            entry.revenue += o.amount;
+                            weekly.set(wk, entry);
+                          }
+                          const bestWeek = Array.from(weekly.entries())
+                            .map(([wk, v]) => ({ wk, ...v }))
+                            .sort((a, b) => b.delivered - a.delivered)[0];
+                          const bestRevenueWeek = Array.from(weekly.entries())
+                            .map(([wk, v]) => ({ wk, ...v }))
+                            .sort((a, b) => b.revenue - a.revenue)[0];
+
+                          const hasAnyComparison = stateRows.length > 0 || cohortRows.length > 0 || bestWeek;
+                          if (!hasAnyComparison) return null;
+
+                          const renderDeltaTone = (mine: number, avg: number | null) => {
+                            if (avg == null || avg === 0) return "default" as const;
+                            const delta = mine - avg;
+                            if (Math.abs(delta) < (avg * 0.05)) return "default" as const;
+                            return delta > 0 ? "good" as const : "bad" as const;
+                          };
+
+                          return (
+                            <section>
+                              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Comparative</h3>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                                {stateRows.length > 0 && mineRow ? (
+                                  <>
+                                    <Tile
+                                      label={`vs ${myState} peers — success`}
+                                      value={`${mineRow.successRate}%`}
+                                      sub={`Peers avg ${Math.round(peerAvg("successRate") ?? 0)}% (${stateRows.length} peer${stateRows.length === 1 ? "" : "s"})`}
+                                      tone={renderDeltaTone(mineRow.successRate, peerAvg("successRate"))}
+                                    />
+                                    <Tile
+                                      label={`vs ${myState} peers — revenue`}
+                                      value={formatMoney(mineRow.revenue)}
+                                      sub={`Peers avg ${formatMoney(peerAvg("revenue") ?? 0)}`}
+                                      tone={renderDeltaTone(mineRow.revenue, peerAvg("revenue"))}
+                                    />
+                                  </>
+                                ) : null}
+                                {cohortRows.length > 0 && mineRow ? (
+                                  <>
+                                    <Tile
+                                      label="vs onboarding cohort — revenue"
+                                      value={formatMoney(mineRow.revenue)}
+                                      sub={`Cohort avg ${formatMoney(cohortAvgRevenue ?? 0)} (${cohortRows.length} joined ${onboardYM})`}
+                                      tone={renderDeltaTone(mineRow.revenue, cohortAvgRevenue)}
+                                    />
+                                    <Tile
+                                      label="vs onboarding cohort — success"
+                                      value={`${mineRow.successRate}%`}
+                                      sub={`Cohort avg ${Math.round(cohortAvgSuccess ?? 0)}%`}
+                                      tone={renderDeltaTone(mineRow.successRate, cohortAvgSuccess)}
+                                    />
+                                  </>
+                                ) : null}
+                                {bestWeek ? (
+                                  <Tile
+                                    label="Best delivery week ever"
+                                    value={bestWeek.delivered}
+                                    sub={`${bestWeek.wk} · ${formatMoney(bestWeek.revenue)}`}
+                                  />
+                                ) : null}
+                                {bestRevenueWeek && bestRevenueWeek.wk !== bestWeek?.wk ? (
+                                  <Tile
+                                    label="Best revenue week ever"
+                                    value={formatMoney(bestRevenueWeek.revenue)}
+                                    sub={`${bestRevenueWeek.wk} · ${bestRevenueWeek.delivered} delivered`}
+                                  />
+                                ) : null}
+                              </div>
+                            </section>
+                          );
+                        })()}
                       </>
                     );
                   })()}
