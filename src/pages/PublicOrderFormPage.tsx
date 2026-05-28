@@ -998,12 +998,18 @@ export default function PublicOrderFormPage() {
   // Next-level journey tracking refs.
   const lastFieldTouchedRef = useRef<string>("");
   const fieldTypingValueRef = useRef<Partial<Record<string, string>>>({});
+  // High-water mark of each field's length since it was last empty. Used so
+  // field_hesitated still fires when the user backspaces character-by-character
+  // (without this, "previous" at the clear-moment is only ~1 char and never
+  // satisfies the >= 3 threshold).
+  const fieldMaxLengthRef = useRef<Partial<Record<string, number>>>({});
   const fieldHesitationTrackedRef = useRef<Set<string>>(new Set());
   const submitIdleTimerRef = useRef<number | null>(null);
   const submitIdleFiredRef = useRef(false);
   const lastTrackedImageIndexRef = useRef<Record<string, number>>({});
   const imageDwellTimersRef = useRef<Record<string, number>>({});
   const backButtonFiredRef = useRef(false);
+  const backSentinelPushedRef = useRef(false);
   const tierSwitchCountRef = useRef(0);
   const fieldRefs = useRef<Partial<Record<PublicOrderFieldKey, HTMLElement | null>>>({});
   const submitActionRef = useRef<HTMLDivElement | null>(null);
@@ -1745,17 +1751,26 @@ export default function PublicOrderFormPage() {
     for (const [key, value] of Object.entries(fields)) {
       const previous = fieldTypingValueRef.current[key] ?? "";
       if (previous === value) continue;
-      if (value.trim().length > 0) {
+      const trimmedLength = value.trim().length;
+      if (trimmedLength > 0) {
         lastFieldTouchedRef.current = key;
-      } else if (previous.trim().length >= 3 && !fieldHesitationTrackedRef.current.has(key)) {
-        fieldHesitationTrackedRef.current.add(key);
-        trackCartJourney("field_hesitated", {
-          dedupeKey: `field_hesitated:${key}`,
-          metadata: {
-            field: key,
-            clearedAfterChars: previous.length
-          }
-        });
+        const currentMax = fieldMaxLengthRef.current[key] ?? 0;
+        if (trimmedLength > currentMax) fieldMaxLengthRef.current[key] = trimmedLength;
+      } else if (previous.trim().length > 0) {
+        // Field just transitioned to empty — judge hesitation off the
+        // high-water mark, not the immediate previous value.
+        const maxSeen = fieldMaxLengthRef.current[key] ?? 0;
+        if (maxSeen >= 3 && !fieldHesitationTrackedRef.current.has(key)) {
+          fieldHesitationTrackedRef.current.add(key);
+          trackCartJourney("field_hesitated", {
+            dedupeKey: `field_hesitated:${key}`,
+            metadata: {
+              field: key,
+              clearedAfterChars: maxSeen
+            }
+          });
+        }
+        fieldMaxLengthRef.current[key] = 0;
       }
       fieldTypingValueRef.current[key] = value;
     }
@@ -2013,9 +2028,22 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     if (!chosenPackage) return;
     const previousPackageId = lastTrackedPackageIdRef.current;
+    const firePackageSelected = () => {
+      trackCartJourney("package_selected", {
+        dedupeKey: `package_selected:${chosenPackage.id}`,
+        packageId: chosenPackage.id,
+        metadata: {
+          packageName: chosenPackage.name,
+          packageAmount: chosenPackagePrice,
+          source: orderSourceFromUtm(publicUtmSource)
+        }
+      });
+    };
     if (!previousPackageId) {
-      // First package selection — captured by form_opened metadata, no event here.
+      // First package selection — keep the package_selected signal so even
+      // single-tier customers produce a journey breadcrumb.
       lastTrackedPackageIdRef.current = chosenPackage.id;
+      firePackageSelected();
       return;
     }
     if (previousPackageId === chosenPackage.id) return;
@@ -2043,6 +2071,8 @@ export default function PublicOrderFormPage() {
         source: orderSourceFromUtm(publicUtmSource)
       }
     });
+    // Also stamp a package_selected for the new package (deduped by packageId).
+    firePackageSelected();
   }, [chosenPackage, publicUtmSource, publicPackages, chosenPackagePrice]);
 
   useEffect(() => {
@@ -2122,6 +2152,18 @@ export default function PublicOrderFormPage() {
       });
     };
 
+    // popstate only fires if there's a state in history to pop. Push a
+    // sentinel state once per mount so an in-frame back press lands on the
+    // handler before the browser unwinds to the previous page. Skipped if
+    // we've already pushed (this effect re-runs often).
+    if (!backSentinelPushedRef.current && typeof window !== "undefined" && window.history) {
+      try {
+        window.history.pushState({ protohubFormSentinel: true }, "");
+        backSentinelPushedRef.current = true;
+      } catch {
+        // Some embed contexts block pushState; popstate falls back to dead.
+      }
+    }
     window.addEventListener("pagehide", handlePageHide);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("popstate", handlePopState);
