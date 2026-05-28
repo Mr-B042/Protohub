@@ -329,6 +329,7 @@ const PackageSchema = z.object({
   imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(15).default([]),
   unitSingular:     z.string().trim().max(20).optional(),
   unitPlural:       z.string().trim().max(20).optional(),
+  attributionProductId: z.string().uuid().nullable().optional(),
   companionProducts: z.array(CompanionSchema).default([]),
   packageComponents: z.array(PackageComponentSchema).default([]),
   offerSyncEnabled: z.boolean().default(false),
@@ -361,6 +362,7 @@ router.post("/:id/packages",
       imageUrls,
       unitSingular,
       unitPlural,
+      attributionProductId,
       companionProducts,
       packageComponents,
       offerSyncEnabled,
@@ -384,6 +386,7 @@ router.post("/:id/packages",
       image_urls: imageUrls.filter((url) => url && url.trim()),
       unit_singular: unitSingular?.trim() || null,
       unit_plural: unitPlural?.trim() || null,
+      attribution_product_id: attributionProductId ?? null,
       companion_products: companionProducts,
       package_components: packageComponents,
       offer_sync_enabled: offerSyncEnabled,
@@ -424,6 +427,7 @@ const PackageUpdateSchema = z.object({
   imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(15).optional(),
   unitSingular:     z.string().trim().max(20).nullable().optional(),
   unitPlural:       z.string().trim().max(20).nullable().optional(),
+  attributionProductId: z.string().uuid().nullable().optional(),
   companionProducts: z.array(CompanionSchema).optional(),
   packageComponents: z.array(PackageComponentSchema).optional(),
   offerSyncEnabled: z.boolean().optional(),
@@ -456,6 +460,7 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.imageUrls !== undefined) updates.image_urls = parsed.data.imageUrls.filter((url) => url && url.trim());
     if (parsed.data.unitSingular !== undefined) updates.unit_singular = parsed.data.unitSingular ? parsed.data.unitSingular.trim() : null;
     if (parsed.data.unitPlural !== undefined) updates.unit_plural = parsed.data.unitPlural ? parsed.data.unitPlural.trim() : null;
+    if (parsed.data.attributionProductId !== undefined) updates.attribution_product_id = parsed.data.attributionProductId ?? null;
     if (parsed.data.companionProducts !== undefined) updates.companion_products = parsed.data.companionProducts;
     if (parsed.data.packageComponents !== undefined) updates.package_components = parsed.data.packageComponents;
     if (parsed.data.offerSyncEnabled !== undefined) updates.offer_sync_enabled = parsed.data.offerSyncEnabled;

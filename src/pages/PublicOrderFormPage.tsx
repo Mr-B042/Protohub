@@ -69,12 +69,12 @@ type PublicPackage = {
   unitPlural?: string;
   packageComponents?: PublicPackageComponent[];
   companionProducts?: PublicCompanion[];
-  // Stamped at merge time when this package belongs to an alternative
-  // product (the customer picks single-tool vs combo on the same form).
-  // The order's product_id still derives from pkg.product_id on the
-  // backend; these fields are display-only.
-  sourceProductId?: string;
-  sourceProductName?: string;
+  // If set, this package's orders attribute to a different product than
+  // its parent (combo bundle sitting under a single-tool parent). The
+  // backend overrides product_id/product_name at order create; the
+  // frontend uses this id to look up the attribution product's name from
+  // the related products list for display. Migration 088.
+  attributionProductId?: string | null;
 };
 
 type PublicPackageComponent = {
@@ -107,7 +107,6 @@ type PublicProduct = {
   freeGiftProductIds?: string[];
   freeGiftStateRestrictions?: Record<string, string[]>;
   crossSellPriceOverrides?: Record<string, number>;
-  alternativeProductIds?: string[];
   formCustomText?: string;
   pricings: PublicPricing[];
   packages: PublicPackage[];
@@ -1084,34 +1083,10 @@ export default function PublicOrderFormPage() {
     () => products.find((product) => product.id === publicProductId),
     [products, publicProductId]
   );
-  // Merge in packages from alternative products so the customer picks
-  // single-tool vs combo on the same picker. Each merged package is
-  // tagged with sourceProductId / sourceProductName so the order
-  // summary + display logic can show the right product name when an
-  // alt package is selected. The order's product_id still derives
-  // server-side from pkg.product_id, so the order attributes correctly.
-  const publicPackages = useMemo(() => {
-    if (!publicProduct) return [];
-    const stamp = (pkg: PublicPackage, src: PublicProduct): PublicPackage => ({
-      ...pkg,
-      sourceProductId: src.id,
-      sourceProductName: src.name
-    });
-    const own = activeProductPackages(publicProduct).map((pkg) => stamp(pkg, publicProduct));
-    const altIds = publicProduct.alternativeProductIds ?? [];
-    const seenIds = new Set(own.map((pkg) => pkg.id));
-    const alt: PublicPackage[] = [];
-    for (const altId of altIds) {
-      const altProduct = products.find((p) => p.id === altId && p.active);
-      if (!altProduct) continue;
-      for (const pkg of activeProductPackages(altProduct)) {
-        if (seenIds.has(pkg.id)) continue;
-        seenIds.add(pkg.id);
-        alt.push(stamp(pkg, altProduct));
-      }
-    }
-    return [...own, ...alt].sort((a, b) => a.displayOrder - b.displayOrder);
-  }, [publicProduct, products]);
+  const publicPackages = useMemo(
+    () => (publicProduct ? activeProductPackages(publicProduct) : []),
+    [publicProduct]
+  );
   const normalizedSelectedState = normalizeStateName(orderFormState);
   const packagesNeedAvailability = publicPackages.some((pkg) =>
     (pkg.stateFilterMode ?? "all") !== "all" || pkg.requiresStateStock
@@ -1130,13 +1105,16 @@ export default function PublicOrderFormPage() {
     ?? (packagesNeedAvailability ? undefined : publicPackages[0]);
   const chosenPackagePrice = chosenPackage?.price ?? 0;
   const chosenPackageCurrency = chosenPackage?.currency ?? publicPackages[0]?.currency ?? "NGN";
-  // If the chosen package belongs to an alternative product, the order
-  // (and every tracking event tied to it) should reflect that product's
-  // name — not the main embed product. sourceProductName is stamped by
-  // the publicPackages merge above; falls back to the main product name
-  // for own-product packages (or when nothing's chosen yet).
-  const chosenProductName = chosenPackage?.sourceProductName ?? publicProduct?.name ?? "";
-  const chosenProductId   = chosenPackage?.sourceProductId   ?? publicProduct?.id   ?? "";
+  // If the chosen package has an attribution_product_id (combo bundle
+  // sitting under a single-tool parent), display + cart capture use
+  // the attribution product. The backend ALSO overrides product_id/
+  // product_name at order create so analytics/inventory/SMS roll up
+  // there too. Migration 088.
+  const chosenAttributionProduct = chosenPackage?.attributionProductId
+    ? products.find((p) => p.id === chosenPackage.attributionProductId) ?? null
+    : null;
+  const chosenProductName = chosenAttributionProduct?.name ?? publicProduct?.name ?? "";
+  const chosenProductId   = chosenAttributionProduct?.id   ?? publicProduct?.id   ?? "";
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
   const guidedCheckout = settings.publicFormMode === "guided_checkout";
   const phoneDigits = orderFormPhone.replace(/\D/g, "");
@@ -3744,12 +3722,13 @@ export default function PublicOrderFormPage() {
                   </div>
                 ) : orderablePublicPackages.map((item) => {
                   const isSelected = orderFormPackageId === item.id;
-                  // For alt-product packages on this form, "x3" labelling should
-                  // reference the alt product's name (the customer's actual buy),
-                  // not the form's main product. sourceProductName is stamped on
-                  // every package by the publicPackages merge; falls back to the
-                  // main product name for own packages.
-                  const itemProductName = item.sourceProductName ?? publicProduct.name;
+                  // Packages with attribution_product_id (combo bundles under
+                  // a single-tool parent) label with the attribution product's
+                  // name, not the form's main product. Migration 088.
+                  const itemAttributionProduct = item.attributionProductId
+                    ? products.find((p) => p.id === item.attributionProductId)
+                    : null;
+                  const itemProductName = itemAttributionProduct?.name ?? publicProduct.name;
                   const title = settings.showPackageName ? item.name : `${itemProductName} x${item.quantity}`;
                   const isComboPackage = packageIsComboLike(item);
                   const imageUrls = isComboPackage ? packageImageList(item) : [];

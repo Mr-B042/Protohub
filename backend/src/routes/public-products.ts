@@ -69,6 +69,7 @@ type DbPackage = {
   image_urls?: string[] | null;
   unit_singular?: string | null;
   unit_plural?: string | null;
+  attribution_product_id?: string | null;
   companion_products: DbCompanion[] | null;
   package_components: DbPackageComponent[] | null;
 };
@@ -113,6 +114,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
   imageUrls: p.image_urls ?? [],
   unitSingular: p.unit_singular ?? null,
   unitPlural: p.unit_plural ?? null,
+  attributionProductId: p.attribution_product_id ?? null,
   companionProducts: (p.companion_products ?? []).map((c) => {
     const restrictions = c.stateRestrictions ?? [];
     const stateFilterMode =
@@ -286,7 +288,7 @@ const PUBLIC_PRODUCT_SELECT = `
   alternative_product_ids,
   form_custom_text,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, companion_products, package_components)
+  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, attribution_product_id, companion_products, package_components)
 `;
 
 router.get("/:id/package-availability", readRateLimit, async (req, res) => {
@@ -345,6 +347,9 @@ router.get("/:id", readRateLimit, async (req, res) => {
     ...(product.cross_sell_product_ids ?? []),
     ...(product.free_gift_product_ids ?? []),
     ...(product.alternative_product_ids ?? []),
+    ...((product.packages ?? [])
+      .map((pkg) => pkg.attribution_product_id)
+      .filter((id): id is string => Boolean(id))),
     ...((product.packages ?? [])
       .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
       .map((companion) => companion.productId)

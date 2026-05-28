@@ -410,7 +410,7 @@ router.post("/", async (req, res) => {
   if (d.packageId) {
     const { data: pkgCheck } = await supabase
       .from("product_packages")
-      .select("id, product_id, package_components")
+      .select("id, product_id, package_components, attribution_product_id")
       .eq("id", d.packageId)
       .single();
     if (!pkgCheck) {
@@ -425,6 +425,24 @@ router.post("/", async (req, res) => {
       return;
     }
     packageComponentsSource = pkgCheck.package_components ?? [];
+
+    // Attribution override: if the package points at a different product for
+    // attribution (combo bundle sitting under a single-tool parent), stamp the
+    // order with the attribution product instead so analytics/inventory/SMS
+    // roll up correctly. Migration 088.
+    const attributionId = (pkgCheck as { attribution_product_id?: string | null }).attribution_product_id ?? null;
+    if (attributionId && attributionId !== d.productId) {
+      const { data: attribProduct } = await supabase
+        .from("products")
+        .select("id, name")
+        .eq("id", attributionId)
+        .eq("org_id", req.user!.orgId)
+        .single();
+      if (attribProduct) {
+        d.productId = attribProduct.id;
+        d.productName = attribProduct.name;
+      }
+    }
   }
 
   // Validate assignedRepId belongs to this org
