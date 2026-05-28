@@ -7511,6 +7511,95 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const [pushLoading, setPushLoading] = useState(false);
   const [pushTestLoading, setPushTestLoading] = useState(false);
+  const [pushDiagnoseRunning, setPushDiagnoseRunning] = useState(false);
+  const [pushDiagnoseResults, setPushDiagnoseResults] = useState<Array<{ name: string; status: "ok" | "fail" | "warn"; detail: string }>>([]);
+  const runPushDiagnostic = async () => {
+    const results: Array<{ name: string; status: "ok" | "fail" | "warn"; detail: string }> = [];
+
+    // Test 1: Permission state
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      results.push({ name: "Notification API", status: "fail", detail: "Browser doesn't support Notification API" });
+      setPushDiagnoseResults(results);
+      return results;
+    }
+    const perm = Notification.permission;
+    results.push({
+      name: "Notification permission",
+      status: perm === "granted" ? "ok" : "fail",
+      detail: `Browser reports: "${perm}"${perm !== "granted" ? " (must be 'granted' for OS notifications to appear)" : ""}`
+    });
+    setPushDiagnoseResults([...results]);
+
+    // Test 2: Direct Notification (proves OS+permission)
+    try {
+      if (perm === "granted") {
+        const n = new Notification("Diagnostic A: Direct", { body: "If you see this banner, macOS/Android notifications + Chrome permission both work" });
+        results.push({ name: "Direct browser Notification", status: "ok", detail: "Sent — check your OS for the banner. If banner did NOT appear, macOS System Settings → Notifications → Chrome is OFF" });
+        setTimeout(() => { try { n.close(); } catch {} }, 8000);
+      } else {
+        results.push({ name: "Direct browser Notification", status: "warn", detail: "Skipped (permission not granted)" });
+      }
+    } catch (e: any) {
+      results.push({ name: "Direct browser Notification", status: "fail", detail: `Threw: ${e?.message ?? "unknown"}` });
+    }
+    setPushDiagnoseResults([...results]);
+
+    // Test 3: Service Worker registration check
+    let registration: ServiceWorkerRegistration | null = null;
+    if (!("serviceWorker" in navigator)) {
+      results.push({ name: "Service Worker support", status: "fail", detail: "Browser doesn't support Service Workers" });
+      setPushDiagnoseResults([...results]);
+      return results;
+    }
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      const protohubRegs = regs.filter((r) => r.scope.includes(location.host));
+      results.push({
+        name: "Service Worker registrations",
+        status: protohubRegs.length === 1 ? "ok" : protohubRegs.length === 0 ? "fail" : "warn",
+        detail: `Found ${protohubRegs.length} registration(s) for this origin${protohubRegs.length > 1 ? " — multiple SWs can cause push to route to a stopped one" : ""}`
+      });
+      registration = protohubRegs[0] ?? null;
+    } catch (e: any) {
+      results.push({ name: "Service Worker registrations", status: "fail", detail: `Lookup threw: ${e?.message ?? "unknown"}` });
+    }
+    setPushDiagnoseResults([...results]);
+
+    // Test 4: SW showNotification (proves SW can talk to OS)
+    if (registration && perm === "granted") {
+      try {
+        await registration.showNotification("Diagnostic B: SW", {
+          body: "If you see this, the service worker CAN show OS notifications. Failure means the server-side push is the bug.",
+          tag: "diagnostic-sw",
+          requireInteraction: false
+        });
+        results.push({ name: "SW showNotification", status: "ok", detail: "Sent via SW — check your OS for the banner" });
+      } catch (e: any) {
+        results.push({ name: "SW showNotification", status: "fail", detail: `Threw: ${e?.message ?? "unknown"}` });
+      }
+    } else {
+      results.push({ name: "SW showNotification", status: "warn", detail: "Skipped (no SW or permission)" });
+    }
+    setPushDiagnoseResults([...results]);
+
+    // Test 5: Push subscription
+    if (registration) {
+      try {
+        const sub = await registration.pushManager.getSubscription();
+        if (sub) {
+          const host = (() => { try { return new URL(sub.endpoint).host; } catch { return "unknown"; } })();
+          results.push({ name: "Push subscription", status: "ok", detail: `Active subscription on ${host}` });
+        } else {
+          results.push({ name: "Push subscription", status: "fail", detail: "No active push subscription — click 'Force Re-subscribe' first" });
+        }
+      } catch (e: any) {
+        results.push({ name: "Push subscription", status: "fail", detail: `Lookup threw: ${e?.message ?? "unknown"}` });
+      }
+    }
+    setPushDiagnoseResults([...results]);
+
+    return results;
+  };
   const browserPushSupported = pushPermission !== "unsupported";
   const pushBackgroundReady =
     browserPushSupported &&
@@ -38675,7 +38764,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           }
                         }}
                       >{pushTestLoading ? "Sending test push…" : "Send Test Push"}</button>
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-indigo-200 px-3 py-2 text-sm text-indigo-700 font-medium hover:bg-indigo-50 disabled:opacity-50"
+                        disabled={pushDiagnoseRunning || nativePushTroubleshootingDisabled}
+                        onClick={async () => {
+                          if (nativePushTroubleshootingDisabled) {
+                            showToast("Diagnostic tools are not available inside the mobile app yet.");
+                            return;
+                          }
+                          setPushDiagnoseRunning(true);
+                          setPushDiagnoseResults([]);
+                          try {
+                            await runPushDiagnostic();
+                            showToast("Diagnostic complete — read the results below");
+                          } finally {
+                            setPushDiagnoseRunning(false);
+                          }
+                        }}
+                      >{pushDiagnoseRunning ? "Diagnosing…" : "🔍 Diagnose Push"}</button>
                     </div>
+                    {pushDiagnoseResults.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                        <div className="text-xs font-bold text-indigo-900 uppercase tracking-wide">Diagnostic Results</div>
+                        {pushDiagnoseResults.map((r, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs">
+                            <span className={r.status === "ok" ? "text-emerald-600" : r.status === "warn" ? "text-amber-600" : "text-red-600"}>
+                              {r.status === "ok" ? "✅" : r.status === "warn" ? "⚠️" : "❌"}
+                            </span>
+                            <div className="flex-1">
+                              <div className="font-semibold text-gray-900">{r.name}</div>
+                              <div className="text-gray-600">{r.detail}</div>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="text-[11px] text-indigo-700 italic pt-1 border-t border-indigo-200 mt-2">
+                          Two test banners ("Diagnostic A: Direct" + "Diagnostic B: SW") should appear in your OS notification area. If neither appeared but both report ✅ here, your macOS/Android system is silencing Chrome notifications — fix that in System Settings → Notifications → Chrome.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
