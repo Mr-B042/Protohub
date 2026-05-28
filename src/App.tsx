@@ -16961,6 +16961,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const next = () => { const d = new Date(`${navStart}T00:00:00`); d.setDate(d.getDate() + (navSpan === "1W" ? 7 : navSpan === "2W" ? 14 : navSpan === "3W" ? 21 : 30)); const s = formatDateKey(d); setNavStart(s); apply(s, navSpan); };
     const thisWeek = () => { const s = getSundayKey(); setNavStart(s); apply(s, navSpan); };
     const changeSpan = (span: NavSpan) => { setNavSpan(span); apply(navStart, span); };
+    // Dynamic label so the centre pill reflects what's actually selected
+    // instead of always reading "This Week". Click still jumps back to the
+    // current period, so the button doubles as a "go to now" shortcut when
+    // navigated away.
+    const currentSundayKey = getSundayKey();
+    const navLabel = (() => {
+      if (navStart === currentSundayKey) {
+        return navSpan === "1M" ? "This Month" : "This Week";
+      }
+      const startMs = new Date(`${navStart}T00:00:00`).getTime();
+      const currentMs = new Date(`${currentSundayKey}T00:00:00`).getTime();
+      const weeksBack = Math.round((currentMs - startMs) / (7 * 86_400_000));
+      if (navSpan === "1M") {
+        const monthsBack = Math.round(weeksBack / 4);
+        if (monthsBack === 1) return "Last Month";
+        if (monthsBack > 0) return `${monthsBack} months ago`;
+        if (monthsBack === -1) return "Next Month";
+        if (monthsBack < 0) return `${Math.abs(monthsBack)} months ahead`;
+        return "This Month";
+      }
+      if (weeksBack === 1) return "Last Week";
+      if (weeksBack > 0) return `${weeksBack} weeks ago`;
+      if (weeksBack === -1) return "Next Week";
+      if (weeksBack < 0) return `${Math.abs(weeksBack)} weeks ahead`;
+      return "This Week";
+    })();
+    const isOnCurrent = navStart === currentSundayKey;
+    const navTitle = isOnCurrent
+      ? "You're on the current period"
+      : `Jump back to ${navSpan === "1M" ? "this month" : "this week"}`;
     return (
       <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
         {/* Row 1: Span selector — full width on mobile, evenly distributed */}
@@ -16975,7 +17005,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         {/* Row 2: Navigation — full width on mobile, "This Week" stretches between arrows */}
         <div className="period-nav-cluster flex items-center gap-1 w-full sm:w-auto">
           <button onClick={prev} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button onClick={thisWeek} className="period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors whitespace-nowrap">This Week</button>
+          <button onClick={thisWeek} title={navTitle} aria-label={navTitle} className={`period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg transition-colors whitespace-nowrap ${isOnCurrent ? "text-gray-600 hover:bg-gray-100" : "text-[#1F8FE0] border-[#1F8FE0]/40 bg-blue-50/40 hover:bg-blue-50"}`}>{navLabel}</button>
           <button onClick={next} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
         {/* Row 3: Range label — left-aligned on mobile, muted */}
