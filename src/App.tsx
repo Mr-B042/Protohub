@@ -7773,6 +7773,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderAuditLog, setOrderAuditLog] = useState<OrderAuditEntry[]>([]);
+  const [orderFieldEdits, setOrderFieldEdits] = useState<Array<{
+    id: string;
+    field_name: string;
+    from_value: unknown;
+    to_value: unknown;
+    changed_by: string | null;
+    changed_by_name: string | null;
+    changed_by_role: string | null;
+    created_at: string;
+  }>>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
@@ -16258,8 +16268,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (modal === "orderDetails" && selectedOrderId) {
       ordersApi.audit(selectedOrderId).then((rows) => setOrderAuditLog(normalizeOrderAuditLog(rows))).catch(() => setOrderAuditLog([]));
+      ordersApi.fieldEdits(selectedOrderId).then((rows) => setOrderFieldEdits(Array.isArray(rows) ? (rows as any) : [])).catch(() => setOrderFieldEdits([]));
     } else {
       setOrderAuditLog([]);
+      setOrderFieldEdits([]);
     }
   }, [modal, selectedOrderId]);
 
@@ -42882,6 +42894,77 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 		                    </div>
 		                  </section>
 		                )}
+
+		                {/* Manual Field Edits */}
+		                {orderFieldEdits.length > 0 && (() => {
+		                  const FIELD_LABELS: Record<string, string> = {
+		                    customer: "Customer name",
+		                    phone: "Phone",
+		                    whatsapp: "WhatsApp",
+		                    email: "Email",
+		                    address: "Address",
+		                    city: "City",
+		                    state: "State",
+		                    product_id: "Product",
+		                    product_name: "Product name",
+		                    package_id: "Package",
+		                    package_name: "Package name",
+		                    quantity: "Quantity",
+		                    amount: "Order amount",
+		                    currency: "Currency",
+		                    logistics_cost: "Delivery fee",
+		                    amount_remitted: "Amount remitted",
+		                    remittance_status: "Remittance status",
+		                    assigned_rep_id: "Assigned rep",
+		                    agent_id: "Agent",
+		                    agent_location_id: "Agent location",
+		                    delivered_date: "Delivered date",
+		                    scheduled_date: "Scheduled date",
+		                    scheduled_at: "Scheduled at"
+		                  };
+		                  const renderValue = (value: unknown): string => {
+		                    if (value === null || value === undefined) return "—";
+		                    if (typeof value === "string") return value.trim() ? value : "—";
+		                    if (typeof value === "number" || typeof value === "boolean") return String(value);
+		                    try { return JSON.stringify(value); } catch { return String(value); }
+		                  };
+		                  return (
+		                    <section>
+		                      <div className={`border-b ${orderBorderClass} pb-2 mb-3`}>
+		                        <h3 className={`font-semibold text-lg m-0 ${orderTitleTextClass}`}>Manual Field Edits</h3>
+		                        <p className={`m-0 mt-1 text-sm ${orderMutedTextClass}`}>Customer info, product, package, money, and assignment changes made after the order was created. Status changes appear above.</p>
+		                      </div>
+		                      <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+		                        {orderFieldEdits.map((edit) => {
+		                          const label = FIELD_LABELS[edit.field_name] ?? edit.field_name.replace(/_/g, " ");
+		                          const actor = edit.changed_by_name ?? "Unknown user";
+		                          const role = edit.changed_by_role ? ` (${edit.changed_by_role})` : "";
+		                          return (
+		                            <div key={edit.id} className={`relative rounded-2xl border ${orderBorderClass} ${orderPanelMutedClass} p-3.5`}>
+		                              <span className="absolute left-0 top-5 h-2.5 w-2.5 -translate-x-1/2 rounded-full border-2 border-white bg-amber-500 dark:border-[#0f1822]" />
+		                              <div className="flex min-w-0 flex-col gap-1.5">
+		                                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+		                                  <p className={`m-0 text-[15px] font-black leading-5 ${orderTitleTextClass}`}>{label} changed</p>
+		                                  <span className={`text-[12px] font-semibold whitespace-nowrap ${orderFaintTextClass}`}>{formatDateTime(edit.created_at)}</span>
+		                                </div>
+		                                <div className="flex flex-wrap items-center gap-2 text-sm">
+		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] ${orderBodyTextClass} ${orderPanelMutedClass}`}>
+		                                    <span className={orderFaintTextClass}>from</span> {renderValue(edit.from_value)}
+		                                  </span>
+		                                  <span className={orderFaintTextClass}>→</span>
+		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] font-semibold ${orderTitleTextClass} bg-amber-50 dark:bg-amber-500/10`}>
+		                                    <span className={orderFaintTextClass}>to</span> {renderValue(edit.to_value)}
+		                                  </span>
+		                                </div>
+		                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>By {actor}{role}</p>
+		                              </div>
+		                            </div>
+		                          );
+		                        })}
+		                      </div>
+		                    </section>
+		                  );
+		                })()}
 
 		                {/* Section 7: Form Submission + Capture Data */}
 		                {hasPublicFormSubmissionDetails(selectedOrder) && (() => {

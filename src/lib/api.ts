@@ -360,6 +360,7 @@ export const ordersApi = {
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
   audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
+  fieldEdits: (id: string) => get<any[]>(`/api/orders/${id}/field-edits`),
   followUpTasks: (id: string) => get<any[]>(`/api/orders/${id}/follow-up-tasks`),
   contactAttempts: (id: string) => get<any[]>(`/api/orders/${id}/contact-attempts`),
   logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)

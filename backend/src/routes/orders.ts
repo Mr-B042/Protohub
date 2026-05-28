@@ -1188,6 +1188,56 @@ router.get("/:id/audit", async (req, res) => {
   }));
 });
 
+// ── GET /api/orders/:id/field-edits ───────────────────────
+// Per-field audit trail (companion to /audit which is status-only).
+// Surfaces who manually edited what on an order — product/package/
+// customer/amount/etc. — so changes like the unrecorded #379 + #387
+// rewrites are traceable going forward.
+router.get("/:id/field-edits", async (req, res) => {
+  const { data, error } = await supabase
+    .from("order_field_edits")
+    .select("id, field_name, from_value, to_value, changed_by, changed_by_name, created_at")
+    .eq("order_id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  type FieldEditRow = {
+    id: string;
+    field_name: string;
+    from_value: unknown;
+    to_value: unknown;
+    changed_by: string | null;
+    changed_by_name: string | null;
+    created_at: string;
+  };
+  type ActorRow = { id: string; name: string | null; role: string | null };
+  const rows = (data ?? []) as FieldEditRow[];
+  const actorIds = Array.from(new Set(rows.map((row) => row.changed_by).filter((id): id is string => Boolean(id))));
+  const actorById = new Map<string, ActorRow>();
+  if (actorIds.length > 0) {
+    const { data: actors } = await supabase
+      .from("users")
+      .select("id, name, role")
+      .eq("org_id", req.user!.orgId)
+      .in("id", actorIds);
+    for (const actor of (actors ?? []) as ActorRow[]) actorById.set(actor.id, actor);
+  }
+
+  res.json(rows.map((row) => {
+    const actor = row.changed_by ? actorById.get(row.changed_by) : undefined;
+    return {
+      ...row,
+      // Prefer the live user row's name; fall back to the snapshot stored
+      // at edit time so the trail survives user deletion.
+      changed_by_name: actor?.name ?? row.changed_by_name ?? null,
+      changed_by_role: actor?.role ?? null
+    };
+  }));
+});
+
 // ── PATCH /api/orders/:id ─────────────────────────────────
 // Fields that may be written even after an order is Delivered/Cancelled.
 // Everything else is locked on terminal orders.
