@@ -1267,39 +1267,78 @@ export async function sendNewOrderSms(
     assignedRepId?: string | null;
     product_name: string;
     package_name?: string | null;
+    package_id?: string | null;
     amount: number;
     currency: string;
     quantity?: number | null;
     cross_sell_lines?: Array<{
       productName?: string | null;
       packageName?: string | null;
+      packageId?: string | null;
       quantity?: number | null;
       selectionSource?: string | null;
     }> | null;
   }
 ) {
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
+
+  // Resolve per-package unit wording + customer-facing description for
+  // the main item and every visible add-on in one round-trip. Some packages
+  // are sets/combos with unit_singular="Set"/unit_plural="Sets" — the
+  // generic "pc/pcs" wording from before read wrong for those orders
+  // ("1pc of Small Pack" when the package is a Set of 8 items). The
+  // description field is the marketing copy the customer already saw on
+  // the form ("1 Sets (8pcs) of Home Cleaning Combo Tools + FREE
+  // DELIVERY + TWO FREE GIFTS") — surfacing it in the SMS gives the
+  // customer an itemized receipt instead of a bare package name.
+  const visibleCrossSells = (order.cross_sell_lines ?? []).filter(
+    (item) => item && item.selectionSource !== "auto_include"
+  );
+  const packageIds = Array.from(new Set(
+    [order.package_id, ...visibleCrossSells.map((item) => item?.packageId)]
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+  ));
+  const packageMetaById = new Map<string, { unit_singular: string | null; unit_plural: string | null; description: string | null }>();
+  if (packageIds.length > 0) {
+    const { data: pkgRows } = await supabase
+      .from("product_packages")
+      .select("id, unit_singular, unit_plural, description")
+      .in("id", packageIds);
+    for (const row of pkgRows ?? []) {
+      packageMetaById.set(row.id as string, {
+        unit_singular: (row as any).unit_singular ?? null,
+        unit_plural: (row as any).unit_plural ?? null,
+        description: (row as any).description ?? null
+      });
+    }
+  }
+
+  const unitWord = (qty: number, packageId?: string | null) => {
+    const meta = packageId ? packageMetaById.get(packageId) : null;
+    if (qty === 1) return (meta?.unit_singular?.trim()) || "pc";
+    return (meta?.unit_plural?.trim()) || (meta?.unit_singular?.trim()) || "pcs";
+  };
+
   // Build a customer-facing breakdown so the SMS reads professionally
   // instead of just "got your order 369 for Edge Brusher Max" when the
   // customer actually bought the Home Pack combo. Format mirrors how
-  // Nigerian customers naturally read quantities in receipts:
-  //   • 1 unit:           "1pc of Edge Brusher Max — Home Pack"
-  //   • 6 units:          "6pcs of Edge Brusher Max — Home Pack"
-  //   • qty unknown:      "Edge Brusher Max — Home Pack"
+  // Nigerian customers naturally read quantities in receipts.
   const qty = Number.isFinite(order.quantity) && (order.quantity ?? 0) > 0
     ? Math.floor(order.quantity as number)
     : null;
   const displayName = orderDisplayName(order);
   const mainLine = qty
-    ? `${qty}${qty === 1 ? "pc" : "pcs"} of ${displayName}`
+    ? `${qty} ${unitWord(qty, order.package_id ?? null)} of ${displayName}`
     : displayName;
+  const mainDescription = (packageMetaById.get(order.package_id ?? "")?.description ?? "").trim();
+
   // Itemized add-on list. Customer-visible add-ons only — auto_include
   // companions are silent bundles baked into a package and the customer
   // never saw them as separate selections, so we skip them here.
-  const addOnLines: string[] = [];
-  for (const item of order.cross_sell_lines ?? []) {
+  const itemBlockLines: string[] = [`- ${mainLine}`];
+  if (mainDescription) itemBlockLines.push(`  ${mainDescription}`);
+  for (const item of visibleCrossSells) {
     if (!item) continue;
-    if (item.selectionSource === "auto_include") continue;
     const itemQty = Number.isFinite(item.quantity) && (item.quantity ?? 0) > 0
       ? Math.floor(item.quantity as number)
       : 1;
@@ -1308,9 +1347,12 @@ export async function sendNewOrderSms(
       package_name: item.packageName ?? null
     });
     if (!itemDisplayName.trim()) continue;
-    addOnLines.push(`- ${itemQty}${itemQty === 1 ? "pc" : "pcs"} of ${itemDisplayName}`);
+    const itemUnit = unitWord(itemQty, item.packageId ?? null);
+    itemBlockLines.push(`- ${itemQty} ${itemUnit} of ${itemDisplayName}`);
+    const itemDescription = (packageMetaById.get(item.packageId ?? "")?.description ?? "").trim();
+    if (itemDescription) itemBlockLines.push(`  ${itemDescription}`);
   }
-  const orderItemsBlock = [`- ${mainLine}`, ...addOnLines].join("\n");
+  const orderItemsBlock = itemBlockLines.join("\n");
   return dispatchSms(
     orgId,
     "order_new",

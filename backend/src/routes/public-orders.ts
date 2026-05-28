@@ -773,6 +773,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     assignedRepId: order.assigned_rep_id,
     product_name: order.product_name,
     package_name: order.package_name,
+    package_id: order.package_id,
     amount: order.amount,
     currency: order.currency,
     quantity: order.quantity,

@@ -602,6 +602,7 @@ router.post("/", async (req, res) => {
     assignedRepId: data.assigned_rep_id,
     product_name: data.product_name,
     package_name: data.package_name,
+    package_id: data.package_id,
     amount: data.amount,
     currency: data.currency,
     quantity: data.quantity,
