@@ -5276,7 +5276,18 @@ const cartJourneyTitle = (event: CartJourneyEvent) => {
     case "order_status_changed": return "Order status changed";
     case "contact_attempt_logged": return "Rep follow-up logged";
     case "form_exited": return "Left the form";
-    default: return "Form activity";
+    default: {
+      // Humanize unknown / future event types so stale-bundle viewers
+      // (e.g. mobile with a cached older JS) still see a meaningful label
+      // instead of a generic "Form activity" placeholder.
+      const raw = String((event as { eventType?: string }).eventType ?? "");
+      if (!raw) return "Form activity";
+      return raw
+        .replace(/_/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/^./, (c: string) => c.toUpperCase());
+    }
   }
 };
 
