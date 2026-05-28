@@ -1115,6 +1115,16 @@ export default function PublicOrderFormPage() {
     : null;
   const chosenProductName = chosenAttributionProduct?.name ?? publicProduct?.name ?? "";
   const chosenProductId   = chosenAttributionProduct?.id   ?? publicProduct?.id   ?? "";
+  // Smart headline: prefix the chosen package with its quantity so the
+  // customer reads "10 pcs of Edge Brusher Max · ⭐ MOST POPULAR" instead
+  // of just "Edge Brusher Max · ⭐ MOST POPULAR". For combos (qty represents
+  // number of sets), it reads "4 sets of Home Cleaning Tools · Best Value 💎".
+  const chosenPackageQtyLabel = chosenPackage && chosenPackage.quantity > 0
+    ? `${chosenPackage.quantity} ${packageUnitFor(chosenPackage, chosenPackage.quantity)} of ${chosenProductName}`
+    : chosenProductName;
+  const chosenPackageHeadline = chosenPackage
+    ? `${chosenPackageQtyLabel} · ${chosenPackage.name}`
+    : "";
   const fieldErrorEntries = Object.entries(fieldErrors).filter((entry): entry is [PublicOrderFieldKey, string] => Boolean(entry[1]));
   const guidedCheckout = settings.publicFormMode === "guided_checkout";
   const phoneDigits = orderFormPhone.replace(/\D/g, "");
@@ -3019,7 +3029,7 @@ export default function PublicOrderFormPage() {
         }}
       >
         <div style={{ display: "grid", gap: 2 }}>
-          <strong style={{ fontSize: 13, color: "#0f172a" }}>{chosenProductName} · {chosenPackage.name}</strong>
+          <strong style={{ fontSize: 13, color: "#0f172a" }}>{chosenPackageHeadline}</strong>
           <span style={{ fontSize: 12, color: "#64748b" }}>Main offer</span>
         </div>
         <strong style={{ fontSize: 13, color: "#0f172a" }}>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
@@ -3061,23 +3071,20 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
-  // Smart "what's in this pack" line: prefer the auto-derived items breakdown
-  // from packageComponents (combos show "4 pcs of X + 4 pcs of Y…", single-tool
-  // packs show "10 pcs of Edge Brusher Max"), fall back to packageQuantity-based
-  // shorthand, then to whatever copy admins wrote. Skips when none of the above
-  // produces anything readable.
+  // Auto-derived items breakdown — only show when it adds info beyond what
+  // the headline already says (i.e. combos that mix multiple products).
   const orderSummaryAutoBreakdown = chosenPackage ? packageComponentSummary(chosenPackage, products) : "";
-  const orderSummaryQtyHint = chosenPackage && chosenPackage.quantity > 0
-    ? `${chosenPackage.quantity} ${packageUnitFor(chosenPackage, chosenPackage.quantity)} of ${chosenProductName}`
+  const orderSummaryAutoBreakdownLine = orderSummaryAutoBreakdown && orderSummaryAutoBreakdown !== chosenPackageQtyLabel
+    ? orderSummaryAutoBreakdown
     : "";
   const orderSummaryManualCopy = (chosenPackage?.description?.trim()
     || (chosenAttributionProduct?.packageDescription ?? publicProduct?.packageDescription ?? "").trim()
     || (chosenAttributionProduct?.description ?? publicProduct?.description ?? "").trim()) || "";
-  const orderSummarySmartLine = orderSummaryAutoBreakdown || orderSummaryQtyHint || orderSummaryManualCopy;
-  // When we used a derived line, also show the admin copy as a quieter second
-  // line so the human-voice description still shows up — but never duplicate
-  // the same text twice.
-  const orderSummaryFlavorLine = orderSummaryManualCopy && orderSummaryManualCopy !== orderSummarySmartLine
+  // Suppress the manual copy when it duplicates the auto-derived breakdown
+  // or the headline.
+  const orderSummaryFlavorLine = orderSummaryManualCopy
+    && orderSummaryManualCopy !== orderSummaryAutoBreakdownLine
+    && orderSummaryManualCopy !== chosenPackageQtyLabel
     ? orderSummaryManualCopy
     : "";
   const orderSummaryBlock = settings.formOrderSummaryEnabled && chosenPackage ? (
@@ -3085,11 +3092,11 @@ export default function PublicOrderFormPage() {
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
       <div style={{ display: "grid", gap: 4, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-          <span>{chosenProductName} · {chosenPackage.name}</span>
+          <span>{chosenPackageHeadline}</span>
           <strong>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
         </div>
-        {orderSummarySmartLine ? (
-          <span style={{ fontSize: 12, color: "#475569", lineHeight: 1.4 }}>{orderSummarySmartLine}</span>
+        {orderSummaryAutoBreakdownLine ? (
+          <span style={{ fontSize: 12, color: "#475569", lineHeight: 1.4 }}>{orderSummaryAutoBreakdownLine}</span>
         ) : null}
         {orderSummaryFlavorLine ? (
           <span style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.4, fontStyle: "italic" }}>{orderSummaryFlavorLine}</span>
@@ -3194,7 +3201,7 @@ export default function PublicOrderFormPage() {
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, paddingBottom: 10, borderBottom: "1px solid #dbeafe" }}>
           <div style={{ display: "grid", gap: 2 }}>
-            <strong style={{ fontSize: 14, color: "#0f172a" }}>{chosenProductName} · {chosenPackage.name}</strong>
+            <strong style={{ fontSize: 14, color: "#0f172a" }}>{chosenPackageHeadline}</strong>
             <span style={{ fontSize: 12, color: "#64748b" }}>Main package</span>
           </div>
           <strong style={{ fontSize: 14, color: "#0f172a" }}>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
