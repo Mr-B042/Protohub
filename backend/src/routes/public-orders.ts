@@ -774,7 +774,8 @@ router.post("/", submitRateLimit, async (req, res) => {
     product_name: order.product_name,
     package_name: order.package_name,
     amount: order.amount,
-    currency: order.currency
+    currency: order.currency,
+    quantity: order.quantity
   });
 
   sendInternalNewOrderEmail(product.org_id, {

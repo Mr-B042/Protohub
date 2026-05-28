@@ -1269,16 +1269,30 @@ export async function sendNewOrderSms(
     package_name?: string | null;
     amount: number;
     currency: string;
+    quantity?: number | null;
   }
 ) {
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
+  // Build a customer-facing breakdown so the SMS reads professionally
+  // instead of just "got your order 369 for Edge Brusher Max" when the
+  // customer actually bought the Home Pack combo.
+  //   • single tier / no package:   "Edge Brusher Max"
+  //   • combo with qty:             "3× Edge Brusher Max — Home Pack"
+  //   • combo, qty unknown:         "Edge Brusher Max — Home Pack"
+  const qty = Number.isFinite(order.quantity) && (order.quantity ?? 0) > 0
+    ? Math.floor(order.quantity as number)
+    : null;
+  const displayName = orderDisplayName(order);
+  const orderItemLine = qty && qty > 1
+    ? `${qty}× ${displayName}`
+    : displayName;
   return dispatchSms(
     orgId,
     "order_new",
     {
       order_id: order.id,
       customer: order.customer,
-      product_name: orderDisplayName(order),
+      product_name: orderItemLine,
       amount: String(order.amount),
       currency: order.currency,
       rep_name: assignedRep?.name ?? "",

@@ -603,7 +603,8 @@ router.post("/", async (req, res) => {
     product_name: data.product_name,
     package_name: data.package_name,
     amount: data.amount,
-    currency: data.currency
+    currency: data.currency,
+    quantity: data.quantity
   });
 
   // Internal: notify owner + admins
