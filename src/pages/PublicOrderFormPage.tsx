@@ -3061,9 +3061,25 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
-  const orderSummaryDescription = (chosenPackage?.description?.trim()
+  // Smart "what's in this pack" line: prefer the auto-derived items breakdown
+  // from packageComponents (combos show "4 pcs of X + 4 pcs of Y…", single-tool
+  // packs show "10 pcs of Edge Brusher Max"), fall back to packageQuantity-based
+  // shorthand, then to whatever copy admins wrote. Skips when none of the above
+  // produces anything readable.
+  const orderSummaryAutoBreakdown = chosenPackage ? packageComponentSummary(chosenPackage, products) : "";
+  const orderSummaryQtyHint = chosenPackage && chosenPackage.quantity > 0
+    ? `${chosenPackage.quantity} ${packageUnitFor(chosenPackage, chosenPackage.quantity)} of ${chosenProductName}`
+    : "";
+  const orderSummaryManualCopy = (chosenPackage?.description?.trim()
     || (chosenAttributionProduct?.packageDescription ?? publicProduct?.packageDescription ?? "").trim()
     || (chosenAttributionProduct?.description ?? publicProduct?.description ?? "").trim()) || "";
+  const orderSummarySmartLine = orderSummaryAutoBreakdown || orderSummaryQtyHint || orderSummaryManualCopy;
+  // When we used a derived line, also show the admin copy as a quieter second
+  // line so the human-voice description still shows up — but never duplicate
+  // the same text twice.
+  const orderSummaryFlavorLine = orderSummaryManualCopy && orderSummaryManualCopy !== orderSummarySmartLine
+    ? orderSummaryManualCopy
+    : "";
   const orderSummaryBlock = settings.formOrderSummaryEnabled && chosenPackage ? (
     <div className="panel public-order-summary-rail" style={{ padding: 16, display: "grid", gap: 6 }}>
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
@@ -3072,8 +3088,11 @@ export default function PublicOrderFormPage() {
           <span>{chosenProductName} · {chosenPackage.name}</span>
           <strong>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
         </div>
-        {orderSummaryDescription ? (
-          <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>{orderSummaryDescription}</span>
+        {orderSummarySmartLine ? (
+          <span style={{ fontSize: 12, color: "#475569", lineHeight: 1.4 }}>{orderSummarySmartLine}</span>
+        ) : null}
+        {orderSummaryFlavorLine ? (
+          <span style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.4, fontStyle: "italic" }}>{orderSummaryFlavorLine}</span>
         ) : null}
       </div>
       {selectedCrossSellLines.map((line, index) => (
