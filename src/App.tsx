@@ -31453,15 +31453,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </section>
 
               {/* ── Agent leaderboard (period-scoped) ─────────────────
-                   Top 3 + bottom 3 across four headline metrics.
-                   Click any row to jump into the agent's detail view. */}
+                   Top 3 + bottom 3 across the headline metrics. Click
+                   any row to jump into the agent's detail view. */}
               {agentRows.length >= 2 && (() => {
-                const sortRev = [...agentRows].sort((a, b) => b.revenue - a.revenue).filter((r) => r.revenue > 0);
-                const sortDeliv = [...agentRows].sort((a, b) => b.deliveries - a.deliveries).filter((r) => r.deliveries > 0);
-                const sortSuccess = [...agentRows]
+                // Sorted descending (high first). Filter out agents with zero
+                // assigned orders for revenue/deliveries — they had no chance
+                // to perform, so flagging them as "worst" would be unfair.
+                const sortRevDesc = [...agentRows]
+                  .filter((r) => r.totalOrders > 0)
+                  .sort((a, b) => b.revenue - a.revenue);
+                const sortDelivDesc = [...agentRows]
+                  .filter((r) => r.totalOrders > 0)
+                  .sort((a, b) => b.deliveries - a.deliveries);
+                const sortSuccessDesc = [...agentRows]
                   .filter((r) => r.totalOrders >= 3)
                   .sort((a, b) => b.successRate - a.successRate);
-                const sortShrinkage = [...agentRows]
+                const sortShrinkageDesc = [...agentRows]
                   .map((r) => ({ ...r, shrinkageValue: r.defectiveValue + r.missingValue }))
                   .filter((r) => r.shrinkageValue > 0)
                   .sort((a, b) => b.shrinkageValue - a.shrinkageValue);
@@ -31473,7 +31480,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     className="!min-h-0 w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors text-left"
                   >
                     <span className="flex items-center gap-2 min-w-0">
-                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${rank === 1 ? "bg-amber-100 text-amber-700" : rank === 2 ? "bg-gray-100 text-gray-700" : rank === 3 ? "bg-orange-100 text-orange-700" : "bg-gray-50 text-gray-500"}`}>
+                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${rank === 1 ? (tone === "bad" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700") : rank === 2 ? "bg-gray-100 text-gray-700" : rank === 3 ? (tone === "bad" ? "bg-rose-50 text-rose-600" : "bg-orange-100 text-orange-700") : "bg-gray-50 text-gray-500"}`}>
                         {rank}
                       </span>
                       <span className="text-sm font-semibold text-gray-900 truncate">{row.agent.name}</span>
@@ -31488,7 +31495,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   rows,
                   format,
                   emptyText,
-                  tone
+                  tone,
+                  direction = "top"
                 }: {
                   title: string;
                   hint: string;
@@ -31496,61 +31504,114 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   format: (r: typeof agentRows[number]) => string;
                   emptyText: string;
                   tone?: "good" | "bad";
-                }) => (
-                  <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-2">
-                    <div>
-                      <h3 className="text-sm font-bold text-gray-900 m-0">{title}</h3>
-                      <p className="text-[11px] text-gray-400 m-0">{hint}</p>
-                    </div>
-                    {rows.length === 0 ? (
-                      <p className="text-xs text-gray-400 italic px-1">{emptyText}</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {rows.slice(0, 3).map((row, i) => (
-                          <LeaderboardRow key={row.agent.id} rank={i + 1} row={row} value={format(row)} tone={tone} />
-                        ))}
+                  direction?: "top" | "bottom";
+                }) => {
+                  // For "bottom" columns: reverse the sorted (descending) list
+                  // so the worst lands at rank 1. For "top": leaderboard's
+                  // already descending, so just slice from the head.
+                  const ordered = direction === "bottom" ? [...rows].reverse() : rows;
+                  return (
+                    <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-2">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900 m-0">{title}</h3>
+                        <p className="text-[11px] text-gray-400 m-0">{hint}</p>
                       </div>
-                    )}
-                  </article>
-                );
+                      {ordered.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic px-1">{emptyText}</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {ordered.slice(0, 3).map((row, i) => (
+                            <LeaderboardRow key={row.agent.id} rank={i + 1} row={row} value={format(row)} tone={tone} />
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                };
 
                 return (
-                  <section aria-label="Agent leaderboard" className="space-y-2">
-                    <div className="flex items-baseline justify-between flex-wrap gap-2">
-                      <h2 className="text-base font-bold text-gray-900 m-0">Agent leaderboard</h2>
-                      <p className="text-xs text-gray-500 m-0">Top performers for the selected period. Click any name for the full performance breakdown.</p>
+                  <section aria-label="Agent leaderboard" className="space-y-4">
+                    {/* Top performers */}
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between flex-wrap gap-2">
+                        <h2 className="text-base font-bold text-gray-900 m-0">🏆 Top performers</h2>
+                        <p className="text-xs text-gray-500 m-0">Best in the selected period. Click any name for the full breakdown.</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <LeaderColumn
+                          title="By revenue"
+                          hint="Delivered order amount"
+                          rows={sortRevDesc.filter((r) => r.revenue > 0)}
+                          format={(r) => formatMoney(r.revenue)}
+                          emptyText="No revenue yet in this period."
+                          tone="good"
+                          direction="top"
+                        />
+                        <LeaderColumn
+                          title="By deliveries"
+                          hint="Successfully delivered orders"
+                          rows={sortDelivDesc.filter((r) => r.deliveries > 0)}
+                          format={(r) => `${r.deliveries}`}
+                          emptyText="No deliveries yet in this period."
+                          tone="good"
+                          direction="top"
+                        />
+                        <LeaderColumn
+                          title="By success rate"
+                          hint="Min 3 orders, sorted by delivery %"
+                          rows={sortSuccessDesc}
+                          format={(r) => `${r.successRate}%`}
+                          emptyText="Need at least 3 orders per agent."
+                          tone="good"
+                          direction="top"
+                        />
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                      <LeaderColumn
-                        title="🏆 By revenue"
-                        hint="Delivered order amount"
-                        rows={sortRev}
-                        format={(r) => formatMoney(r.revenue)}
-                        emptyText="No revenue yet in this period."
-                      />
-                      <LeaderColumn
-                        title="📦 By deliveries"
-                        hint="Successfully delivered orders"
-                        rows={sortDeliv}
-                        format={(r) => `${r.deliveries}`}
-                        emptyText="No deliveries yet in this period."
-                      />
-                      <LeaderColumn
-                        title="🎯 By success rate"
-                        hint="Min 3 orders, sorted by delivery %"
-                        rows={sortSuccess}
-                        format={(r) => `${r.successRate}%`}
-                        emptyText="Need at least 3 orders per agent."
-                        tone="good"
-                      />
-                      <LeaderColumn
-                        title="🚨 Highest shrinkage"
-                        hint="Defective + missing value"
-                        rows={sortShrinkage}
-                        format={(r) => formatMoney(r.defectiveValue + r.missingValue)}
-                        emptyText="All clean — no shrinkage flagged."
-                        tone="bad"
-                      />
+
+                    {/* Needs attention — worst performers */}
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between flex-wrap gap-2">
+                        <h2 className="text-base font-bold text-rose-700 m-0">🚨 Needs attention</h2>
+                        <p className="text-xs text-gray-500 m-0">Agents who had orders to work on but underperformed in the period.</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <LeaderColumn
+                          title="Lowest revenue"
+                          hint="Had orders, brought in least"
+                          rows={sortRevDesc}
+                          format={(r) => formatMoney(r.revenue)}
+                          emptyText="No agents handled orders this period."
+                          tone="bad"
+                          direction="bottom"
+                        />
+                        <LeaderColumn
+                          title="Fewest deliveries"
+                          hint="Had orders, delivered fewest"
+                          rows={sortDelivDesc}
+                          format={(r) => `${r.deliveries} of ${r.totalOrders}`}
+                          emptyText="No agents handled orders this period."
+                          tone="bad"
+                          direction="bottom"
+                        />
+                        <LeaderColumn
+                          title="Lowest success rate"
+                          hint="Min 3 orders, ranked by failure %"
+                          rows={sortSuccessDesc}
+                          format={(r) => `${r.successRate}% (${r.failed} failed)`}
+                          emptyText="Need at least 3 orders per agent."
+                          tone="bad"
+                          direction="bottom"
+                        />
+                        <LeaderColumn
+                          title="Highest shrinkage"
+                          hint="Defective + missing value"
+                          rows={sortShrinkageDesc}
+                          format={(r) => formatMoney(r.defectiveValue + r.missingValue)}
+                          emptyText="All clean — no shrinkage flagged."
+                          tone="bad"
+                          direction="top"
+                        />
+                      </div>
                     </div>
                   </section>
                 );
