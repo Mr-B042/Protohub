@@ -4740,6 +4740,11 @@ if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)
 
 // ── CART_JOURNEY_POLL_MS ────────────────────
 const CART_JOURNEY_POLL_MS = 5_000;
+// ── CART_DETAIL_FALLBACK_POLL_MS ────────────
+// The cart-details modal subscribes to Realtime for instant updates. This
+// slower interval is a safety net for the rare case where the websocket
+// is dropped (reconnects, sleeping laptops, flaky mobile networks).
+const CART_DETAIL_FALLBACK_POLL_MS = 30_000;
 
 // ── FORM_PULSE_POLL_MS ────────────────────
 const FORM_PULSE_POLL_MS = 8_000;
@@ -8058,10 +8063,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     let cancelled = false;
     let pollingHandle: number | undefined;
-    // Poll the journey while the modal is open so live tier hops, image
-    // dwells, hesitation events etc. appear without a page reload —
-    // mirrors the orderDetails effect below. silent=true skips the loading
-    // spinner so the timeline doesn't flicker every 5 seconds.
+    let realtimeChannel: ReturnType<NonNullable<typeof realtimeClient>["channel"]> | null = null;
+
+    // ── Initial fetch + slow fallback poll ──────────────────
+    // Realtime is the primary update path (sub-second latency, no traffic
+    // when idle). The 30s poll exists only as belt-and-braces in case the
+    // websocket drops or the publication isn't enabled for some reason.
     const loadJourney = async (silent = false) => {
       if (!silent) setSelectedCartJourneyLoading(true);
       try {
@@ -8083,10 +8090,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     };
 
-    // Refresh the cart row itself in the same tick — Selected Package,
-    // Amount, and Last activity all read from abandonedCarts, so they
-    // stay stale without this. Re-uses the existing /api/carts list
-    // endpoint; we only patch the matching row in state.
+    // Cart row (Selected Package + Amount + Last activity) is also kept
+    // fresh via the global abandoned_carts realtime sub. This is a
+    // belt-and-braces refresh — fires on initial open and every 30s.
     const refreshSelectedCart = async () => {
       try {
         const rows = await cartsApi.list();
@@ -8124,15 +8130,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     void loadJourney();
     void refreshSelectedCart();
+
+    // ── Realtime: cart_journey_events INSERT filtered by cart_id ──
+    // Migration 084 adds cart_journey_events to the supabase_realtime
+    // publication. Subscribing here pushes new journey rows (tier_switched,
+    // image_viewed, field_hesitated, etc.) into the modal within ~100ms of
+    // the customer's action — no polling needed for the happy path.
+    if (realtimeClient) {
+      realtimeChannel = realtimeClient.channel(`cart-journey-${selectedCartId}`);
+      realtimeChannel.on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "cart_journey_events",
+          filter: `cart_id=eq.${selectedCartId}`
+        },
+        (payload) => {
+          if (cancelled) return;
+          const nextEvent = normalizeCartJourneyEvent(payload.new);
+          if (!nextEvent?.id) return;
+          setSelectedCartJourneyEvents((prev) => {
+            if (prev.some((e) => e.id === nextEvent.id)) return prev;
+            const next = [...prev, nextEvent].sort((a, b) =>
+              (a.createdAt ?? "").localeCompare(b.createdAt ?? "")
+            );
+            setAdTrackingCartJourneyMap((value) => ({ ...value, [selectedCartId]: next }));
+            return next;
+          });
+        }
+      );
+      void realtimeChannel.subscribe();
+    }
+
+    // ── Fallback poll every 30s ──
+    // Catches anything the realtime sub missed (e.g. websocket reconnect
+    // gap). Cheap — only fires when tab is visible.
     pollingHandle = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void loadJourney(true);
       void refreshSelectedCart();
-    }, CART_JOURNEY_POLL_MS);
+    }, CART_DETAIL_FALLBACK_POLL_MS);
 
     return () => {
       cancelled = true;
       if (pollingHandle) window.clearInterval(pollingHandle);
+      if (realtimeChannel && realtimeClient) realtimeClient.removeChannel(realtimeChannel);
     };
   }, [modal, selectedCartId]);
 
