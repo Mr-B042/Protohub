@@ -12831,8 +12831,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <LineCard
               kind="main"
               label="Main offer"
-              name={order.productName}
-              detail={`${order.packageName}${order.originalQuantity != null && order.originalQuantity !== mainQty ? ` · was ${order.originalQuantity}, now ${mainQty}` : ""}`}
+              name={order.packageName && order.packageName.trim() && order.packageName.trim() !== order.productName.trim()
+                ? `${order.productName} — ${order.packageName}`
+                : order.productName}
+              detail={order.originalQuantity != null && order.originalQuantity !== mainQty
+                ? `was ${order.originalQuantity}, now ${mainQty}`
+                : undefined}
               quantity={mainQty}
               unit={formatProductMoney(mainUnit, order.currency)}
               total={formatProductMoney(mainTotal, order.currency)}
