@@ -983,6 +983,11 @@ export default function PublicOrderFormPage() {
   const [orderFormDeliveryWindow, setOrderFormDeliveryWindow] = useState("");
 
   const cartSyncTimerRef = useRef<number | null>(null);
+  // Tracks the packageId most recently sent to /api/public/carts. When the
+  // chosen package shifts (tier hop), the cart-sync effect uses a short
+  // debounce so the admin's "Selected Package" pane keeps up with the live
+  // journey timeline; field-only edits still get the full 1.5s coalescing.
+  const lastSyncedPackageIdRef = useRef<string>("");
   const autoSubmitTimerRef = useRef<number | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
   const publicOrderSubmittingRef = useRef(false);
@@ -1638,6 +1643,7 @@ export default function PublicOrderFormPage() {
     journeyDedupRef.current.clear();
     previousCrossSellKeysRef.current = [];
     lastTrackedPackageIdRef.current = "";
+    lastSyncedPackageIdRef.current = "";
     lastTrackedStateRef.current = "";
     lastExpandedCardProductIdRef.current = null;
     exitTrackedRef.current = false;
@@ -1930,8 +1936,17 @@ export default function PublicOrderFormPage() {
     const cartId = ensureDraftCartId();
     if (!cartId) return;
 
+    // Tier hops use a short debounce so the admin Cart Details "Selected
+    // Package" pane catches up with the customer-journey timeline. Field
+    // typing keeps the full 1.5s coalescing window to avoid per-keystroke
+    // POSTs. The per-IP 60 req/min rate-limit easily survives the worst
+    // case of rapid tier hopping (a handful of POSTs over a few seconds).
+    const isPackageHop = chosenPackage.id !== lastSyncedPackageIdRef.current;
+    const captureDelayMs = isPackageHop ? 250 : 1500;
+
     cartSyncTimerRef.current = window.setTimeout(() => {
       if (publicOrderSubmittingRef.current) return;
+      lastSyncedPackageIdRef.current = chosenPackage.id;
       const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
       cartsApi.capture({
         id: cartId,
@@ -1977,7 +1992,7 @@ export default function PublicOrderFormPage() {
       }).catch(() => {
         // Draft capture is best-effort only.
       });
-    }, 1500);
+    }, captureDelayMs);
 
     return () => {
       if (cartSyncTimerRef.current) {
@@ -2268,6 +2283,7 @@ export default function PublicOrderFormPage() {
     journeyDedupRef.current.clear();
     previousCrossSellKeysRef.current = [];
     lastTrackedPackageIdRef.current = "";
+    lastSyncedPackageIdRef.current = "";
     lastTrackedStateRef.current = "";
     lastExpandedCardProductIdRef.current = null;
     firstInteractionTrackedRef.current = false;

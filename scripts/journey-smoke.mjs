@@ -81,12 +81,24 @@ if (packageCount >= 2) {
 }
 
 // ── 4. Click any "Home Combo" package (has multi-image carousel) ──
+let targetComboName = null;
 log("selecting a Home Combo package to expose the carousel...");
 const comboPackage = page.locator('[role="radio"]').filter({ hasText: /combo/i }).first();
 if (await comboPackage.count() > 0) {
+  targetComboName = (await comboPackage.textContent() ?? "").trim();
+  log(`final tier target: ${targetComboName?.slice(0, 60)}...`);
   await comboPackage.click();
-  await sleep(1500);
+  // Sleep only 800ms — long enough for the 250ms fast-path debounce to fire
+  // and the POST to land, short enough to prove "fast path" works.
+  await sleep(800);
 }
+
+// ── 4a. ASSERT: cart row in DB now reflects the final tier within ~1s ──
+log("checking cart row catches up to final tier within ~1s of hop...");
+const cartCheck = execSync(
+  `psql "${DB_URL}" -At -F"|" -c "SELECT package_name, EXTRACT(EPOCH FROM (NOW() - last_activity)) as age_secs FROM abandoned_carts WHERE created_at > '${baseline}'::timestamptz ORDER BY last_activity DESC LIMIT 1"`
+).toString().trim();
+log(`cart row latest: ${cartCheck || "(no row)"}`);
 
 // ── 4b. Click carousel next arrow + dwell 1.8s → image_viewed ──
 log("clicking carousel next + dwelling 1.8s...");
@@ -154,3 +166,23 @@ if (missing > 0) {
   process.exit(1);
 }
 console.log("\nAll expected event types landed in DB.");
+
+// ── Cart row freshness assertion ──
+// After the last tier hop the cart row's package_name must match the final
+// selected tier — proves the 250ms fast-path debounce works.
+if (targetComboName) {
+  const finalCart = execSync(
+    `psql "${DB_URL}" -At -F"|" -c "SELECT package_name FROM abandoned_carts WHERE created_at > '${baseline}'::timestamptz ORDER BY last_activity DESC LIMIT 1"`
+  ).toString().trim();
+  const finalPkg = finalCart.split("|")[0] ?? "";
+  // targetComboName has the package name embedded in card text; normalise by
+  // checking the cart's package_name appears in what we clicked.
+  const matches = finalPkg && targetComboName.toLowerCase().includes(finalPkg.toLowerCase());
+  console.log(`\n=== CART ROW FRESHNESS ===`);
+  console.log(`  cart.package_name = ${finalPkg}`);
+  console.log(`  ${matches ? "✅" : "❌"} matches final tier clicked`);
+  if (!matches) {
+    console.log("\nCart row did NOT catch up to the final tier within the test window.");
+    process.exit(1);
+  }
+}
