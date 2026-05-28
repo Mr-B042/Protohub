@@ -65,6 +65,8 @@ type PublicPackage = {
   featuredComboCard?: boolean;
   imageUrl?: string;
   imageUrls?: string[];
+  unitSingular?: string;
+  unitPlural?: string;
   packageComponents?: PublicPackageComponent[];
   companionProducts?: PublicCompanion[];
 };
@@ -365,6 +367,17 @@ function packageVisibleInState(pkg: PublicPackage, state: string) {
   return mode === "block" ? !matches : matches;
 }
 
+// Per-package unit label override (e.g. "set" / "sets" for combo packs).
+// Falls back to "pc" / "pcs" when the package doesn't configure a custom unit.
+function packageUnitFor(
+  pkg: Pick<PublicPackage, "unitSingular" | "unitPlural"> | null | undefined,
+  quantity: number
+): string {
+  const singular = ((pkg?.unitSingular as string | undefined) ?? "").trim() || "pc";
+  const plural = ((pkg?.unitPlural as string | undefined) ?? "").trim() || "pcs";
+  return quantity === 1 ? singular : plural;
+}
+
 function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) {
   const components = pkg.packageComponents ?? [];
   if (components.length === 0) return "";
@@ -376,7 +389,7 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
       const isFreeGift = Boolean(component.isFreeGift ?? component.is_free_gift);
       const productName = products.find((product) => product.id === productId)?.name ?? "Item";
       const qty = Math.max(1, Number(component.quantity) || 1);
-      return `${isFreeGift ? "FREE " : ""}${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`;
+      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(pkg, qty)} ${productName}`;
     })
     .join(" + ");
 }
@@ -392,7 +405,7 @@ function packageFreeGiftItems(pkg: PublicPackage, products: PublicProduct[]) {
         id: component.componentId || component.component_id || productId,
         name: productName,
         quantity: qty,
-        label: `${qty} ${qty === 1 ? "pc" : "pcs"} ${productName}`
+        label: `${qty} ${packageUnitFor(pkg, qty)} ${productName}`
       };
     });
 }

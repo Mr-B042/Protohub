@@ -67,6 +67,8 @@ type DbPackage = {
   featured_combo_card?: boolean | null;
   image_url?: string | null;
   image_urls?: string[] | null;
+  unit_singular?: string | null;
+  unit_plural?: string | null;
   companion_products: DbCompanion[] | null;
   package_components: DbPackageComponent[] | null;
 };
@@ -108,6 +110,8 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
   featuredComboCard: p.featured_combo_card === true,
   imageUrl: p.image_url ?? "",
   imageUrls: p.image_urls ?? [],
+  unitSingular: p.unit_singular ?? null,
+  unitPlural: p.unit_plural ?? null,
   companionProducts: (p.companion_products ?? []).map((c) => {
     const restrictions = c.stateRestrictions ?? [];
     const stateFilterMode =
@@ -279,7 +283,7 @@ const PUBLIC_PRODUCT_SELECT = `
   free_gift_product_ids, free_gift_state_restrictions,
   form_custom_text,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, companion_products, package_components)
+  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, companion_products, package_components)
 `;
 
 router.get("/:id/package-availability", readRateLimit, async (req, res) => {

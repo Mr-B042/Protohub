@@ -478,6 +478,8 @@ type ProductPackage = {
   featuredComboCard?: boolean;
   imageUrl?: string;
   imageUrls?: string[];
+  unitSingular?: string;
+  unitPlural?: string;
   companionProducts?: PackageCompanion[];
   packageComponents?: PackageComponent[];
 };
@@ -3793,6 +3795,18 @@ const companionMatchesState = (
   return mode === "block" ? !matches : matches;
 };
 const formatBundleUnitLabel = (quantity: number) => `${quantity}${quantity === 1 ? "pc" : "pcs"}`;
+
+// Returns the singular ("pc") or plural ("pcs") unit label for a package,
+// honouring per-package overrides (e.g. "set"/"sets") when configured.
+// Pass undefined / null for `pkg` to get the default labels.
+const packageUnitFor = (
+  pkg: Pick<ProductPackage, "unitSingular" | "unitPlural"> | null | undefined,
+  quantity: number
+): string => {
+  const singular = (pkg?.unitSingular ?? "").trim() || "pc";
+  const plural = (pkg?.unitPlural ?? "").trim() || "pcs";
+  return quantity === 1 ? singular : plural;
+};
 const summarizePackageComponents = (
   components: PackageComponent[] | undefined,
   products: Pick<Product, "id" | "name">[]
@@ -5882,6 +5896,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageName, setPackageName] = useState("");
   const [packageDescription, setPackageDescription] = useState("");
   const [packageQuantity, setPackageQuantity] = useState("1");
+  const [packageUnitSingular, setPackageUnitSingular] = useState("");
+  const [packageUnitPlural, setPackageUnitPlural] = useState("");
   const [packagePrice, setPackagePrice] = useState("0");
   const [packageCurrency, setPackageCurrency] = useState<ProductCurrencyCode>("NGN");
   const [packageDisplayOrder, setPackageDisplayOrder] = useState("1");
@@ -8461,6 +8477,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageName(selectedPackage.name);
     setPackageDescription(selectedPackage.description);
     setPackageQuantity(String(selectedPackage.quantity));
+    setPackageUnitSingular(selectedPackage.unitSingular ?? "");
+    setPackageUnitPlural(selectedPackage.unitPlural ?? "");
     setPackagePrice(String(selectedPackage.price));
     setPackageCurrency(selectedPackage.currency);
     setPackageDisplayOrder(String(selectedPackage.displayOrder));
@@ -18029,6 +18047,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageName("");
     setPackageDescription("");
     setPackageQuantity("1");
+    setPackageUnitSingular("");
+    setPackageUnitPlural("");
     setPackagePrice("0");
     setPackageCurrency("NGN");
     setPackageDisplayOrder("1");
@@ -18064,6 +18084,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageName(item.name);
     setPackageDescription(item.description);
     setPackageQuantity(String(item.quantity));
+    setPackageUnitSingular(item.unitSingular ?? "");
+    setPackageUnitPlural(item.unitPlural ?? "");
     setPackagePrice(String(item.price));
     setPackageCurrency(item.currency);
     setPackageDisplayOrder(String(item.displayOrder));
@@ -18310,6 +18332,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       featuredComboCard: packageFeaturedComboCard,
       imageUrl: legacyPackageImageUrl,
       imageUrls: normalisedPackageImageUrls,
+      unitSingular: packageUnitSingular.trim() || undefined,
+      unitPlural: packageUnitPlural.trim() || undefined,
       packageComponents: normalisedComponents,
       companionProducts: normalisedCompanions
     };
@@ -18327,6 +18351,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       featuredComboCard: packageRecord.featuredComboCard,
       imageUrl: packageRecord.imageUrl,
       imageUrls: packageRecord.imageUrls,
+      unitSingular: packageRecord.unitSingular ?? null,
+      unitPlural: packageRecord.unitPlural ?? null,
       packageComponents: normalisedComponents,
       companionProducts: normalisedCompanions
     };
@@ -43015,6 +43041,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <label><span>Price</span><input value={packagePrice} onChange={(event) => setPackagePrice(event.target.value)} inputMode="decimal" /></label>
                   <label><span>Currency</span><select value={packageCurrency} onChange={(event) => setPackageCurrency(event.target.value as ProductCurrencyCode)}>{Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}</select></label>
                   <label><span>Display Order</span><input value={packageDisplayOrder} onChange={(event) => setPackageDisplayOrder(event.target.value)} inputMode="numeric" /></label>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label>
+                    <span>Unit label — singular <span className="text-gray-400 font-normal">(optional)</span></span>
+                    <input value={packageUnitSingular} onChange={(event) => setPackageUnitSingular(event.target.value)} placeholder="pc" maxLength={20} />
+                  </label>
+                  <label>
+                    <span>Unit label — plural <span className="text-gray-400 font-normal">(optional)</span></span>
+                    <input value={packageUnitPlural} onChange={(event) => setPackageUnitPlural(event.target.value)} placeholder="pcs" maxLength={20} />
+                  </label>
+                  <p className="text-[11px] text-gray-500 sm:col-span-2 -mt-1">Used wherever the package's quantity is shown (e.g. "3 sets" instead of "3 pcs"). Leave blank to use the default.</p>
                 </div>
                 <section className="border border-amber-200 bg-amber-50/70 rounded-xl p-4 space-y-4">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
