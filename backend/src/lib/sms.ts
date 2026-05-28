@@ -44,7 +44,7 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
 // carts close materially better when the message reads like a real person.
 export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   order_new: {
-    body: "{{greeting}} {{customer}}, your order is received (ref {{order_id}}). {{product_name}} ({{currency}} {{amount}}). We'll call you shortly to confirm delivery. {{rep_contact}}"
+    body: "{{greeting}} {{customer}}, your order is received (ref {{order_id}}):\n{{order_items}}\nTotal: {{currency}} {{amount}}. We'll call you shortly to confirm delivery. {{rep_contact}}"
   },
   order_status_change: {
     body: "{{greeting}} {{customer}}, quick update on order {{order_id}}: status is now {{status}}. We will keep you posted."
@@ -1270,6 +1270,12 @@ export async function sendNewOrderSms(
     amount: number;
     currency: string;
     quantity?: number | null;
+    cross_sell_lines?: Array<{
+      productName?: string | null;
+      packageName?: string | null;
+      quantity?: number | null;
+      selectionSource?: string | null;
+    }> | null;
   }
 ) {
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
@@ -1284,16 +1290,37 @@ export async function sendNewOrderSms(
     ? Math.floor(order.quantity as number)
     : null;
   const displayName = orderDisplayName(order);
-  const orderItemLine = qty
+  const mainLine = qty
     ? `${qty}${qty === 1 ? "pc" : "pcs"} of ${displayName}`
     : displayName;
+  // Itemized add-on list. Customer-visible add-ons only — auto_include
+  // companions are silent bundles baked into a package and the customer
+  // never saw them as separate selections, so we skip them here.
+  const addOnLines: string[] = [];
+  for (const item of order.cross_sell_lines ?? []) {
+    if (!item) continue;
+    if (item.selectionSource === "auto_include") continue;
+    const itemQty = Number.isFinite(item.quantity) && (item.quantity ?? 0) > 0
+      ? Math.floor(item.quantity as number)
+      : 1;
+    const itemDisplayName = orderDisplayName({
+      product_name: (item.productName ?? "").trim(),
+      package_name: item.packageName ?? null
+    });
+    if (!itemDisplayName.trim()) continue;
+    addOnLines.push(`- ${itemQty}${itemQty === 1 ? "pc" : "pcs"} of ${itemDisplayName}`);
+  }
+  const orderItemsBlock = [`- ${mainLine}`, ...addOnLines].join("\n");
   return dispatchSms(
     orgId,
     "order_new",
     {
       order_id: order.id,
       customer: order.customer,
-      product_name: orderItemLine,
+      // product_name kept populated for backward compat with any org whose
+      // customised order_new template still references the old placeholder.
+      product_name: mainLine,
+      order_items: orderItemsBlock,
       amount: String(order.amount),
       currency: order.currency,
       rep_name: assignedRep?.name ?? "",

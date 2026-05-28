@@ -604,7 +604,8 @@ router.post("/", async (req, res) => {
     package_name: data.package_name,
     amount: data.amount,
     currency: data.currency,
-    quantity: data.quantity
+    quantity: data.quantity,
+    cross_sell_lines: data.cross_sell_lines
   });
 
   // Internal: notify owner + admins
