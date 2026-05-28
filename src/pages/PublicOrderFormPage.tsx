@@ -389,7 +389,7 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
       const isFreeGift = Boolean(component.isFreeGift ?? component.is_free_gift);
       const productName = products.find((product) => product.id === productId)?.name ?? "Item";
       const qty = Math.max(1, Number(component.quantity) || 1);
-      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(pkg, qty)} ${productName}`;
+      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(pkg, qty)} of ${productName}`;
     })
     .join(" + ");
 }
@@ -405,7 +405,7 @@ function packageFreeGiftItems(pkg: PublicPackage, products: PublicProduct[]) {
         id: component.componentId || component.component_id || productId,
         name: productName,
         quantity: qty,
-        label: `${qty} ${packageUnitFor(pkg, qty)} ${productName}`
+        label: `${qty} ${packageUnitFor(pkg, qty)} of ${productName}`
       };
     });
 }
