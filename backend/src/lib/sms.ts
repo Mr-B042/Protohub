@@ -1275,16 +1275,17 @@ export async function sendNewOrderSms(
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
   // Build a customer-facing breakdown so the SMS reads professionally
   // instead of just "got your order 369 for Edge Brusher Max" when the
-  // customer actually bought the Home Pack combo.
-  //   • single tier / no package:   "Edge Brusher Max"
-  //   • combo with qty:             "3× Edge Brusher Max — Home Pack"
-  //   • combo, qty unknown:         "Edge Brusher Max — Home Pack"
+  // customer actually bought the Home Pack combo. Format mirrors how
+  // Nigerian customers naturally read quantities in receipts:
+  //   • 1 unit:           "1pc of Edge Brusher Max — Home Pack"
+  //   • 6 units:          "6pcs of Edge Brusher Max — Home Pack"
+  //   • qty unknown:      "Edge Brusher Max — Home Pack"
   const qty = Number.isFinite(order.quantity) && (order.quantity ?? 0) > 0
     ? Math.floor(order.quantity as number)
     : null;
   const displayName = orderDisplayName(order);
-  const orderItemLine = qty && qty > 1
-    ? `${qty}× ${displayName}`
+  const orderItemLine = qty
+    ? `${qty}${qty === 1 ? "pc" : "pcs"} of ${displayName}`
     : displayName;
   return dispatchSms(
     orgId,
