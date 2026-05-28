@@ -16993,23 +16993,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : `Jump back to ${navSpan === "1M" ? "this month" : "this week"}`;
     return (
       <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
-        {/* Row 1: Span selector — full width on mobile, evenly distributed */}
-        <div className="period-nav-segmented flex items-center bg-gray-100 p-0.5 rounded-lg w-full sm:w-auto">
-          {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
-            <button key={s} onClick={() => changeSpan(s)}
-              className={`period-nav-button !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-              {s}
-            </button>
-          ))}
-        </div>
-        {/* Row 2: Navigation — full width on mobile, "This Week" stretches between arrows */}
+        {/* Row 1: Navigation arrows + smart label */}
         <div className="period-nav-cluster flex items-center gap-1 w-full sm:w-auto">
           <button onClick={prev} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
           <button onClick={thisWeek} title={navTitle} aria-label={navTitle} className={`period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg transition-colors whitespace-nowrap ${isOnCurrent ? "text-gray-600 hover:bg-gray-100" : "text-[#1F8FE0] border-[#1F8FE0]/40 bg-blue-50/40 hover:bg-blue-50"}`}>{navLabel}</button>
           <button onClick={next} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
-        {/* Row 3: Range label — left-aligned on mobile, muted */}
+        {/* Row 2: Range label — left-aligned on mobile, muted */}
         <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
+        {/* Row 3: Window-size selector, hidden behind a disclosure so the
+            default band stays clean. 90% of admins don't need to change the
+            arrow step size, but power users can expand this to pick 2W/3W
+            scrolls or 1M months. Native <details> means no React state to
+            manage and no extra prop plumbing across every page that mounts
+            renderWeekNav. */}
+        <details className="period-nav-window text-xs text-gray-500 ml-auto sm:ml-2">
+          <summary className="cursor-pointer select-none px-2 py-1 rounded-md hover:bg-gray-100 transition-colors">
+            Window: <span className="font-semibold text-gray-700">{navSpan === "1W" ? "1 week" : navSpan === "2W" ? "2 weeks" : navSpan === "3W" ? "3 weeks" : "1 month"}</span>
+          </summary>
+          <div className="period-nav-segmented flex items-center bg-gray-100 p-0.5 rounded-lg mt-2">
+            {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
+              <button key={s} onClick={() => changeSpan(s)}
+                className={`period-nav-button !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
+                {s}
+              </button>
+            ))}
+          </div>
+        </details>
       </div>
     );
   };
