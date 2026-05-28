@@ -12804,7 +12804,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const mainOfferQtyNote = order.originalQuantity != null && order.originalQuantity !== mainQty
       ? `was ${order.originalQuantity}, now ${mainQty}`
       : "";
-    const mainOfferDetail = [mainOfferDescription, mainOfferQtyNote].filter(Boolean).join(" · ");
+    // Build a "Deducts:" annotation from the package_components_snapshot so
+    // admins see what actually leaves stock alongside the customer-facing
+    // product name. Without this, an admin reading "Edge Brusher Max — Small
+    // Pack" on the LineCard has to scroll down to the Fulfilment Stock
+    // Breakdown section to confirm the deduction is going to "Home Cleaning
+    // Tools" — which is why they've been manually rewriting orders to make
+    // it obvious.
+    // Only render when the deduction target is something OTHER than the
+    // customer-facing main product. For plain N-pack bundles (Trial Pack =
+    // 3 × Edge Brusher Max), the deduction matches the headline and the
+    // annotation would be noise.
+    const deductionLines = (order.packageComponentsSnapshot ?? [])
+      .filter((line) => !line.isFreeGift)
+      .filter((line) => line.productId && line.productId !== order.productId)
+      .map((line) => `${line.quantity} × ${line.productName}`);
+    const mainOfferDeducts = deductionLines.length > 0
+      ? `Deducts: ${deductionLines.join(", ")} from stock`
+      : "";
+    const mainOfferDetail = [mainOfferDescription, mainOfferQtyNote, mainOfferDeducts]
+      .filter(Boolean)
+      .join(" · ");
     const lineStat = (label: string, value: string | number, tone = "") => (
       <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 shadow-sm dark:border-slate-700/70 dark:bg-white/[0.04]">
         <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{label}</p>
