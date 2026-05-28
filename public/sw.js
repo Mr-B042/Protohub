@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v7-auto-update";
+const CACHE_NAME = "protohub-v8-android-push-fix";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 const DEFAULT_BRAND_NAME = "Protohub";
@@ -223,49 +223,80 @@ self.addEventListener("message", (event) => {
 
 // ── Push ─────────────────────────────────────────────────
 self.addEventListener("push", (event) => {
-  if (!event.data) return;
+  // Android Chrome will silently drop background pushes if the handler
+  // throws or takes too long. We MUST call showNotification synchronously
+  // in waitUntil — no awaits before it that could fail.
 
-  let payload;
-  try {
-    payload = event.data.json();
-  } catch {
-    payload = { title: "Protohub", body: event.data.text() };
+  let payload = { title: "Protohub", body: "" };
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch {
+      try {
+        payload = { title: "Protohub", body: event.data.text() };
+      } catch {
+        // keep empty payload defaults
+      }
+    }
   }
 
+  const kind = typeof payload.kind === "string" && payload.kind ? payload.kind : "info";
+  const presentation = presentationForKind(kind);
+  const payloadBrandName = typeof payload.brandName === "string" && payload.brandName.trim()
+    ? payload.brandName.trim()
+    : DEFAULT_BRAND_NAME;
+  const payloadBrandLogo = sanitizeBrandLogo(payload.brandLogo);
+  const presentationIcon = payload.icon || presentation.icon || "/icons/icon-192.png";
+  const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, payloadBrandName);
+  const options = {
+    body: payload.body || "",
+    icon: payloadBrandLogo || presentationIcon,
+    badge: payload.badge || DEFAULT_BADGE,
+    tag: payload.tag || `protohub-${kind}`,
+    renotify: true,
+    requireInteraction: typeof payload.requireInteraction === "boolean" ? payload.requireInteraction : !!presentation.requireInteraction,
+    vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : presentation.vibrate,
+    timestamp: typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
+    data: {
+      url: payload.url || "/",
+      kind,
+      brandName: payloadBrandName
+    },
+    actions: [
+      { action: "open", title: "Open" },
+      { action: "dismiss", title: "Dismiss" }
+    ]
+  };
+  if (payload.color || presentation.color) {
+    options.color = payload.color || presentation.color;
+  }
+
+  // Show notification IMMEDIATELY using payload-only data (no cache reads).
+  // This is the critical path for Android background delivery — must not
+  // depend on caches.open() / cache.match() succeeding.
+  const showPromise = self.registration.showNotification(title, options).catch(() => undefined);
+
+  // After the notification is shown, optionally enrich with cached
+  // org-level branding if it differs. This runs in waitUntil but never
+  // blocks the initial show.
   event.waitUntil((async () => {
-    const branding = await readPushBranding();
-    const kind = typeof payload.kind === "string" && payload.kind ? payload.kind : "info";
-    const presentation = presentationForKind(kind);
-    const brandName = typeof payload.brandName === "string" && payload.brandName.trim()
-      ? payload.brandName.trim()
-      : branding.brandName || DEFAULT_BRAND_NAME;
-    const brandLogo = branding.logoUrl || sanitizeBrandLogo(payload.brandLogo);
-    const presentationIcon = payload.icon || presentation.icon || "/icons/icon-192.png";
-    const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
-    const options = {
-      body: payload.body || "",
-      icon: brandLogo || presentationIcon,
-      badge: payload.badge || DEFAULT_BADGE,
-      image: payload.image || (brandLogo ? presentationIcon : undefined),
-      tag: payload.tag || `protohub-${kind}`,
-      renotify: true,
-      requireInteraction: typeof payload.requireInteraction === "boolean" ? payload.requireInteraction : !!presentation.requireInteraction,
-      vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : presentation.vibrate,
-      timestamp: typeof payload.timestamp === "number" ? payload.timestamp : Date.now(),
-      data: {
-        url: payload.url || "/",
-        kind,
-        brandName
-      },
-      actions: [
-        { action: "open", title: "Open" },
-        { action: "dismiss", title: "Dismiss" }
-      ]
-    };
-    if (payload.color || presentation.color) {
-      options.color = payload.color || presentation.color;
+    await showPromise;
+    if (payload.brandName && payload.brandLogo) return; // payload had branding
+    try {
+      const cachedBranding = await readPushBranding();
+      const cachedBrandName = cachedBranding.brandName || DEFAULT_BRAND_NAME;
+      const cachedLogo = cachedBranding.logoUrl;
+      if (cachedBrandName === payloadBrandName && !cachedLogo) return;
+      const enrichedTitle = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, cachedBrandName);
+      const enrichedOptions = {
+        ...options,
+        icon: cachedLogo || options.icon,
+        data: { ...options.data, brandName: cachedBrandName }
+      };
+      await self.registration.showNotification(enrichedTitle, enrichedOptions).catch(() => undefined);
+    } catch {
+      // best-effort enrichment; original notification already shown
     }
-    await self.registration.showNotification(title, options);
   })());
 });
 
