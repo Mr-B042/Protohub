@@ -8057,8 +8057,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     let cancelled = false;
-    const loadJourney = async () => {
-      setSelectedCartJourneyLoading(true);
+    let pollingHandle: number | undefined;
+    // Poll the journey while the modal is open so live tier hops, image
+    // dwells, hesitation events etc. appear without a page reload —
+    // mirrors the orderDetails effect below. silent=true skips the loading
+    // spinner so the timeline doesn't flicker every 5 seconds.
+    const loadJourney = async (silent = false) => {
+      if (!silent) setSelectedCartJourneyLoading(true);
       try {
         const grouped = await cartsApi.journeyBulk([selectedCartId]);
         if (cancelled) return;
@@ -8068,19 +8073,66 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setSelectedCartJourneyEvents(normalized);
         setAdTrackingCartJourneyMap((value) => ({ ...value, [selectedCartId]: normalized }));
       } catch {
-        if (!cancelled && !cached) {
+        if (!cancelled && !silent && !cached) {
           setSelectedCartJourneyEvents([]);
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && !silent) {
           setSelectedCartJourneyLoading(false);
         }
       }
     };
 
+    // Refresh the cart row itself in the same tick — Selected Package,
+    // Amount, and Last activity all read from abandonedCarts, so they
+    // stay stale without this. Re-uses the existing /api/carts list
+    // endpoint; we only patch the matching row in state.
+    const refreshSelectedCart = async () => {
+      try {
+        const rows = await cartsApi.list();
+        if (cancelled || !Array.isArray(rows)) return;
+        const fresh = (rows as any[]).find((row) => row?.id === selectedCartId);
+        if (!fresh) return;
+        setAbandonedCarts((value) =>
+          value.map((cart) =>
+            cart.id === selectedCartId
+              ? {
+                  ...cart,
+                  productId:    fresh.productId ?? fresh.product_id ?? cart.productId,
+                  packageId:    fresh.packageId ?? fresh.package_id ?? cart.packageId,
+                  productName:  fresh.productName ?? fresh.product_name ?? cart.productName,
+                  packageName:  fresh.packageName ?? fresh.package_name ?? cart.packageName,
+                  amount:       Number(fresh.amount ?? cart.amount),
+                  currency:     fresh.currency ?? cart.currency,
+                  customer:     fresh.customer ?? cart.customer,
+                  phone:        fresh.phone ?? cart.phone,
+                  whatsapp:     fresh.whatsapp ?? cart.whatsapp,
+                  email:        fresh.email ?? cart.email,
+                  city:         fresh.city ?? cart.city,
+                  state:        fresh.state ?? cart.state,
+                  status:       fresh.status ?? cart.status,
+                  assignedRepId:fresh.assignedRepId ?? fresh.assigned_rep_id ?? cart.assignedRepId,
+                  lastActivity: fresh.lastActivity ?? fresh.last_activity ?? cart.lastActivity
+                }
+              : cart
+          )
+        );
+      } catch {
+        // best-effort refresh
+      }
+    };
+
     void loadJourney();
+    void refreshSelectedCart();
+    pollingHandle = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadJourney(true);
+      void refreshSelectedCart();
+    }, CART_JOURNEY_POLL_MS);
+
     return () => {
       cancelled = true;
+      if (pollingHandle) window.clearInterval(pollingHandle);
     };
   }, [modal, selectedCartId]);
 
