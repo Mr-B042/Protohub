@@ -12706,6 +12706,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const addOnCount = order.crossSellLines?.length ?? 0;
     const giftCount = order.freeGiftLines?.length ?? 0;
     const itemCount = 1 + addOnCount + giftCount;
+    // Look up the package the customer actually bought so we can surface its
+    // marketing description (e.g. "3 Sets (24pcs) of Home Cleaning Combo
+    // Tools — ⭐ Good Value + FREE DELIVERY + SIX FREE GIFTS 🎁") in the
+    // order details. Falls back gracefully if the product / package was
+    // since renamed or deleted.
+    const mainOfferProduct = products.find((p) => p.id === order.productId);
+    const mainOfferPackage = mainOfferProduct?.packages.find((pk) => pk.id === order.packageId);
+    const mainOfferDescription = (mainOfferPackage?.description ?? "").trim();
+    const mainOfferQtyNote = order.originalQuantity != null && order.originalQuantity !== mainQty
+      ? `was ${order.originalQuantity}, now ${mainQty}`
+      : "";
+    const mainOfferDetail = [mainOfferDescription, mainOfferQtyNote].filter(Boolean).join(" · ");
     const lineStat = (label: string, value: string | number, tone = "") => (
       <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 shadow-sm dark:border-slate-700/70 dark:bg-white/[0.04]">
         <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{label}</p>
@@ -12834,9 +12846,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               name={order.packageName && order.packageName.trim() && order.packageName.trim() !== order.productName.trim()
                 ? `${order.productName} — ${order.packageName}`
                 : order.productName}
-              detail={order.originalQuantity != null && order.originalQuantity !== mainQty
-                ? `was ${order.originalQuantity}, now ${mainQty}`
-                : undefined}
+              detail={mainOfferDetail || undefined}
               quantity={mainQty}
               unit={formatProductMoney(mainUnit, order.currency)}
               total={formatProductMoney(mainTotal, order.currency)}
