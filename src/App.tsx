@@ -167,7 +167,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
   }
 }
 
-type Period = "Today" | "This Week" | "This Month" | "This Year" | "Custom";
+type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
@@ -1172,7 +1172,7 @@ type RepBonusCoachResponse = {
   orderOpportunities: RepBonusOrderOpportunity[];
 };
 
-const periods: Period[] = ["Today", "This Week", "This Month", "This Year"];
+const periods: Period[] = ["Today", "Yesterday", "This Week", "Last Week", "This Month", "Last Month", "This Year"];
 
 const currencies: Record<CurrencyCode, { label: string; locale: string; currency: string }> = {
   NGN: { label: "Nigerian Naira", locale: "en-NG", currency: "NGN" },
@@ -3248,8 +3248,11 @@ const liveFormPulseLastSeenAt = (pulse?: LiveFormPulseResponse | null) => {
 };
 const liveFormPulseScopeLabel = (period: Period, bounds: { dateFrom: string; dateTo: string } | null) => {
   if (period === "Today") return "today";
+  if (period === "Yesterday") return "yesterday";
   if (period === "This Week") return "this week";
+  if (period === "Last Week") return "last week";
   if (period === "This Month") return "this month";
+  if (period === "Last Month") return "last month";
   if (period === "This Year") return "this year";
   if (bounds?.dateFrom && bounds?.dateTo) return `${bounds.dateFrom} to ${bounds.dateTo}`;
   return "this period";
@@ -3307,12 +3310,32 @@ const isInPeriod = (dateKey: string | undefined, activePeriod: Period, range: Da
     return value === today;
   }
 
+  if (activePeriod === "Yesterday") {
+    const y = new Date(now);
+    y.setDate(now.getDate() - 1);
+    return value === formatDateKey(y);
+  }
+
   if (activePeriod === "This Week") {
     return value >= formatDateKey(weekStart) && value <= today;
   }
 
+  if (activePeriod === "Last Week") {
+    const lastWeekStart = new Date(weekStart);
+    lastWeekStart.setDate(weekStart.getDate() - 7);
+    const lastWeekEnd = new Date(weekStart);
+    lastWeekEnd.setDate(weekStart.getDate() - 1);
+    return value >= formatDateKey(lastWeekStart) && value <= formatDateKey(lastWeekEnd);
+  }
+
   if (activePeriod === "This Month") {
     return value.slice(0, 7) === today.slice(0, 7);
+  }
+
+  if (activePeriod === "Last Month") {
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const ym = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}`;
+    return value.slice(0, 7) === ym;
   }
 
   return value.slice(0, 4) === today.slice(0, 4);
@@ -3332,12 +3355,33 @@ const periodBoundsForQuery = (activePeriod: Period, range: DateRange) => {
     return { dateFrom: today, dateTo: today };
   }
 
+  if (activePeriod === "Yesterday") {
+    const y = new Date(now);
+    y.setDate(now.getDate() - 1);
+    const key = formatDateKey(y);
+    return { dateFrom: key, dateTo: key };
+  }
+
   if (activePeriod === "This Week") {
     return { dateFrom: formatDateKey(weekStart), dateTo: today };
   }
 
+  if (activePeriod === "Last Week") {
+    const lastWeekStart = new Date(weekStart);
+    lastWeekStart.setDate(weekStart.getDate() - 7);
+    const lastWeekEnd = new Date(weekStart);
+    lastWeekEnd.setDate(weekStart.getDate() - 1);
+    return { dateFrom: formatDateKey(lastWeekStart), dateTo: formatDateKey(lastWeekEnd) };
+  }
+
   if (activePeriod === "This Month") {
     return { dateFrom: `${today.slice(0, 7)}-01`, dateTo: today };
+  }
+
+  if (activePeriod === "Last Month") {
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { dateFrom: formatDateKey(lastMonth), dateTo: formatDateKey(lastDay) };
   }
 
   return { dateFrom: `${today.slice(0, 4)}-01-01`, dateTo: today };
@@ -3353,7 +3397,7 @@ const daysInPeriodSoFar = (activePeriod: Period, range: DateRange) => {
     return Math.max(1, Math.round((capped.getTime() - start.getTime()) / 86_400_000) + 1);
   }
 
-  if (activePeriod === "Today") {
+  if (activePeriod === "Today" || activePeriod === "Yesterday") {
     return 1;
   }
 
@@ -3361,8 +3405,17 @@ const daysInPeriodSoFar = (activePeriod: Period, range: DateRange) => {
     return now.getDay() + 1;
   }
 
+  if (activePeriod === "Last Week") {
+    return 7;
+  }
+
   if (activePeriod === "This Month") {
     return now.getDate();
+  }
+
+  if (activePeriod === "Last Month") {
+    // Number of days in the previous calendar month
+    return new Date(now.getFullYear(), now.getMonth(), 0).getDate();
   }
 
   const yearStart = new Date(now.getFullYear(), 0, 1);
@@ -3407,6 +3460,13 @@ const explicitPeriodRange = (activePeriod: Period, range: DateRange, previous = 
     return { start: key, end: key };
   }
 
+  if (activePeriod === "Yesterday") {
+    const y = new Date(now);
+    y.setDate(now.getDate() - (previous ? 2 : 1));
+    const key = formatDateKey(y);
+    return { start: key, end: key };
+  }
+
   if (activePeriod === "This Week") {
     const start = new Date(now);
     start.setDate(now.getDate() - now.getDay());
@@ -3416,6 +3476,22 @@ const explicitPeriodRange = (activePeriod: Period, range: DateRange, previous = 
       end.setDate(end.getDate() - 7);
     }
     return { start: formatDateKey(start), end: formatDateKey(end) };
+  }
+
+  if (activePeriod === "Last Week") {
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay());
+    const start = new Date(weekStart);
+    start.setDate(weekStart.getDate() - (previous ? 14 : 7));
+    const end = new Date(weekStart);
+    end.setDate(weekStart.getDate() - (previous ? 8 : 1));
+    return { start: formatDateKey(start), end: formatDateKey(end) };
+  }
+
+  if (activePeriod === "Last Month") {
+    const targetMonth = new Date(now.getFullYear(), now.getMonth() - (previous ? 2 : 1), 1);
+    const targetMonthEnd = new Date(now.getFullYear(), now.getMonth() - (previous ? 1 : 0), 0);
+    return { start: formatDateKey(targetMonth), end: formatDateKey(targetMonthEnd) };
   }
 
   if (activePeriod === "This Month") {
