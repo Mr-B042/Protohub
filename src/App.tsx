@@ -31058,6 +31058,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         {(() => {
                           const myState = agentPrimaryBaseState(agent);
 
+                          // ── Previous-period agentRows for WoW rank delta ──
+                          // explicitPeriodRange(period, range, true) returns
+                          // the same-duration window immediately before the
+                          // selected period. We re-derive per-agent metrics
+                          // inside that window once so we can compare ranks.
+                          const previousRange = explicitPeriodRange(agentsPeriod, agentsDateRange, true);
+                          const inPreviousWindow = (order: TrackedOrder) => {
+                            const key = orderCreatedKey(order);
+                            if (!previousRange.start || !previousRange.end || !key) return false;
+                            return key >= previousRange.start && key <= previousRange.end;
+                          };
+                          const previousAgentRows = agents.map((a) => {
+                            const assigned = trackedOrders.filter((o) =>
+                              o.agentId === a.id
+                              && inPreviousWindow(o)
+                              && matchesProductFilter(o.productId, o.productName, agentProductIds)
+                            );
+                            const deliveredList = assigned.filter((o) => (o.status ?? "New") === "Delivered");
+                            return {
+                              agentId: a.id,
+                              deliveries: deliveredList.length,
+                              revenue: deliveredList.reduce((s, o) => s + o.amount, 0),
+                              successRate: assigned.length === 0 ? 0 : Math.round((deliveredList.length / assigned.length) * 100),
+                              totalOrders: assigned.length
+                            };
+                          });
+                          const rankBy = (rows: Array<{ agentId: string } & Record<string, any>>, key: string) => {
+                            const sorted = [...rows].sort((a, b) => (b as any)[key] - (a as any)[key]);
+                            const idx = sorted.findIndex((r) => r.agentId === agent.id);
+                            return idx === -1 ? null : idx + 1;
+                          };
+                          const currentAsRankable = agentRows.map((r) => ({
+                            agentId: r.agent.id,
+                            revenue: r.revenue,
+                            deliveries: r.deliveries,
+                            successRate: r.successRate
+                          }));
+                          const currentRevRank = rankBy(currentAsRankable, "revenue");
+                          const currentDelivRank = rankBy(currentAsRankable, "deliveries");
+                          const previousRevRank = rankBy(previousAgentRows, "revenue");
+                          const previousDelivRank = rankBy(previousAgentRows, "deliveries");
+                          const hadPreviousActivity = previousAgentRows.some((r) => r.agentId === agent.id && (r.totalOrders > 0 || r.revenue > 0));
+
                           // Peer comparison: other agents whose primary base state matches
                           const stateRows = myState
                             ? agentRows.filter((r) => r.agent.id !== agent.id && agentPrimaryBaseState(r.agent) === myState)
@@ -31112,7 +31155,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             .map(([wk, v]) => ({ wk, ...v }))
                             .sort((a, b) => b.revenue - a.revenue)[0];
 
-                          const hasAnyComparison = stateRows.length > 0 || cohortRows.length > 0 || bestWeek;
+                          const hasAnyComparison = stateRows.length > 0 || cohortRows.length > 0 || bestWeek || hadPreviousActivity;
                           if (!hasAnyComparison) return null;
 
                           const renderDeltaTone = (mine: number, avg: number | null) => {
@@ -31122,10 +31165,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             return delta > 0 ? "good" as const : "bad" as const;
                           };
 
+                          // Sparkline data: last 12 ISO weeks of lifetime
+                          // delivery counts + revenue. Walks ISO weeks
+                          // descending and trims to most-recent 12 with data.
+                          const weeklySeries = Array.from(weekly.entries())
+                            .map(([wk, v]) => ({ wk, ...v }))
+                            .sort((a, b) => a.wk.localeCompare(b.wk));
+                          const sparkData = weeklySeries.slice(-12).map((w) => ({
+                            label: w.wk.replace(/^\d{4}-/, ""),
+                            Delivered: w.delivered,
+                            Revenue: w.revenue
+                          }));
+
+                          // WoW rank delta helper: positive = improved (rank
+                          // number went down), negative = dropped.
+                          const rankDelta = (curr: number | null, prev: number | null) => {
+                            if (curr == null || prev == null) return null;
+                            return prev - curr;
+                          };
+                          const revRankDelta = rankDelta(currentRevRank, previousRevRank);
+                          const delivRankDelta = rankDelta(currentDelivRank, previousDelivRank);
+
+                          const formatRankDelta = (delta: number | null) => {
+                            if (delta == null) return "—";
+                            if (delta === 0) return "no change";
+                            return delta > 0 ? `↑ ${delta} place${delta === 1 ? "" : "s"}` : `↓ ${Math.abs(delta)} place${Math.abs(delta) === 1 ? "" : "s"}`;
+                          };
+                          const rankDeltaTone = (delta: number | null) =>
+                            delta == null ? "default" as const
+                            : delta > 0 ? "good" as const
+                            : delta < 0 ? "bad" as const
+                            : "default" as const;
+
                           return (
                             <section>
                               <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-gray-500 mb-2">Comparative</h3>
                               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                                {hadPreviousActivity ? (
+                                  <>
+                                    <Tile
+                                      label="Rank Δ — revenue"
+                                      value={currentRevRank != null ? `#${currentRevRank}` : "—"}
+                                      sub={`Prev period #${previousRevRank ?? "—"} · ${formatRankDelta(revRankDelta)}`}
+                                      tone={rankDeltaTone(revRankDelta)}
+                                    />
+                                    <Tile
+                                      label="Rank Δ — deliveries"
+                                      value={currentDelivRank != null ? `#${currentDelivRank}` : "—"}
+                                      sub={`Prev period #${previousDelivRank ?? "—"} · ${formatRankDelta(delivRankDelta)}`}
+                                      tone={rankDeltaTone(delivRankDelta)}
+                                    />
+                                  </>
+                                ) : null}
                                 {stateRows.length > 0 && mineRow ? (
                                   <>
                                     <Tile
@@ -31173,6 +31264,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   />
                                 ) : null}
                               </div>
+
+                              {/* Weekly trend sparklines (lifetime, last 12 weeks) */}
+                              {sparkData.length >= 2 ? (
+                                <article className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mt-3">
+                                  <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
+                                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500 m-0">Weekly trend — last {sparkData.length} weeks</p>
+                                    <p className="text-[11px] text-gray-400 m-0">Solid = deliveries · dashed = revenue (scaled)</p>
+                                  </div>
+                                  <ResponsiveContainer width="100%" height={140}>
+                                    <LineChart data={sparkData} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
+                                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
+                                      <YAxis yAxisId="left" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
+                                      <YAxis yAxisId="right" orientation="right" hide />
+                                      <Tooltip
+                                        contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 11 }}
+                                        formatter={(value: any, name: string) => name === "Revenue" ? [formatMoney(Number(value)), name] : [value, name]}
+                                      />
+                                      <Line yAxisId="left" type="monotone" dataKey="Delivered" stroke="#10b981" strokeWidth={2.2} dot={{ r: 2.5, fill: "#10b981" }} />
+                                      <Line yAxisId="right" type="monotone" dataKey="Revenue" stroke="#1F8FE0" strokeWidth={1.6} strokeDasharray="4 3" dot={false} />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                </article>
+                              ) : null}
                             </section>
                           );
                         })()}
