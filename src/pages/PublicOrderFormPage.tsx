@@ -3061,12 +3061,20 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
+  const orderSummaryDescription = (chosenPackage?.description?.trim()
+    || (chosenAttributionProduct?.packageDescription ?? publicProduct?.packageDescription ?? "").trim()
+    || (chosenAttributionProduct?.description ?? publicProduct?.description ?? "").trim()) || "";
   const orderSummaryBlock = settings.formOrderSummaryEnabled && chosenPackage ? (
     <div className="panel public-order-summary-rail" style={{ padding: 16, display: "grid", gap: 6 }}>
       <strong style={{ fontSize: 14 }}>{settings.formOrderSummaryTitle}</strong>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
-        <span>{chosenProductName} · {chosenPackage.name}</span>
-        <strong>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
+      <div style={{ display: "grid", gap: 4, padding: "4px 0", borderBottom: "1px solid #f0f0f0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+          <span>{chosenProductName} · {chosenPackage.name}</span>
+          <strong>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
+        </div>
+        {orderSummaryDescription ? (
+          <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>{orderSummaryDescription}</span>
+        ) : null}
       </div>
       {selectedCrossSellLines.map((line, index) => (
         <div key={`xs-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#92400e" }}>
