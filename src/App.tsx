@@ -11584,41 +11584,282 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       customerName: group.agentName
     });
   };
+  // Flat, per-movement audit rows for one agent×hub group within the
+  // selected week. Mirrors the WhatsApp summary's source logic (customer
+  // deliveries + waybills + manual stock movements) but emits one row per
+  // movement for the CSV's detail section. Used only for export.
+  type WeekendMovementRow = {
+    date: string;
+    movement: string;
+    direction: "In" | "Out";
+    productName: string;
+    productSku: string;
+    qty: number;
+    counterparty: string;
+    category: string;
+    note: string;
+    reference: string;
+  };
+  const buildWeekendMovementRows = (group: AgentWeeklyBalanceGroup): WeekendMovementRow[] => {
+    const weekStart = agentBalanceWeekStart;
+    const weekEnd = agentBalanceWeekEnd;
+    const out: WeekendMovementRow[] = [];
+    const skuFor = (productId: string | undefined, fallbackName: string) => {
+      if (productId) {
+        const p = products.find((prod) => prod.id === productId);
+        if (p) return p.sku ?? "";
+      }
+      const byName = products.find((prod) => prod.name === fallbackName);
+      return byName?.sku ?? "";
+    };
+    const nameFor = (productId: string | undefined, fallbackName: string) => {
+      if (productId) {
+        const match = products.find((p) => p.id === productId)?.name;
+        if (match) return match;
+      }
+      return fallbackName || "Unknown product";
+    };
+
+    // 1. Customer deliveries (main + add-ons + free gifts)
+    trackedOrders
+      .filter((order) => {
+        if (order.agentId !== group.agentId) return false;
+        if ((order.status ?? "") !== "Delivered") return false;
+        const dk = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
+        return dk && dk >= weekStart && dk <= weekEnd;
+      })
+      .forEach((order) => {
+        const day = normalizeDateKey(order.deliveredDate!);
+        const customer = (order.customer || "Unknown customer").trim();
+        const mainComponents = (order.packageComponentsSnapshot ?? []).filter(
+          (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
+        );
+        if (mainComponents.length > 0) {
+          mainComponents.forEach((c) => {
+            out.push({
+              date: day, movement: "Customer delivery", direction: "Out",
+              productName: nameFor(c.productId, c.productName), productSku: skuFor(c.productId, c.productName),
+              qty: Number(c.quantity || 0), counterparty: customer, category: "Main package",
+              note: order.packageName || "", reference: order.id
+            });
+          });
+        } else {
+          const qty = Number(order.quantity || 1);
+          if (qty > 0) {
+            out.push({
+              date: day, movement: "Customer delivery", direction: "Out",
+              productName: order.productName || "Unknown product", productSku: skuFor(order.productId, order.productName),
+              qty, counterparty: customer, category: "Main package",
+              note: order.packageName || "", reference: order.id
+            });
+          }
+        }
+        (order.crossSellLines ?? []).forEach((line) => {
+          const subComponents = (line.packageComponentsSnapshot ?? []).filter(
+            (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
+          );
+          if (subComponents.length > 0) {
+            subComponents.forEach((c) => {
+              out.push({
+                date: day, movement: "Customer delivery", direction: "Out",
+                productName: nameFor(c.productId, c.productName), productSku: skuFor(c.productId, c.productName),
+                qty: Number(c.quantity || 0), counterparty: customer, category: "Add-on",
+                note: line.packageName || "", reference: order.id
+              });
+            });
+          } else {
+            const qty = Number(line.quantity || 0);
+            if (qty > 0) {
+              out.push({
+                date: day, movement: "Customer delivery", direction: "Out",
+                productName: nameFor(line.productId, line.productName), productSku: skuFor(line.productId, line.productName),
+                qty, counterparty: customer, category: "Add-on",
+                note: line.packageName || "", reference: order.id
+              });
+            }
+          }
+        });
+        (order.freeGiftLines ?? []).forEach((gift) => {
+          const qty = Number(gift.quantity || 0);
+          if (qty > 0) {
+            out.push({
+              date: day, movement: "Customer delivery", direction: "Out",
+              productName: nameFor(gift.productId, gift.productName), productSku: skuFor(gift.productId, gift.productName),
+              qty, counterparty: customer, category: "Free gift",
+              note: "", reference: order.id
+            });
+          }
+        });
+      });
+
+    // 2. Waybills (inter-hub only — skip auto-created customer-delivery ones)
+    waybillRecords.forEach((waybill) => {
+      if (isCustomerDeliveryWaybill(waybill)) return;
+      const qty = Number(waybill.quantity || 0);
+      if (qty <= 0) return;
+      const productName = nameFor(waybill.productId, waybill.productName);
+      const productSku = skuFor(waybill.productId, waybill.productName);
+      if (waybill.toAgentId === group.agentId && waybill.dateReceived) {
+        const day = normalizeDateKey(waybill.dateReceived);
+        if (day && day >= weekStart && day <= weekEnd) {
+          out.push({
+            date: day, movement: "Waybill received", direction: "In",
+            productName, productSku, qty,
+            counterparty: waybill.sendingLocationName || waybill.sendingState || "warehouse",
+            category: "Transfer", note: waybill.note ?? "", reference: waybill.id
+          });
+        }
+      }
+      if (waybill.fromAgentId === group.agentId && waybill.dateSent) {
+        const day = normalizeDateKey(waybill.dateSent);
+        if (day && day >= weekStart && day <= weekEnd) {
+          out.push({
+            date: day, movement: "Waybill sent", direction: "Out",
+            productName, productSku, qty,
+            counterparty: waybill.receivingLocationName || waybill.receivingState || "another hub",
+            category: "Transfer", note: waybill.note ?? "", reference: waybill.id
+          });
+        }
+      }
+    });
+
+    // 3. Manual stock movements (Correction / Return / Stock Added / etc.)
+    stockMovements.forEach((movement) => {
+      if (movement.agentId !== group.agentId) return;
+      if (movement.type === "Order Fulfilled") return;
+      if (movement.type === "Waybill In" || movement.type === "Waybill Out") return;
+      const dateRaw = movement.date ?? movement.createdAt ?? "";
+      const day = dateRaw ? normalizeDateKey(dateRaw) : "";
+      if (!day || day < weekStart || day > weekEnd) return;
+      const qty = Number(movement.qty || 0);
+      if (qty === 0) return;
+      out.push({
+        date: day,
+        movement: movement.type,
+        direction: qty > 0 ? "In" : "Out",
+        productName: nameFor(movement.productId, movement.productName),
+        productSku: skuFor(movement.productId, movement.productName),
+        qty: Math.abs(qty),
+        counterparty: movement.byName || movement.by || "",
+        category: "Manual",
+        note: movement.note ?? "",
+        reference: movement.orderId || movement.waybillId || movement.id
+      });
+    });
+
+    return out.sort((a, b) =>
+      a.date.localeCompare(b.date)
+      || a.productName.localeCompare(b.productName)
+      || a.movement.localeCompare(b.movement)
+    );
+  };
+
   const exportWeekendStockSummaryCsv = () => {
-    const rows = [
+    const sortedRows = visibleAgentBalanceRows
+      .slice()
+      .sort((a, b) =>
+        a.agentName.localeCompare(b.agentName)
+        || a.locationName.localeCompare(b.locationName)
+        || a.productName.localeCompare(b.productName)
+      );
+
+    // ── Metadata header ──
+    const meta: string[][] = [
       ["Weekend Stock Summary"],
       ["Week", weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)],
       ["Agent Filter", agentBalanceAgentId ? (agentBalanceAgentOptions.find((agent) => agent.id === agentBalanceAgentId)?.name ?? agentBalanceAgentId) : "All agents"],
       ["State Filter", agentBalanceStateFilter || "All states"],
       ["Product Filter", agentBalanceProductId ? (products.find((product) => product.id === agentBalanceProductId)?.name ?? agentBalanceProductId) : "All products"],
       ["Search", agentBalanceSearch || "All"],
-      ["Updated", agentBalanceGeneratedAt ? formatMoment(agentBalanceGeneratedAt) : "Not yet generated"],
-      [],
-      ["Agent", "Hub", "State", "City", "Product", "SKU", "Opening", "Received", "Delivered", "Adjustments", "Closing"]
+      ["Generated", agentBalanceGeneratedAt ? formatMoment(agentBalanceGeneratedAt) : "Not yet generated"],
+      ["Hubs in view", String(agentBalanceGroups.length)],
+      ["Product rows", String(sortedRows.length)],
+      ["Note", "Closing balance = stock the agent starts next week (Monday) with."],
+      []
     ];
 
-    const csvRows = visibleAgentBalanceRows
-      .slice()
-      .sort((a, b) =>
-        a.agentName.localeCompare(b.agentName)
-        || a.locationName.localeCompare(b.locationName)
-        || a.productName.localeCompare(b.productName)
-      )
-      .map((row) => [
-        row.agentName,
-        row.locationName,
-        row.locationState ?? "",
-        row.locationCity ?? "",
-        row.productName,
-        row.productSku ?? "",
-        String(row.openingBalance),
-        String(row.receivedThisWeek),
-        String(row.deliveredThisWeek),
-        String(weekendStockAdjustmentForRow(row)),
-        String(row.closingBalance)
-      ]);
+    // ── Section 1: per-product balance table with full category split ──
+    const balanceHeader = [
+      "Agent", "Hub", "State", "City", "Product", "SKU",
+      "Opening", "Received", "Restored", "Delivered", "Returned",
+      "Sent Out (Transfer)", "Written Off", "Net Change", "Closing (carry to next Mon)"
+    ];
+    const balanceRows = sortedRows.map((row) => [
+      row.agentName,
+      row.locationName,
+      row.locationState ?? "",
+      row.locationCity ?? "",
+      row.productName,
+      row.productSku ?? "",
+      String(row.openingBalance),
+      String(row.receivedThisWeek),
+      String(row.restoredThisWeek),
+      String(row.deliveredThisWeek),
+      String(row.returnedThisWeek),
+      String(row.transferredOutThisWeek),
+      String(row.writtenOffThisWeek),
+      String(row.netChange),
+      String(row.closingBalance)
+    ]);
+    // Totals row across all visible product rows
+    const sumCol = (pick: (r: AgentWeeklyBalanceRow) => number) => sortedRows.reduce((acc, r) => acc + pick(r), 0);
+    const totalsRow = [
+      "TOTAL", "", "", "", "", "",
+      String(sumCol((r) => r.openingBalance)),
+      String(sumCol((r) => r.receivedThisWeek)),
+      String(sumCol((r) => r.restoredThisWeek)),
+      String(sumCol((r) => r.deliveredThisWeek)),
+      String(sumCol((r) => r.returnedThisWeek)),
+      String(sumCol((r) => r.transferredOutThisWeek)),
+      String(sumCol((r) => r.writtenOffThisWeek)),
+      String(sumCol((r) => r.netChange)),
+      String(sumCol((r) => r.closingBalance))
+    ];
 
-    const csv = [...rows, ...csvRows]
+    // ── Section 2: movement-by-movement audit log ──
+    const movementHeader = [
+      "Date", "Agent", "Hub", "State", "City", "Product", "SKU",
+      "Movement", "Direction", "Qty", "Counterparty", "Category", "Note", "Reference"
+    ];
+    const movementRows: string[][] = [];
+    agentBalanceGroups
+      .slice()
+      .sort((a, b) => a.agentName.localeCompare(b.agentName) || a.locationName.localeCompare(b.locationName))
+      .forEach((group) => {
+        const hubLabel = group.locationName;
+        buildWeekendMovementRows(group).forEach((m) => {
+          movementRows.push([
+            m.date,
+            group.agentName,
+            hubLabel,
+            group.locationState ?? "",
+            group.locationCity ?? "",
+            m.productName,
+            m.productSku,
+            m.movement,
+            m.direction,
+            String(m.qty),
+            m.counterparty,
+            m.category,
+            m.note,
+            m.reference
+          ]);
+        });
+      });
+
+    const allRows: string[][] = [
+      ...meta,
+      ["STOCK BALANCE BY PRODUCT"],
+      balanceHeader,
+      ...balanceRows,
+      totalsRow,
+      [],
+      ["MOVEMENT DETAIL (every delivery, transfer & adjustment this week)"],
+      movementHeader,
+      ...(movementRows.length > 0 ? movementRows : [["No movements recorded this week."]])
+    ];
+
+    const csv = allRows
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
       .join("\n");
 
