@@ -9328,18 +9328,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       total: customerSelectedBonus + repDrivenBonus
     };
   };
-  const costForOrder = (order: TrackedOrder) => {
-    const product = products.find((item) => item.id === order.productId);
-    if (!product) {
-      return 0;
-    }
-    // Pick the pricing whose currency matches the order so cost and revenue
-    // are in the same unit. Fall back to primary if no match.
-    const matchPricing = order.currency
-      ? product.pricings.find((p) => p.currency === order.currency)
-      : undefined;
+  // Per-product unit cost in the order's currency (falls back to primary).
+  const unitCostForProductInCurrency = (productId: string | undefined | null, currency?: string) => {
+    if (!productId) return 0;
+    const product = products.find((item) => item.id === productId);
+    if (!product) return 0;
+    const matchPricing = currency ? product.pricings.find((p) => p.currency === currency) : undefined;
     const pricing = matchPricing ?? primaryPricing(product);
-    return quantityForOrder(order) * (pricing?.unitCost ?? 0);
+    return pricing?.unitCost ?? 0;
+  };
+  // True COGS for an order = cost of every real unit that leaves stock:
+  //   - combo components (packageComponentsSnapshot) when present, else the
+  //     main product × quantity
+  //   - cross-sell add-ons
+  //   - free gifts (given away at ₦0 revenue but still a real cost)
+  // Mirrors the inventory expansion in demandLinesForOrder, so the profit
+  // math matches what's actually deducted on delivery. The previous version
+  // only costed the main/attributed product and ignored combo parts, add-ons
+  // and gifts — which understated COGS (overstated profit) for combos.
+  const costForOrder = (order: TrackedOrder) => {
+    let total = 0;
+    if (order.packageComponentsSnapshot?.length) {
+      for (const component of order.packageComponentsSnapshot) {
+        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency);
+      }
+    } else {
+      total += quantityForOrder(order) * unitCostForProductInCurrency(order.productId, order.currency);
+    }
+    for (const line of order.crossSellLines ?? []) {
+      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+    }
+    for (const line of order.freeGiftLines ?? []) {
+      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+    }
+    return total;
   };
   const stockDemandDateKeyDaysAgo = (daysAgo: number) => {
     const date = new Date();
@@ -12289,7 +12311,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeGrossMargin = financeRevenue === 0 ? 0 : Math.round((financeGrossProfit / financeRevenue) * 1000) / 10;
   const financeNetMargin = financeRevenue === 0 ? 0 : Math.round((financeNetProfit / financeRevenue) * 1000) / 10;
   const financeDeliveredCount = financeDeliveredRows.length;
-  const financeAvgCpa = financeDeliveredCount === 0 ? 0 : Math.round(financeExpenseTotal / financeDeliveredCount);
   const financeRoi = financeCogs + financeLogisticsCost + financeOpex === 0 ? 0 : Math.round((financeNetProfit / (financeCogs + financeLogisticsCost + financeOpex)) * 100);
   const proportionalShare = (valueBase: number, totalBase: number, pool: number, countBase = 0, totalCountBase = 0) => {
     if (pool === 0) return 0;
@@ -12297,27 +12318,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (totalCountBase > 0) return pool * (countBase / totalCountBase);
     return 0;
   };
+  // Per-rep CONTRIBUTION MARGIN (direct profit), not company net profit.
+  // We only subtract costs the rep directly causes — COGS, logistics, and
+  // the rep's own commission/bonus — and deliberately do NOT push shared
+  // company overhead onto reps (that stays on the P&L / Financial Overview
+  // tabs). This keeps the number fair and defensible, and means the rows
+  // can't sum to more than the company total the way the old overhead-
+  // allocated "net profit" did.
   const financeRepRows = salesRepUsers.map((user) => {
     const delivered = financeDeliveredRows.filter((order) => order.assignedRepId === user.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
     const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
-    const allocatedExpenses = proportionalShare(revenue, financeRevenue, financeSharedOpex, delivered.length, financeDeliveredCount);
-    const netProfit = revenue - cogs - logistics - allocatedExpenses;
+    const commission = recognizedBonusTotalForRows(delivered);
+    const contribution = revenue - cogs - logistics - commission;
+    const directCost = cogs + logistics + commission;
     return {
       user,
       revenue,
       delivered: delivered.length,
-      netProfit,
-      cpa: delivered.length === 0 ? 0 : Math.round(allocatedExpenses / delivered.length),
-      roi: cogs + logistics + allocatedExpenses === 0 ? 0 : Math.round((netProfit / (cogs + logistics + allocatedExpenses)) * 100)
+      commission,
+      contribution,
+      roi: directCost === 0 ? 0 : Math.round((contribution / directCost) * 100)
     };
   });
   const filteredFinanceRepRows = financeRepRows.filter((row) => {
     const search = financeRepSearch.trim().toLowerCase();
     return !search || `${row.user.name} ${row.user.email}`.toLowerCase().includes(search);
   });
-  const topFinanceRep = [...financeRepRows].sort((a, b) => b.netProfit - a.netProfit)[0];
+  const topFinanceRep = [...financeRepRows].sort((a, b) => b.contribution - a.contribution)[0];
+  const financeRepCommissionTotal = financeRepRows.reduce((sum, row) => sum + row.commission, 0);
+  const financeRepContributionTotal = financeRepRows.reduce((sum, row) => sum + row.contribution, 0);
   const financeAgentRows = agentRows.map((row) => {
     const delivered = financeDeliveredRows.filter((order) => order.agentId === row.agent.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
@@ -18492,8 +18523,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let tabRows: string[][] = [];
     if (financeTab === "Sales Rep Finance") {
       tabRows = [
-        ["Sales Rep", "Revenue", "Delivered", "Net Profit", "CPA", "ROI %"],
-        ...filteredFinanceRepRows.map((r) => [r.user.name, formatMoney(r.revenue), String(r.delivered), formatMoney(r.netProfit), formatMoney(r.cpa), `${r.roi}%`])
+        ["Sales Rep", "Revenue", "Delivered", "Contribution", "Commission", "ROI %"],
+        ...filteredFinanceRepRows.map((r) => [r.user.name, formatMoney(r.revenue), String(r.delivered), formatMoney(r.contribution), formatMoney(r.commission), `${r.roi}%`])
       ];
     } else if (financeTab === "Agent Costs") {
       tabRows = [
@@ -35552,9 +35583,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="space-y-4">
                   <section className="grid grid-cols-1 lg:grid-cols-3 gap-4" aria-label="Sales rep finance summary">
                     {[
-                      { title: "Total Team ROI", value: `${financeRoi}%`, helper: "Net Profit / (COGS + Expenses)", icon: CircleDollarSign, tone: "blue" },
-                      { title: "Avg CPA", value: formatMoney(financeAvgCpa), helper: "SUM(Expenses) / Delivered Orders", icon: CircleDollarSign, tone: "gray" },
-                      { title: "Top Performer", value: topFinanceRep?.user.name ?? "N/A", helper: `${formatMoney(topFinanceRep?.netProfit ?? 0)} Net Profit`, icon: BadgeCheck, tone: "green" },
+                      { title: "Team Contribution", value: formatMoney(financeRepContributionTotal), helper: "Revenue − COGS − Logistics − Commission (direct, excl. company overhead)", icon: CircleDollarSign, tone: "blue" },
+                      { title: "Total Commission", value: formatMoney(financeRepCommissionTotal), helper: "Sum of rep bonuses on delivered orders", icon: CircleDollarSign, tone: "gray" },
+                      { title: "Top Performer", value: topFinanceRep?.user.name ?? "N/A", helper: `${formatMoney(topFinanceRep?.contribution ?? 0)} contribution`, icon: BadgeCheck, tone: "green" },
                     ].map(({ title, value, helper, icon: Icon, tone }) => (
                       <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-2">
@@ -35596,16 +35627,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Net Profit</span>
-                                <div className="font-semibold text-gray-900">{formatMoney(row.netProfit)}</div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Contribution</span>
+                                <div className="font-semibold text-gray-900">{formatMoney(row.contribution)}</div>
                               </div>
                               <div>
                                 <span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span>
                                 <div className="text-gray-700">{row.delivered}</div>
                               </div>
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-gray-400">CPA</span>
-                                <div className="text-gray-600">{formatMoney(row.cpa)}</div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Commission</span>
+                                <div className="text-gray-600">{formatMoney(row.commission)}</div>
                               </div>
                             </div>
                           </article>
@@ -35616,7 +35647,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Sales Rep Name", "Revenue", "Delivered", "Net Profit", "CPA", "ROI %"].map((h) => (
+                            {["Sales Rep Name", "Revenue", "Delivered", "Contribution", "Commission", "ROI %"].map((h) => (
                               <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                             ))}
                           </tr>
@@ -35633,8 +35664,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 </td>
                                 <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.revenue)}</td>
                                 <td className="px-4 py-4 text-gray-700">{row.delivered}</td>
-                                <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.netProfit)}</td>
-                                <td className="px-4 py-4 text-gray-600">{formatMoney(row.cpa)}</td>
+                                <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.contribution)}</td>
+                                <td className="px-4 py-4 text-gray-600">{formatMoney(row.commission)}</td>
                                 <td className="px-4 py-4"><span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{row.roi}%</span></td>
                               </tr>
                             ))
