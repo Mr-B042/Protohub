@@ -6123,6 +6123,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>([]);
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>([]);
   const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => mondayKeyFromDate());
+  // Range mode: "week" = the standard Mon–Sun week navigated above; "custom"
+  // = an arbitrary [start, end] window the user picks. Custom defaults to the
+  // current week's Mon–Sun until the user changes the pickers.
+  const [agentBalanceRangeMode, setAgentBalanceRangeMode] = useState<"week" | "custom">("week");
+  const [agentBalanceCustomStart, setAgentBalanceCustomStart] = useState<string>(() => mondayKeyFromDate());
+  const [agentBalanceCustomEnd, setAgentBalanceCustomEnd] = useState<string>(() => weekEndFromStartKey(mondayKeyFromDate()));
   const [agentBalanceRows, setAgentBalanceRows] = useState<AgentWeeklyBalanceRow[]>([]);
   const [agentBalanceSummary, setAgentBalanceSummary] = useState<AgentWeeklyBalanceSummary | null>(null);
   const [agentBalanceGeneratedAt, setAgentBalanceGeneratedAt] = useState("");
@@ -7034,8 +7040,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const loadAgentBalances = async (options: { quiet?: boolean } = {}) => {
     setAgentBalanceLoading(true);
     try {
+      // Resolve the window from the current mode. Custom range sends an
+      // explicit weekEnd; week mode omits it (backend defaults to +6).
+      const customRange = agentBalanceRangeMode === "custom";
+      const windowStart = customRange ? agentBalanceCustomStart : agentBalanceWeekStart;
+      const windowEnd = customRange
+        ? (agentBalanceCustomEnd >= agentBalanceCustomStart ? agentBalanceCustomEnd : agentBalanceCustomStart)
+        : null;
       const result = await weekendStockSummaryApi.weekly({
-        weekStart: agentBalanceWeekStart,
+        weekStart: windowStart,
+        ...(windowEnd ? { weekEnd: windowEnd } : {}),
         ...(agentBalanceAgentId ? { agentId: agentBalanceAgentId } : {}),
         ...(agentBalanceProductId ? { productId: agentBalanceProductId } : {})
       });
@@ -7235,7 +7249,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!auth.getAccessToken()) return;
     if (!isWeekendStockSummaryPage(activePage)) return;
     void loadAgentBalances({ quiet: agentBalanceRows.length > 0 });
-  }, [activePage, agentBalanceWeekStart, agentBalanceAgentId, agentBalanceProductId]);
+  }, [activePage, agentBalanceWeekStart, agentBalanceRangeMode, agentBalanceCustomStart, agentBalanceCustomEnd, agentBalanceAgentId, agentBalanceProductId]);
 
   const loadSmsBalance = async (options: { quiet?: boolean } = {}) => {
     setSmsBalanceLoading(true);
@@ -11031,7 +11045,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
-  const agentBalanceWeekEnd = weekEndFromStartKey(agentBalanceWeekStart);
+  // Effective window the summary covers. In "week" mode it's the navigated
+  // Mon–Sun week; in "custom" mode it's the user-picked [start, end] range.
+  // Everything downstream (data load, Copy Summary, CSV, drill) reads these
+  // two so the page works identically for both modes.
+  const agentBalanceWindowStart = agentBalanceRangeMode === "custom" ? agentBalanceCustomStart : agentBalanceWeekStart;
+  const agentBalanceWindowEnd = agentBalanceRangeMode === "custom"
+    ? (agentBalanceCustomEnd >= agentBalanceCustomStart ? agentBalanceCustomEnd : agentBalanceCustomStart)
+    : weekEndFromStartKey(agentBalanceWeekStart);
+  // Back-compat alias — existing code referenced agentBalanceWeekEnd as "the
+  // end of the window", which is now range-aware.
+  const agentBalanceWeekEnd = agentBalanceWindowEnd;
+  const agentBalanceIsCustomRange = agentBalanceRangeMode === "custom";
   const agentBalanceSearchNeedle = agentBalanceSearch.trim().toLowerCase();
   const visibleAgentBalanceRows = agentBalanceRows.filter((row) => {
     const matchesState = !agentBalanceStateFilter || (row.locationState?.trim() ?? "") === agentBalanceStateFilter;
@@ -11134,13 +11159,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ? "Correction"
               : "All Types",
       movementDrill: drill,
-      startDate: agentBalanceWeekStart,
-      endDate: agentBalanceWeekEnd
+      startDate: agentBalanceWindowStart,
+      endDate: agentBalanceWindowEnd
     });
   };
   const formatAgentBalanceWeekMessage = (group: AgentWeeklyBalanceGroup) => {
-    const weekStart = agentBalanceWeekStart;
-    const weekEnd = agentBalanceWeekEnd;
+    const weekStart = agentBalanceWindowStart;
+    const weekEnd = agentBalanceWindowEnd;
     // Build a Date safely from a YYYY-MM-DD key (avoid TZ shift).
     const dateFromKey = (key: string) => {
       const [y, m, d] = key.split("-").map((part) => Number(part));
@@ -11349,8 +11374,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     lines.push(`from ${fmtFull(weekStart)} to ${fmtFull(weekEnd)}`);
     lines.push("");
 
-    // ── Opening balances per product (what they started the week with) ──
-    lines.push(`Stock Balance you had at the start of this week (${fmtFull(weekStart)}):`);
+    // ── Opening balances per product (what they started the period with) ──
+    lines.push(agentBalanceIsCustomRange
+      ? `Stock Balance at the start of this period (${fmtFull(weekStart)}):`
+      : `Stock Balance you had at the start of this week (${fmtFull(weekStart)}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.openingBalance}`);
@@ -11492,17 +11519,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
 
     if (!renderedAny) {
-      lines.push(`No stock movement recorded this week — all balances unchanged.`);
+      lines.push(agentBalanceIsCustomRange
+        ? `No stock movement recorded in this period — all balances unchanged.`
+        : `No stock movement recorded this week — all balances unchanged.`);
       lines.push("");
     }
 
     // ── Closing summary ─────────────────────────────────────────
-    // Two parts: (1) the closing balance per product to carry into next
-    // week (mirror of the opening list, using authoritative closingBalance),
-    // and (2) a week totals roll-up across all products.
-    // The Sunday-night closing balance is what the agent opens next week
-    // (Monday) with — label it as that Monday so it reads as the start of
-    // the new week, not the end of the old one.
+    // (1) closing balance per product, (2) totals roll-up.
+    // Week mode: the Sunday-night closing is what the agent opens the NEXT
+    // week (Monday) with, so we label it as that Monday. Custom range: there
+    // is no "next week", so we just state the closing balance as of the end
+    // date of the selected range.
     const nextMonday = dateFromKey(weekEnd);
     nextMonday.setDate(nextMonday.getDate() + 1);
     const nextMondayLabel = nextMonday.toLocaleDateString("en-GB", {
@@ -11514,7 +11542,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     lines.push("====================");
     lines.push("");
-    lines.push(`Stock Balance to start next week with (${nextMondayLabel}):`);
+    lines.push(agentBalanceIsCustomRange
+      ? `Closing Stock Balance as of ${fmtFull(weekEnd)}:`
+      : `Stock Balance to start next week with (${nextMondayLabel}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.closingBalance}`);
@@ -11532,9 +11562,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const totalTransferredOut = sumRows((r) => r.transferredOutThisWeek);
     const totalWrittenOff     = sumRows((r) => r.writtenOffThisWeek);
 
-    lines.push("WEEK SUMMARY");
-    lines.push(`Total stock at week start: ${totalOpening}pcs`);
-    if (totalReceived > 0)       lines.push(`Total received this week: ${totalReceived}pcs`);
+    const periodWord = agentBalanceIsCustomRange ? "this period" : "this week";
+    lines.push(agentBalanceIsCustomRange ? "PERIOD SUMMARY" : "WEEK SUMMARY");
+    lines.push(`Total stock at start: ${totalOpening}pcs`);
+    if (totalReceived > 0)       lines.push(`Total received ${periodWord}: ${totalReceived}pcs`);
     if (totalRestored > 0)       lines.push(`Total restored to stock: ${totalRestored}pcs`);
     if (totalDelivered > 0)      lines.push(`Total delivered to customers: ${totalDelivered}pcs`);
     if (totalReturned > 0)       lines.push(`Total returned: ${totalReturned}pcs`);
@@ -11560,7 +11591,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const combined = [
       `Weekend stock summary`,
-      `Week: ${weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}`,
+      `${agentBalanceIsCustomRange ? "Period" : "Week"}: ${weekRangeLabel(agentBalanceWindowStart, agentBalanceWindowEnd)}`,
       `Visible hubs: ${agentBalanceGroups.length}`,
       "",
       ...agentBalanceGroups.flatMap((group, index) => (
@@ -11601,8 +11632,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     reference: string;
   };
   const buildWeekendMovementRows = (group: AgentWeeklyBalanceGroup): WeekendMovementRow[] => {
-    const weekStart = agentBalanceWeekStart;
-    const weekEnd = agentBalanceWeekEnd;
+    const weekStart = agentBalanceWindowStart;
+    const weekEnd = agentBalanceWindowEnd;
     const out: WeekendMovementRow[] = [];
     const skuFor = (productId: string | undefined, fallbackName: string) => {
       if (productId) {
@@ -11766,7 +11797,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // ── Metadata header ──
     const meta: string[][] = [
       ["Weekend Stock Summary"],
-      ["Week", weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)],
+      [agentBalanceIsCustomRange ? "Period" : "Week", weekRangeLabel(agentBalanceWindowStart, agentBalanceWindowEnd)],
       ["Agent Filter", agentBalanceAgentId ? (agentBalanceAgentOptions.find((agent) => agent.id === agentBalanceAgentId)?.name ?? agentBalanceAgentId) : "All agents"],
       ["State Filter", agentBalanceStateFilter || "All states"],
       ["Product Filter", agentBalanceProductId ? (products.find((product) => product.id === agentBalanceProductId)?.name ?? agentBalanceProductId) : "All products"],
@@ -11866,7 +11897,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `weekend-stock-summary-${agentBalanceWeekStart}.csv`;
+    link.download = `weekend-stock-summary-${agentBalanceWindowStart}${agentBalanceIsCustomRange ? `_to_${agentBalanceWindowEnd}` : ""}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -30958,48 +30989,111 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </header>
 
               <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-4">
-                <div className="flex flex-col xl:flex-row xl:items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                      onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, -7))}
-                    >
-                      <ChevronLeft className="w-4 h-4" /> Previous week
-                    </button>
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                      onClick={() => setAgentBalanceWeekStart(mondayKeyFromDate())}
-                    >
-                      This week
-                    </button>
-                    <button
-                      className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                      onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, 7))}
-                    >
-                      Next week <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
-                    <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Jump to week</span>
-                    <input
-                      type="date"
-                      className="!min-h-0 border-0 bg-transparent p-0 text-sm text-gray-800 focus:outline-none"
-                      value={agentBalanceWeekStart}
-                      onChange={(event) => {
-                        const picked = event.target.value;
-                        if (!picked) return;
-                        // Snap any picked day to the Monday of its week so the
-                        // summary always aligns to a full Mon–Sun window.
-                        setAgentBalanceWeekStart(mondayKeyFromDate(new Date(`${picked}T00:00:00`)));
-                      }}
-                    />
-                  </label>
-                  <div className="xl:ml-auto inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
-                    <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
-                    Week of {weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}
-                  </div>
+                {/* Mode toggle: weekly navigation vs an arbitrary date range */}
+                <div className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50 p-1 text-sm font-semibold">
+                  <button
+                    className={`!min-h-0 px-3 py-1.5 rounded-md transition-colors ${!agentBalanceIsCustomRange ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                    onClick={() => setAgentBalanceRangeMode("week")}
+                  >
+                    Weekly
+                  </button>
+                  <button
+                    className={`!min-h-0 px-3 py-1.5 rounded-md transition-colors ${agentBalanceIsCustomRange ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                    onClick={() => {
+                      // Seed the custom range from the current week so it opens
+                      // on a sensible window the first time.
+                      if (agentBalanceRangeMode !== "custom") {
+                        setAgentBalanceCustomStart(agentBalanceWeekStart);
+                        setAgentBalanceCustomEnd(weekEndFromStartKey(agentBalanceWeekStart));
+                      }
+                      setAgentBalanceRangeMode("custom");
+                    }}
+                  >
+                    Custom range
+                  </button>
                 </div>
+
+                {!agentBalanceIsCustomRange ? (
+                  <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, -7))}
+                      >
+                        <ChevronLeft className="w-4 h-4" /> Previous week
+                      </button>
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => setAgentBalanceWeekStart(mondayKeyFromDate())}
+                      >
+                        This week
+                      </button>
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        onClick={() => setAgentBalanceWeekStart((prev) => addDaysToDateKey(prev, 7))}
+                      >
+                        Next week <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                      <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Jump to week</span>
+                      <input
+                        type="date"
+                        className="!min-h-0 border-0 bg-transparent p-0 text-sm text-gray-800 focus:outline-none"
+                        value={agentBalanceWeekStart}
+                        onChange={(event) => {
+                          const picked = event.target.value;
+                          if (!picked) return;
+                          // Snap any picked day to the Monday of its week so the
+                          // summary always aligns to a full Mon–Sun window.
+                          setAgentBalanceWeekStart(mondayKeyFromDate(new Date(`${picked}T00:00:00`)));
+                        }}
+                      />
+                    </label>
+                    <div className="xl:ml-auto inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
+                      <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
+                      Week of {weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+                    <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">From</span>
+                      <input
+                        type="date"
+                        className="!min-h-0 border-0 bg-transparent p-0 text-sm text-gray-800 focus:outline-none"
+                        value={agentBalanceCustomStart}
+                        max={agentBalanceCustomEnd || undefined}
+                        onChange={(event) => {
+                          const picked = event.target.value;
+                          if (!picked) return;
+                          setAgentBalanceCustomStart(picked);
+                          // Keep end >= start.
+                          if (agentBalanceCustomEnd && agentBalanceCustomEnd < picked) setAgentBalanceCustomEnd(picked);
+                        }}
+                      />
+                    </label>
+                    <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">To</span>
+                      <input
+                        type="date"
+                        className="!min-h-0 border-0 bg-transparent p-0 text-sm text-gray-800 focus:outline-none"
+                        value={agentBalanceCustomEnd}
+                        min={agentBalanceCustomStart || undefined}
+                        onChange={(event) => {
+                          const picked = event.target.value;
+                          if (!picked) return;
+                          setAgentBalanceCustomEnd(picked < agentBalanceCustomStart ? agentBalanceCustomStart : picked);
+                        }}
+                      />
+                    </label>
+                    <div className="xl:ml-auto inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
+                      <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
+                      {weekRangeLabel(agentBalanceWindowStart, agentBalanceWindowEnd)}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                   <label className="space-y-1">

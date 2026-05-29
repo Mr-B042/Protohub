@@ -9,10 +9,19 @@ router.use(requireAuth);
 
 const QuerySchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Optional explicit window end. When omitted the window is the standard
+  // 7-day Mon–Sun week (weekStart + 6). When provided (and >= weekStart),
+  // the summary covers the arbitrary [weekStart, weekEnd] range — opening
+  // balance at the start, closing at the end, every movement in between.
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   agentId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
   productId: z.string().uuid().optional()
 });
+
+// Hard cap on a custom range so a huge span can't pull an unbounded
+// movement set. ~3 months is plenty for stock reconciliation.
+const MAX_RANGE_DAYS = 92;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WAT_OFFSET_MS = 60 * 60 * 1000;
@@ -188,7 +197,15 @@ router.get(
     }
 
     const weekStart = parsed.data.weekStart ?? mondayWeekStartKey();
-    const weekEnd = addDaysToKey(weekStart, 6);
+    // Window end: explicit custom range end (clamped to a sane max span and
+    // never before the start), else the standard 7-day week.
+    let weekEnd: string;
+    if (parsed.data.weekEnd && parsed.data.weekEnd >= weekStart) {
+      const maxEnd = addDaysToKey(weekStart, MAX_RANGE_DAYS - 1);
+      weekEnd = parsed.data.weekEnd > maxEnd ? maxEnd : parsed.data.weekEnd;
+    } else {
+      weekEnd = addDaysToKey(weekStart, 6);
+    }
     const weekStartIso = watDayStartIso(weekStart);
     const weekEndExclusiveIso = watDayStartIso(addDaysToKey(weekEnd, 1));
     let accessScope: WeekendStockSummaryAccessScope = { mode: "all", states: new Set<string>(), agentIds: new Set<string>() };
