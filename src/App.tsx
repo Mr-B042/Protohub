@@ -43860,9 +43860,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 		                    scheduled_date: "Scheduled date",
 		                    scheduled_at: "Scheduled at"
 		                  };
-		                  const renderValue = (value: unknown): string => {
+		                  const resolveIdToName = (fieldKey: string, value: string): string | null => {
+                    switch (fieldKey) {
+                      case "agent_id": return agents.find((a) => a.id === value)?.name ?? null;
+                      case "assigned_rep_id": return users.find((u) => u.id === value)?.name ?? null;
+                      case "product_id": return products.find((p) => p.id === value)?.name ?? null;
+                      case "package_id": return products.flatMap((p) => p.packages ?? []).find((pk) => pk.id === value)?.name ?? null;
+                      case "agent_location_id": {
+                        const loc = agents.flatMap((a) => agentLocationRows(a)).find((l) => l.id === value);
+                        return loc ? agentLocationLabel(loc) : null;
+                      }
+                      default: return null;
+                    }
+                  };
+                  const renderValue = (value: unknown, fieldKey: string): string => {
 		                    if (value === null || value === undefined) return "—";
-		                    if (typeof value === "string") return value.trim() ? value : "—";
+		                    if (typeof value === "string") {
+                      if (!value.trim()) return "—";
+                      return resolveIdToName(fieldKey, value) ?? value;
+                    }
 		                    if (typeof value === "number" || typeof value === "boolean") return String(value);
 		                    try { return JSON.stringify(value); } catch { return String(value); }
 		                  };
@@ -43888,11 +43904,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 		                                </div>
 		                                <div className="flex flex-wrap items-center gap-2 text-sm">
 		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] ${orderBodyTextClass} ${orderPanelMutedClass}`}>
-		                                    <span className={orderFaintTextClass}>from</span> {renderValue(edit.fromValue)}
+		                                    <span className={orderFaintTextClass}>from</span> {renderValue(edit.fromValue, fieldKey)}
 		                                  </span>
 		                                  <span className={orderFaintTextClass}>→</span>
 		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] font-semibold ${orderTitleTextClass} bg-amber-50 dark:bg-amber-500/10`}>
-		                                    <span className={orderFaintTextClass}>to</span> {renderValue(edit.toValue)}
+		                                    <span className={orderFaintTextClass}>to</span> {renderValue(edit.toValue, fieldKey)}
 		                                  </span>
 		                                </div>
 		                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>By {actor}{role}</p>
