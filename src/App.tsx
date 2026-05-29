@@ -11500,9 +11500,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Two parts: (1) the closing balance per product to carry into next
     // week (mirror of the opening list, using authoritative closingBalance),
     // and (2) a week totals roll-up across all products.
+    // The Sunday-night closing balance is what the agent opens next week
+    // (Monday) with — label it as that Monday so it reads as the start of
+    // the new week, not the end of the old one.
+    const nextMonday = dateFromKey(weekEnd);
+    nextMonday.setDate(nextMonday.getDate() + 1);
+    const nextMondayLabel = nextMonday.toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    });
+
     lines.push("====================");
     lines.push("");
-    lines.push(`Closing Stock Balance to carry into next week (${fmtFull(weekEnd)}):`);
+    lines.push(`Stock Balance to start next week with (${nextMondayLabel}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.closingBalance}`);
