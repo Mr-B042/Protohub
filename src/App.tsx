@@ -30979,6 +30979,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       Next week <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                    <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Jump to week</span>
+                    <input
+                      type="date"
+                      className="!min-h-0 border-0 bg-transparent p-0 text-sm text-gray-800 focus:outline-none"
+                      value={agentBalanceWeekStart}
+                      onChange={(event) => {
+                        const picked = event.target.value;
+                        if (!picked) return;
+                        // Snap any picked day to the Monday of its week so the
+                        // summary always aligns to a full Mon–Sun window.
+                        setAgentBalanceWeekStart(mondayKeyFromDate(new Date(`${picked}T00:00:00`)));
+                      }}
+                    />
+                  </label>
                   <div className="xl:ml-auto inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
                     <CalendarDays className="w-4 h-4 text-[#1F8FE0]" />
                     Week of {weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}
