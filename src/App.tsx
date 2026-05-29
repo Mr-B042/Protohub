@@ -11171,7 +11171,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     //   3. Waybill sent — outgoing transfer (- stock)
     // Each entry has a sign (+ for in, - for out) so the math reconciles
     // exactly with the agent_balance row's deliveredThisWeek/received total.
-    type EntrySource = "main" | "add-on" | "free gift" | "waybill in" | "waybill out";
+    type EntrySource =
+      | "main" | "add-on" | "free gift"
+      | "waybill in" | "waybill out"
+      | "manual adjustment" | "return" | "stock added" | "status reversal" | "distributed";
     type Entry = { day: string; qty: number; sign: 1 | -1; source: EntrySource; label: string };
     const byProduct = new Map<string, Entry[]>();
 
@@ -11240,6 +11243,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (qty > 0) {
           pushEntry(productName, { day, qty, sign: -1, source: "free gift", label: `${qty}pcs delivered to ${customer} (free gift)` });
         }
+      });
+    });
+
+    // ── Manual stock adjustments (corrections, returns, restored, etc.) ──
+    // Anything in stock_movements for this agent in the week that isn't
+    // already captured by orders or waybills. Sign comes from qty: positive
+    // means stock added, negative means stock removed.
+    type ManualEntrySource = "manual adjustment" | "return" | "stock added" | "status reversal" | "distributed";
+    const manualTypeLabel = (type: StockMovementType): { source: ManualEntrySource; verb: string } => {
+      switch (type) {
+        case "Return":              return { source: "return",            verb: "returned to stock" };
+        case "Stock Added":         return { source: "stock added",       verb: "added to stock" };
+        case "Status Reversal":     return { source: "status reversal",   verb: "reversed back to stock" };
+        case "Distributed to Agent":return { source: "distributed",       verb: "distributed from warehouse" };
+        case "Correction":          return { source: "manual adjustment", verb: "adjusted" };
+        default:                    return { source: "manual adjustment", verb: "adjusted" };
+      }
+    };
+    stockMovements.forEach((movement) => {
+      if (movement.agentId !== group.agentId) return;
+      // Skip movements already counted via orders/waybills loops.
+      if (movement.type === "Order Fulfilled") return;
+      if (movement.type === "Waybill In" || movement.type === "Waybill Out") return;
+
+      const dateRaw = movement.date ?? movement.createdAt ?? "";
+      const day = dateRaw ? normalizeDateKey(dateRaw) : "";
+      if (!day || day < weekStart || day > weekEnd) return;
+
+      const qty = Number(movement.qty || 0);
+      if (qty === 0) return;
+      const absQty = Math.abs(qty);
+      const sign: 1 | -1 = qty > 0 ? 1 : -1;
+      const productName = resolveProductName(movement.productId, movement.productName);
+      const { source, verb } = manualTypeLabel(movement.type);
+      const reasonTail = movement.note ? ` — ${movement.note}` : "";
+      const directional = sign === 1 ? `+${absQty}pcs` : `-${absQty}pcs`;
+      pushEntry(productName, {
+        day,
+        qty: absQty,
+        sign,
+        source,
+        label: `${directional} ${verb}${reasonTail}`
       });
     });
 
@@ -11316,14 +11361,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Helper: render one product section with timeline + reconciled totals.
     const renderProductSection = (productName: string, opening: number | null, entries: Entry[]) => {
       const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
-      const totalIn = sortedEntries.filter((e) => e.sign === 1).reduce((sum, e) => sum + e.qty, 0);
-      const totalDelivered = sortedEntries
-        .filter((e) => e.sign === -1 && (e.source === "main" || e.source === "add-on" || e.source === "free gift"))
-        .reduce((sum, e) => sum + e.qty, 0);
-      const totalSentOut = sortedEntries
-        .filter((e) => e.sign === -1 && e.source === "waybill out")
-        .reduce((sum, e) => sum + e.qty, 0);
-      const totalOut = totalDelivered + totalSentOut;
+      const sum = (filter: (e: Entry) => boolean) =>
+        sortedEntries.filter(filter).reduce((acc, e) => acc + e.qty, 0);
+      const totalReceivedWaybill = sum((e) => e.sign === 1 && e.source === "waybill in");
+      const totalManualIn        = sum((e) => e.sign === 1 && e.source !== "waybill in");
+      const totalDelivered       = sum((e) => e.sign === -1 && (e.source === "main" || e.source === "add-on" || e.source === "free gift"));
+      const totalSentOut         = sum((e) => e.sign === -1 && e.source === "waybill out");
+      const totalManualOut       = sum((e) => e.sign === -1 && e.source !== "main" && e.source !== "add-on" && e.source !== "free gift" && e.source !== "waybill out");
+      const totalIn  = totalReceivedWaybill + totalManualIn;
+      const totalOut = totalDelivered + totalSentOut + totalManualOut;
 
       lines.push(productName);
 
@@ -11343,9 +11389,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       lines.push("");
 
       const summaryBits: string[] = [];
-      if (totalIn > 0)        summaryBits.push(`Received via waybill: ${totalIn}pcs`);
-      if (totalDelivered > 0) summaryBits.push(`Delivered to customers: ${totalDelivered}pcs`);
-      if (totalSentOut > 0)   summaryBits.push(`Sent out via waybill: ${totalSentOut}pcs`);
+      if (totalReceivedWaybill > 0) summaryBits.push(`Received via waybill: ${totalReceivedWaybill}pcs`);
+      if (totalManualIn > 0)        summaryBits.push(`Added via manual adjustment: ${totalManualIn}pcs`);
+      if (totalDelivered > 0)       summaryBits.push(`Delivered to customers: ${totalDelivered}pcs`);
+      if (totalSentOut > 0)         summaryBits.push(`Sent out via waybill: ${totalSentOut}pcs`);
+      if (totalManualOut > 0)       summaryBits.push(`Removed via manual adjustment: ${totalManualOut}pcs`);
       summaryBits.forEach((bit) => lines.push(bit));
 
       if (opening !== null) {
