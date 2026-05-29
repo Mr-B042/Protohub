@@ -11163,36 +11163,82 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return deliveredKey >= weekStart && deliveredKey <= weekEnd;
     });
 
-    // ── Build product → entries[{ day, customer, qty }] ──
-    type Entry = { day: string; customer: string; qty: number };
+    // ── Build product → entries[{ day, customer, qty, source }] ──
+    // Each delivered order contributes stock movement from three places:
+    //   1. The main package — packageComponentsSnapshot (combo) OR the
+    //      raw productName+quantity for single-product orders
+    //   2. Add-ons — order.crossSellLines (each can be a single product
+    //      or a sub-combo with its own packageComponentsSnapshot)
+    //   3. Free gifts — order.freeGiftLines (physical items, deduct stock)
+    type EntrySource = "main" | "add-on" | "free gift";
+    type Entry = { day: string; customer: string; qty: number; source: EntrySource };
     const byProduct = new Map<string, Entry[]>();
+
+    const pushEntry = (productName: string, entry: Entry) => {
+      if (!byProduct.has(productName)) byProduct.set(productName, []);
+      byProduct.get(productName)!.push(entry);
+    };
+
+    const resolveProductName = (productId: string | undefined, fallbackName: string) => {
+      if (productId) {
+        const match = products.find((p) => p.id === productId)?.name;
+        if (match) return match;
+      }
+      return fallbackName || "Unknown product";
+    };
 
     deliveredOrders.forEach((order) => {
       const day = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
       if (!day) return;
       const customer = (order.customer || "Unknown customer").trim();
 
-      const realComponents = (order.packageComponentsSnapshot ?? []).filter(
+      // 1. Main package — prefer components snapshot (combos), else raw
+      const mainComponents = (order.packageComponentsSnapshot ?? []).filter(
         (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
       );
-
-      if (realComponents.length > 0) {
-        realComponents.forEach((c) => {
-          const productName =
-            (c.productId
-              ? products.find((p) => p.id === c.productId)?.name
-              : c.productName) || c.productName || "Unknown product";
+      if (mainComponents.length > 0) {
+        mainComponents.forEach((c) => {
+          const productName = resolveProductName(c.productId, c.productName);
           const qty = Number(c.quantity || 0);
-          if (!byProduct.has(productName)) byProduct.set(productName, []);
-          byProduct.get(productName)!.push({ day, customer, qty });
+          pushEntry(productName, { day, customer, qty, source: "main" });
         });
       } else {
         const productName = order.productName || "Unknown product";
         const qty = Number(order.quantity || 1);
-        if (qty <= 0) return;
-        if (!byProduct.has(productName)) byProduct.set(productName, []);
-        byProduct.get(productName)!.push({ day, customer, qty });
+        if (qty > 0) {
+          pushEntry(productName, { day, customer, qty, source: "main" });
+        }
       }
+
+      // 2. Add-ons — each cross-sell line either has its own components
+      // snapshot (sub-combo) or a single product reference
+      (order.crossSellLines ?? []).forEach((line) => {
+        const subComponents = (line.packageComponentsSnapshot ?? []).filter(
+          (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
+        );
+        if (subComponents.length > 0) {
+          subComponents.forEach((c) => {
+            const productName = resolveProductName(c.productId, c.productName);
+            const qty = Number(c.quantity || 0);
+            pushEntry(productName, { day, customer, qty, source: "add-on" });
+          });
+        } else {
+          const productName = resolveProductName(line.productId, line.productName);
+          const qty = Number(line.quantity || 0);
+          if (qty > 0) {
+            pushEntry(productName, { day, customer, qty, source: "add-on" });
+          }
+        }
+      });
+
+      // 3. Free gifts — physical items the agent hands over, deduct stock
+      (order.freeGiftLines ?? []).forEach((gift) => {
+        const productName = resolveProductName(gift.productId, gift.productName);
+        const qty = Number(gift.quantity || 0);
+        if (qty > 0) {
+          pushEntry(productName, { day, customer, qty, source: "free gift" });
+        }
+      });
     });
 
     const lines: string[] = [];
@@ -11232,10 +11278,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         lines.push(`Total sold: 0pcs`);
         lines.push(`Stock remaining: ${row.openingBalance} (unchanged)`);
       } else {
-        // Sort entries by day, then list each
         const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
         sortedEntries.forEach((entry) => {
-          lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}`);
+          const suffix = entry.source === "main" ? "" : ` (${entry.source})`;
+          lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}${suffix}`);
         });
         lines.push("");
         lines.push(`Total sold: ${totalSold}pcs`);
@@ -11244,15 +11290,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       lines.push("");
     });
 
-    // Edge case: combo components touched a product that isn't on the
-    // agent's normal inventory list. Show those too so the math reconciles.
+    // Edge case: components touched a product that isn't on the agent's
+    // normal inventory list (combos or add-ons pulling unrelated SKUs).
+    // Show those too so the math reconciles.
     Array.from(byProduct.entries()).forEach(([productName, entries]) => {
       if (handledNames.has(productName)) return;
       const totalSold = entries.reduce((sum, e) => sum + e.qty, 0);
       lines.push(`${productName} (not on your usual inventory list)`);
       const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
       sortedEntries.forEach((entry) => {
-        lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}`);
+        const suffix = entry.source === "main" ? "" : ` (${entry.source})`;
+        lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}${suffix}`);
       });
       lines.push("");
       lines.push(`Total sold: ${totalSold}pcs`);
