@@ -11141,7 +11141,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const formatAgentBalanceWeekMessage = (group: AgentWeeklyBalanceGroup) => {
     const weekStart = agentBalanceWeekStart;
     const weekEnd = agentBalanceWeekEnd;
-    // Build a Date safely from a YYYY-MM-DD key (avoid TZ shift)
+    // Build a Date safely from a YYYY-MM-DD key (avoid TZ shift).
     const dateFromKey = (key: string) => {
       const [y, m, d] = key.split("-").map((part) => Number(part));
       return new Date(y, (m || 1) - 1, d || 1);
@@ -11153,13 +11153,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         month: "long",
         year: "numeric"
       });
-    const fmtShortDay = (key: string) =>
-      dateFromKey(key).toLocaleDateString("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric"
-      });
+
+    // ── Filter delivered orders within the week for this agent ──
+    const deliveredOrders = trackedOrders.filter((order) => {
+      if (order.agentId !== group.agentId) return false;
+      if ((order.status ?? "") !== "Delivered") return false;
+      const deliveredKey = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
+      if (!deliveredKey) return false;
+      return deliveredKey >= weekStart && deliveredKey <= weekEnd;
+    });
+
+    // ── Build product → entries[{ day, customer, qty }] ──
+    type Entry = { day: string; customer: string; qty: number };
+    const byProduct = new Map<string, Entry[]>();
+
+    deliveredOrders.forEach((order) => {
+      const day = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
+      if (!day) return;
+      const customer = (order.customer || "Unknown customer").trim();
+
+      const realComponents = (order.packageComponentsSnapshot ?? []).filter(
+        (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
+      );
+
+      if (realComponents.length > 0) {
+        realComponents.forEach((c) => {
+          const productName =
+            (c.productId
+              ? products.find((p) => p.id === c.productId)?.name
+              : c.productName) || c.productName || "Unknown product";
+          const qty = Number(c.quantity || 0);
+          if (!byProduct.has(productName)) byProduct.set(productName, []);
+          byProduct.get(productName)!.push({ day, customer, qty });
+        });
+      } else {
+        const productName = order.productName || "Unknown product";
+        const qty = Number(order.quantity || 1);
+        if (qty <= 0) return;
+        if (!byProduct.has(productName)) byProduct.set(productName, []);
+        byProduct.get(productName)!.push({ day, customer, qty });
+      }
+    });
 
     const lines: string[] = [];
 
@@ -11176,103 +11210,56 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     lines.push("");
 
-    // ── Filter delivered orders within the week for this agent ──
-    const deliveredOrders = trackedOrders.filter((order) => {
-      if (order.agentId !== group.agentId) return false;
-      if ((order.status ?? "") !== "Delivered") return false;
-      const deliveredKey = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
-      if (!deliveredKey) return false;
-      return deliveredKey >= weekStart && deliveredKey <= weekEnd;
-    });
-
-    if (deliveredOrders.length === 0) {
-      lines.push(`No deliveries recorded this week.`);
-      return lines.join("\n");
-    }
-
     lines.push(`A Detailed Stock Movement`);
     lines.push("");
 
-    // ── Build day → product → entries[{customer, qty}] ──
-    type Entry = { customer: string; qty: number };
-    type DayMap = Map<string, Map<string, Entry[]>>;
-    const byDay: DayMap = new Map();
+    // ── Per-product timeline + summary ──
+    // Iterate group.rows so products with no deliveries are still mentioned.
+    // Then append any extra products that DID get deliveries but aren't on
+    // the agent's normal inventory list (rare — combo expansion edge case).
+    const handledNames = new Set<string>();
 
-    deliveredOrders.forEach((order) => {
-      const day = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
-      if (!day) return;
-      const customer = (order.customer || "Unknown customer").trim();
-      if (!byDay.has(day)) byDay.set(day, new Map());
-      const dayMap = byDay.get(day)!;
-
-      const realComponents = (order.packageComponentsSnapshot ?? []).filter(
-        (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
-      );
-
-      if (realComponents.length > 0) {
-        realComponents.forEach((c) => {
-          const productName =
-            (c.productId
-              ? products.find((p) => p.id === c.productId)?.name
-              : c.productName) || c.productName || "Unknown product";
-          const qty = Number(c.quantity || 0);
-          if (!dayMap.has(productName)) dayMap.set(productName, []);
-          dayMap.get(productName)!.push({ customer, qty });
-        });
-      } else {
-        const productName = order.productName || "Unknown product";
-        const qty = Number(order.quantity || 1);
-        if (qty <= 0) return;
-        if (!dayMap.has(productName)) dayMap.set(productName, []);
-        dayMap.get(productName)!.push({ customer, qty });
-      }
-    });
-
-    // ── Running balance per product (start with opening) ──
-    const runningBalance: Record<string, number> = {};
     group.rows.forEach((row) => {
-      runningBalance[row.productName] = row.openingBalance;
-    });
+      handledNames.add(row.productName);
+      const entries = byProduct.get(row.productName) ?? [];
+      const totalSold = entries.reduce((sum, e) => sum + e.qty, 0);
+      const remaining = row.openingBalance - totalSold;
 
-    const sortedDays = Array.from(byDay.keys()).sort();
-    sortedDays.forEach((day, dayIndex) => {
-      const productMap = byDay.get(day)!;
-
-      // Day header
-      lines.push(fmtShortDay(day));
-
-      // Top-line summary per product for this day
-      Array.from(productMap.entries()).forEach(([productName, entries]) => {
-        const totalQty = entries.reduce((sum, e) => sum + e.qty, 0);
-        const distinctCustomers = new Set(entries.map((e) => e.customer)).size;
-        const customerLabel = distinctCustomers === 1 ? "customer" : "customers";
-        lines.push(`${totalQty}pcs of ${productName} was delivered to ${distinctCustomers} ${customerLabel}`);
-      });
-      lines.push("");
-
-      // Per-customer breakdown
-      Array.from(productMap.entries()).forEach(([productName, entries]) => {
-        entries.forEach((entry) => {
-          lines.push(`${entry.qty}pcs of ${productName} was delivered to ${entry.customer}`);
-        });
-      });
-      lines.push("");
-
-      // Running calculation
-      Array.from(productMap.entries()).forEach(([productName, entries]) => {
-        const totalQty = entries.reduce((sum, e) => sum + e.qty, 0);
-        const before = runningBalance[productName] ?? 0;
-        const after = before - totalQty;
-        runningBalance[productName] = after;
-        lines.push(`${before} - ${totalQty} = ${after} Stock remaining for ${productName}`);
-      });
-
-      if (dayIndex < sortedDays.length - 1) {
+      lines.push(`${row.productName}`);
+      if (entries.length === 0) {
+        lines.push(`- No deliveries this week`);
         lines.push("");
+        lines.push(`Total sold: 0pcs`);
+        lines.push(`Stock remaining: ${row.openingBalance} (unchanged)`);
+      } else {
+        // Sort entries by day, then list each
+        const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
+        sortedEntries.forEach((entry) => {
+          lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}`);
+        });
+        lines.push("");
+        lines.push(`Total sold: ${totalSold}pcs`);
+        lines.push(`Stock remaining: ${row.openingBalance} - ${totalSold} = ${remaining}`);
       }
+      lines.push("");
     });
 
-    return lines.join("\n");
+    // Edge case: combo components touched a product that isn't on the
+    // agent's normal inventory list. Show those too so the math reconciles.
+    Array.from(byProduct.entries()).forEach(([productName, entries]) => {
+      if (handledNames.has(productName)) return;
+      const totalSold = entries.reduce((sum, e) => sum + e.qty, 0);
+      lines.push(`${productName} (not on your usual inventory list)`);
+      const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
+      sortedEntries.forEach((entry) => {
+        lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}`);
+      });
+      lines.push("");
+      lines.push(`Total sold: ${totalSold}pcs`);
+      lines.push("");
+    });
+
+    return lines.join("\n").trimEnd();
   };
   const copyAgentBalanceSummary = async (group: AgentWeeklyBalanceGroup) => {
     try {
