@@ -248,9 +248,12 @@ export async function sendPushToSubscriptions(
             // 1-hour TTL meant pushes were silently dropped while the
             // phone was asleep. 28 days (= 2419200s) is FCM's maximum;
             // urgency:high asks the push service to wake the device.
+            // Topic header intentionally omitted — it triggers FCM
+            // collapse/replace behavior that can drop pushes when
+            // multiple share a topic, and the comparison app
+            // (ordellocrm) doesn't send one.
             TTL: 28 * 24 * 60 * 60,
-            urgency: "high",
-            topic: pushTopicForPayload(payload)
+            urgency: "high"
           }
         );
         // Verbose logging — every attempt prints the push-service response so
