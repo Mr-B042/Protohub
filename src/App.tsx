@@ -11496,6 +11496,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       lines.push("");
     }
 
+    // ── Closing summary ─────────────────────────────────────────
+    // Two parts: (1) the closing balance per product to carry into next
+    // week (mirror of the opening list, using authoritative closingBalance),
+    // and (2) a week totals roll-up across all products.
+    lines.push("====================");
+    lines.push("");
+    lines.push(`Closing Stock Balance to carry into next week (${fmtFull(weekEnd)}):`);
+    lines.push("");
+    group.rows.forEach((row, index) => {
+      lines.push(`${index + 1}. ${row.productName} = ${row.closingBalance}`);
+    });
+    lines.push("");
+
+    const sumRows = (pick: (row: AgentWeeklyBalanceRow) => number) =>
+      group.rows.reduce((acc, row) => acc + pick(row), 0);
+    const totalOpening        = sumRows((r) => r.openingBalance);
+    const totalClosing        = sumRows((r) => r.closingBalance);
+    const totalReceived       = sumRows((r) => r.receivedThisWeek);
+    const totalRestored       = sumRows((r) => r.restoredThisWeek);
+    const totalDelivered      = sumRows((r) => r.deliveredThisWeek);
+    const totalReturned       = sumRows((r) => r.returnedThisWeek);
+    const totalTransferredOut = sumRows((r) => r.transferredOutThisWeek);
+    const totalWrittenOff     = sumRows((r) => r.writtenOffThisWeek);
+
+    lines.push("WEEK SUMMARY");
+    lines.push(`Total stock at week start: ${totalOpening}pcs`);
+    if (totalReceived > 0)       lines.push(`Total received this week: ${totalReceived}pcs`);
+    if (totalRestored > 0)       lines.push(`Total restored to stock: ${totalRestored}pcs`);
+    if (totalDelivered > 0)      lines.push(`Total delivered to customers: ${totalDelivered}pcs`);
+    if (totalReturned > 0)       lines.push(`Total returned: ${totalReturned}pcs`);
+    if (totalTransferredOut > 0) lines.push(`Total sent out (transfer): ${totalTransferredOut}pcs`);
+    if (totalWrittenOff > 0)     lines.push(`Total written off: ${totalWrittenOff}pcs`);
+    lines.push(`Total stock remaining now: ${totalClosing}pcs`);
+
     return lines.join("\n").trimEnd();
   };
   const copyAgentBalanceSummary = async (group: AgentWeeklyBalanceGroup) => {
