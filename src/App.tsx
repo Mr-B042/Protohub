@@ -29949,7 +29949,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               for (const o of repOrders) {
                 const s = o.status ?? "New";
                 statusCounts[s] = (statusCounts[s] ?? 0) + 1;
-                const src = o.source ?? orderSourceFromUtm(o.utmSource);
+                // Use the canonical resolver, which derives from utmSource
+                // FIRST (fb/ig/an/th/ms/wa/tt → readable labels), so existing
+                // orders whose stored `source` was collapsed to "Website"
+                // still surface as Instagram / Audience Network / etc.
+                const src = orderDisplaySourceFor(o).label;
                 sourceCounts[src] = (sourceCounts[src] ?? 0) + 1;
               }
               const statusOrder = ["New", "Confirmed", "In Process", "Dispatched", "Postponed", "Delivered", "Cancelled", "Failed"];
@@ -30209,7 +30213,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
                                 <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
-                                <td className="px-5 py-3 text-gray-600">{o.source ?? orderSourceFromUtm(o.utmSource)}</td>
+                                <td className="px-5 py-3 text-gray-600">{orderDisplaySourceFor(o).label}</td>
                                 <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
                               </tr>
                             ))}
