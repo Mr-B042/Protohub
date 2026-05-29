@@ -11163,15 +11163,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return deliveredKey >= weekStart && deliveredKey <= weekEnd;
     });
 
-    // ── Build product → entries[{ day, customer, qty, source }] ──
-    // Each delivered order contributes stock movement from three places:
-    //   1. The main package — packageComponentsSnapshot (combo) OR the
-    //      raw productName+quantity for single-product orders
-    //   2. Add-ons — order.crossSellLines (each can be a single product
-    //      or a sub-combo with its own packageComponentsSnapshot)
-    //   3. Free gifts — order.freeGiftLines (physical items, deduct stock)
-    type EntrySource = "main" | "add-on" | "free gift";
-    type Entry = { day: string; customer: string; qty: number; source: EntrySource };
+    // ── Build product → entries[{ day, qty, source, label }] ──
+    // Each entry is one stock movement on a specific day. Sources cover
+    // every way stock can change for an agent:
+    //   1. Delivered to a customer — main / add-on / free gift (- stock)
+    //   2. Waybill received — incoming transfer (+ stock)
+    //   3. Waybill sent — outgoing transfer (- stock)
+    // Each entry has a sign (+ for in, - for out) so the math reconciles
+    // exactly with the agent_balance row's deliveredThisWeek/received total.
+    type EntrySource = "main" | "add-on" | "free gift" | "waybill in" | "waybill out";
+    type Entry = { day: string; qty: number; sign: 1 | -1; source: EntrySource; label: string };
     const byProduct = new Map<string, Entry[]>();
 
     const pushEntry = (productName: string, entry: Entry) => {
@@ -11187,6 +11188,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return fallbackName || "Unknown product";
     };
 
+    // ── Customer deliveries (main + add-ons + free gifts) ──
     deliveredOrders.forEach((order) => {
       const day = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
       if (!day) return;
@@ -11200,13 +11202,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         mainComponents.forEach((c) => {
           const productName = resolveProductName(c.productId, c.productName);
           const qty = Number(c.quantity || 0);
-          pushEntry(productName, { day, customer, qty, source: "main" });
+          pushEntry(productName, { day, qty, sign: -1, source: "main", label: `${qty}pcs delivered to ${customer}` });
         });
       } else {
         const productName = order.productName || "Unknown product";
         const qty = Number(order.quantity || 1);
         if (qty > 0) {
-          pushEntry(productName, { day, customer, qty, source: "main" });
+          pushEntry(productName, { day, qty, sign: -1, source: "main", label: `${qty}pcs delivered to ${customer}` });
         }
       }
 
@@ -11220,13 +11222,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           subComponents.forEach((c) => {
             const productName = resolveProductName(c.productId, c.productName);
             const qty = Number(c.quantity || 0);
-            pushEntry(productName, { day, customer, qty, source: "add-on" });
+            pushEntry(productName, { day, qty, sign: -1, source: "add-on", label: `${qty}pcs delivered to ${customer} (add-on)` });
           });
         } else {
           const productName = resolveProductName(line.productId, line.productName);
           const qty = Number(line.quantity || 0);
           if (qty > 0) {
-            pushEntry(productName, { day, customer, qty, source: "add-on" });
+            pushEntry(productName, { day, qty, sign: -1, source: "add-on", label: `${qty}pcs delivered to ${customer} (add-on)` });
           }
         }
       });
@@ -11236,9 +11238,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const productName = resolveProductName(gift.productId, gift.productName);
         const qty = Number(gift.quantity || 0);
         if (qty > 0) {
-          pushEntry(productName, { day, customer, qty, source: "free gift" });
+          pushEntry(productName, { day, qty, sign: -1, source: "free gift", label: `${qty}pcs delivered to ${customer} (free gift)` });
         }
       });
+    });
+
+    // ── Waybill movements (incoming + outgoing) ──
+    // Stock RECEIVED by this agent (+ to balance): waybills targeting
+    // toAgentId === group.agentId, with dateReceived in the week.
+    // Stock SENT OUT by this agent (- from balance): waybills with
+    // fromAgentId === group.agentId, with dateSent in the week.
+    waybillRecords.forEach((waybill) => {
+      const productName = resolveProductName(waybill.productId, waybill.productName);
+      const qty = Number(waybill.quantity || 0);
+      if (qty <= 0) return;
+
+      // Incoming — only count once it's actually received at the agent's hub
+      if (waybill.toAgentId === group.agentId && waybill.dateReceived) {
+        const day = normalizeDateKey(waybill.dateReceived);
+        if (day && day >= weekStart && day <= weekEnd) {
+          const sourceLabel = waybill.sendingLocationName
+            || waybill.sendingState
+            || "warehouse";
+          pushEntry(productName, {
+            day,
+            qty,
+            sign: 1,
+            source: "waybill in",
+            label: `+${qty}pcs received from ${sourceLabel}${waybill.note ? ` (${waybill.note})` : ""}`
+          });
+        }
+      }
+
+      // Outgoing — count on dateSent so the agent's stock reflects the
+      // moment the units left their hub.
+      if (waybill.fromAgentId === group.agentId && waybill.dateSent) {
+        const day = normalizeDateKey(waybill.dateSent);
+        if (day && day >= weekStart && day <= weekEnd) {
+          const destLabel = waybill.receivingLocationName
+            || waybill.receivingState
+            || "another hub";
+          pushEntry(productName, {
+            day,
+            qty,
+            sign: -1,
+            source: "waybill out",
+            label: `-${qty}pcs sent to ${destLabel}${waybill.note ? ` (${waybill.note})` : ""}`
+          });
+        }
+      }
     });
 
     const lines: string[] = [];
@@ -11265,46 +11313,68 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // the agent's normal inventory list (rare — combo expansion edge case).
     const handledNames = new Set<string>();
 
+    // Helper: render one product section with timeline + reconciled totals.
+    const renderProductSection = (productName: string, opening: number | null, entries: Entry[]) => {
+      const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
+      const totalIn = sortedEntries.filter((e) => e.sign === 1).reduce((sum, e) => sum + e.qty, 0);
+      const totalDelivered = sortedEntries
+        .filter((e) => e.sign === -1 && (e.source === "main" || e.source === "add-on" || e.source === "free gift"))
+        .reduce((sum, e) => sum + e.qty, 0);
+      const totalSentOut = sortedEntries
+        .filter((e) => e.sign === -1 && e.source === "waybill out")
+        .reduce((sum, e) => sum + e.qty, 0);
+      const totalOut = totalDelivered + totalSentOut;
+
+      lines.push(productName);
+
+      if (sortedEntries.length === 0) {
+        lines.push(`- No movement this week`);
+        lines.push("");
+        if (opening !== null) {
+          lines.push(`Stock remaining: ${opening} (unchanged)`);
+        }
+        lines.push("");
+        return;
+      }
+
+      sortedEntries.forEach((entry) => {
+        lines.push(`- ${fmtFull(entry.day)}: ${entry.label}`);
+      });
+      lines.push("");
+
+      const summaryBits: string[] = [];
+      if (totalIn > 0)        summaryBits.push(`Received via waybill: ${totalIn}pcs`);
+      if (totalDelivered > 0) summaryBits.push(`Delivered to customers: ${totalDelivered}pcs`);
+      if (totalSentOut > 0)   summaryBits.push(`Sent out via waybill: ${totalSentOut}pcs`);
+      summaryBits.forEach((bit) => lines.push(bit));
+
+      if (opening !== null) {
+        const closing = opening + totalIn - totalOut;
+        // Build a readable math line: e.g. "78 + 10 - 11 = 77"
+        let mathLine = `Stock remaining: ${opening}`;
+        if (totalIn > 0) mathLine += ` + ${totalIn}`;
+        if (totalOut > 0) mathLine += ` - ${totalOut}`;
+        mathLine += ` = ${closing}`;
+        lines.push(mathLine);
+      } else {
+        const closing = totalIn - totalOut;
+        lines.push(`Net movement: +${totalIn} - ${totalOut} = ${closing > 0 ? "+" : ""}${closing}`);
+      }
+      lines.push("");
+    };
+
+    // Render every product on the agent's normal inventory list first.
     group.rows.forEach((row) => {
       handledNames.add(row.productName);
       const entries = byProduct.get(row.productName) ?? [];
-      const totalSold = entries.reduce((sum, e) => sum + e.qty, 0);
-      const remaining = row.openingBalance - totalSold;
-
-      lines.push(`${row.productName}`);
-      if (entries.length === 0) {
-        lines.push(`- No deliveries this week`);
-        lines.push("");
-        lines.push(`Total sold: 0pcs`);
-        lines.push(`Stock remaining: ${row.openingBalance} (unchanged)`);
-      } else {
-        const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
-        sortedEntries.forEach((entry) => {
-          const suffix = entry.source === "main" ? "" : ` (${entry.source})`;
-          lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}${suffix}`);
-        });
-        lines.push("");
-        lines.push(`Total sold: ${totalSold}pcs`);
-        lines.push(`Stock remaining: ${row.openingBalance} - ${totalSold} = ${remaining}`);
-      }
-      lines.push("");
+      renderProductSection(row.productName, row.openingBalance, entries);
     });
 
-    // Edge case: components touched a product that isn't on the agent's
-    // normal inventory list (combos or add-ons pulling unrelated SKUs).
-    // Show those too so the math reconciles.
+    // Then surface any extra products that DID get movement but aren't on
+    // the agent's normal list (combo expansion / waybill of unrelated SKU).
     Array.from(byProduct.entries()).forEach(([productName, entries]) => {
       if (handledNames.has(productName)) return;
-      const totalSold = entries.reduce((sum, e) => sum + e.qty, 0);
-      lines.push(`${productName} (not on your usual inventory list)`);
-      const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
-      sortedEntries.forEach((entry) => {
-        const suffix = entry.source === "main" ? "" : ` (${entry.source})`;
-        lines.push(`- ${fmtFull(entry.day)}: ${entry.qty}pcs delivered to ${entry.customer}${suffix}`);
-      });
-      lines.push("");
-      lines.push(`Total sold: ${totalSold}pcs`);
-      lines.push("");
+      renderProductSection(`${productName} (not on your usual inventory list)`, null, entries);
     });
 
     return lines.join("\n").trimEnd();
