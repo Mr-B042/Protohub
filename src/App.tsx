@@ -11004,6 +11004,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesAgent = deliveryAgent === "All Agents" || agentName === deliveryAgent || (!order.agentId && deliveryAgent === "Unassigned");
     return matchesSearch && matchesAgent;
   });
+  // Delivered orders grouped by product (mirrors the Dashboard's
+  // "New Orders by Product" card, but scoped to delivered orders in the
+  // Deliveries filters). Sorted by units descending.
+  const deliveriesByProduct = Object.entries(
+    filteredDeliveryRows.reduce<Record<string, { count: number; units: number; revenue: number }>>((acc, order) => {
+      const name = order.productName || "Unknown product";
+      const current = acc[name] ?? { count: 0, units: 0, revenue: 0 };
+      acc[name] = {
+        count: current.count + 1,
+        units: current.units + quantityForOrder(order),
+        revenue: current.revenue + order.amount
+      };
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1].units - a[1].units);
   const DELIVERIES_PAGE_SIZE = 25;
   const deliveriesTotalPages = Math.max(1, Math.ceil(filteredDeliveryRows.length / DELIVERIES_PAGE_SIZE));
   const deliveriesPageClamped = Math.min(deliveriesPage, deliveriesTotalPages);
@@ -29757,6 +29772,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </article>
                   );
                 })}
+              </section>
+
+              {/* Delivered Orders by Product — mirrors the Dashboard's
+                  "New Orders by Product" card, scoped to delivered orders. */}
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+                  <span className="w-8 h-8 rounded-lg bg-green-50 text-green-600 flex items-center justify-center shrink-0"><PackageCheck className="w-4 h-4" /></span>
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-900">Delivered Orders by Product</h2>
+                    <p className="text-xs text-gray-400">Delivered orders in the selected period</p>
+                  </div>
+                </div>
+                {deliveriesByProduct.length === 0 ? (
+                  <div className="px-5 py-10 text-center text-sm text-gray-400">No deliveries in this period.</div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {deliveriesByProduct.map(([productName, item], idx) => (
+                      <div key={productName} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                        <span className="text-xs font-bold text-gray-400 w-4 shrink-0">{idx + 1}.</span>
+                        <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{productName}</span>
+                        <span className="text-sm font-bold text-gray-900 whitespace-nowrap">{item.count} order{item.count === 1 ? "" : "s"}</span>
+                        <span className="text-xs text-gray-400 whitespace-nowrap">{item.units} unit{item.units === 1 ? "" : "s"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
