@@ -175,7 +175,7 @@ type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" |
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
-type OrderSource = "All Sources" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
+type OrderSource = "All Sources" | "TikTok" | "Facebook" | "Instagram" | "Messenger" | "Audience Network" | "Threads" | "WhatsApp" | "Website" | "Direct";
 type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Recovered Pending" | "Recovered Failed / Cancelled" | "Customer Finished Later";
@@ -1312,7 +1312,7 @@ const moneyValues = {
 
 const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Scheduled Delivered", "Scheduled Late", "Scheduled Pending"];
-const orderSources: OrderSource[] = ["All Sources", "TikTok", "Facebook", "WhatsApp", "Website"];
+const orderSources: OrderSource[] = ["All Sources", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "TikTok", "WhatsApp", "Website", "Direct"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
 const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later"];
@@ -2096,20 +2096,20 @@ const activeProductPackages = (product: Product) => product.packages.filter((ite
 const persistedActiveProductPackages = <T extends { id: string; active: boolean; displayOrder: number }>(product: { packages: T[] }) =>
   product.packages.filter((item) => item.active && !isTemporaryPackageId(item.id)).sort((a, b) => a.displayOrder - b.displayOrder);
 const orderSourceFromUtm = (source: string): Exclude<OrderSource, "All Sources"> => {
-  const normalized = source.toLowerCase();
+  const normalized = (source ?? "").toLowerCase().trim();
 
-  if (normalized.includes("tiktok")) {
-    return "TikTok";
-  }
-
-  if (normalized.includes("facebook") || normalized.includes("meta")) {
-    return "Facebook";
-  }
-
-  if (normalized.includes("whatsapp")) {
-    return "WhatsApp";
-  }
-
+  // Recognise the Meta/ad ecosystem codes + full names so orders aren't all
+  // collapsed into "Website". Mirrors the Ad Tracking source codes
+  // (fb/ig/an/th/ms/wa/tt). Exact short codes are matched first, then names.
+  if (normalized === "tt" || normalized.includes("tiktok")) return "TikTok";
+  if (normalized === "ig" || normalized.includes("instagram") || normalized.includes("insta")) return "Instagram";
+  if (normalized === "an" || normalized.includes("audience network")) return "Audience Network";
+  if (normalized === "ms" || normalized.includes("messenger")) return "Messenger";
+  if (normalized === "th" || normalized.includes("threads")) return "Threads";
+  if (normalized === "wa" || normalized.includes("whatsapp")) return "WhatsApp";
+  if (normalized === "fb" || normalized.includes("facebook") || normalized.includes("meta")) return "Facebook";
+  if (normalized.includes("web") || normalized.includes("organic") || normalized.includes("embed")) return "Website";
+  if (!normalized || normalized === "direct" || normalized === "none") return "Direct";
   return "Website";
 };
 const AD_TRACKING_SOURCE_PRIORITY = ["fb", "ig", "an", "th", "ms", "wa", "tt"];
@@ -30186,7 +30186,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAdminOrderDetail(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
-                                <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{o.date}</td>
+                                <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
                                 <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
                                 <td className="px-5 py-3 text-gray-600">{o.source ?? orderSourceFromUtm(o.utmSource)}</td>
                                 <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
