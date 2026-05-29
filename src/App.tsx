@@ -7868,6 +7868,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedSalesRepId, setSelectedSalesRepId] = useState("");
   const [salesRepView, setSalesRepView] = useState<"list" | "detail">("list");
   const [repDetailShowAll, setRepDetailShowAll] = useState(false);
+  const [repDetailStatusFilter, setRepDetailStatusFilter] = useState<string>("All");
   const [salesProductIds, setSalesProductIds] = useState<Set<string>>(new Set());
   const [showSalesProductFilter, setShowSalesProductFilter] = useState(false);
   const [liveFormPulse, setLiveFormPulse] = useState<LiveFormPulseResponse | null>(null);
@@ -29958,8 +29959,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               const totalForBars = repOrders.length || 1;
 
               const sortedRepOrders = [...repOrders]
+                .filter((order) => repDetailStatusFilter === "All" || (order.status ?? "New") === repDetailStatusFilter)
                 .sort((a, b) => normalizeDateKey(b.createdAt ?? b.date).localeCompare(normalizeDateKey(a.createdAt ?? a.date)));
               const recentRepOrders = repDetailShowAll ? sortedRepOrders : sortedRepOrders.slice(0, 8);
+              // Status options for the filter dropdown: "All" plus the statuses
+              // this rep actually has orders in (ordered canonically).
+              const repDetailStatusFilterOptions = ["All", ...["New", "Confirmed", "In Process", "Dispatched", "Postponed", "Delivered", "Cancelled", "Failed"].filter((s) => statusCounts[s])];
 
               const initial = (detailUser.name || "?").charAt(0).toUpperCase();
 
@@ -30152,22 +30157,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
                   {/* Recent orders */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
                       <h2 className="text-base font-bold text-gray-900 m-0">
                         {repDetailShowAll ? "All Orders" : "Recent Orders"}
-                        <span className="ml-2 text-xs font-medium text-gray-400">{repDetailShowAll ? `${sortedRepOrders.length} total` : `showing latest ${Math.min(8, sortedRepOrders.length)} of ${sortedRepOrders.length}`}</span>
+                        <span className="ml-2 text-xs font-medium text-gray-400">
+                          {repDetailStatusFilter !== "All" ? `${sortedRepOrders.length} ${repDetailStatusFilter}` : (repDetailShowAll ? `${sortedRepOrders.length} total` : `showing latest ${Math.min(8, sortedRepOrders.length)} of ${sortedRepOrders.length}`)}
+                        </span>
                       </h2>
-                      {sortedRepOrders.length > 8 && (
-                        <button
-                          className="!min-h-0 text-sm font-semibold text-[#1F8FE0] hover:underline"
-                          onClick={() => setRepDetailShowAll((v) => !v)}
-                        >
-                          {repDetailShowAll ? "Show Recent Only" : "View All Orders"}
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-2 text-sm">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Status</span>
+                          <select
+                            className="!min-h-0 h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/20"
+                            value={repDetailStatusFilter}
+                            onChange={(e) => { setRepDetailStatusFilter(e.target.value); setRepDetailShowAll(true); }}
+                          >
+                            {repDetailStatusFilterOptions.map((s) => (
+                              <option key={s} value={s}>{s === "All" ? "All statuses" : s}{s !== "All" ? ` (${statusCounts[s]})` : ""}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {sortedRepOrders.length > 8 && (
+                          <button
+                            className="!min-h-0 text-sm font-semibold text-[#1F8FE0] hover:underline whitespace-nowrap"
+                            onClick={() => setRepDetailShowAll((v) => !v)}
+                          >
+                            {repDetailShowAll ? "Show Recent Only" : "View All Orders"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {recentRepOrders.length === 0 ? (
-                      <div className="px-5 py-10 text-center text-sm text-gray-400">No orders yet.</div>
+                      <div className="px-5 py-10 text-center text-sm text-gray-400">{repDetailStatusFilter !== "All" ? `No ${repDetailStatusFilter} orders for this rep.` : "No orders yet."}</div>
                     ) : (
                       <div className={`overflow-x-auto ${repDetailShowAll ? "max-h-[60vh] overflow-y-auto" : ""}`}>
                         <table className="w-full text-sm">
