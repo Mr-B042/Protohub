@@ -56,6 +56,8 @@ type DbPackageComponent = {
   quantity: number;
   isFreeGift?: boolean;
   is_free_gift?: boolean;
+  hiddenFromCustomer?: boolean;
+  hidden_from_customer?: boolean;
   note?: string;
 };
 type DbPackage = {
@@ -168,6 +170,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       productId,
       quantity: component.quantity,
       isFreeGift: component.isFreeGift ?? component.is_free_gift ?? false,
+      hiddenFromCustomer: component.hiddenFromCustomer ?? component.hidden_from_customer ?? false,
       note: component.note ?? ""
     };
   })

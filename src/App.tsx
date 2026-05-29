@@ -461,6 +461,9 @@ type PackageComponent = {
   productId: string;
   quantity: number;
   isFreeGift?: boolean;
+  // Still deducts stock on delivery, but hidden from the customer-facing
+  // breakdown on the order form (part already implied by the combo name).
+  hiddenFromCustomer?: boolean;
   note?: string;
 };
 type ProductPackage = {
@@ -3820,6 +3823,7 @@ const normalisePackageComponent = (component: Partial<PackageComponent>): Packag
   productId: component.productId || "",
   quantity: Math.max(1, Number(component.quantity) || 1),
   isFreeGift: Boolean(component.isFreeGift),
+  hiddenFromCustomer: Boolean(component.hiddenFromCustomer),
   note: component.note ?? ""
 });
 const clonePackageFreeGiftComponent = (component: PackageComponent): PackageComponent =>
@@ -45701,14 +45705,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </label>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-[auto,1fr,auto] gap-2.5 items-end">
-                              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(component.isFreeGift)}
-                                  onChange={(e) => update({ isFreeGift: e.target.checked })}
-                                />
-                                <span>Free gift</span>
-                              </label>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(component.isFreeGift)}
+                                    onChange={(e) => update({ isFreeGift: e.target.checked })}
+                                  />
+                                  <span>Free gift</span>
+                                </label>
+                                <label className="inline-flex items-center gap-2 text-sm text-gray-700" title="Still deducts stock on delivery, but won't show in the customer's order breakdown.">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(component.hiddenFromCustomer)}
+                                    onChange={(e) => update({ hiddenFromCustomer: e.target.checked })}
+                                  />
+                                  <span>Hide from customer breakdown</span>
+                                </label>
+                              </div>
                               <label className="flex flex-col gap-1">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Internal note</span>
                                 <input

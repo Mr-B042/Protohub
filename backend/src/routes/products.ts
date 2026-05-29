@@ -311,6 +311,10 @@ const PackageComponentSchema = z.object({
   productId: z.string().uuid(),
   quantity: z.number().int().min(1).default(1),
   isFreeGift: z.boolean().default(false),
+  // When true, this component still deducts stock on delivery but is hidden
+  // from the customer-facing breakdown on the order form (e.g. a part already
+  // implied by the combo name, so listing it would just confuse the buyer).
+  hiddenFromCustomer: z.boolean().optional(),
   note: z.string().max(160).optional()
 });
 const PackageSchema = z.object({

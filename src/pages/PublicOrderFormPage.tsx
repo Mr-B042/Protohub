@@ -85,6 +85,8 @@ type PublicPackageComponent = {
   quantity: number;
   isFreeGift?: boolean;
   is_free_gift?: boolean;
+  hiddenFromCustomer?: boolean;
+  hidden_from_customer?: boolean;
   note?: string;
 };
 
@@ -394,6 +396,10 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
   if (components.length === 0) return "";
   return components
     .filter((component) => component.productId || component.product_id)
+    // Hide components flagged "hidden from customer" — they still deduct
+    // stock, but listing them would just confuse the buyer (e.g. a part
+    // already implied by the combo name).
+    .filter((component) => !(component.hiddenFromCustomer ?? component.hidden_from_customer))
     .slice(0, 4)
     .map((component) => {
       const productId = component.productId || component.product_id || "";
