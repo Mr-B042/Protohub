@@ -17319,7 +17319,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         `Preferred Package ${index + 2}: ${buildPreferredPackageLine(
           line.productName,
           line.packageName,
-          Math.max(1, Number(line.quantity ?? 1) || 1) * Math.max(1, Number(line.packageQuantity ?? 1) || 1)
+          // Use the ordered quantity (what the breakdown card shows + what
+          // line.amount is priced on). Multiplying by packageQuantity here
+          // double-counted — e.g. 3 Starter Packs showed as "12pcs … =
+          // ₦10,500", implying ₦875/pc when the unit is actually ₦3,500.
+          Math.max(1, Number(line.quantity ?? 1) || 1)
         )} = ${formatProductMoney(line.amount, order.currency)}`
       );
     });
