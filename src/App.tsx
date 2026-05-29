@@ -11139,24 +11139,140 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
   const formatAgentBalanceWeekMessage = (group: AgentWeeklyBalanceGroup) => {
-    const hubLabel = agentBalanceHubLabel(group);
-    const body = group.rows
-      .map((row) => {
-        const adjustment = weekendStockAdjustmentForRow(row);
-        return `• ${row.productName}: Opening ${row.openingBalance} | Received ${row.receivedThisWeek} | Delivered ${row.deliveredThisWeek} | Adjustments ${formatSignedUnits(adjustment)} | Closing ${row.closingBalance}`;
-      })
-      .join("\n");
-    return [
-      `Weekly stock balance`,
-      `Week: ${weekRangeLabel(agentBalanceWeekStart, agentBalanceWeekEnd)}`,
-      `Agent: ${group.agentName}`,
-      `Hub: ${hubLabel}`,
-      "",
-      body,
-      "",
-      `Regards,`,
-      `Protohub`
-    ].join("\n");
+    const weekStart = agentBalanceWeekStart;
+    const weekEnd = agentBalanceWeekEnd;
+    // Build a Date safely from a YYYY-MM-DD key (avoid TZ shift)
+    const dateFromKey = (key: string) => {
+      const [y, m, d] = key.split("-").map((part) => Number(part));
+      return new Date(y, (m || 1) - 1, d || 1);
+    };
+    const fmtFull = (key: string) =>
+      dateFromKey(key).toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+      });
+    const fmtShortDay = (key: string) =>
+      dateFromKey(key).toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+      });
+
+    const lines: string[] = [];
+
+    // ── Headline ────────────────────────────────────────────────
+    lines.push(`Our Stock Inventory Breakdown`);
+    lines.push(`from ${fmtFull(weekStart)} to ${fmtFull(weekEnd)}`);
+    lines.push("");
+
+    // ── Opening balances per product (what they started the week with) ──
+    lines.push(`Stock Balance you had at the start of this week (${fmtFull(weekStart)}):`);
+    lines.push("");
+    group.rows.forEach((row, index) => {
+      lines.push(`${index + 1}. ${row.productName} = ${row.openingBalance}`);
+    });
+    lines.push("");
+
+    // ── Filter delivered orders within the week for this agent ──
+    const deliveredOrders = trackedOrders.filter((order) => {
+      if (order.agentId !== group.agentId) return false;
+      if ((order.status ?? "") !== "Delivered") return false;
+      const deliveredKey = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
+      if (!deliveredKey) return false;
+      return deliveredKey >= weekStart && deliveredKey <= weekEnd;
+    });
+
+    if (deliveredOrders.length === 0) {
+      lines.push(`No deliveries recorded this week.`);
+      return lines.join("\n");
+    }
+
+    lines.push(`A Detailed Stock Movement`);
+    lines.push("");
+
+    // ── Build day → product → entries[{customer, qty}] ──
+    type Entry = { customer: string; qty: number };
+    type DayMap = Map<string, Map<string, Entry[]>>;
+    const byDay: DayMap = new Map();
+
+    deliveredOrders.forEach((order) => {
+      const day = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
+      if (!day) return;
+      const customer = (order.customer || "Unknown customer").trim();
+      if (!byDay.has(day)) byDay.set(day, new Map());
+      const dayMap = byDay.get(day)!;
+
+      const realComponents = (order.packageComponentsSnapshot ?? []).filter(
+        (c) => (c.productId || c.productName) && Number(c.quantity || 0) > 0
+      );
+
+      if (realComponents.length > 0) {
+        realComponents.forEach((c) => {
+          const productName =
+            (c.productId
+              ? products.find((p) => p.id === c.productId)?.name
+              : c.productName) || c.productName || "Unknown product";
+          const qty = Number(c.quantity || 0);
+          if (!dayMap.has(productName)) dayMap.set(productName, []);
+          dayMap.get(productName)!.push({ customer, qty });
+        });
+      } else {
+        const productName = order.productName || "Unknown product";
+        const qty = Number(order.quantity || 1);
+        if (qty <= 0) return;
+        if (!dayMap.has(productName)) dayMap.set(productName, []);
+        dayMap.get(productName)!.push({ customer, qty });
+      }
+    });
+
+    // ── Running balance per product (start with opening) ──
+    const runningBalance: Record<string, number> = {};
+    group.rows.forEach((row) => {
+      runningBalance[row.productName] = row.openingBalance;
+    });
+
+    const sortedDays = Array.from(byDay.keys()).sort();
+    sortedDays.forEach((day, dayIndex) => {
+      const productMap = byDay.get(day)!;
+
+      // Day header
+      lines.push(fmtShortDay(day));
+
+      // Top-line summary per product for this day
+      Array.from(productMap.entries()).forEach(([productName, entries]) => {
+        const totalQty = entries.reduce((sum, e) => sum + e.qty, 0);
+        const distinctCustomers = new Set(entries.map((e) => e.customer)).size;
+        const customerLabel = distinctCustomers === 1 ? "customer" : "customers";
+        lines.push(`${totalQty}pcs of ${productName} was delivered to ${distinctCustomers} ${customerLabel}`);
+      });
+      lines.push("");
+
+      // Per-customer breakdown
+      Array.from(productMap.entries()).forEach(([productName, entries]) => {
+        entries.forEach((entry) => {
+          lines.push(`${entry.qty}pcs of ${productName} was delivered to ${entry.customer}`);
+        });
+      });
+      lines.push("");
+
+      // Running calculation
+      Array.from(productMap.entries()).forEach(([productName, entries]) => {
+        const totalQty = entries.reduce((sum, e) => sum + e.qty, 0);
+        const before = runningBalance[productName] ?? 0;
+        const after = before - totalQty;
+        runningBalance[productName] = after;
+        lines.push(`${before} - ${totalQty} = ${after} Stock remaining for ${productName}`);
+      });
+
+      if (dayIndex < sortedDays.length - 1) {
+        lines.push("");
+      }
+    });
+
+    return lines.join("\n");
   };
   const copyAgentBalanceSummary = async (group: AgentWeeklyBalanceGroup) => {
     try {
