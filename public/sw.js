@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v8-android-push-fix";
+const CACHE_NAME = "protohub-v9-simple-push-handler";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 const DEFAULT_BRAND_NAME = "Protohub";
@@ -223,17 +223,21 @@ self.addEventListener("message", (event) => {
 
 // ── Push ─────────────────────────────────────────────────
 self.addEventListener("push", (event) => {
-  // Android Chrome will silently drop background pushes if the handler
-  // throws or takes too long. We MUST call showNotification synchronously
-  // in waitUntil — no awaits before it that could fail.
+  // Android Chrome is STRICT: the showNotification promise must be the
+  // direct argument to event.waitUntil(). Wrapping in async/await or
+  // deferring via .catch() makes Chrome treat the push as "no
+  // notification shown" and silently drops the OS banner (only the
+  // in-app notification fires when the page is open). Keep this dead
+  // simple — one waitUntil(showNotification(...)). No cache reads, no
+  // branding enrichment, nothing async before the show call.
 
-  let payload = { title: "Protohub", body: "" };
+  let payload = { title: DEFAULT_BRAND_NAME, body: "" };
   if (event.data) {
     try {
       payload = event.data.json();
     } catch {
       try {
-        payload = { title: "Protohub", body: event.data.text() };
+        payload = { title: DEFAULT_BRAND_NAME, body: event.data.text() };
       } catch {
         // keep empty payload defaults
       }
@@ -242,15 +246,15 @@ self.addEventListener("push", (event) => {
 
   const kind = typeof payload.kind === "string" && payload.kind ? payload.kind : "info";
   const presentation = presentationForKind(kind);
-  const payloadBrandName = typeof payload.brandName === "string" && payload.brandName.trim()
+  const brandName = typeof payload.brandName === "string" && payload.brandName.trim()
     ? payload.brandName.trim()
     : DEFAULT_BRAND_NAME;
-  const payloadBrandLogo = sanitizeBrandLogo(payload.brandLogo);
-  const presentationIcon = payload.icon || presentation.icon || "/icons/icon-192.png";
-  const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, payloadBrandName);
+  const brandLogo = sanitizeBrandLogo(payload.brandLogo);
+  const iconCandidate = brandLogo || payload.icon || presentation.icon || "/icons/icon-192.png";
+  const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
   const options = {
     body: payload.body || "",
-    icon: payloadBrandLogo || presentationIcon,
+    icon: iconCandidate,
     badge: payload.badge || DEFAULT_BADGE,
     tag: payload.tag || `protohub-${kind}`,
     renotify: true,
@@ -260,44 +264,13 @@ self.addEventListener("push", (event) => {
     data: {
       url: payload.url || "/",
       kind,
-      brandName: payloadBrandName
-    },
-    actions: [
-      { action: "open", title: "Open" },
-      { action: "dismiss", title: "Dismiss" }
-    ]
-  };
-  if (payload.color || presentation.color) {
-    options.color = payload.color || presentation.color;
-  }
-
-  // Show notification IMMEDIATELY using payload-only data (no cache reads).
-  // This is the critical path for Android background delivery — must not
-  // depend on caches.open() / cache.match() succeeding.
-  const showPromise = self.registration.showNotification(title, options).catch(() => undefined);
-
-  // After the notification is shown, optionally enrich with cached
-  // org-level branding if it differs. This runs in waitUntil but never
-  // blocks the initial show.
-  event.waitUntil((async () => {
-    await showPromise;
-    if (payload.brandName && payload.brandLogo) return; // payload had branding
-    try {
-      const cachedBranding = await readPushBranding();
-      const cachedBrandName = cachedBranding.brandName || DEFAULT_BRAND_NAME;
-      const cachedLogo = cachedBranding.logoUrl;
-      if (cachedBrandName === payloadBrandName && !cachedLogo) return;
-      const enrichedTitle = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, cachedBrandName);
-      const enrichedOptions = {
-        ...options,
-        icon: cachedLogo || options.icon,
-        data: { ...options.data, brandName: cachedBrandName }
-      };
-      await self.registration.showNotification(enrichedTitle, enrichedOptions).catch(() => undefined);
-    } catch {
-      // best-effort enrichment; original notification already shown
+      brandName
     }
-  })());
+  };
+
+  // Single waitUntil wrapping showNotification directly. Match Ordello's
+  // pattern exactly — this is the form Android Chrome reliably honors.
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 // ── Notification Click ───────────────────────────────────
