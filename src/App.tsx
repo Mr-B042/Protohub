@@ -11366,56 +11366,103 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // the agent's normal inventory list (rare — combo expansion edge case).
     const handledNames = new Set<string>();
 
-    // Helper: render one product section with timeline + reconciled totals.
-    const renderProductSection = (productName: string, opening: number | null, entries: Entry[]) => {
+    // Helper: render one product section.
+    //
+    // The TIMELINE (per-day, per-customer lines) is best-effort human detail
+    // reconstructed from orders + waybills + stock movements. The BOTTOM-LINE
+    // NUMBERS (category totals + "Stock remaining") are anchored to the
+    // backend's authoritative weekly balance row so they always match the
+    // system of record — even if the timeline detail is slightly incomplete
+    // (e.g. a movement beyond the loaded-movements cap or a backdated date).
+    //
+    // For products that aren't on the agent's normal balance list (combo
+    // expansion / unrelated waybill SKU), there's no authoritative row, so we
+    // fall back to the reconstructed entry sums and label them clearly.
+    const renderProductSection = (
+      displayName: string,
+      row: AgentWeeklyBalanceRow | null,
+      entries: Entry[]
+    ) => {
       const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
-      const sum = (filter: (e: Entry) => boolean) =>
-        sortedEntries.filter(filter).reduce((acc, e) => acc + e.qty, 0);
-      const totalReceivedWaybill = sum((e) => e.sign === 1 && e.source === "waybill in");
-      const totalManualIn        = sum((e) => e.sign === 1 && e.source !== "waybill in");
-      const totalDelivered       = sum((e) => e.sign === -1 && (e.source === "main" || e.source === "add-on" || e.source === "free gift"));
-      const totalSentOut         = sum((e) => e.sign === -1 && e.source === "waybill out");
-      const totalManualOut       = sum((e) => e.sign === -1 && e.source !== "main" && e.source !== "add-on" && e.source !== "free gift" && e.source !== "waybill out");
-      const totalIn  = totalReceivedWaybill + totalManualIn;
-      const totalOut = totalDelivered + totalSentOut + totalManualOut;
 
-      lines.push(productName);
+      lines.push(displayName);
 
-      if (sortedEntries.length === 0) {
-        lines.push(`- No movement this week`);
-        lines.push("");
-        if (opening !== null) {
+      // ── Authoritative path (product on the agent's balance list) ──
+      if (row) {
+        const opening = row.openingBalance;
+        const closing = row.closingBalance;
+        const received = row.receivedThisWeek;
+        const delivered = row.deliveredThisWeek;
+        const returned = row.returnedThisWeek;
+        const transferredOut = row.transferredOutThisWeek;
+        const restored = row.restoredThisWeek;
+        const writtenOff = row.writtenOffThisWeek;
+
+        const hasMovement =
+          received || delivered || returned || transferredOut || restored || writtenOff ||
+          closing !== opening || sortedEntries.length > 0;
+
+        if (!hasMovement) {
+          lines.push(`- No movement this week`);
+          lines.push("");
           lines.push(`Stock remaining: ${opening} (unchanged)`);
+          lines.push("");
+          return;
         }
+
+        // Timeline detail (best effort). If we have no reconstructed entries
+        // but the authoritative row shows movement, say so plainly.
+        if (sortedEntries.length > 0) {
+          sortedEntries.forEach((entry) => {
+            lines.push(`- ${fmtFull(entry.day)}: ${entry.label}`);
+          });
+        } else {
+          lines.push(`- Movement recorded this week (see Inventory for line detail)`);
+        }
+        lines.push("");
+
+        // Authoritative category breakdown (only nonzero lines).
+        if (received > 0)       lines.push(`Received this week: ${received}pcs`);
+        if (restored > 0)       lines.push(`Restored to stock: ${restored}pcs`);
+        if (delivered > 0)      lines.push(`Delivered to customers: ${delivered}pcs`);
+        if (returned > 0)       lines.push(`Returned: ${returned}pcs`);
+        if (transferredOut > 0) lines.push(`Sent out (transfer): ${transferredOut}pcs`);
+        if (writtenOff > 0)     lines.push(`Written off: ${writtenOff}pcs`);
+
+        // Build a math line that ALWAYS reconciles to the authoritative
+        // closing balance. Categorized in/out terms are summed; any residual
+        // (e.g. a positive correction that isn't in a counter) is shown as an
+        // explicit adjustment so the arithmetic is always honest.
+        const categorized = opening + received + restored - delivered - returned - transferredOut - writtenOff;
+        const otherAdjustment = closing - categorized;
+
+        let mathLine = `Stock remaining: ${opening}`;
+        if (received > 0)       mathLine += ` + ${received}`;
+        if (restored > 0)       mathLine += ` + ${restored}`;
+        if (delivered > 0)      mathLine += ` - ${delivered}`;
+        if (returned > 0)       mathLine += ` - ${returned}`;
+        if (transferredOut > 0) mathLine += ` - ${transferredOut}`;
+        if (writtenOff > 0)     mathLine += ` - ${writtenOff}`;
+        if (otherAdjustment !== 0) {
+          mathLine += otherAdjustment > 0 ? ` + ${otherAdjustment}` : ` - ${Math.abs(otherAdjustment)}`;
+        }
+        mathLine += ` = ${closing}`;
+        lines.push(mathLine);
         lines.push("");
         return;
       }
 
+      // ── Fallback path (off-list product, no authoritative row) ──
+      const sum = (filter: (e: Entry) => boolean) =>
+        sortedEntries.filter(filter).reduce((acc, e) => acc + e.qty, 0);
+      const totalIn  = sum((e) => e.sign === 1);
+      const totalOut = sum((e) => e.sign === -1);
       sortedEntries.forEach((entry) => {
         lines.push(`- ${fmtFull(entry.day)}: ${entry.label}`);
       });
       lines.push("");
-
-      const summaryBits: string[] = [];
-      if (totalReceivedWaybill > 0) summaryBits.push(`Received via waybill: ${totalReceivedWaybill}pcs`);
-      if (totalManualIn > 0)        summaryBits.push(`Added via manual adjustment: ${totalManualIn}pcs`);
-      if (totalDelivered > 0)       summaryBits.push(`Delivered to customers: ${totalDelivered}pcs`);
-      if (totalSentOut > 0)         summaryBits.push(`Sent out via waybill: ${totalSentOut}pcs`);
-      if (totalManualOut > 0)       summaryBits.push(`Removed via manual adjustment: ${totalManualOut}pcs`);
-      summaryBits.forEach((bit) => lines.push(bit));
-
-      if (opening !== null) {
-        const closing = opening + totalIn - totalOut;
-        // Build a readable math line: e.g. "78 + 10 - 11 = 77"
-        let mathLine = `Stock remaining: ${opening}`;
-        if (totalIn > 0) mathLine += ` + ${totalIn}`;
-        if (totalOut > 0) mathLine += ` - ${totalOut}`;
-        mathLine += ` = ${closing}`;
-        lines.push(mathLine);
-      } else {
-        const closing = totalIn - totalOut;
-        lines.push(`Net movement: +${totalIn} - ${totalOut} = ${closing > 0 ? "+" : ""}${closing}`);
-      }
+      const net = totalIn - totalOut;
+      lines.push(`Net movement: +${totalIn} - ${totalOut} = ${net > 0 ? "+" : ""}${net}`);
       lines.push("");
     };
 
@@ -11423,7 +11470,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     group.rows.forEach((row) => {
       handledNames.add(row.productName);
       const entries = byProduct.get(row.productName) ?? [];
-      renderProductSection(row.productName, row.openingBalance, entries);
+      renderProductSection(row.productName, row, entries);
     });
 
     // Then surface any extra products that DID get movement but aren't on
