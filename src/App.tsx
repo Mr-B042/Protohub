@@ -7791,13 +7791,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderAuditLog, setOrderAuditLog] = useState<OrderAuditEntry[]>([]);
   const [orderFieldEdits, setOrderFieldEdits] = useState<Array<{
     id: string;
-    field_name: string;
-    from_value: unknown;
-    to_value: unknown;
-    changed_by: string | null;
-    changed_by_name: string | null;
-    changed_by_role: string | null;
-    created_at: string;
+    // The API response is camelCased by snakeToCamel, so keys arrive as
+    // fieldName/fromValue/etc — NOT the snake_case DB column names. (The
+    // VALUE of fieldName is still the snake_case key like "delivered_date",
+    // which is what FIELD_LABELS is keyed on.)
+    fieldName: string;
+    fromValue: unknown;
+    toValue: unknown;
+    changedBy: string | null;
+    changedByName: string | null;
+    changedByRole: string | null;
+    createdAt: string;
   }>>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
@@ -43831,24 +43835,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 		                      </div>
 		                      <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
 		                        {orderFieldEdits.map((edit) => {
-		                          const label = FIELD_LABELS[edit.field_name] ?? edit.field_name.replace(/_/g, " ");
-		                          const actor = edit.changed_by_name ?? "Unknown user";
-		                          const role = edit.changed_by_role ? ` (${edit.changed_by_role})` : "";
+		                          const fieldKey = edit.fieldName ?? "";
+                          const label = FIELD_LABELS[fieldKey] ?? (fieldKey ? fieldKey.replace(/_/g, " ") : "Field");
+		                          const actor = edit.changedByName ?? "Unknown user";
+		                          const role = edit.changedByRole ? ` (${edit.changedByRole})` : "";
 		                          return (
 		                            <div key={edit.id} className={`relative rounded-2xl border ${orderBorderClass} ${orderPanelMutedClass} p-3.5`}>
 		                              <span className="absolute left-0 top-5 h-2.5 w-2.5 -translate-x-1/2 rounded-full border-2 border-white bg-amber-500 dark:border-[#0f1822]" />
 		                              <div className="flex min-w-0 flex-col gap-1.5">
 		                                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
 		                                  <p className={`m-0 text-[15px] font-black leading-5 ${orderTitleTextClass}`}>{label} changed</p>
-		                                  <span className={`text-[12px] font-semibold whitespace-nowrap ${orderFaintTextClass}`}>{formatDateTime(edit.created_at)}</span>
+		                                  <span className={`text-[12px] font-semibold whitespace-nowrap ${orderFaintTextClass}`}>{formatDateTime(edit.createdAt)}</span>
 		                                </div>
 		                                <div className="flex flex-wrap items-center gap-2 text-sm">
 		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] ${orderBodyTextClass} ${orderPanelMutedClass}`}>
-		                                    <span className={orderFaintTextClass}>from</span> {renderValue(edit.from_value)}
+		                                    <span className={orderFaintTextClass}>from</span> {renderValue(edit.fromValue)}
 		                                  </span>
 		                                  <span className={orderFaintTextClass}>→</span>
 		                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[12px] font-semibold ${orderTitleTextClass} bg-amber-50 dark:bg-amber-500/10`}>
-		                                    <span className={orderFaintTextClass}>to</span> {renderValue(edit.to_value)}
+		                                    <span className={orderFaintTextClass}>to</span> {renderValue(edit.toValue)}
 		                                  </span>
 		                                </div>
 		                                <p className={`m-0 text-[11px] font-bold uppercase tracking-[0.16em] ${orderFaintTextClass}`}>By {actor}{role}</p>
