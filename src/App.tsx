@@ -11378,14 +11378,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // For products that aren't on the agent's normal balance list (combo
     // expansion / unrelated waybill SKU), there's no authoritative row, so we
     // fall back to the reconstructed entry sums and label them clearly.
+    // Returns true if the section rendered any movement, false if the
+    // product had no movement this week (and was therefore skipped to keep
+    // the message short — products with no movement are omitted from the
+    // detail, since the opening-balance list at the top already shows them).
     const renderProductSection = (
       displayName: string,
       row: AgentWeeklyBalanceRow | null,
       entries: Entry[]
-    ) => {
+    ): boolean => {
       const sortedEntries = entries.slice().sort((a, b) => a.day.localeCompare(b.day));
-
-      lines.push(displayName);
 
       // ── Authoritative path (product on the agent's balance list) ──
       if (row) {
@@ -11402,13 +11404,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           received || delivered || returned || transferredOut || restored || writtenOff ||
           closing !== opening || sortedEntries.length > 0;
 
+        // Skip no-movement products entirely — keeps the message short for
+        // agents holding many SKUs. Their balance is already in the opening
+        // list at the top.
         if (!hasMovement) {
-          lines.push(`- No movement this week`);
-          lines.push("");
-          lines.push(`Stock remaining: ${opening} (unchanged)`);
-          lines.push("");
-          return;
+          return false;
         }
+
+        lines.push(displayName);
 
         // Timeline detail (best effort). If we have no reconstructed entries
         // but the authoritative row shows movement, say so plainly.
@@ -11449,14 +11452,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         mathLine += ` = ${closing}`;
         lines.push(mathLine);
         lines.push("");
-        return;
+        return true;
       }
 
       // ── Fallback path (off-list product, no authoritative row) ──
+      // Off-list products only ever appear here because they HAD movement,
+      // so there's always something to show.
+      if (sortedEntries.length === 0) return false;
       const sum = (filter: (e: Entry) => boolean) =>
         sortedEntries.filter(filter).reduce((acc, e) => acc + e.qty, 0);
       const totalIn  = sum((e) => e.sign === 1);
       const totalOut = sum((e) => e.sign === -1);
+      lines.push(displayName);
       sortedEntries.forEach((entry) => {
         lines.push(`- ${fmtFull(entry.day)}: ${entry.label}`);
       });
@@ -11464,21 +11471,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const net = totalIn - totalOut;
       lines.push(`Net movement: +${totalIn} - ${totalOut} = ${net > 0 ? "+" : ""}${net}`);
       lines.push("");
+      return true;
     };
 
     // Render every product on the agent's normal inventory list first.
+    // Track whether anything had movement so we can show a clean message
+    // when the whole week was quiet.
+    let renderedAny = false;
     group.rows.forEach((row) => {
       handledNames.add(row.productName);
       const entries = byProduct.get(row.productName) ?? [];
-      renderProductSection(row.productName, row, entries);
+      if (renderProductSection(row.productName, row, entries)) renderedAny = true;
     });
 
     // Then surface any extra products that DID get movement but aren't on
     // the agent's normal list (combo expansion / waybill of unrelated SKU).
     Array.from(byProduct.entries()).forEach(([productName, entries]) => {
       if (handledNames.has(productName)) return;
-      renderProductSection(`${productName} (not on your usual inventory list)`, null, entries);
+      if (renderProductSection(`${productName} (not on your usual inventory list)`, null, entries)) renderedAny = true;
     });
+
+    if (!renderedAny) {
+      lines.push(`No stock movement recorded this week — all balances unchanged.`);
+      lines.push("");
+    }
 
     return lines.join("\n").trimEnd();
   };
