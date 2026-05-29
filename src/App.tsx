@@ -18057,9 +18057,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   };
 
+  // ── Shared CSV export helpers ──────────────────────────────────────
+  // Every page's "Export CSV" routes through triggerCsvDownload so the
+  // quoting, blob/link/cleanup, and toast are identical everywhere. A
+  // "Generated" timestamp + workspace name are stamped on every file so an
+  // exported sheet is self-describing (who/when/what filters).
+  const csvGeneratedRow = (): string[] => ["Generated", formatMoment(new Date())];
+  const csvWorkspaceRow = (): string[] => ["Workspace", companyName || "Protohub"];
+  const triggerCsvDownload = (filenameBase: string, rows: (string | number | null | undefined)[][], toastMsg: string) => {
+    const csv = rows
+      .map((row) => row.map((cell) => `"${(cell === null || cell === undefined ? "" : String(cell)).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${filenameBase}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(toastMsg);
+  };
+
   const exportReport = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Dashboard Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", selectedPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Product Filter", dashboardProductIds.size === 0 ? "All Products" : products.filter(p => dashboardProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -18072,22 +18096,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Total Orders", String(dashboardOrders.length)],
       ["Fulfillment Rate", `${dashboardDeliveryRate}%`],
       ["Cancellation Rate", `${dashboardCancelledRate}%`],
-      ["Abandoned Carts", String(dashboardCarts.length)]
+      ["Abandoned Carts", String(dashboardCarts.length)],
+      [],
+      ["PER-PRODUCT BREAKDOWN (this period)"],
+      ["Product", "Orders", "Delivered", "Units Delivered", "Revenue"]
     ];
+    // Per-product breakdown so the dashboard export isn't just headline KPIs.
+    const perProduct = new Map<string, { orders: number; delivered: number; units: number; revenue: number }>();
+    dashboardOrders.forEach((order) => {
+      const name = order.productName || "Unknown product";
+      if (!perProduct.has(name)) perProduct.set(name, { orders: 0, delivered: 0, units: 0, revenue: 0 });
+      const agg = perProduct.get(name)!;
+      agg.orders += 1;
+      if ((order.status ?? "New") === "Delivered") {
+        agg.delivered += 1;
+        agg.units += quantityForOrder(order);
+        agg.revenue += order.amount;
+      }
+    });
+    Array.from(perProduct.entries())
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .forEach(([name, agg]) => {
+        rows.push([name, String(agg.orders), String(agg.delivered), String(agg.units), formatMoney(agg.revenue)]);
+      });
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `dashboard-report-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Dashboard report exported as CSV.");
+    triggerCsvDownload("dashboard-report", rows, "Dashboard report exported as CSV.");
   };
 
   const exportOrdersCsv = () => {
@@ -18098,8 +18131,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const exportDeliveryRate = filteredOrderRows.length === 0
       ? 0
       : Math.round((exportDelivered.length / filteredOrderRows.length) * 100);
-    const rows = [
+    const exportRemitted = filteredOrderRows.reduce((s, o) => s + (o.amountRemitted ?? 0), 0);
+    const exportLogistics = filteredOrderRows.reduce((s, o) => s + (o.logisticsCost ?? 0), 0);
+    const rows: (string | number)[][] = [
       [activeOrderWorkspaceMeta.exportTitle],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", selectedOrdersPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
@@ -18109,44 +18146,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Location", orderLocation],
       ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
       ["Total Handled", String(filteredOrderRows.length)],
+      ["Delivered", String(exportDelivered.length)],
       ["Delivery Rate", `${exportDeliveryRate}%`],
-      ["Revenue Generated", formatMoney(exportRevenue)],
+      ["Revenue Generated (delivered)", formatMoney(exportRevenue)],
+      ["Logistics Cost", formatMoney(exportLogistics)],
+      ["Amount Remitted", formatMoney(exportRemitted)],
       [],
-      ["Order ID", "Customer", "Phone", "Product", "Package", "Status", "Assigned To", "Assigned By", "Source", "Location", "Amount", "Date"],
+      ["Order ID", "Customer", "Phone", "WhatsApp", "Email", "Product", "Package", "Qty", "Status", "Assigned To", "Assigned By", "Source", "City", "State", "Location", "Amount", "Logistics", "Remitted", "Remittance Status", "UTM Source", "UTM Campaign", "Created Date", "Scheduled", "Delivered Date"],
       ...filteredOrderRows.map((order) => [
         order.id,
         order.customer,
         order.phone,
+        order.whatsapp ?? "",
+        order.email ?? "",
         order.productName,
         order.packageName,
+        String(quantityForOrder(order)),
         order.status ?? "New",
         users.find((u) => u.id === order.assignedRepId)?.name ?? "Unassigned",
         order.assignedByNameSnapshot ?? users.find((u) => u.id === order.assignedByUserId)?.name ?? (order.assignedRepId ? "Legacy / unrecorded" : "Not assigned"),
         order.source ?? orderSourceFromUtm(order.utmSource),
+        order.city ?? "",
+        order.state ?? "",
         order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
         formatProductMoney(order.amount, order.currency),
-        order.date
-      ])
+        formatProductMoney(order.logisticsCost ?? 0, order.currency),
+        formatProductMoney(order.amountRemitted ?? 0, order.currency),
+        order.remittanceStatus ?? "",
+        order.utmSource ?? "",
+        order.utmCampaign ?? "",
+        order.date,
+        order.scheduledDate ? displayDateFromKey(normalizeDateKey(order.scheduledDate)) : "",
+        order.deliveredDate ? displayDateFromKey(normalizeDateKey(order.deliveredDate)) : ""
+      ]),
+      [
+        "TOTAL", "", "", "", "", "", "",
+        String(filteredOrderRows.reduce((s, o) => s + quantityForOrder(o), 0)),
+        "", "", "", "", "", "", "",
+        formatMoney(filteredOrderRows.reduce((s, o) => s + o.amount, 0)),
+        formatMoney(exportLogistics),
+        formatMoney(exportRemitted),
+        "", "", "", "", "", ""
+      ]
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${activeOrderWorkspaceMeta.exportFilePrefix}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast(`${activeOrderWorkspaceMeta.title} CSV exported.`);
+    triggerCsvDownload(activeOrderWorkspaceMeta.exportFilePrefix, rows, `${activeOrderWorkspaceMeta.title} CSV exported.`);
   };
 
   const exportRepOrdersCsv = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Call Rep Orders Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Scope", repScopeName],
       ["Mode", repScopeDescription],
       ["Status Tab", repOrderStatusTab],
@@ -18154,39 +18205,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Total Orders", String(repOrders.length)],
       ["Conversion", `${repConversionRate}%`],
       [],
-      ["Order ID", "Customer", "Phone", "Source", "Status", "Response Time", "Location", "Created Date", "Amount"],
+      ["Order ID", "Customer", "Phone", "WhatsApp", "Product", "Package", "Qty", "Source", "Status", "Response Time", "City", "State", "Location", "Created Date", "Amount"],
       ...repStatusFilteredOrders.map((order) => [
         order.id,
         order.customer,
         order.phone,
+        order.whatsapp ?? "",
+        order.productName,
+        order.packageName,
+        String(quantityForOrder(order)),
         order.source ?? orderSourceFromUtm(order.utmSource),
         order.status ?? "New",
         responseTimeForOrder(order),
+        order.city ?? "",
+        order.state ?? "",
         order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
         order.date,
         formatProductMoney(order.amount, order.currency)
-      ])
+      ]),
+      [
+        "TOTAL", "", "", "", "", "",
+        String(repStatusFilteredOrders.reduce((s, o) => s + quantityForOrder(o), 0)),
+        "", "", "", "", "", "", "",
+        formatMoney(repStatusFilteredOrders.reduce((s, o) => s + o.amount, 0))
+      ]
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `call-rep-orders-${slugify(repScopeName)}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Call rep orders exported.");
+    triggerCsvDownload(`call-rep-orders-${slugify(repScopeName)}`, rows, "Call rep orders exported.");
   };
 
   const exportAgentsCsv = () => {
     const productFilterLabel = agentProductIds.size === 0 ? "All" : [...agentProductIds].map((id) => products.find((p) => p.id === id)?.name ?? id).join(", ");
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Agents Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", agentsPeriod === "Custom" ? `${agentsDateRange.start || "?"} to ${agentsDateRange.end || "?"}` : agentsPeriod],
       ["Product Filter", productFilterLabel],
       ["Currency", selectedCurrency.label],
@@ -18198,27 +18251,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Stock with Agents", formatMoney(totalAgentStockValue)],
       [],
       ["Name", "Phone", "Zone", "Status", "Total Orders", "Delivered", "Qty Delivered", "Failed", "Delivery Rate", "Revenue", "Stock Value"],
-      ...filteredAgentRows.map((row) => [row.agent.name, row.agent.phone, row.agent.zone, row.status, String(row.totalOrders), String(row.deliveries), String(row.deliveredUnits), String(row.failed), `${row.successRate}%`, formatMoney(row.revenue), formatMoney(row.stockValue)])
+      ...filteredAgentRows.map((row) => [row.agent.name, row.agent.phone, row.agent.zone, row.status, String(row.totalOrders), String(row.deliveries), String(row.deliveredUnits), String(row.failed), `${row.successRate}%`, formatMoney(row.revenue), formatMoney(row.stockValue)]),
+      [
+        "TOTAL", "", "", "",
+        String(filteredAgentRows.reduce((s, r) => s + r.totalOrders, 0)),
+        String(filteredAgentRows.reduce((s, r) => s + r.deliveries, 0)),
+        String(filteredAgentRows.reduce((s, r) => s + r.deliveredUnits, 0)),
+        String(filteredAgentRows.reduce((s, r) => s + r.failed, 0)),
+        "",
+        formatMoney(filteredAgentRows.reduce((s, r) => s + r.revenue, 0)),
+        formatMoney(filteredAgentRows.reduce((s, r) => s + r.stockValue, 0))
+      ]
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `agents-report-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Agents CSV exported.");
+    triggerCsvDownload("agents-report", rows, "Agents CSV exported.");
   };
 
   const exportCustomersCsv = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Customer Directory"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", selectedCustomerPeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", customerSearch || "All"],
@@ -18245,27 +18298,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         customer.cancelled,
         formatMoney(customer.totalSpend),
         customer.source
-      ])
+      ]),
+      [
+        "TOTAL", "", "", "", "", "", "", "",
+        String(filteredCustomers.reduce((s, c) => s + (Number(c.orders) || 0), 0)),
+        String(filteredCustomers.reduce((s, c) => s + (Number(c.successful) || 0), 0)),
+        String(filteredCustomers.reduce((s, c) => s + (Number(c.cancelled) || 0), 0)),
+        formatMoney(filteredCustomers.reduce((s, c) => s + (Number(c.totalSpend) || 0), 0)),
+        ""
+      ]
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Customer data exported.");
+    triggerCsvDownload("customers", rows, "Customer data exported.");
   };
 
   const exportExpensesCsv = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Expense Management"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", selectedExpensePeriodLabel],
       ["Currency", selectedCurrency.label],
       ["Search", expenseSearch || "All"],
@@ -18274,87 +18325,95 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Product-Linked", formatMoney(productLinkedExpenses)],
       ["General Expenses", formatMoney(generalExpenses)],
       ["Daily Burn Rate", formatMoney(dailyBurnRate)],
+      ["Entries in view", String(filteredExpenses.length)],
       [],
       ["Date", "Recorded At", "Type", "Product / Ref", "Amount", "Description"],
-      ...filteredExpenses.map((expense) => [displayDateFromKey(expense.date), formatMoment(expense.createdAt), expense.type, expense.productName, formatMoney(expense.amount), expense.description])
+      ...filteredExpenses.map((expense) => [displayDateFromKey(expense.date), formatMoment(expense.createdAt), expense.type, expense.productName, formatMoney(expense.amount), expense.description]),
+      [
+        "TOTAL", "", "", "",
+        formatMoney(filteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0)),
+        ""
+      ]
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `expenses-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Expenses exported.");
+    triggerCsvDownload("expenses", rows, "Expenses exported.");
   };
 
   const exportUserData = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["User Management"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Total Users", String(users.length)],
       ["Active Users", String(activeUserCount)],
-      ["New Users (Month)", String(users.length)],
       ["Role Filter", userRole],
       ["Status Filter", userStatus],
-      ["Name", "Email", "Role", "Status", "Created"],
-      ...users.map((user) => [user.name, user.email, user.role, user.active ? "Active" : "Inactive", formatMoment(user.created)])
+      [],
+      ["Name", "Email", "Phone", "Role", "Status", "Presence", "Last Seen", "Extra Pages", "Custom Permissions", "Created"],
+      ...users.map((user) => [
+        user.name,
+        user.email,
+        user.phone ?? "",
+        user.role,
+        user.active ? "Active" : "Inactive",
+        userPresenceState(user),
+        user.lastSeenAt ? formatMoment(user.lastSeenAt) : "Never",
+        (user.extraPages ?? []).length > 0 ? (user.extraPages ?? []).join("; ") : "—",
+        (user.permissions ?? []).length > 0 ? String((user.permissions ?? []).length) : "0",
+        formatMoment(user.created)
+      ])
     ];
 
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `users-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("User data exported.");
+    triggerCsvDownload("users", rows, "User data exported.");
   };
 
   const exportInventoryCsv = () => {
-    const rows = [
+    const rows: (string | number)[][] = [
       ["Inventory Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Currency", selectedCurrency.label],
       ["Search", inventorySearch || "All"],
       ["Total Products", String(products.length)],
       ["Total Inventory Value", formatMoney(inventoryValue)],
       ["Total Units", String(totalInventoryUnits)],
       [],
-      ["Product", "SKU", "Unit Cost", "Selling Price", "Warehouse Stock", "Agent Stock", "Units Sold", "Status"],
+      ["Product", "SKU", "Unit Cost", "Selling Price", "Warehouse Stock", "Agent Stock", "Total Stock", "Reorder Point", "Low Stock?", "Stock Value", "Units Sold", "Status"],
       ...products.map((product) => {
         const pricing = primaryPricing(product);
+        const agentStock = productAgentStockSum(product.id);
+        const totalStock = product.warehouseStock + agentStock;
+        const unitCost = pricing?.unitCost ?? 0;
+        const stockValue = totalStock * unitCost;
+        const lowStock = product.warehouseStock <= (product.reorderPoint || 0);
         return [
           product.name,
           product.sku,
-          formatProductMoney(pricing?.unitCost ?? 0, pricing?.currency ?? "NGN"),
+          formatProductMoney(unitCost, pricing?.currency ?? "NGN"),
           formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN"),
           String(product.warehouseStock),
-          String(productAgentStockSum(product.id)),
+          String(agentStock),
+          String(totalStock),
+          String(product.reorderPoint ?? 0),
+          lowStock ? "YES" : "No",
+          formatProductMoney(stockValue, pricing?.currency ?? "NGN"),
           String(productUnitsSoldLive(product.id)),
           product.active ? "Active" : "Inactive"
         ];
-      })
+      }),
+      [
+        "TOTAL", "", "", "",
+        String(products.reduce((s, p) => s + p.warehouseStock, 0)),
+        String(products.reduce((s, p) => s + productAgentStockSum(p.id), 0)),
+        String(products.reduce((s, p) => s + p.warehouseStock + productAgentStockSum(p.id), 0)),
+        "",
+        String(products.filter((p) => p.warehouseStock <= (p.reorderPoint || 0)).length) + " low",
+        formatMoney(inventoryValue),
+        String(products.reduce((s, p) => s + productUnitsSoldLive(p.id), 0)),
+        ""
+      ]
     ];
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `inventory-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Inventory exported as CSV.");
+    triggerCsvDownload("inventory", rows, "Inventory exported as CSV.");
   };
 
   const printWaybill = (w: WaybillRecord) => {
@@ -18382,8 +18441,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const exportFinancialReport = () => {
-    const header = [
+    const header: string[][] = [
       ["Financial Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Tab", financeTab],
       ["Period", selectedFinancePeriodLabel],
       ["Currency", selectedCurrency.label],
@@ -18428,20 +18489,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ];
     }
     const rows = [...header, ...tabRows];
-
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `financial-report-${slugify(financeTab)}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast(`${financeTab} report exported.`);
+    triggerCsvDownload(`financial-report-${slugify(financeTab)}`, rows, `${financeTab} report exported.`);
   };
 
   const handleNavClick = (label: string) => {
@@ -22656,8 +22704,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const exportRate = filteredAbandonedCarts.length === 0
       ? 0
       : Math.round((exportConverted / filteredAbandonedCarts.length) * 100);
-    const rows = [
+    const rows: (string | number | null | undefined)[][] = [
       ["Abandoned Carts Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", cartsPeriod === "Custom" && cartsDateRange.start && cartsDateRange.end ? `${cartsDateRange.start} to ${cartsDateRange.end}` : cartsPeriod],
       ["Currency", selectedCurrency.label],
       ["Search", cartSearch || "All"],
@@ -22711,23 +22761,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ];
       })
     ];
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `abandoned-carts-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Abandoned carts exported as CSV.");
+    triggerCsvDownload("abandoned-carts", rows, "Abandoned carts exported as CSV.");
   };
 
   const exportDeliveriesCsv = () => {
-    const rows = [
+    const rows: (string | number | null | undefined)[][] = [
       ["Deliveries Report"],
+      csvWorkspaceRow(),
+      csvGeneratedRow(),
       ["Period", deliveriesPeriod === "Custom" && deliveriesDateRange.start && deliveriesDateRange.end ? `${deliveriesDateRange.start} to ${deliveriesDateRange.end}` : deliveriesPeriod],
       ["Currency", selectedCurrency.label],
       ["Product Filter", deliveriesProductIds.size === 0 ? "All Products" : products.filter(p => deliveriesProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -22737,7 +22778,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Total Revenue", formatMoney(deliveredRevenueInPeriod)],
       ["Avg Fulfillment", `${averageFulfillmentDays.toFixed(1)} days`],
       [],
-      ["Order ID", "Customer", "Phone", "Product", "Package", "Qty", "Location", "Agent", "Delivered Date", "Fulfillment Days", "Revenue"],
+      ["Order ID", "Customer", "Phone", "Product", "Package", "Qty", "City", "State", "Location", "Agent", "Delivered Date", "Fulfillment Days", "Revenue"],
       ...filteredDeliveryRows.map((order) => [
         order.id,
         order.customer,
@@ -22745,25 +22786,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         order.productName,
         order.packageName,
         String(quantityForOrder(order)),
+        order.city ?? "",
+        order.state ?? "",
         order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? ""),
         agentNameForOrder(order),
         order.deliveredDate,
         fulfillmentDaysForOrder(order).toFixed(1),
         formatProductMoney(order.amount, order.currency)
-      ])
+      ]),
+      [
+        "TOTAL", "", "", "", "",
+        String(filteredDeliveryRows.reduce((s, o) => s + quantityForOrder(o), 0)),
+        "", "", "", "", "", "",
+        formatMoney(filteredDeliveryRows.reduce((s, o) => s + o.amount, 0))
+      ]
     ];
-    const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `deliveries-report-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Deliveries exported as CSV.");
+    triggerCsvDownload("deliveries-report", rows, "Deliveries exported as CSV.");
   };
 
   const convertSelectedCart = async () => {
@@ -29849,10 +29887,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors"
                         onClick={() => {
-                          const rows = [
+                          const rows: (string | number)[][] = [
                             ["Sales Rep Report"],
+                            csvWorkspaceRow(),
+                            csvGeneratedRow(),
                             ["Name", detailUser.name],
                             ["Email", detailUser.email],
+                            ["Phone", detailUser.phone ?? ""],
                             ["Status", detailUser.active ? "Active" : "Inactive"],
                             ["Joined", formatMoment(detailUser.created)],
                             ["Period", salesPeriod === "Custom" && salesDateRange.start && salesDateRange.end ? `${salesDateRange.start} to ${salesDateRange.end}` : salesPeriod],
@@ -29864,26 +29905,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             ["Conversion Rate", `${repConversion}%`],
                             ["Avg Response Time", avgResponseLabel],
                             [],
-                            ["Order ID", "Customer", "Date", "Amount", "Source", "Status"],
+                            ["Order ID", "Customer", "Phone", "Product", "Package", "Qty", "Date", "Amount", "Source", "Status"],
                             ...repOrders.map((o) => [
                               o.id,
                               o.customer,
+                              o.phone,
+                              o.productName,
+                              o.packageName,
+                              String(quantityForOrder(o)),
                               formatOrderCreatedAt(o),
                               formatProductMoney(o.amount, o.currency),
                               o.source ?? orderSourceFromUtm(o.utmSource),
                               o.status ?? "New"
-                            ])
+                            ]),
+                            [
+                              "TOTAL", "", "", "", "",
+                              String(repOrders.reduce((s, o) => s + quantityForOrder(o), 0)),
+                              "",
+                              formatMoney(repOrders.reduce((s, o) => s + o.amount, 0)),
+                              "", ""
+                            ]
                           ];
-                          const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-                          const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-                          const link = document.createElement("a");
-                          link.href = url;
-                          link.download = `sales-rep-${detailUser.name.replace(/\s+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
-                          document.body.appendChild(link);
-                          link.click();
-                          link.remove();
-                          URL.revokeObjectURL(url);
-                          showToast(`${detailUser.name} report exported.`);
+                          triggerCsvDownload(`sales-rep-${detailUser.name.replace(/\s+/g, "-").toLowerCase()}`, rows, `${detailUser.name} report exported.`);
                         }}
                       >
                         <Download className="w-4 h-4" /> Export Report
@@ -46847,20 +46890,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	            {modal === "salesRepDetails" && selectedSalesRep && (
 	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{formatMoment(selectedSalesRep.created)}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {orderDisplaySourceFor(order).label}</p>)}</section><div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminSalesRepEditRoute(selectedSalesRep.id)}>Edit Profile</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
-                        const rows = [
+                        const rows: (string | number)[][] = [
                           [`Sales Rep Report — ${selectedSalesRep.name}`],
+                          csvWorkspaceRow(),
+                          csvGeneratedRow(),
                           ["Email", selectedSalesRep.email],
+                          ["Status", selectedSalesRep.active ? "Active" : "Inactive"],
                           ["Total Orders", String(repOrders.length)],
                           ["Delivered", String(repOrders.filter((o) => (o.status ?? "New") === "Delivered").length)],
+                          ["Delivered Revenue", formatMoney(repOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((s, o) => s + o.amount, 0))],
                           [],
-                          ["Order ID", "Customer", "Phone", "Product", "Status", "Amount", "Date"],
-                          ...repOrders.map((o) => [o.id, o.customer, o.phone, o.productName, o.status ?? "New", formatProductMoney(o.amount, o.currency), formatOrderCreatedAt(o)])
+                          ["Order ID", "Customer", "Phone", "Product", "Package", "Qty", "Status", "Amount", "Date"],
+                          ...repOrders.map((o) => [o.id, o.customer, o.phone, o.productName, o.packageName, String(quantityForOrder(o)), o.status ?? "New", formatProductMoney(o.amount, o.currency), formatOrderCreatedAt(o)]),
+                          [
+                            "TOTAL", "", "", "", "",
+                            String(repOrders.reduce((s, o) => s + quantityForOrder(o), 0)),
+                            "",
+                            formatMoney(repOrders.reduce((s, o) => s + o.amount, 0)),
+                            ""
+                          ]
                         ];
-                        const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-                        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-                        const a = document.createElement("a"); a.href = url; a.download = `rep-${slugify(selectedSalesRep.name)}-${new Date().toISOString().slice(0,10)}.csv`;
-                        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-                        showToast(`${selectedSalesRep.name}'s orders exported.`);
+                        triggerCsvDownload(`rep-${slugify(selectedSalesRep.name)}`, rows, `${selectedSalesRep.name}'s orders exported.`);
                       }}>Export Report</button></div></div>
 	            )}
 
