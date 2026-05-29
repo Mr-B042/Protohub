@@ -242,7 +242,13 @@ export async function sendPushToSubscriptions(
           },
           message,
           {
-            TTL: 60 * 60,
+            // FCM/Mozilla/Apple drop the message silently if TTL elapses
+            // before the device wakes. Samsung One UI's Adaptive Battery
+            // can keep a device in deep doze for hours; the previous
+            // 1-hour TTL meant pushes were silently dropped while the
+            // phone was asleep. 28 days (= 2419200s) is FCM's maximum;
+            // urgency:high asks the push service to wake the device.
+            TTL: 28 * 24 * 60 * 60,
             urgency: "high",
             topic: pushTopicForPayload(payload)
           }
