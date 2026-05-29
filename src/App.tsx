@@ -11294,6 +11294,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Stock SENT OUT by this agent (- from balance): waybills with
     // fromAgentId === group.agentId, with dateSent in the week.
     waybillRecords.forEach((waybill) => {
+      // Skip customer-delivery waybills — when an order is delivered the
+      // backend auto-creates a waybill (agent → "Customer:orderId", note
+      // "Auto-created on order delivery (...)"). That movement is ALREADY
+      // counted as a customer delivery from the orders loop above, so
+      // counting it here too would double-count AND leak the internal
+      // auto-created note into the agent-facing text.
+      if (isCustomerDeliveryWaybill(waybill)) return;
+
       const productName = resolveProductName(waybill.productId, waybill.productName);
       const qty = Number(waybill.quantity || 0);
       if (qty <= 0) return;
