@@ -32987,7 +32987,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-700">{o.productName}</td>
-                                <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{o.date}</td>
+                                <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
                                 <td className="px-5 py-3 font-semibold text-gray-900 whitespace-nowrap">{formatProductMoney(o.amount, o.currency)}</td>
                                 <td className="px-5 py-3">{renderOrderStatusSummary(o)}</td>
                               </tr>
