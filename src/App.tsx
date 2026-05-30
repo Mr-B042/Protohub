@@ -44846,7 +44846,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                                </div>
 	                                <span className="text-xs text-gray-500">
                                     {agentCoverageLabel(agent)}
-                                    {matchedLocation ? ` · ${agentLocationLabel(matchedLocation)}` : ""}
+                                    {matchedLocation ? <span className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#1F8FE0]"><Truck className="w-3 h-3 shrink-0" aria-hidden="true" /> Ships from {agentLocationLabel(matchedLocation)} — this hub's stock</span> : ""}
                                   </span>
 	                              </div>
 	                              <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${stockColor}`}>{stockLabel}</span>
