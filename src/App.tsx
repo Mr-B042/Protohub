@@ -30377,7 +30377,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <button
                               type="button"
                               onClick={() => openAdminSalesRepDetail(row.user.id)}
-                              className="group w-full text-left flex items-center gap-3 sm:gap-4 px-2 py-3 rounded-lg border-b border-gray-100 last:border-0 hover:bg-gray-50/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1F8FE0] transition-colors"
+                              className="group w-full text-left flex items-center gap-3 sm:gap-4 px-2 py-3 rounded-lg border-b border-gray-100 last:border-0 hover:bg-gray-50/80 dark:hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1F8FE0] transition-colors"
                             >
                               <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold tabular-nums ring-1 ${medalClasses}`}>
                                 {isGold ? <Crown className="w-3.5 h-3.5" aria-hidden="true" /> : idx + 1}
@@ -30395,16 +30395,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <span className={`block h-full rounded-full ${barClasses}`} style={{ width: `${barWidth}%` }} />
                                 </div>
                               </div>
-                              <div className="shrink-0 flex flex-col items-end gap-1">
-                                <span className={`text-sm font-bold tabular-nums ${isGold ? "text-amber-600" : "text-gray-900"}`}>{formatMoney(row.revenue)}</span>
-                                <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400 tabular-nums">{isGold ? "Leader" : `${share}% of lead`}</span>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 tabular-nums">
-                                    <PackageCheck className="w-3 h-3 text-gray-400" aria-hidden="true" />
-                                    {row.delivered}/{row.orders}
+                              <div className="shrink-0 flex flex-col items-end gap-0.5 text-right">
+                                <span className={`text-sm font-bold tabular-nums leading-tight ${isGold ? "text-amber-600" : "text-gray-900"}`}>{formatMoney(row.revenue)}</span>
+                                <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-400 tabular-nums">{isGold ? "Revenue · Leader" : `Revenue · ${share}% of lead`}</span>
+                                <div className="mt-1.5 flex items-center gap-3">
+                                  <span className="hidden sm:flex flex-col items-end leading-none" title="Delivered orders out of total assigned orders this period">
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-600 tabular-nums">
+                                      <PackageCheck className="w-3 h-3 text-gray-400" aria-hidden="true" />{row.delivered}/{row.orders}
+                                    </span>
+                                    <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-gray-400">delivered</span>
                                   </span>
-                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ring-1 ${convClasses}`}>{row.conversion}%</span>
-                                  <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-400 group-hover:translate-x-0.5 transition-all" aria-hidden="true" />
+                                  <span className="flex flex-col items-end leading-none" title="Conversion rate — delivered ÷ assigned orders">
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ring-1 ${convClasses}`}>{row.conversion}%</span>
+                                    <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-gray-400">conv. rate</span>
+                                  </span>
+                                  <ChevronRight className="w-4 h-4 self-center text-gray-300 group-hover:text-gray-400 group-hover:translate-x-0.5 transition-all" aria-hidden="true" />
                                 </div>
                               </div>
                             </button>
@@ -36464,9 +36469,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {financeTab === "Product Profitability" && (
                 <div className="space-y-4">
                   {topGrowthOpportunity && (
-                    <div className="rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm">
+                    <div className="rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm dark:border-emerald-400/30 dark:from-emerald-500/14 dark:to-emerald-500/6">
                       <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
                           <TrendingUp className="h-5 w-5" />
                         </div>
                         <div className="min-w-0 flex-1">
