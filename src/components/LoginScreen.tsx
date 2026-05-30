@@ -28,8 +28,24 @@ function passwordStrength(pw: string): { label: string; pct: number; color: stri
   return { label: b.label, pct: ((score) / (buckets.length - 1)) * 100, color: b.color };
 }
 
+// Read a value the app persists via writeStored (JSON-encoded). The login
+// screen shows the last-known org brand from a previous session so the
+// workspace looks consistent before sign-in (falls back to ProtoHub default
+// on a fresh device).
+function readStoredString(key: string): string {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw == null) return "";
+    try { const v = JSON.parse(raw); return typeof v === "string" ? v : ""; }
+    catch { return raw; }
+  } catch { return ""; }
+}
+
 export function LoginScreen({ onLogin }: Props) {
   const [mode, setMode]       = useState<Mode>("login");
+  const brandName = readStoredString("protohub.companyName").trim();
+  const brandLogo = readStoredString("protohub.companyLogo").trim();
+  const [brandLogoBroken, setBrandLogoBroken] = useState(false);
   const [orgName, setOrgName] = useState("");
   const [name, setName]       = useState("");
   const [email, setEmail]     = useState("");
@@ -109,14 +125,24 @@ export function LoginScreen({ onLogin }: Props) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        {/* Logo / brand */}
+        {/* Logo / brand — use the org's saved logo/name when available,
+            else the default ProtoHub mark. */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#1F8FE0] mb-4">
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">ProtoHub CRM</h1>
+          {brandLogo && !brandLogoBroken ? (
+            <img
+              src={brandLogo}
+              alt={brandName || "Workspace logo"}
+              onError={() => setBrandLogoBroken(true)}
+              className="inline-block w-16 h-16 object-contain rounded-2xl mb-4"
+            />
+          ) : (
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#1F8FE0] mb-4">
+              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-gray-900">{brandName || "ProtoHub CRM"}</h1>
           <p className="text-sm text-gray-500 mt-1">
             {mode === "login" ? "Sign in to your workspace" : mode === "register" ? "Create your organization" : "Reset your password"}
           </p>
