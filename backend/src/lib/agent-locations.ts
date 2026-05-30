@@ -182,6 +182,10 @@ export async function resolveAgentLocationForOrder(
     desiredCity?: string | null;
     productId?: string | null;
     explicitLocationId?: string | null;
+    // Every product the order needs in stock (main + add-ons + free gifts).
+    // When provided, hub selection ranks by ability to fulfill ALL lines, not
+    // just the main product. Falls back to `productId` for older callers.
+    requiredLines?: Array<{ productId: string; quantity: number }>;
   }
 ) {
   const locations = await loadAgentLocations(orgId, agentId);
@@ -189,6 +193,9 @@ export async function resolveAgentLocationForOrder(
   const pool = activeLocations.length > 0 ? activeLocations : locations;
   if (pool.length === 0) return null;
 
+  // A deliberate hub choice always wins: an explicit pick from the UI (the UI
+  // gates cross-state selection) and, crucially, the reversal/delete paths that
+  // pass the order's *stored* hub so stock is returned to where it was taken.
   if (args.explicitLocationId) {
     const explicit = pool.find((location) => location.id === args.explicitLocationId) ?? locations.find((location) => location.id === args.explicitLocationId);
     if (explicit) return explicit;
@@ -196,19 +203,49 @@ export async function resolveAgentLocationForOrder(
 
   const wantedState = normalizeState(args.desiredState).toLowerCase();
   const wantedCity = normalizeCity(args.desiredCity).toLowerCase();
-  const productId = args.productId ? String(args.productId) : "";
 
-  const sorted = pool.slice().sort((a, b) => {
-    const aStock = productId ? locationStockForProduct(a, productId) : 0;
-    const bStock = productId ? locationStockForProduct(b, productId) : 0;
-    if ((aStock > 0 ? 1 : 0) !== (bStock > 0 ? 1 : 0)) return (bStock > 0 ? 1 : 0) - (aStock > 0 ? 1 : 0);
-    if (aStock !== bStock) return bStock - aStock;
+  // STRICT STATE ROUTING: an order placed in a state must be fulfilled from
+  // that state's hub. When the order has a state, the candidate pool is
+  // restricted to in-state hubs. If the agent has NO active hub in that state,
+  // return null so the caller blocks/flags it — never silently route the order
+  // to an out-of-state hub just because that hub has more stock.
+  let candidates = pool;
+  if (wantedState) {
+    const stateHubs = pool.filter((location) => normalizeState(location.state).toLowerCase() === wantedState);
+    if (stateHubs.length === 0) return null;
+    candidates = stateHubs;
+  }
+
+  // Lines this order needs the hub to stock. Falls back to the single main
+  // product so callers that haven't been updated still behave sensibly.
+  const requiredLines = (args.requiredLines && args.requiredLines.length > 0)
+    ? args.requiredLines
+    : (args.productId ? [{ productId: String(args.productId), quantity: 1 }] : []);
+
+  const fulfillment = (location: AgentLocationRecord) => {
+    if (requiredLines.length === 0) return { fully: true, satisfied: 0, depth: 0 };
+    let satisfied = 0;
+    let depth = 0;
+    let fully = true;
+    for (const line of requiredLines) {
+      const have = locationStockForProduct(location, line.productId);
+      depth += Math.min(have, Math.max(1, line.quantity));
+      if (have >= line.quantity) satisfied += 1; else fully = false;
+    }
+    return { fully, satisfied, depth };
+  };
+
+  const sorted = candidates.slice().sort((a, b) => {
+    const fa = fulfillment(a);
+    const fb = fulfillment(b);
+    // 1. Hubs that can fulfill EVERY line (main + add-ons) first.
+    if ((fa.fully ? 1 : 0) !== (fb.fully ? 1 : 0)) return (fb.fully ? 1 : 0) - (fa.fully ? 1 : 0);
+    // 2. Then more lines satisfiable, then more total available stock depth.
+    if (fa.satisfied !== fb.satisfied) return fb.satisfied - fa.satisfied;
+    if (fa.depth !== fb.depth) return fb.depth - fa.depth;
+    // 3. Then the primary hub.
     if ((a.is_primary ? 1 : 0) !== (b.is_primary ? 1 : 0)) return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
-
-    const aStateMatch = wantedState && normalizeState(a.state).toLowerCase() === wantedState ? 1 : 0;
-    const bStateMatch = wantedState && normalizeState(b.state).toLowerCase() === wantedState ? 1 : 0;
-    if (aStateMatch !== bStateMatch) return bStateMatch - aStateMatch;
-
+    // 4. Then city match (within the already state-matched pool).
     const aCityMatch = wantedCity && normalizeCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
     const bCityMatch = wantedCity && normalizeCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
     if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;
@@ -265,6 +302,7 @@ export async function buildAgentLocationSnapshot(
     desiredCity?: string | null;
     productId?: string | null;
     explicitLocationId?: string | null;
+    requiredLines?: Array<{ productId: string; quantity: number }>;
   }
 ) {
   const location = await resolveAgentLocationForOrder(orgId, agentId, args);

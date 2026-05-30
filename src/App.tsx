@@ -1884,15 +1884,22 @@ const bestAgentFulfillmentLocationMatch = (
   const wantedCity = normalizeAgentCity(city).toLowerCase();
   const locations = activeAgentLocationRows(agent);
   if (locations.length === 0) return null;
-  const sorted = locations.slice().sort((a, b) => {
+  // STRICT STATE ROUTING — mirrors the backend resolveAgentLocationForOrder():
+  // only hubs in the order's state are candidates. If the agent has no hub in
+  // that state, return null (no out-of-state fallback) so the badge matches
+  // what the backend will actually do.
+  let candidates = locations;
+  if (wantedState) {
+    const stateHubs = locations.filter((location) => normalizeAgentState(location.state).toLowerCase() === wantedState);
+    if (stateHubs.length === 0) return null;
+    candidates = stateHubs;
+  }
+  const sorted = candidates.slice().sort((a, b) => {
     const aStock = agentLocationProductStockQuantity(a, productId);
     const bStock = agentLocationProductStockQuantity(b, productId);
     if ((aStock > 0 ? 1 : 0) !== (bStock > 0 ? 1 : 0)) return (bStock > 0 ? 1 : 0) - (aStock > 0 ? 1 : 0);
     if (aStock !== bStock) return bStock - aStock;
     if ((a.isPrimary ? 1 : 0) !== (b.isPrimary ? 1 : 0)) return (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
-    const aStateMatch = wantedState && normalizeAgentState(a.state).toLowerCase() === wantedState ? 1 : 0;
-    const bStateMatch = wantedState && normalizeAgentState(b.state).toLowerCase() === wantedState ? 1 : 0;
-    if (aStateMatch !== bStateMatch) return bStateMatch - aStateMatch;
     const aCityMatch = wantedCity && normalizeAgentCity(a.city).toLowerCase() === wantedCity ? 1 : 0;
     const bCityMatch = wantedCity && normalizeAgentCity(b.city).toLowerCase() === wantedCity ? 1 : 0;
     if (aCityMatch !== bCityMatch) return bCityMatch - aCityMatch;

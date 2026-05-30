@@ -496,6 +496,7 @@ router.post("/", async (req, res) => {
         desiredState: d.state,
         desiredCity: d.city,
         productId: d.productId,
+        requiredLines: d.productId ? [{ productId: String(d.productId), quantity: Number(d.quantity) || 1 }] : undefined,
         explicitLocationId: d.agentLocationId ?? null
       })
     : {
@@ -781,7 +782,8 @@ router.patch("/:id/status", async (req, res) => {
       : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: inventoryProductId
+          productId: inventoryProductId,
+          requiredLines: inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }))
         });
     const availability = await inventoryAvailabilityMap(
       effectiveAgentId,
@@ -834,6 +836,7 @@ router.patch("/:id/status", async (req, res) => {
         desiredState: existing.state,
         desiredCity: existing.city,
         productId: existing.product_id,
+        requiredLines: inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity })),
         explicitLocationId: effectiveAgentLocationId
       })
     );
@@ -974,17 +977,20 @@ router.patch("/:id/status", async (req, res) => {
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
     const today = new Date().toISOString().split("T")[0];
+    const deductionLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
     const resolvedLocation = effectiveAgentLocationId
       ? await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
           productId: inventoryProductId,
+          requiredLines: deductionLines,
           explicitLocationId: effectiveAgentLocationId
         })
       : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
-          productId: inventoryProductId
+          productId: inventoryProductId,
+          requiredLines: deductionLines
         });
 
     if (!resolvedLocation) {
@@ -1610,6 +1616,7 @@ router.patch("/:id", async (req, res) => {
           desiredState: (updates.state as string | undefined) ?? current.state ?? undefined,
           desiredCity: (updates.city as string | undefined) ?? current.city ?? undefined,
           productId: (updates.product_id as string | undefined) ?? current.product_id ?? undefined,
+          requiredLines: orderInventoryLinesFromRow({ ...current, ...updates }).map((line) => ({ productId: line.productId, quantity: line.quantity })),
           explicitLocationId: (updates.agent_location_id as string | null | undefined) ?? current.agent_location_id ?? undefined
         })
       );
