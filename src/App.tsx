@@ -14271,7 +14271,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`Delivery fee for ${order.id} not synced: ${err?.message ?? "please retry"}.`);
     });
   };
-  const productProfitabilityRows = products.map((product) => {
+  const productProfitabilityRowsAll = products.map((product) => {
     const allOrders = financePeriodOrders.filter((order) => order.productId === product.id);
     const delivered = financeCohortDeliveredRows.filter((order) => order.productId === product.id);
     const unitsSold = delivered.reduce((sum, order) => {
@@ -14314,8 +14314,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       margin: revenue === 0 ? 0 : Math.round((netProfit / revenue) * 100),
       roi: cogs + logistics + productExpenses === 0 ? 0 : Math.round((netProfit / (cogs + logistics + productExpenses)) * 100)
     };
-  }).filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
+  });
+  const productProfitabilityRows = productProfitabilityRowsAll.filter((row) => row.product.name.toLowerCase().includes(financeProductSearch.trim().toLowerCase()) || row.product.sku.toLowerCase().includes(financeProductSearch.trim().toLowerCase()));
   const avgProductMargin = productProfitabilityRows.filter((row) => row.revenue > 0).length === 0 ? 0 : Math.round(productProfitabilityRows.filter((row) => row.revenue > 0).reduce((sum, row) => sum + row.margin, 0) / productProfitabilityRows.filter((row) => row.revenue > 0).length);
+  // "Top Growth Opportunity" insight: the product with the highest net margin
+  // this period, restricted to products that actually sold (delivered revenue)
+  // AND are profitable — recommending more ad spend on a loss-maker would be
+  // wrong. Computed from the full (unfiltered) set so it stays stable as the
+  // user types in the search box.
+  const topGrowthOpportunity = (() => {
+    const candidates = productProfitabilityRowsAll.filter((row) => row.revenue > 0 && row.netProfit > 0);
+    if (candidates.length === 0) return null;
+    const best = candidates.reduce((top, row) => ((row.netProfit / row.revenue) > (top.netProfit / top.revenue) ? row : top));
+    return { product: best.product, marginPct: (best.netProfit / best.revenue) * 100, netProfit: best.netProfit, revenue: best.revenue };
+  })();
   const packagePerformanceRows = (() => {
     const search = financeProductSearch.trim().toLowerCase();
     const totalDeliveredRevenue = financeDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
@@ -36377,6 +36389,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
               {financeTab === "Product Profitability" && (
                 <div className="space-y-4">
+                  {topGrowthOpportunity && (
+                    <div className="rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                          <TrendingUp className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">Top Growth Opportunity</span>
+                          <p className="mt-1 text-sm text-gray-700">
+                            <strong className="text-gray-900">{topGrowthOpportunity.product.name}</strong> has the highest net margin (<strong>{topGrowthOpportunity.marginPct.toFixed(1)}%</strong>) this period. Consider increasing marketing spend for this product.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                            <span><span className="font-bold text-emerald-700">{formatMoney(topGrowthOpportunity.netProfit)}</span> <span className="text-gray-400">profit</span></span>
+                            <span><span className="font-bold text-gray-900">{formatMoney(topGrowthOpportunity.revenue)}</span> <span className="text-gray-400">revenue</span></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm">
                       <TrendingUp className="w-4 h-4 text-blue-500" />
