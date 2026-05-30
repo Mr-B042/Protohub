@@ -44820,7 +44820,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    </div>
 	                  )}
 	                  <div>
-	                    <span className="text-xs font-semibold text-gray-700 block mb-2">Delivery Agent — pick one:</span>
+	                    <span className="text-xs font-semibold text-gray-700 block mb-2">{visibleRows.length <= 1 ? "Delivery Agent" : "Delivery Agent — pick one:"}</span>
 	                    {visibleRows.length === 0 ? (
 	                      <div className="px-3 py-4 text-center text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200">No matching agents — toggle "Show all states" above</div>
 	                    ) : (
@@ -44870,7 +44870,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            : "bg-rose-50 border-rose-200 text-rose-900"
 	                      }`}>
 	                        {selectedAgentRow.stockQty >= orderQty ? (
-	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}).</>
+	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}). <span className="font-bold">Next: tap "Assign to Agent" below to confirm.</span></>
 	                        ) : selectedAgentRow.stockQty > 0 ? (
 	                          <><strong>⚠ Insufficient stock.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} only has <strong>{selectedAgentRow.stockQty}</strong> in stock — this order needs <strong>{orderQty}</strong>. Use <em>Distribute Stock</em> to top them up first.</>
 	                        ) : (
