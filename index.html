@@ -88,17 +88,35 @@
       html.dark .app-splash__spinner { border-color: #1e293b; border-top-color: #1F8FE0; }
     </style>
     <script>
-      // Brand the splash from the org's saved name/logo (same source the
-      // manifest script reads), so it matches the white-label workspace.
+      // Brand the splash from the org's saved name/logo. These are stored
+      // JSON-encoded by the app's writeStored helper, so the raw localStorage
+      // value has surrounding quotes — JSON.parse it (a literal quoted URL
+      // would otherwise become a broken <img src>). Falls back gracefully.
       (() => {
+        var readStored = function (key) {
+          try {
+            var raw = localStorage.getItem(key);
+            if (raw == null) return "";
+            try { var v = JSON.parse(raw); return typeof v === "string" ? v : ""; }
+            catch (e) { return raw; }
+          } catch (e) { return ""; }
+        };
         try {
-          var name = (localStorage.getItem("protohub.companyName") || "").trim();
-          var logo = (localStorage.getItem("protohub.companyLogo") || "").trim();
+          var name = readStored("protohub.companyName").trim();
+          var logo = readStored("protohub.companyLogo").trim();
           var brand = document.getElementById("app-splash-brand");
           if (logo) {
             var img = document.createElement("img");
             img.className = "app-splash__logo";
             img.alt = name || "Loading";
+            // If the logo URL fails to load (stale/dead link), fall back to
+            // the brand name so we never show a broken-image icon.
+            img.onerror = function () {
+              var span = document.createElement("div");
+              span.className = "app-splash__brand";
+              span.textContent = name || "Protohub";
+              img.replaceWith(span);
+            };
             img.src = logo;
             brand.replaceWith(img);
           } else if (name) {
