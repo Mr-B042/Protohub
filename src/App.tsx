@@ -10235,9 +10235,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardPreviousDelivered = deliveredOrderRows
     .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
     .filter((order) => isInExplicitRange(orderDeliveredKey(order), dashboardPreviousRange));
-  // Cohort delivered for the previous period (created in the prev range AND now
-  // Delivered) — keeps the Fulfillment Rate trend apples-to-apples with current.
-  const dashboardPreviousDeliveredCohort = dashboardPreviousOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const dashboardPreviousExpenses = expenses
     .filter((expense) => dashboardExpenseMatchesProductFilter(expense))
     .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange));
@@ -10449,11 +10446,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ordersDeliveryRateExact = periodOrders.length === 0 ? 0 : (periodDeliveredOrders.length / periodOrders.length) * 100;
   const ordersDeliveryRate = Math.round(ordersDeliveryRateExact);
   const ordersFailedRate = periodOrders.length === 0 ? 0 : Math.round((periodOrders.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New")).length / periodOrders.length) * 100);
-  // Fulfillment Rate uses a clean cohort basis — delivered AMONG orders created
-  // in the period — matching the Orders page's Delivery Rate. (It used to divide
-  // delivered-in-period by created-in-period, mixing two cohorts.) Revenue/profit
-  // still use dashboardDeliveredOrders (delivered-in-period) for recognition.
-  const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredCohortOrders.length / dashboardOrders.length) * 100;
+  // Fulfillment Rate = the "delivered this period vs placed this period"
+  // throughput rate, matching the Delivered Week P&L card's headline Delivery
+  // rate (delivered-by-delivery-date over orders-created-in-period). This is the
+  // org's canonical delivery rate.
+  const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
@@ -15409,12 +15406,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (card.label === "Fulfillment Rate") {
       const previousRateExact = dashboardPreviousOrders.length === 0
         ? 0
-        : (dashboardPreviousDeliveredCohort.length / dashboardPreviousOrders.length) * 100;
+        : (dashboardPreviousDelivered.length / dashboardPreviousOrders.length) * 100;
       return {
         ...card,
         value: `${dashboardDeliveryRate}%`,
         trend: formatTrend(percentChange(dashboardDeliveryRateExact, previousRateExact)),
-        helper: `${dashboardDeliveredCohortOrders.length} delivered · ${dashboardCancelledCount} cancelled (${dashboardCancelledRate}%)`
+        helper: `${dashboardDeliveredOrders.length} delivered · ${dashboardCancelledCount} cancelled (${dashboardCancelledRate}%)`
       };
     }
 
