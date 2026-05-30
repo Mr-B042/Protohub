@@ -12406,7 +12406,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const remittancePartnerKey = (agentId: string | null | undefined, partnerName: string) =>
     agentId || `name:${partnerName.trim().toLowerCase() || "unassigned"}`;
   const partnerCashMap = (() => {
-    const map = new Map<string, { partnerName: string; agentId: string | null; remitted: number; transactionCount: number }>();
+    const map = new Map<string, { partnerName: string; agentId: string | null; remitted: number; transactionCount: number; lastReceivedAt: string | null }>();
     financeRemittanceTransactions.forEach((transaction) => {
       const partnerName = transaction.agentName ?? agents.find((agent) => agent.id === transaction.agentId)?.name ?? "Unassigned";
       const key = remittancePartnerKey(transaction.agentId, partnerName);
@@ -12414,21 +12414,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         partnerName,
         agentId: transaction.agentId ?? null,
         remitted: 0,
-        transactionCount: 0
+        transactionCount: 0,
+        lastReceivedAt: null
       };
       current.remitted += transaction.deltaAmount;
       current.transactionCount += 1;
+      // Most recent cash actually received from this partner. Only positive
+      // receipts count — negative deltas are corrections/reversals. receivedAt
+      // is an ISO string, so lexicographic max == most recent.
+      if (transaction.deltaAmount > 0 && transaction.receivedAt && (!current.lastReceivedAt || transaction.receivedAt > current.lastReceivedAt)) {
+        current.lastReceivedAt = transaction.receivedAt;
+      }
       map.set(key, current);
     });
     return map;
   })();
   const remittanceRows = (() => {
-    const partnerMap = new Map<string, { key: string; partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; transactionCount: number; orders: TrackedOrder[] }>();
+    const partnerMap = new Map<string, { key: string; partnerName: string; agentId: string | null; orderCount: number; revenue: number; logisticsCost: number; expected: number; remitted: number; outstanding: number; oldestUnpaidDays: number; transactionCount: number; lastReceivedAt: string | null; orders: TrackedOrder[] }>();
     financeDeliveredRows.forEach((order) => {
       const agent = agents.find((a) => a.id === order.agentId);
       const partnerName = agent?.name ?? "Unassigned";
       const key = remittancePartnerKey(agent?.id ?? null, partnerName);
-      const current = partnerMap.get(key) ?? { key, partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, transactionCount: 0, orders: [] };
+      const current = partnerMap.get(key) ?? { key, partnerName, agentId: agent?.id ?? null, orderCount: 0, revenue: 0, logisticsCost: 0, expected: 0, remitted: 0, outstanding: 0, oldestUnpaidDays: 0, transactionCount: 0, lastReceivedAt: null, orders: [] };
       current.orderCount += 1;
       current.revenue += order.amount;
       current.logisticsCost += orderLogisticsCost(order);
@@ -12454,10 +12461,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         outstanding: 0,
         oldestUnpaidDays: 0,
         transactionCount: 0,
+        lastReceivedAt: null,
         orders: []
       };
       current.remitted += cashRow.remitted;
       current.transactionCount += cashRow.transactionCount;
+      if (cashRow.lastReceivedAt && (!current.lastReceivedAt || cashRow.lastReceivedAt > current.lastReceivedAt)) {
+        current.lastReceivedAt = cashRow.lastReceivedAt;
+      }
       partnerMap.set(key, current);
     });
     return Array.from(partnerMap.values()).sort((a, b) => b.outstanding - a.outstanding);
@@ -12528,21 +12539,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || remittanceOrderSortValue(b) - remittanceOrderSortValue(a)
         || a.customer.localeCompare(b.customer);
     });
-
-  // Latest cash-received date per order, taken from the remittance ledger
-  // (each transaction carries the received_at the recorder entered). Only
-  // positive receipts count as "cash received" — negative deltas are
-  // corrections/reversals, not money coming in. receivedAt is an ISO string,
-  // so lexicographic max == most recent.
-  const remittanceLastReceivedByOrderId = (() => {
-    const map: Record<string, string> = {};
-    for (const tx of financeRemittanceTransactions) {
-      if (!tx.orderId || !tx.receivedAt || (tx.deltaAmount ?? 0) <= 0) continue;
-      const prev = map[tx.orderId];
-      if (!prev || tx.receivedAt > prev) map[tx.orderId] = tx.receivedAt;
-    }
-    return map;
-  })();
 
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
@@ -36100,6 +36096,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics Fees</span>
                                     <div className="text-gray-600">{formatMoney(row.logisticsCost)}</div>
                                   </div>
+                                  <div className="col-span-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Last Cash Received</span>
+                                    <div className="font-medium text-gray-600">{row.lastReceivedAt ? displayDateFromKey(row.lastReceivedAt.slice(0, 10)) : "—"}</div>
+                                  </div>
                                 </div>
                                 {aging && (
                                   <div className="flex items-center justify-between gap-3">
@@ -36151,12 +36151,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Outstanding", "Aging", "Receipts", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Last Cash Received", "Outstanding", "Aging", "Receipts", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {filteredRemittanceRows.length === 0 ? (
-                            <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
+                            <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
                           ) : (
                             filteredRemittanceRows.map((row) => {
                               return (
@@ -36170,6 +36170,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td className="px-4 py-4 text-gray-600">{formatMoney(row.logisticsCost)}</td>
                                   <td className="px-4 py-4 font-semibold text-blue-700">{formatMoney(row.expected)}</td>
                                   <td className="px-4 py-4 font-semibold text-green-700">{formatMoney(row.remitted)}</td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-gray-600">{row.lastReceivedAt ? displayDateFromKey(row.lastReceivedAt.slice(0, 10)) : <span className="text-gray-300">—</span>}</td>
                                   <td className={`px-4 py-4 font-bold ${row.outstanding > 0 ? "text-amber-700" : "text-gray-400"}`}>{formatMoney(row.outstanding)}</td>
                                   <td className="px-4 py-4">
                                     {row.outstanding > 0
@@ -36202,6 +36203,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-3 text-gray-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.logisticsCost, 0))}</td>
                               <td className="px-4 py-3 text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</td>
                               <td className="px-4 py-3 text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
+                              <td className="px-4 py-3 text-gray-700">—</td>
                               <td className="px-4 py-3 text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
                               <td className="px-4 py-3 text-gray-700">—</td>
                               <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((sum, row) => sum + row.transactionCount, 0)}</td>
@@ -36273,13 +36275,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">To Remit</span>
                                     <div className="font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</div>
                                   </div>
-                                  <div>
+                                  <div className="col-span-2">
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
                                     <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Last Cash Received</span>
-                                    <div className="font-medium text-gray-600">{remittanceLastReceivedByOrderId[order.id] ? displayDateFromKey(remittanceLastReceivedByOrderId[order.id].slice(0, 10)) : "—"}</div>
                                   </div>
                                 </div>
                                 <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}</button>
@@ -36293,14 +36291,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Order", "Customer", "Partner", "Amount", "Logistics", "To Remit", "Received", "Last Cash Received", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Order", "Customer", "Partner", "Amount", "Logistics", "To Remit", "Received", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {(() => {
                             const deliveredOrders = financeRemittanceEditableOrders;
                             if (deliveredOrders.length === 0) {
-                              return <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>;
+                              return <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>;
                             }
                             const OS_PAGE = 25;
                             const osTotalPages = Math.ceil(deliveredOrders.length / OS_PAGE);
@@ -36310,7 +36308,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                               const auditStack = renderOrderDateAuditStack(order, { compact: true });
-                              const lastReceived = remittanceLastReceivedByOrderId[order.id];
                               return (
                                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-3 font-bold text-[#1F8FE0]">{order.id}</td>
@@ -36324,7 +36321,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</td>
-                                  <td className="px-4 py-3 whitespace-nowrap text-gray-600">{lastReceived ? displayDateFromKey(lastReceived.slice(0, 10)) : <span className="text-gray-300">—</span>}</td>
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
                                   <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button></td>
                                 </tr>
@@ -48094,11 +48090,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
             {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
               <div className="modal-form">
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.partnerName}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Orders In Batch</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchOrders.length}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Logistics Fees</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceBatchTargetRow.logisticsCost, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Expected To Receive</span><strong className="text-sm font-semibold text-blue-700">{formatProductMoney(remittanceBatchTargetRow.expected, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
+                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Last Cash Received</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.lastReceivedAt ? displayDateFromKey(remittanceBatchTargetRow.lastReceivedAt.slice(0, 10)) : "—"}</strong></article>
                 </div>
                 <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                   This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.
