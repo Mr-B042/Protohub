@@ -152,11 +152,6 @@ export function LoginScreen({ onLogin }: Props) {
               </svg>
             </div>
           )}
-          {IS_LOCAL_HOST && (
-            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-700">
-              Local Sandbox
-            </div>
-          )}
           <p className="text-sm text-gray-500 mt-1">
             {mode === "login" ? "Sign in to your workspace" : mode === "register" ? "Create your organization" : "Reset your password"}
           </p>

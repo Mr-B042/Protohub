@@ -109,12 +109,7 @@
           var isLocal = ["localhost", "127.0.0.1", "0.0.0.0", "::1"].indexOf(location.hostname) !== -1;
           var logo = readStored("protohub.companyLogo").trim() || (isLocal ? "" : "/brand/company-logo.png");
           var brand = document.getElementById("app-splash-brand");
-          if (isLocal) {
-            // Make the local splash unmistakable.
-            brand.textContent = (name || "Protohub") + " — LOCAL";
-          } else if (name) {
-            brand.textContent = name;
-          }
+          if (name) brand.textContent = name;
           if (logo) {
             var img = document.createElement("img");
             img.className = "app-splash__logo";
@@ -124,7 +119,7 @@
             img.onerror = function () {
               var span = document.createElement("div");
               span.className = "app-splash__brand";
-              span.textContent = (isLocal ? (name || "Protohub") + " — LOCAL" : (name || "Protohub"));
+              span.textContent = name || "Protohub";
               img.replaceWith(span);
             };
             img.src = logo;
