@@ -35,6 +35,63 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- First-paint splash: shows instantly (before the JS bundle loads) so
+         users on slow networks see a branded loader instead of a blank white
+         screen. main.tsx fades it out the moment React mounts. Brand-aware:
+         uses the org's saved name/logo from localStorage when available. -->
+    <div id="app-splash" aria-hidden="true">
+      <div class="app-splash__inner">
+        <div id="app-splash-brand" class="app-splash__brand">Protohub</div>
+        <div class="app-splash__spinner"></div>
+      </div>
+    </div>
+    <style>
+      #app-splash {
+        position: fixed; inset: 0; z-index: 2147483647;
+        display: grid; place-items: center;
+        background: #ffffff;
+        transition: opacity 0.35s ease;
+        font-family: Inter, system-ui, -apple-system, sans-serif;
+      }
+      #app-splash.app-splash--hide { opacity: 0; pointer-events: none; }
+      .app-splash__inner { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+      .app-splash__brand {
+        font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a;
+        max-width: 70vw; text-align: center; line-height: 1.2;
+      }
+      #app-splash img.app-splash__logo { width: 84px; height: 84px; object-fit: contain; border-radius: 18px; }
+      .app-splash__spinner {
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 3px solid #e2e8f0; border-top-color: #1F8FE0;
+        animation: app-splash-spin 0.7s linear infinite;
+      }
+      @keyframes app-splash-spin { to { transform: rotate(360deg); } }
+      @media (prefers-color-scheme: dark) {
+        #app-splash { background: #0f1822; }
+        .app-splash__brand { color: #f1f5f9; }
+        .app-splash__spinner { border-color: #1e293b; border-top-color: #1F8FE0; }
+      }
+    </style>
+    <script>
+      // Brand the splash from the org's saved name/logo (same source the
+      // manifest script reads), so it matches the white-label workspace.
+      (() => {
+        try {
+          var name = (localStorage.getItem("protohub.companyName") || "").trim();
+          var logo = (localStorage.getItem("protohub.companyLogo") || "").trim();
+          var brand = document.getElementById("app-splash-brand");
+          if (logo) {
+            var img = document.createElement("img");
+            img.className = "app-splash__logo";
+            img.alt = name || "Loading";
+            img.src = logo;
+            brand.replaceWith(img);
+          } else if (name) {
+            brand.textContent = name;
+          }
+        } catch (e) {}
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       // Register service worker for push notifications + auto-update.

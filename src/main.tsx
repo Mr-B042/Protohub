@@ -80,6 +80,17 @@ function Root() {
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn());
   const [hash, setHash]         = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
 
+  // Fade out the first-paint splash (index.html) once React has mounted, then
+  // remove it from the DOM. Runs after the first commit, so by now real UI is
+  // on screen — the white-screen gap is covered end to end.
+  useEffect(() => {
+    const splash = document.getElementById("app-splash");
+    if (!splash) return;
+    splash.classList.add("app-splash--hide");
+    const timer = window.setTimeout(() => splash.remove(), 400);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   // Listen for auth being cleared. The "storage" event covers other tabs;
   // "protohub:logout" covers same-tab logouts (auth.clear emits it).
   useEffect(() => {
