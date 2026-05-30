@@ -10452,6 +10452,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // org's canonical delivery rate.
   const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
+  // Same-Period Delivery: of orders PLACED in the period, how many were ALSO
+  // DELIVERED within that same period ("ordered & delivered same week"). A
+  // same-window turnaround view — distinct from the throughput Fulfillment Rate.
+  // It reads lower than the true delivery rate on periods with delivery lag
+  // (orders placed late in the period haven't had time to deliver yet).
+  const dashboardSamePeriodDelivered = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered" && isInPeriod(orderDeliveredKey(order), period, dateRange));
+  const dashboardSamePeriodRate = dashboardOrders.length === 0 ? 0 : Math.round((dashboardSamePeriodDelivered.length / dashboardOrders.length) * 100);
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
   // have an amount, so the projection still produces a sensible number.
@@ -15424,6 +15431,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         value: `${dashboardDeliveryRate}%`,
         trend: formatTrend(percentChange(dashboardDeliveryRateExact, previousRateExact)),
         helper: `${dashboardDeliveredOrders.length} delivered · ${dashboardCancelledCount} cancelled (${dashboardCancelledRate}%)`
+      };
+    }
+
+    if (card.label === "Same-Period Delivery") {
+      return {
+        ...card,
+        value: `${dashboardSamePeriodRate}%`,
+        helper: `${dashboardSamePeriodDelivered.length} of ${dashboardOrders.length} placed delivered in-period`
       };
     }
 
@@ -27649,6 +27664,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     violet:  { bar: "bg-violet-500",  icon: "bg-violet-50 text-violet-600" },
                     orange:  { bar: "bg-orange-500",  icon: "bg-orange-50 text-orange-600" },
                     teal:    { bar: "bg-teal-500",    icon: "bg-teal-50 text-teal-600" },
+                    cyan:    { bar: "bg-cyan-500",    icon: "bg-cyan-50 text-cyan-600" },
                     positive:{ bar: "bg-emerald-500", icon: "bg-emerald-50 text-emerald-600" },
                     negative:{ bar: "bg-red-500",     icon: "bg-red-50 text-red-600" },
                   };
