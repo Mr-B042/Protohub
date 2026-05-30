@@ -44845,8 +44845,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                                  {!sameState && orderState && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">⚠ different state</span>}
 	                                </div>
 	                                <span className="text-xs text-gray-500">
-                                    {agentCoverageLabel(agent)}
-                                    {matchedLocation ? <span className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#1F8FE0]"><Truck className="w-3 h-3 shrink-0" aria-hidden="true" /> Ships from {agentLocationLabel(matchedLocation)} — this hub's stock</span> : ""}
+                                    {matchedLocation ? <span className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#1F8FE0]"><Truck className="w-3 h-3 shrink-0" aria-hidden="true" /> Ships from {agentLocationLabel(matchedLocation)} — this hub's stock</span> : <span className="text-[11px] text-amber-600">No hub in {orderState || "this state"} · based in {agentPrimaryBaseState(agent) || "—"}</span>}
                                   </span>
 	                              </div>
 	                              <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${stockColor}`}>{stockLabel}</span>
