@@ -103,23 +103,33 @@
         };
         try {
           var name = readStored("protohub.companyName").trim();
-          // Saved org logo if present, else the bundled company logo so the
-          // splash always shows the brand mark (single-tenant app).
-          var logo = readStored("protohub.companyLogo").trim() || "/brand/company-logo.png";
+          // The REAL bundled company logo is the default only on prod. On
+          // localhost we don't fall back to it — so the local splash looks
+          // different (its own saved logo if any, else just the name text).
+          var isLocal = ["localhost", "127.0.0.1", "0.0.0.0", "::1"].indexOf(location.hostname) !== -1;
+          var logo = readStored("protohub.companyLogo").trim() || (isLocal ? "" : "/brand/company-logo.png");
           var brand = document.getElementById("app-splash-brand");
-          var img = document.createElement("img");
-          img.className = "app-splash__logo";
-          img.alt = name || "Protohub";
-          // If the logo fails to load, fall back to the brand name text so we
-          // never show a broken-image icon.
-          img.onerror = function () {
-            var span = document.createElement("div");
-            span.className = "app-splash__brand";
-            span.textContent = name || "Protohub";
-            img.replaceWith(span);
-          };
-          img.src = logo;
-          brand.replaceWith(img);
+          if (isLocal) {
+            // Make the local splash unmistakable.
+            brand.textContent = (name || "Protohub") + " — LOCAL";
+          } else if (name) {
+            brand.textContent = name;
+          }
+          if (logo) {
+            var img = document.createElement("img");
+            img.className = "app-splash__logo";
+            img.alt = name || "Protohub";
+            // If the logo fails to load, fall back to the brand name text so
+            // we never show a broken-image icon.
+            img.onerror = function () {
+              var span = document.createElement("div");
+              span.className = "app-splash__brand";
+              span.textContent = (isLocal ? (name || "Protohub") + " — LOCAL" : (name || "Protohub"));
+              img.replaceWith(span);
+            };
+            img.src = logo;
+            brand.replaceWith(img);
+          }
         } catch (e) {}
       })();
     </script>

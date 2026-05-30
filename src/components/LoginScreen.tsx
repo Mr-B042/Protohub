@@ -41,10 +41,20 @@ function readStoredString(key: string): string {
   } catch { return ""; }
 }
 
+// Local sandbox vs live prod. The REAL bundled company logo is only used as
+// the default on prod — on localhost we fall back to the generic cube so the
+// two environments are instantly distinguishable at a glance.
+const IS_LOCAL_HOST =
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(window.location.hostname);
+
 export function LoginScreen({ onLogin }: Props) {
   const [mode, setMode]       = useState<Mode>("login");
   const brandName = readStoredString("protohub.companyName").trim();
   const brandLogo = readStoredString("protohub.companyLogo").trim();
+  // Prod default = real company logo; local default = none (→ cube fallback).
+  const defaultBrandLogo = IS_LOCAL_HOST ? "" : "/brand/company-logo.png";
+  const loginLogoSrc = brandLogo || defaultBrandLogo;
   const [brandLogoBroken, setBrandLogoBroken] = useState(false);
   const [orgName, setOrgName] = useState("");
   const [name, setName]       = useState("");
@@ -128,9 +138,9 @@ export function LoginScreen({ onLogin }: Props) {
         {/* Logo / brand — the org's saved logo if present, else the bundled
             company logo. Falls back to the ProtoHub mark only if both fail. */}
         <div className="text-center mb-8">
-          {!brandLogoBroken ? (
+          {loginLogoSrc && !brandLogoBroken ? (
             <img
-              src={brandLogo || "/brand/company-logo.png"}
+              src={loginLogoSrc}
               alt={brandName || "Protohub"}
               onError={() => setBrandLogoBroken(true)}
               className="inline-block h-24 w-auto max-w-[240px] object-contain rounded-2xl mb-4"
@@ -140,6 +150,11 @@ export function LoginScreen({ onLogin }: Props) {
               <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
               </svg>
+            </div>
+          )}
+          {IS_LOCAL_HOST && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-700">
+              Local Sandbox
             </div>
           )}
           <p className="text-sm text-gray-500 mt-1">
