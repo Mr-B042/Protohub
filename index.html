@@ -29,6 +29,20 @@
         document.head.appendChild(link);
       })();
     </script>
+    <script>
+      // Apply the saved theme to <html> BEFORE first paint, so both the
+      // splash and the app's first render are in the right mode (no
+      // light→dark flash). Mirrors App.tsx: stored protohub.theme wins,
+      // else the OS preference.
+      (() => {
+        try {
+          var stored = localStorage.getItem("protohub.theme");
+          var dark = stored === "dark" || (stored !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", !!dark);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
     <meta name="theme-color" content="#1F8FE0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -66,11 +80,12 @@
         animation: app-splash-spin 0.7s linear infinite;
       }
       @keyframes app-splash-spin { to { transform: rotate(360deg); } }
-      @media (prefers-color-scheme: dark) {
-        #app-splash { background: #0f1822; }
-        .app-splash__brand { color: #f1f5f9; }
-        .app-splash__spinner { border-color: #1e293b; border-top-color: #1F8FE0; }
-      }
+      /* Match the app's actual theme (set on <html> before paint), not just
+         the OS preference — so a dark-mode user on a light-OS phone doesn't
+         get a white flash before the dark app loads. */
+      html.dark #app-splash { background: #0f1822; }
+      html.dark .app-splash__brand { color: #f1f5f9; }
+      html.dark .app-splash__spinner { border-color: #1e293b; border-top-color: #1F8FE0; }
     </style>
     <script>
       // Brand the splash from the org's saved name/logo (same source the
