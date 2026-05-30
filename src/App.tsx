@@ -10592,7 +10592,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : assignmentScopedWorkspaceOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
-  const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
+  // Delivery Rate uses the org's canonical "delivered this period vs placed this
+  // period" throughput basis — matching the dashboard Fulfillment Rate and the
+  // Delivered Week P&L — NOT a cohort of placed-this-period orders. Numerator =
+  // orders DELIVERED (by delivery date) this period within this view's scope;
+  // denominator = orders placed this period (pfOrders). pfDelivered (cohort) is
+  // still used for the revenue stats below.
+  const pfDeliveredThisPeriod = trackedOrders
+    .filter(o => viewerScopeRepId === null || o.assignedRepId === viewerScopeRepId)
+    .filter(o => (o.status ?? "New") === "Delivered" && isInPeriod(orderDeliveredKey(o), ordersPeriod, ordersDateRange))
+    .filter(matchesOrderAssignmentScope)
+    .filter(matchesOrderWorkspacePage)
+    .filter(o => orderProductIds.size === 0 || matchesProductFilter(o.productId, o.productName, orderProductIds));
+  const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDeliveredThisPeriod.length / pfOrders.length) * 100;
   const pfDeliveryRate = Math.round(pfDeliveryRateExact);
   const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
   const canViewOrderBonusEstimate = currentRole === "Sales Rep";
@@ -10659,7 +10671,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ]
       : [
           { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
+          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDeliveredThisPeriod.length} delivered this period of ${pfOrders.length} placed`, icon: Truck, color: "bg-green-50 text-green-500" },
           orderWorkspaceFinancialMetric,
           { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
         ];
