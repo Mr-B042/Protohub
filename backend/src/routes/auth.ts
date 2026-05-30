@@ -129,6 +129,12 @@ const touchUserPresence = async (userId: string) => {
 
 // ── POST /api/auth/register ───────────────────────────────
 // Creates the first user (Owner) and their organization.
+//
+// Public self-registration is DISABLED — this is a private, single-tenant
+// deployment, not a SaaS. New team members are created by the Owner/Admin in
+// User Management. Flip this to true only if you ever need to bootstrap a
+// brand-new organization, then turn it back off.
+const PUBLIC_REGISTRATION_ENABLED = false;
 const RegisterSchema = z.object({
   orgName: z.string().min(2).max(160),
   name: z.string().min(2).max(120),
@@ -137,6 +143,10 @@ const RegisterSchema = z.object({
 });
 
 router.post("/register", async (req, res) => {
+  if (!PUBLIC_REGISTRATION_ENABLED) {
+    res.status(403).json({ error: "Self-registration is disabled. Ask your workspace owner to create your account." });
+    return;
+  }
   const parsed = RegisterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
