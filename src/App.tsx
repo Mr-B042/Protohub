@@ -9270,6 +9270,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return rank(a.role) - rank(b.role) || a.name.localeCompare(b.name);
   });
   const activeAgents = agents.filter((agent) => agent.active);
+  // In the Send-to-Agent modal: if the order has no agent yet and exactly one
+  // in-state agent is eligible, pre-select it so the user can hit "Send to
+  // Agent" straight away (no need to tap the lone agent first). Never overrides
+  // an existing selection. Re-runs as agents finish loading.
+  useEffect(() => {
+    if (modal !== "sendToAgent" || !selectedOrder || createOrderAgentId) return;
+    const inStateAgents = activeAgents
+      .map((agent) => buildAgentOrderMatch(agent, selectedOrder.state, selectedOrder.city, selectedOrder.productId))
+      .filter((row) => row.sameState);
+    if (inStateAgents.length === 1) {
+      setCreateOrderAgentId(inStateAgents[0].agent.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, selectedOrderId, activeAgents.length]);
   const deliveryAgentOptions = ["All Agents", "Unassigned", ...agents.map((agent) => agent.name)];
   const agentZoneOptions = ["All Zones", ...Array.from(new Set(agents.map((agent) => agentPrimaryBaseState(agent)).filter(Boolean)))];
   const agentStockValueFor = (agentId: string) =>
