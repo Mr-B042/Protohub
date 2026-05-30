@@ -20324,7 +20324,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     if (!isDeliveryDateOnly && nextStatus === "Delivered" && !order.agentId) {
-      showToast(`Cannot mark ${orderId} delivered — no agent assigned. Use "Send to Agent" first.`);
+      showToast(`Cannot mark ${orderId} delivered — no agent assigned. Use "Assign to Agent" first.`);
       return;
     }
 
@@ -43003,7 +43003,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {modal === "editOrderCustomer" && "Edit Order"}
 	                {modal === "deleteOrder" && "Delete Order"}
 	                {modal === "reassignOrder" && "Reassign Sales Rep"}
-	                {modal === "sendToAgent" && "Send to Agent"}
+	                {modal === "sendToAgent" && "Assign to Agent"}
 	                {modal === "scheduleOrder" && "Schedule Delivery"}
 	                {modal === "cartDetails" && "Cart Details"}
 	                {modal === "convertCart" && "Convert Cart"}
@@ -43526,10 +43526,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          title={
 	                            isBlockedDelivery
 	                              ? (missingRep && missingAgent
-	                                  ? "No Sales Rep and no Agent assigned. Use 'Reassign Sales Rep' and 'Send to Agent' first."
+	                                  ? "No Sales Rep and no Agent assigned. Use 'Reassign Sales Rep' and 'Assign to Agent' first."
 	                                  : missingRep
 	                                    ? "No Sales Rep assigned. Use 'Reassign Sales Rep' first to enable delivery."
-	                                    : "No Agent assigned. Use 'Send to Agent' first to enable delivery.")
+	                                    : "No Agent assigned. Use 'Assign to Agent' first to enable delivery.")
 	                              : isReverting
 	                                ? "Warning: re-opening a delivered order will not automatically restore stock"
 	                                : undefined
@@ -44376,7 +44376,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderStatusRoute(selectedOrder.id)}><Repeat2 /> Change Status</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => printInvoiceForOrder(selectedOrder)}><BookOpen /> Print Invoice</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => downloadInvoiceForOrder(selectedOrder)}><Download /> Download Invoice</button>
-	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Send to Agent</button>
+	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderSendToAgentRoute(selectedOrder.id)}><Truck /> Assign to Agent</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderReassignRoute(selectedOrder.id)}><UserPlus /> Reassign Rep</button>
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderEditRoute(selectedOrder.id)}><Pencil /> Edit Order</button>
 	                </section>
@@ -44428,7 +44428,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <option value="">Unassigned</option>
 	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const stockQty = selectedOrder ? buildAgentOrderMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId).stockQty : (orderProductId ? totalAgentProductStock(agent, orderProductId) : 0); const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{selectedOrder ? agentOptionLabel(agent, selectedOrder.state, selectedOrder.city) : `${agent.name} · ${agentCoverageCompactLabel(agent)}`}{stockTag}</option>; })}
 	                    </select>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Send to Agent</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Assign to Agent</button>
 	                  </div>
 	                </section>
 
@@ -44881,7 +44881,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  )}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first — tap an agent above, then Send to Agent."); return; } saveOrderAgent(selectedOrder); }}>Send to Agent</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first — tap an agent above, then Assign to Agent."); return; } saveOrderAgent(selectedOrder); }}>Assign to Agent</button>
 	                  </div>
 	                </div>
 	              );
