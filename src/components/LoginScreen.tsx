@@ -125,15 +125,15 @@ export function LoginScreen({ onLogin }: Props) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        {/* Logo / brand — use the org's saved logo/name when available,
-            else the default ProtoHub mark. */}
+        {/* Logo / brand — the org's saved logo if present, else the bundled
+            company logo. Falls back to the ProtoHub mark only if both fail. */}
         <div className="text-center mb-8">
-          {brandLogo && !brandLogoBroken ? (
+          {!brandLogoBroken ? (
             <img
-              src={brandLogo}
-              alt={brandName || "Workspace logo"}
+              src={brandLogo || "/brand/company-logo.png"}
+              alt={brandName || "Protohub"}
               onError={() => setBrandLogoBroken(true)}
-              className="inline-block w-16 h-16 object-contain rounded-2xl mb-4"
+              className="inline-block h-24 w-auto max-w-[240px] object-contain rounded-2xl mb-4"
             />
           ) : (
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#1F8FE0] mb-4">
@@ -142,7 +142,6 @@ export function LoginScreen({ onLogin }: Props) {
               </svg>
             </div>
           )}
-          <h1 className="text-2xl font-bold text-gray-900">{brandName || "ProtoHub CRM"}</h1>
           <p className="text-sm text-gray-500 mt-1">
             {mode === "login" ? "Sign in to your workspace" : mode === "register" ? "Create your organization" : "Reset your password"}
           </p>

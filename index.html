@@ -73,7 +73,7 @@
         font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a;
         max-width: 70vw; text-align: center; line-height: 1.2;
       }
-      #app-splash img.app-splash__logo { width: 84px; height: 84px; object-fit: contain; border-radius: 18px; }
+      #app-splash img.app-splash__logo { width: 132px; height: 132px; object-fit: contain; border-radius: 20px; }
       .app-splash__spinner {
         width: 34px; height: 34px; border-radius: 50%;
         border: 3px solid #e2e8f0; border-top-color: #1F8FE0;
@@ -103,25 +103,23 @@
         };
         try {
           var name = readStored("protohub.companyName").trim();
-          var logo = readStored("protohub.companyLogo").trim();
+          // Saved org logo if present, else the bundled company logo so the
+          // splash always shows the brand mark (single-tenant app).
+          var logo = readStored("protohub.companyLogo").trim() || "/brand/company-logo.png";
           var brand = document.getElementById("app-splash-brand");
-          if (logo) {
-            var img = document.createElement("img");
-            img.className = "app-splash__logo";
-            img.alt = name || "Loading";
-            // If the logo URL fails to load (stale/dead link), fall back to
-            // the brand name so we never show a broken-image icon.
-            img.onerror = function () {
-              var span = document.createElement("div");
-              span.className = "app-splash__brand";
-              span.textContent = name || "Protohub";
-              img.replaceWith(span);
-            };
-            img.src = logo;
-            brand.replaceWith(img);
-          } else if (name) {
-            brand.textContent = name;
-          }
+          var img = document.createElement("img");
+          img.className = "app-splash__logo";
+          img.alt = name || "Protohub";
+          // If the logo fails to load, fall back to the brand name text so we
+          // never show a broken-image icon.
+          img.onerror = function () {
+            var span = document.createElement("div");
+            span.className = "app-splash__brand";
+            span.textContent = name || "Protohub";
+            img.replaceWith(span);
+          };
+          img.src = logo;
+          brand.replaceWith(img);
         } catch (e) {}
       })();
     </script>
