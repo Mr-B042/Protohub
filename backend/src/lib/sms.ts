@@ -68,7 +68,10 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
     body: "{{greeting}} {{customer}}, no rush. We will hold your {{product_name}} order and check back on {{scheduled_date}}. {{rep_contact}}"
   },
   order_follow_up: {
-    body: "{{greeting}} {{customer}}, kindly note we will reach back on {{scheduled_date}} regarding your {{product_name}} order. {{rep_contact}}"
+    // No "on" before {{scheduled_date}} — the label already carries the right
+    // wording for every case ("today at 2pm", "Monday at 2pm", "shortly
+    // today"), and "on shortly today"/"on today" reads wrong.
+    body: "{{greeting}} {{customer}}, kindly note we will reach back to you {{scheduled_date}} regarding your {{product_name}} order. {{rep_contact}}"
   },
   // Staff-facing — terse, scannable on a lock-screen notification preview.
   // Action verb up front so the rep sees what to do without unlocking.
@@ -1092,6 +1095,20 @@ async function sendFollowUpReminderSms(
   }
 ) {
   const assignedRep = await loadAssignedRepContact(orgId, order.assigned_rep_id);
+  // The reminder fires when the scheduled time becomes due and the cron runs
+  // every 15 min, so it often sends a few minutes AFTER the promised moment.
+  // Echoing the original (now-past) clock time reads wrong to the customer
+  // ("we'll reach back at 11:35am" in a text that arrived at 11:45am). So:
+  // keep the exact time only while it's still in the future; once it's
+  // due/past, promise a near-future outreach instead ("shortly today").
+  const customerScheduledLabel = (() => {
+    const raw = options.scheduledLabel;
+    if (!raw) return raw;
+    const parseSource = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00+01:00` : raw;
+    const moment = new Date(parseSource);
+    if (Number.isNaN(moment.getTime())) return raw;
+    return moment.getTime() <= Date.now() ? "shortly today" : raw;
+  })();
   return dispatchSms(
     orgId,
     "order_follow_up",
@@ -1103,7 +1120,7 @@ async function sendFollowUpReminderSms(
       currency: order.currency ?? "NGN",
       from_status: order.status ?? "—",
       status: order.status ?? "—",
-      scheduled_date: options.scheduledLabel,
+      scheduled_date: customerScheduledLabel,
       call_outcome: order.call_outcome ?? "—",
       response: order.response ?? "Follow-up reminder",
       note_text: options.noteText ?? "",
