@@ -27195,6 +27195,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <span className="text-[11px] text-gray-400 leading-tight">Management System</span>
             </div>
           )}
+          {/* Mobile-only close button — the backdrop also closes the drawer,
+              but a visible X is far more discoverable on a phone. */}
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setMobileMenuOpen(false)}
+            className="lg:hidden ml-auto -mr-1 p-2 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 active:bg-white/15 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Nav items */}
