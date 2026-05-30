@@ -44428,7 +44428,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                      <option value="">Unassigned</option>
 	                      {(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const orderProductId = selectedOrder?.productId; const stockQty = selectedOrder ? buildAgentOrderMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId).stockQty : (orderProductId ? totalAgentProductStock(agent, orderProductId) : 0); const needs = selectedOrder ? quantityForOrder(selectedOrder) : 1; const stockTag = !orderProductId ? "" : stockQty === 0 ? " — ⚠ no stock" : stockQty >= needs ? ` — ✓ ${stockQty} in stock` : ` — ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{selectedOrder ? agentOptionLabel(agent, selectedOrder.state, selectedOrder.city) : `${agent.name} · ${agentCoverageCompactLabel(agent)}`}{stockTag}</option>; })}
 	                    </select>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Assign to Agent</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => saveOrderAgent(selectedOrder)}>Assign to this Agent</button>
 	                  </div>
 	                </section>
 
