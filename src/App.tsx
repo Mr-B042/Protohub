@@ -12529,6 +12529,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || a.customer.localeCompare(b.customer);
     });
 
+  // Latest cash-received date per order, taken from the remittance ledger
+  // (each transaction carries the received_at the recorder entered). Only
+  // positive receipts count as "cash received" — negative deltas are
+  // corrections/reversals, not money coming in. receivedAt is an ISO string,
+  // so lexicographic max == most recent.
+  const remittanceLastReceivedByOrderId = (() => {
+    const map: Record<string, string> = {};
+    for (const tx of financeRemittanceTransactions) {
+      if (!tx.orderId || !tx.receivedAt || (tx.deltaAmount ?? 0) <= 0) continue;
+      const prev = map[tx.orderId];
+      if (!prev || tx.receivedAt > prev) map[tx.orderId] = tx.receivedAt;
+    }
+    return map;
+  })();
+
   // Inline editor for an order's delivery fee — used in Recent Transactions
   // and Scheduled Deliveries tables. Saves on blur, books to expenses.
   const renderDeliveryFeeCell = (order: TrackedOrder) => {
@@ -36258,9 +36273,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">To Remit</span>
                                     <div className="font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</div>
                                   </div>
-                                  <div className="col-span-2">
+                                  <div>
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
                                     <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-400">Last Cash Received</span>
+                                    <div className="font-medium text-gray-600">{remittanceLastReceivedByOrderId[order.id] ? displayDateFromKey(remittanceLastReceivedByOrderId[order.id].slice(0, 10)) : "—"}</div>
                                   </div>
                                 </div>
                                 <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}</button>
@@ -36274,14 +36293,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Order", "Customer", "Partner", "Amount", "Logistics", "To Remit", "Received", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Order", "Customer", "Partner", "Amount", "Logistics", "To Remit", "Received", "Last Cash Received", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                           {(() => {
                             const deliveredOrders = financeRemittanceEditableOrders;
                             if (deliveredOrders.length === 0) {
-                              return <tr><td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>;
+                              return <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No delivered orders in this period yet.</td></tr>;
                             }
                             const OS_PAGE = 25;
                             const osTotalPages = Math.ceil(deliveredOrders.length / OS_PAGE);
@@ -36291,6 +36310,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               const status = orderRemittanceStatus(order);
                               const statusTone = status === "Paid" ? "bg-green-100 text-green-700" : status === "Partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                               const auditStack = renderOrderDateAuditStack(order, { compact: true });
+                              const lastReceived = remittanceLastReceivedByOrderId[order.id];
                               return (
                                 <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-3 font-bold text-[#1F8FE0]">{order.id}</td>
@@ -36304,6 +36324,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-gray-600">{lastReceived ? displayDateFromKey(lastReceived.slice(0, 10)) : <span className="text-gray-300">—</span>}</td>
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
                                   <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button></td>
                                 </tr>
