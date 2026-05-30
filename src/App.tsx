@@ -14702,6 +14702,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const search = roundRobinSearch.trim().toLowerCase();
     return !search || `${row.user.name} ${row.user.email}`.toLowerCase().includes(search);
   });
+  // Skip the current next-in-line rep: moves them to second-to-last (not last),
+  // so they still get a turn soon. Shared by the "Next in Line" card's Skip Rep
+  // button. Optimistic update with rollback on save failure.
+  const skipNextRoundRobinRep = () => {
+    const sorted = roundRobinActiveRows.map((r) => r.user);
+    if (sorted.length < 2) return;
+    if (sorted.some((user) => isTemporaryUserId(user.id))) {
+      showToast("A team member is still syncing. Try again in a moment.");
+      return;
+    }
+    const skipped = sorted[0];
+    const rest = sorted.slice(1);
+    const reordered = [...rest.slice(0, -1), skipped, rest[rest.length - 1]];
+    const prevUsers = users;
+    setUsers((prev) => prev.map((u) => {
+      const idx = reordered.findIndex((r) => r.id === u.id);
+      return idx >= 0 ? { ...u, roundRobinPosition: idx } : u;
+    }));
+    showToast(`Skipped ${skipped.name}. Next: ${rest[0].name}.`);
+    teamApi.updateRoundRobin(reordered.map((r) => r.id)).catch((err: any) => {
+      setUsers(prevUsers);
+      showToast(`Failed to save sequence: ${err.message}`);
+    });
+  };
   // For non-Owner/Admin viewers (e.g., a logged-in Sales Rep), force the scope
   // to their own user ID regardless of the View-as dropdown. The dropdown
   // itself is hidden for these roles, but this is the data-side safety net.
@@ -38415,7 +38439,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Round-Robin Management</h1>
                   <p className="text-sm font-medium text-gray-500">Configure the lead distribution sequence for your sales team.</p>
-                  {roundRobinActiveRows[0] ? <p className="text-sm font-bold text-gray-700 mt-1">Next in line: <span className="text-[#1F8FE0]">{roundRobinActiveRows[0].user.name}</span></p> : null}
                 </div>
                 <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
@@ -38438,30 +38461,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     });
                   }}>
                     <Repeat2 className="w-4 h-4" /> Advance Sequence
-                  </button>
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-orange-200 bg-orange-50 text-orange-700 rounded-md hover:bg-orange-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
-                    const sorted = roundRobinActiveRows.map((r) => r.user);
-                    if (sorted.length < 2) return;
-                    if (sorted.some((user) => isTemporaryUserId(user.id))) {
-                      showToast("A team member is still syncing. Try again in a moment.");
-                      return;
-                    }
-                    const skipped = sorted[0];
-                    // Skip moves to second-to-last (not last) — differs from Advance
-                    const rest = sorted.slice(1);
-                    const reordered = [...rest.slice(0, -1), skipped, rest[rest.length - 1]];
-                    const prevUsers = users;
-                    setUsers((prev) => prev.map((u) => {
-                      const idx = reordered.findIndex((r) => r.id === u.id);
-                      return idx >= 0 ? { ...u, roundRobinPosition: idx } : u;
-                    }));
-                    showToast(`Skipped ${skipped.name}. Next: ${rest[0].name}.`);
-                    teamApi.updateRoundRobin(reordered.map((r) => r.id)).catch((err: any) => {
-                      setUsers(prevUsers);
-                      showToast(`Failed to save sequence: ${err.message}`);
-                    });
-                  }}>
-                    <SkipForward className="w-4 h-4" /> Skip Rep
                   </button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
                     if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
@@ -38489,6 +38488,51 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={4} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {roundRobinActiveRows[0] && (() => {
+                const nextRep = roundRobinActiveRows[0].user;
+                const nextInitials = (nextRep.name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s.charAt(0).toUpperCase()).join("") || "?";
+                return (
+                  <section aria-label="Next in line" className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-700/60">
+                    {/* Soft brand-blue glow — translucent, so it reads well in both light and dark. */}
+                    <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-[#1F8FE0]/10 blur-3xl" aria-hidden="true" />
+                    <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+                          </span>
+                          <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">Next in Line</span>
+                        </div>
+                        <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-gray-900 sm:text-3xl">{nextRep.name}</h2>
+                        <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-gray-500">
+                          The next incoming lead or order will be automatically assigned to <span className="font-semibold text-gray-700">{nextRep.name}</span> based on the current sequence.
+                        </p>
+                        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                          <button
+                            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-[#1F8FE0]/30 bg-[#1F8FE0]/10 px-4 py-2 text-sm font-semibold text-[#1F8FE0] transition-colors hover:bg-[#1F8FE0]/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={roundRobinActiveRows.length < 2}
+                            onClick={skipNextRoundRobinRep}
+                          >
+                            <SkipForward className="h-4 w-4" /> Skip Rep
+                          </button>
+                          <button
+                            className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+                            onClick={() => openAdminSalesRepDetail(nextRep.id)}
+                          >
+                            <Eye className="h-4 w-4" /> View Performance
+                          </button>
+                        </div>
+                      </div>
+                      <div className="shrink-0 self-start sm:self-center">
+                        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-blue-50 to-blue-200 text-3xl font-extrabold text-[#1F8FE0] shadow-inner ring-4 ring-white sm:h-28 sm:w-28 dark:from-blue-500/25 dark:to-blue-600/10 dark:text-blue-200 dark:ring-slate-800">
+                          {nextInitials}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                );
+              })()}
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
                 <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full w-full sm:w-auto" role="tablist" aria-label="Round-robin views">
                   {roundRobinTabs.map((tab) => (
