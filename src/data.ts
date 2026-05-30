@@ -96,13 +96,6 @@ export const summaryCards = [
     helper: "0% cancelled",
     icon: PackageCheck,
     tone: "teal"
-  },
-  {
-    label: "Same-Period Delivery",
-    value: "0%",
-    helper: "ordered & delivered in-period",
-    icon: CalendarClock,
-    tone: "cyan"
   }
 ];
 

@@ -10452,13 +10452,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // org's canonical delivery rate.
   const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
-  // Same-Period Delivery: of orders PLACED in the period, how many were ALSO
-  // DELIVERED within that same period ("ordered & delivered same week"). A
-  // same-window turnaround view — distinct from the throughput Fulfillment Rate.
-  // It reads lower than the true delivery rate on periods with delivery lag
-  // (orders placed late in the period haven't had time to deliver yet).
-  const dashboardSamePeriodDelivered = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered" && isInPeriod(orderDeliveredKey(order), period, dateRange));
-  const dashboardSamePeriodRate = dashboardOrders.length === 0 ? 0 : Math.round((dashboardSamePeriodDelivered.length / dashboardOrders.length) * 100);
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
   // have an amount, so the projection still produces a sensible number.
@@ -10599,19 +10592,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : assignmentScopedWorkspaceOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
-  // Delivery Rate uses the org's canonical "delivered this period vs placed this
-  // period" throughput basis — matching the dashboard Fulfillment Rate and the
-  // Delivered Week P&L — NOT a cohort of placed-this-period orders. Numerator =
-  // orders DELIVERED (by delivery date) this period within this view's scope;
-  // denominator = orders placed this period (pfOrders). pfDelivered (cohort) is
-  // still used for the revenue stats below.
-  const pfDeliveredThisPeriod = trackedOrders
-    .filter(o => viewerScopeRepId === null || o.assignedRepId === viewerScopeRepId)
-    .filter(o => (o.status ?? "New") === "Delivered" && isInPeriod(orderDeliveredKey(o), ordersPeriod, ordersDateRange))
-    .filter(matchesOrderAssignmentScope)
-    .filter(matchesOrderWorkspacePage)
-    .filter(o => orderProductIds.size === 0 || matchesProductFilter(o.productId, o.productName, orderProductIds));
-  const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDeliveredThisPeriod.length / pfOrders.length) * 100;
+  const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
   const pfDeliveryRate = Math.round(pfDeliveryRateExact);
   const pfRevenuePerDelivered = pfDelivered.length === 0 ? 0 : pfRevenue / pfDelivered.length;
   const canViewOrderBonusEstimate = currentRole === "Sales Rep";
@@ -10678,7 +10659,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ]
       : [
           { label: "Total Orders", value: pfOrders.length, sub: "this period", icon: BookOpen, color: "bg-blue-50 text-blue-500" },
-          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDeliveredThisPeriod.length} delivered this period of ${pfOrders.length} placed`, icon: Truck, color: "bg-green-50 text-green-500" },
+          { label: "Delivery Rate", value: `${pfDeliveryRate}%`, sub: `${pfDelivered.length} delivered of ${pfOrders.length}`, icon: Truck, color: "bg-green-50 text-green-500" },
           orderWorkspaceFinancialMetric,
           { label: "Pending", value: pfOrders.filter((o) => ["Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")).length, sub: "awaiting delivery", icon: Clock, color: "bg-amber-50 text-amber-500" }
         ];
@@ -15431,14 +15412,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         value: `${dashboardDeliveryRate}%`,
         trend: formatTrend(percentChange(dashboardDeliveryRateExact, previousRateExact)),
         helper: `${dashboardDeliveredOrders.length} delivered · ${dashboardCancelledCount} cancelled (${dashboardCancelledRate}%)`
-      };
-    }
-
-    if (card.label === "Same-Period Delivery") {
-      return {
-        ...card,
-        value: `${dashboardSamePeriodRate}%`,
-        helper: `${dashboardSamePeriodDelivered.length} of ${dashboardOrders.length} placed delivered in-period`
       };
     }
 
@@ -27664,7 +27637,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     violet:  { bar: "bg-violet-500",  icon: "bg-violet-50 text-violet-600" },
                     orange:  { bar: "bg-orange-500",  icon: "bg-orange-50 text-orange-600" },
                     teal:    { bar: "bg-teal-500",    icon: "bg-teal-50 text-teal-600" },
-                    cyan:    { bar: "bg-cyan-500",    icon: "bg-cyan-50 text-cyan-600" },
                     positive:{ bar: "bg-emerald-500", icon: "bg-emerald-50 text-emerald-600" },
                     negative:{ bar: "bg-red-500",     icon: "bg-red-50 text-red-600" },
                   };
