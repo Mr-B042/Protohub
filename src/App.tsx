@@ -44870,7 +44870,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            : "bg-rose-50 border-rose-200 text-rose-900"
 	                      }`}>
 	                        {selectedAgentRow.stockQty >= orderQty ? (
-	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}). <span className="font-bold">Next: tap "Assign to Agent" below to confirm.</span></>
+	                          <><strong>✓ Ready to fulfil.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} has <strong>{selectedAgentRow.stockQty}</strong> {selectedOrder.productName} in stock — enough for this order ({orderQty}). <span className="font-bold">Next: tap "Assign to this Agent" below to confirm.</span></>
 	                        ) : selectedAgentRow.stockQty > 0 ? (
 	                          <><strong>⚠ Insufficient stock.</strong> {selectedAgentRow.agent.name}{selectedAgentRow.locationMatch ? ` · ${agentLocationLabel(selectedAgentRow.locationMatch)}` : ""} only has <strong>{selectedAgentRow.stockQty}</strong> in stock — this order needs <strong>{orderQty}</strong>. Use <em>Distribute Stock</em> to top them up first.</>
 	                        ) : (
@@ -44881,7 +44881,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  )}
 	                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
 	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first — tap an agent above, then Assign to Agent."); return; } saveOrderAgent(selectedOrder); }}>Assign to Agent</button>
+	                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first — tap an agent above, then Assign to this Agent."); return; } saveOrderAgent(selectedOrder); }}>Assign to this Agent</button>
 	                  </div>
 	                </div>
 	              );
