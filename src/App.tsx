@@ -27418,7 +27418,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           
           <div className="ml-auto flex items-center gap-4">
             {/* Notification bell + dropdown */}
-            <div className="relative">
+            {/* z-[60] establishes a stacking context for the bell so its
+                dropdown always sits above page content (e.g. the product-filter
+                toolbar), which otherwise overlapped it on desktop. */}
+            <div className="relative z-[60]">
               <button className="topbar-icon-button text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
                 <Bell className="w-5 h-5" />
                 {unreadNotificationCount > 0 && (
