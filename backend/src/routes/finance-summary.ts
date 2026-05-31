@@ -42,6 +42,10 @@ router.get("/", async (req, res) => {
     .eq("org_id", req.user!.orgId)
     .gte("created_at", createdFrom)
     .lte("created_at", createdTo)
+    // Exclude held duplicates from the placed-in-period throughput cohort
+    // (Dashboard Fulfillment Rate / P&L delivery rate). null-safe for legacy
+    // rows; released orders re-enter automatically.
+    .or("review_hold.is.null,review_hold.eq.false")
     .order("created_at", { ascending: false });
 
   let deliveredOrdersQuery = supabase

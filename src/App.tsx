@@ -10281,6 +10281,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardExpenseMatchesProductFilter = (expense: ExpenseRecord) =>
     dashboardProductIds.size === 0 || !expense.productId || matchesProductFilter(expense.productId, expense.productName, dashboardProductIds);
   const dashboardOrders = trackedOrders
+    // Held duplicates aren't real placed orders — drop them from the Dashboard
+    // throughput (Fulfillment Rate) denominator + KPI counts. Keeps the
+    // intentional throughput-vs-cohort distinction; just cleans duplicates from
+    // both. Keyed on the live flag, so a released order counts again.
+    .filter(o => !o.reviewHold)
     .filter(o => matchesProductFilter(o.productId, o.productName, dashboardProductIds))
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
   const deliveredOrderRows = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered");
@@ -12406,7 +12411,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
   const financeOrderSource = financeSummaryData?.cohortOrders ?? trackedOrders;
   const financeDeliveredSource = financeSummaryData?.deliveredOrders ?? deliveredOrderRows;
-  const financePeriodOrders = financeOrderSource.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
+  const financePeriodOrders = financeOrderSource.filter((order) => !order.reviewHold && isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const financeCohortDeliveredRows = financePeriodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const financeExpenses = expenses.filter((expense) => isInPeriod(expense.date, financePeriod, financeDateRange) && expenseMatchesProductFilter(expense));
   const financeExpenseTotal = financeExpenses.reduce((sum, expense) => sum + expense.amount, 0);
