@@ -10674,9 +10674,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Product-filtered stats — drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
+  // Order Management KPIs (Total Orders / Delivery Rate / Pending) exclude held
+  // duplicates so they aren't counted as real orders or drag down the delivery
+  // rate. They STILL appear in the list below (with the ⏸ Review badge) so the
+  // team can release/reject them — the list uses periodOrders, not pfOrders.
+  const pfOrdersBase = assignmentScopedWorkspaceOrders.filter(o => !o.reviewHold);
   const pfOrders = orderProductIds.size === 0
-    ? assignmentScopedWorkspaceOrders
-    : assignmentScopedWorkspaceOrders.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
+    ? pfOrdersBase
+    : pfOrdersBase.filter(o => matchesProductFilter(o.productId, o.productName, orderProductIds));
   const pfDelivered = pfOrders.filter(o => (o.status ?? "New") === "Delivered");
   const pfRevenue = pfDelivered.reduce((sum, o) => sum + o.amount, 0);
   const pfDeliveryRateExact = pfOrders.length === 0 ? 0 : (pfDelivered.length / pfOrders.length) * 100;
