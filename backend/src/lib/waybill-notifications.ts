@@ -6,6 +6,9 @@ type WaybillContext = {
   id: string;
   productName: string;
   quantity: number;
+  // For multi-item waybills, a pre-built "Item x3, Item2 x2" label. When set it
+  // replaces the single productName x quantity summary.
+  itemsLabel?: string | null;
   fromLocation?: string | null;
   toLocation?: string | null;
   carrier?: string | null;
@@ -22,7 +25,7 @@ function buildRouteLabel(waybill: WaybillContext): string {
 }
 
 function buildEventPayload(waybill: WaybillContext, event: WaybillEvent): { title: string; body: string; tag: string; kind: string } {
-  const summary = `${waybill.productName} x${waybill.quantity}${buildRouteLabel(waybill)}`;
+  const summary = `${waybill.itemsLabel || `${waybill.productName} x${waybill.quantity}`}${buildRouteLabel(waybill)}`;
   if (event === "dispatched") {
     const carrier = waybill.carrier ? ` via ${waybill.carrier}` : "";
     return {
