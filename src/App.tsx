@@ -691,6 +691,10 @@ type TrackedOrder = {
   formContext?: Record<string, string | number | boolean | null>;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
+  // Parked for manual review (e.g. 3rd+ order from the same phone in one day).
+  // The order is still "New" but not auto-assigned; Owner/Admin releases or rejects.
+  reviewHold?: boolean;
+  reviewReason?: string;
   response?: string;
   location?: string;
   deliveryWindow?: string;
@@ -4523,6 +4527,8 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     sourceCartId: sourceCartIdForOrder(value) || undefined,
     formContext: value?.formContext ?? value?.form_context ?? undefined,
     embedLabel: value?.embedLabel ?? value?.embed_label ?? undefined,
+    reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
+    reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -20390,6 +20396,19 @@ ${waybillLineItems(w).length > 1
     ]);
   };
 
+  // Clear a "held for review" flag so the order flows normally again. Owner/Admin
+  // only (the backend also enforces this). Optimistic with rollback on failure.
+  const releaseOrderHold = (orderId: string) => {
+    const order = trackedOrders.find((o) => o.id === orderId);
+    if (!order) return;
+    setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, reviewHold: false, reviewReason: undefined } : o));
+    ordersApi.update(orderId, { review_hold: false, review_reason: null } as any).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
+      showToast(`Could not release the order: ${err?.message ?? "please retry"}.`);
+    });
+    showToast(`Order ${orderId} released — it will be handled like a normal order now.`);
+  };
+
   const updateOrderStatus = (
     orderId: string,
     nextStatus: Exclude<OrderStatus, "All Orders">,
@@ -28659,9 +28678,17 @@ ${waybillLineItems(w).length > 1
                                 {order.phone || "No phone saved"}
                               </p>
                             </div>
-                            <span className={`shrink-0 rounded-full px-3.5 py-2 text-xs font-black ${statusBadgeClasses(status)}`}>
-                              {status}
-                            </span>
+                            <div className="flex shrink-0 flex-col items-end gap-1.5">
+                              <span className={`rounded-full px-3.5 py-2 text-xs font-black ${statusBadgeClasses(status)}`}>
+                                {status}
+                              </span>
+                              {order.reviewHold && (
+                                <span
+                                  className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
+                                  title={order.reviewReason || "Held for review — possible duplicate"}
+                                >⏸ Review</span>
+                              )}
+                            </div>
                           </div>
 
                           {callOutcome
@@ -28826,6 +28853,12 @@ ${waybillLineItems(w).length > 1
                               </td>
                               <td className="px-4 py-3.5">
                                 {renderOrderStatusSummary(order)}
+                                {order.reviewHold && (
+                                  <span
+                                    className="mt-1.5 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
+                                    title={order.reviewReason || "Held for review — possible duplicate"}
+                                  >⏸ Review</span>
+                                )}
                                 {scheduleMarker ? (
                                   renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5" })
                                 ) : null}
@@ -43738,6 +43771,33 @@ ${waybillLineItems(w).length > 1
 
 	            {modal === "orderDetails" && selectedOrder && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
+	                {selectedOrder.reviewHold && (
+	                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+	                    <div className="flex items-start gap-2.5">
+	                      <span className="text-lg leading-none">⏸</span>
+	                      <div className="min-w-0 flex-1">
+	                        <p className="m-0 text-sm font-bold text-amber-900 dark:text-amber-200">Held for review — possible duplicate</p>
+	                        <p className="mt-0.5 mb-0 text-xs text-amber-800/90 dark:text-amber-200/80">
+	                          {selectedOrder.reviewReason || "This customer placed more than 2 orders in one day, so this one was parked and not auto-assigned."}
+	                        </p>
+	                        {isOwnerOrAdmin ? (
+	                          <div className="mt-2.5 flex flex-wrap gap-2">
+	                            <button
+	                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors"
+	                              onClick={() => releaseOrderHold(selectedOrder.id)}
+	                            >Release — it's genuine</button>
+	                            <button
+	                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition-colors"
+	                              onClick={() => { updateOrderStatus(selectedOrder.id, "Cancelled", "Rejected — duplicate order held for review"); closeModal(); }}
+	                            >Reject — cancel it</button>
+	                          </div>
+	                        ) : (
+	                          <p className="mt-1.5 mb-0 text-xs font-semibold text-amber-700 dark:text-amber-300">An Owner or Admin will review this and release or cancel it.</p>
+	                        )}
+	                      </div>
+	                    </div>
+	                  </div>
+	                )}
 	                {/* Owner/admin always has full permissions — Reassign + Change Status always visible */}
 	                <div className="flex items-center justify-between gap-2 flex-wrap">
 	                  <div className="flex items-center gap-2 flex-wrap">

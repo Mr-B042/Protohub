@@ -1288,6 +1288,11 @@ const MANUAL_BONUS_FIELDS = new Set([
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
 ]);
 
+const REVIEW_HOLD_FIELDS = new Set([
+  "review_hold", "reviewHold",
+  "review_reason", "reviewReason",
+]);
+
 const OrderDatePatchSchema = z.object({
   createdAt: z.string().trim().min(1).max(80),
   reason: z.string().trim().min(3).max(500)
@@ -1427,6 +1432,13 @@ router.patch("/:id", async (req, res) => {
     return;
   }
 
+  // Releasing / changing a manual-review hold is an Owner/Admin decision.
+  const touchesReviewHold = requestedKeys.some((k) => REVIEW_HOLD_FIELDS.has(k));
+  if (req.user!.role === "Sales Rep" && touchesReviewHold) {
+    res.status(403).json({ error: "Only an Owner or Admin can release a held order." });
+    return;
+  }
+
   if (req.body.delivered_date !== undefined || req.body.deliveredDate !== undefined) {
     const requestedDeliveredDate = req.body.delivered_date ?? req.body.deliveredDate;
     if (req.user!.role === "Sales Rep") {
@@ -1485,7 +1497,9 @@ router.patch("/:id", async (req, res) => {
     bonus_paid:                ["bonus_paid", "bonusPaid"],
     timeline_notes:            ["timeline_notes", "timelineNotes"],
     cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
-    free_gift_lines:           ["free_gift_lines", "freeGiftLines"]
+    free_gift_lines:           ["free_gift_lines", "freeGiftLines"],
+    review_hold:               ["review_hold", "reviewHold"],
+    review_reason:             ["review_reason", "reviewReason"]
   };
   const updates: Record<string, unknown> = {};
   for (const [dbKey, inputKeys] of Object.entries(allowed)) {

@@ -319,7 +319,7 @@ const notifyAfterSubmitUpsellAccepted = async (
 };
 
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|form_context|assigned_by_user_id|assigned_by_name_snapshot/i.test(error?.message ?? "");
+  error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|form_context|assigned_by_user_id|assigned_by_name_snapshot|review_hold|review_reason/i.test(error?.message ?? "");
 
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
@@ -388,6 +388,37 @@ router.post("/", submitRateLimit, async (req, res) => {
     logger.warn("public-orders: flagged customer blocked", { ip: req.ip });
     res.status(403).json({ error: "Order cannot be placed." });
     return;
+  }
+
+  // Repeat-order guard: hold the 3rd+ order from the same phone in one day (WAT)
+  // for manual review instead of auto-dispatching it — on pay-on-delivery, a
+  // bogus duplicate (or an accidental re-submit) costs real stock + logistics.
+  // Match on the last 10 Nigerian digits so 080..., 234... and +234... versions
+  // of the same number all count as one person. The order is still created; it's
+  // just parked (not auto-assigned) for an Owner/Admin to release or reject.
+  const phoneLast10 = normalizedPhone.slice(-10);
+  let reviewHold = false;
+  let reviewReason: string | null = null;
+  if (phoneLast10.length >= 7) {
+    // Start of today in WAT (UTC+1, no DST), expressed as a UTC instant.
+    const watNow = new Date(Date.now() + 60 * 60 * 1000);
+    const startOfDayUtc = new Date(
+      Date.UTC(watNow.getUTCFullYear(), watNow.getUTCMonth(), watNow.getUTCDate()) - 60 * 60 * 1000
+    );
+    const { data: todaysOrders } = await supabase
+      .from("orders")
+      .select("phone")
+      .eq("org_id", product.org_id)
+      .gte("created_at", startOfDayUtc.toISOString());
+    const priorToday = (todaysOrders ?? []).filter(
+      (o) => String(o.phone ?? "").replace(/\D/g, "").slice(-10) === phoneLast10
+    ).length;
+    // Allow up to 2 per day; the 3rd onward is held for review.
+    if (priorToday >= 2) {
+      reviewHold = true;
+      reviewReason = `Possible duplicate: ${priorToday + 1} orders from this number today — held for review.`;
+      logger.warn("public-orders: order held for review (repeat customer)", { priorToday, ip: req.ip });
+    }
   }
 
   const embedSettings = await readSettings(product.org_id);
@@ -612,7 +643,8 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   let assignedRepId: string | null = null;
 
-  if (publicOrderAssignmentMode === "auto_assign") {
+  // Held orders are never auto-assigned — they wait, parked, for a human.
+  if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
     // Round-robin assign to the sales rep with the lowest position, then
     // advance that rep to max+1 so the next order goes to the next rep.
     const { data: reps } = await supabase
@@ -674,6 +706,8 @@ router.post("/", submitRateLimit, async (req, res) => {
     confirmation_checked: d.confirmationChecked ?? null,
     preferred_delivery:   d.preferredDelivery ?? null,
     form_context:      d.formContext ?? {},
+    review_hold:       reviewHold,
+    review_reason:     reviewReason,
     status:            "New"
   } as Record<string, unknown>;
   const legacyInsert = { ...baseInsert };
@@ -684,6 +718,8 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.form_context;
   delete legacyInsert.assigned_by_user_id;
   delete legacyInsert.assigned_by_name_snapshot;
+  delete legacyInsert.review_hold;
+  delete legacyInsert.review_reason;
 
   let { data: order, error: orderErr } = await supabase
     .from("orders")
