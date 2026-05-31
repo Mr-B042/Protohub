@@ -3788,6 +3788,23 @@ const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJour
   );
 };
 
+// How much of a lead's contact info an abandoned cart captured, across the 6
+// fields the cart stores. Shared by the cart detail view + the carts list badge
+// so both always agree. (Address isn't captured on carts, only on placed orders.)
+const cartCustomerInfoFields = (cart: AbandonedCartRecord): { label: string; done: boolean }[] => [
+  { label: "Name",     done: Boolean((cart.customer ?? "").trim()) },
+  { label: "Phone",    done: Boolean((cart.phone ?? "").trim()) },
+  { label: "WhatsApp", done: Boolean((cart.whatsapp ?? "").trim()) },
+  { label: "Email",    done: Boolean((cart.email ?? "").trim()) },
+  { label: "City",     done: Boolean((cart.city ?? "").trim()) },
+  { label: "State",    done: Boolean((cart.state ?? "").trim()) },
+];
+const cartCustomerInfoCompletion = (cart: AbandonedCartRecord) => {
+  const fields = cartCustomerInfoFields(cart);
+  const done = fields.filter((f) => f.done).length;
+  return { fields, done, total: fields.length, complete: done === fields.length };
+};
+
 const timeSinceCreated = (order: TrackedOrder): string => {
   const created = new Date(order.createdAt ?? order.date);
   if (Number.isNaN(created.getTime())) return "—";
@@ -29478,6 +29495,14 @@ ${waybillLineItems(w).length > 1
                           <div className="min-w-0">
                             <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
                             <div className="text-xs text-gray-500">{cart.phone}</div>
+                            {(() => {
+                              const ci = cartCustomerInfoCompletion(cart);
+                              return (
+                                <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (Name, Phone, WhatsApp, Email, City, State)`}>
+                                  {ci.complete ? "✓ Info complete" : `Info ${ci.done}/${ci.total}`}
+                                </span>
+                              );
+                            })()}
                             {conversionMarker && (
                               <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>
@@ -29605,6 +29630,14 @@ ${waybillLineItems(w).length > 1
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.customer}</div>
                               <div className="text-xs text-gray-400">{cart.phone}</div>
+                              {(() => {
+                                const ci = cartCustomerInfoCompletion(cart);
+                                return (
+                                  <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (Name, Phone, WhatsApp, Email, City, State)`}>
+                                    {ci.complete ? "✓ Info complete" : `Info ${ci.done}/${ci.total}`}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3">
                               <div className="font-medium text-gray-900">{cart.productName}</div>
@@ -45250,18 +45283,9 @@ ${waybillLineItems(w).length > 1
 	                            : "bg-amber-100 text-amber-800";
 	                return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${tone}`}>{s}</span>;
 	              };
-	              // How much of the customer's contact info the lead filled in, out of the
-	              // 5 fields shown below: Name, Phone, WhatsApp, Email, Location (city/state).
-	              const customerInfoChecks: { label: string; done: boolean }[] = [
-	                { label: "Name",     done: Boolean((selectedCart.customer ?? "").trim()) },
-	                { label: "Phone",    done: Boolean((selectedCart.phone ?? "").trim()) },
-	                { label: "WhatsApp", done: Boolean((selectedCart.whatsapp ?? "").trim()) },
-	                { label: "Email",    done: Boolean((selectedCart.email ?? "").trim()) },
-	                { label: "Location", done: Boolean((selectedCart.city ?? "").trim() || (selectedCart.state ?? "").trim()) },
-	              ];
-	              const customerInfoTotal = customerInfoChecks.length;
-	              const customerInfoDone = customerInfoChecks.filter((c) => c.done).length;
-	              const customerInfoComplete = customerInfoDone === customerInfoTotal;
+	              // How much of the lead's contact info the cart captured, across the 6
+	              // fields shown below (Name, Phone, WhatsApp, Email, City, State).
+	              const { done: customerInfoDone, total: customerInfoTotal, complete: customerInfoComplete } = cartCustomerInfoCompletion(selectedCart);
 	              return (
 	                <div className="px-6 py-5 flex flex-col gap-5">
 	                  {/* Header */}
@@ -45331,7 +45355,8 @@ ${waybillLineItems(w).length > 1
 	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "— missing"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "— missing"}</p></div>
 	                      <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className={`font-semibold m-0 ${selectedCart.email ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.email || "— missing"}</p></div>
-	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className={`font-semibold m-0 ${[selectedCart.city, selectedCart.state].filter(Boolean).length ? "text-gray-900" : "text-gray-400"}`}>{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "— missing"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">City</p><p className={`font-semibold m-0 ${(selectedCart.city ?? "").trim() ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.city || "— missing"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">State</p><p className={`font-semibold m-0 ${(selectedCart.state ?? "").trim() ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.state || "— missing"}</p></div>
 	                    </div>
 	                  </section>
 
