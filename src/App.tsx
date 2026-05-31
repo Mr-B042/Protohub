@@ -2457,19 +2457,29 @@ const chooseRangeDate = (range: DateRange, nextDate: string): DateRange => {
 };
 
 const todayKey = () => formatDateKey(new Date());
-const mondayKeyFromDate = (source = new Date()) => {
-  const date = new Date(source);
-  const day = date.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + offset);
-  return formatDateKey(date);
-};
 const addDaysToDateKey = (dateKey: string, days: number) => {
   const date = new Date(`${normalizeDateKey(dateKey)}T00:00:00`);
   date.setDate(date.getDate() + days);
   return formatDateKey(date);
 };
 const weekEndFromStartKey = (weekStart: string) => addDaysToDateKey(weekStart, 6);
+// Sunday that starts the Sun–Sat week CONTAINING `source` — used when a specific
+// date is picked, so it snaps to that date's week.
+const sundayKeyFromDate = (source = new Date()) => {
+  const date = new Date(source);
+  date.setDate(date.getDate() - date.getDay());
+  return formatDateKey(date);
+};
+// Default week for the Weekend Stock Summary: the most recently COMPLETED Sun–Sat
+// week (ending on the most recent Saturday — today if today is Saturday). So on a
+// Sunday you see the week that just finished (e.g. Sun 24 – Sat 30), not a brand-new
+// near-empty week. Weeks run Sunday → Saturday.
+const weekendSummaryWeekStart = (source = new Date()) => {
+  const date = new Date(source);
+  const daysSinceSaturday = (date.getDay() + 1) % 7; // Sun→1 … Sat→0
+  date.setDate(date.getDate() - daysSinceSaturday - 6);
+  return formatDateKey(date);
+};
 
 const normalizeDateKey = (value?: string) => {
   if (!value) {
@@ -6135,13 +6145,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agents, setAgents] = useState<DeliveryAgentRecord[]>([]);
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>([]);
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>([]);
-  const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => mondayKeyFromDate());
-  // Range mode: "week" = the standard Mon–Sun week navigated above; "custom"
+  const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => weekendSummaryWeekStart());
+  // Range mode: "week" = the standard Sun–Sat week navigated above; "custom"
   // = an arbitrary [start, end] window the user picks. Custom defaults to the
-  // current week's Mon–Sun until the user changes the pickers.
+  // current week's Sun–Sat until the user changes the pickers.
   const [agentBalanceRangeMode, setAgentBalanceRangeMode] = useState<"week" | "custom">("week");
-  const [agentBalanceCustomStart, setAgentBalanceCustomStart] = useState<string>(() => mondayKeyFromDate());
-  const [agentBalanceCustomEnd, setAgentBalanceCustomEnd] = useState<string>(() => weekEndFromStartKey(mondayKeyFromDate()));
+  const [agentBalanceCustomStart, setAgentBalanceCustomStart] = useState<string>(() => weekendSummaryWeekStart());
+  const [agentBalanceCustomEnd, setAgentBalanceCustomEnd] = useState<string>(() => weekEndFromStartKey(weekendSummaryWeekStart()));
   const [agentBalanceRows, setAgentBalanceRows] = useState<AgentWeeklyBalanceRow[]>([]);
   const [agentBalanceSummary, setAgentBalanceSummary] = useState<AgentWeeklyBalanceSummary | null>(null);
   const [agentBalanceGeneratedAt, setAgentBalanceGeneratedAt] = useState("");
@@ -11123,7 +11133,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const assignedRepCount = salesRepUsers.filter((u) => salesTeams.some((t) => t.memberIds.includes(u.id))).length;
   const productTeamScope = (product: Product) => salesTeams.filter((team) => team.productIds.includes(product.id)).map((team) => team.name);
   // Effective window the summary covers. In "week" mode it's the navigated
-  // Mon–Sun week; in "custom" mode it's the user-picked [start, end] range.
+  // Sun–Sat week; in "custom" mode it's the user-picked [start, end] range.
   // Everything downstream (data load, Copy Summary, CSV, drill) reads these
   // two so the page works identically for both modes.
   const agentBalanceWindowStart = agentBalanceRangeMode === "custom" ? agentBalanceCustomStart : agentBalanceWeekStart;
@@ -11604,13 +11614,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     // ── Closing summary ─────────────────────────────────────────
     // (1) closing balance per product, (2) totals roll-up.
-    // Week mode: the Sunday-night closing is what the agent opens the NEXT
-    // week (Monday) with, so we label it as that Monday. Custom range: there
-    // is no "next week", so we just state the closing balance as of the end
-    // date of the selected range.
-    const nextMonday = dateFromKey(weekEnd);
-    nextMonday.setDate(nextMonday.getDate() + 1);
-    const nextMondayLabel = nextMonday.toLocaleDateString("en-GB", {
+    // Week mode: the Saturday-night closing is what the agent opens the NEXT
+    // week (the following Sunday) with, so we label it as that day. Custom
+    // range: there is no "next week", so we just state the closing balance as
+    // of the end date of the selected range.
+    const nextWeekStart = dateFromKey(weekEnd);
+    nextWeekStart.setDate(nextWeekStart.getDate() + 1);
+    const nextWeekStartLabel = nextWeekStart.toLocaleDateString("en-GB", {
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -11621,7 +11631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     lines.push("");
     lines.push(agentBalanceIsCustomRange
       ? `Closing Stock Balance as of ${fmtFull(weekEnd)}:`
-      : `Stock Balance to start next week with (${nextMondayLabel}):`);
+      : `Stock Balance to start next week with (${nextWeekStartLabel}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.closingBalance}`);
@@ -11882,7 +11892,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Generated", agentBalanceGeneratedAt ? formatMoment(agentBalanceGeneratedAt) : "Not yet generated"],
       ["Hubs in view", String(agentBalanceGroups.length)],
       ["Product rows", String(sortedRows.length)],
-      ["Note", "Closing balance = stock the agent starts next week (Monday) with."],
+      ["Note", "Closing balance = stock the agent starts next week (Sunday) with."],
       []
     ];
 
@@ -31326,7 +31336,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </button>
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                        onClick={() => setAgentBalanceWeekStart(mondayKeyFromDate())}
+                        onClick={() => setAgentBalanceWeekStart(weekendSummaryWeekStart())}
                       >
                         This week
                       </button>
@@ -31347,9 +31357,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         onChange={(event) => {
                           const picked = event.target.value;
                           if (!picked) return;
-                          // Snap any picked day to the Monday of its week so the
-                          // summary always aligns to a full Mon–Sun window.
-                          setAgentBalanceWeekStart(mondayKeyFromDate(new Date(`${picked}T00:00:00`)));
+                          // Snap any picked day to the Sunday of its week so the
+                          // summary always aligns to a full Sun–Sat window.
+                          setAgentBalanceWeekStart(sundayKeyFromDate(new Date(`${picked}T00:00:00`)));
                         }}
                       />
                     </label>
