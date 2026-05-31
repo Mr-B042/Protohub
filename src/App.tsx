@@ -234,11 +234,15 @@ type StockCountSession = {
   status: "Open" | "Closed";
   entries: StockCountEntry[];
 };
+type WaybillItem = { productId: string; productName: string; quantity: number };
 type WaybillRecord = {
   id: string;
   productId: string;
   productName: string;
   quantity: number;
+  // Multi-item waybills carry the full line-item list. Legacy single-product
+  // rows leave this undefined and use productId/productName/quantity.
+  items?: WaybillItem[];
   waybillFee: number;
   logisticsPartner: string;
   sendingState: string;
@@ -256,6 +260,32 @@ type WaybillRecord = {
   createdBy: string;
   createdAt: string;
 };
+// Normalize a server waybill's `items` jsonb (snake_case or camelCase) into the
+// frontend WaybillItem[] shape. Returns undefined for legacy single-item rows.
+function mapWaybillItems(raw: any): WaybillItem[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const items = raw
+    .map((it: any) => ({
+      productId: String(it?.productId ?? it?.product_id ?? ""),
+      productName: String(it?.productName ?? it?.product_name ?? ""),
+      quantity: Number(it?.quantity ?? 0),
+    }))
+    .filter((it) => it.productId && it.quantity > 0);
+  return items.length > 0 ? items : undefined;
+}
+// The line items to display for a waybill: the full `items` list for multi-item
+// waybills, or a single synthetic line from the legacy columns. Tolerant of both
+// camelCase and snake_case item shapes (realtime reloads may skip normalization).
+function waybillLineItems(w: WaybillRecord): WaybillItem[] {
+  if (Array.isArray(w.items) && w.items.length > 0) {
+    return w.items.map((it: any) => ({
+      productId: it?.productId ?? it?.product_id ?? "",
+      productName: it?.productName ?? it?.product_name ?? "",
+      quantity: Number(it?.quantity ?? 0),
+    }));
+  }
+  return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
+}
 type RepConsoleTab = "Dashboard" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -6171,8 +6201,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [writeOffReason, setWriteOffReason] = useState<WriteOffReason | "">("");
   const [writeOffCustomReason, setWriteOffCustomReason] = useState("");
   const [adjustStockEntryId, setAdjustStockEntryId] = useState<string | null>(null);
-  const [waybillProductId, setWaybillProductId] = useState("");
-  const [waybillQty, setWaybillQty] = useState("1");
+  // Multi-item create modal: one waybill can carry several products, each with
+  // its own quantity (one shared route + fee + tracking #). Rows of {productId, quantity}.
+  const [waybillItems, setWaybillItems] = useState<{ productId: string; quantity: string }[]>([{ productId: "", quantity: "1" }]);
+  const addWaybillItemRow = () => setWaybillItems((prev) => [...prev, { productId: "", quantity: "1" }]);
+  const removeWaybillItemRow = (index: number) =>
+    setWaybillItems((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  const updateWaybillItemRow = (index: number, patch: Partial<{ productId: string; quantity: string }>) =>
+    setWaybillItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   const [waybillFee, setWaybillFee] = useState("0");
   const [waybillPartner, setWaybillPartner] = useState("");
   const [waybillFromType, setWaybillFromType] = useState<"Warehouse" | "Agent">("Warehouse");
@@ -16414,6 +16450,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             productId:        w.productId ?? w.product_id ?? "",
             productName:      w.productName ?? w.product_name ?? "",
             quantity:         w.quantity ?? 0,
+            items:            mapWaybillItems(w.items),
             waybillFee:       Number(w.waybillFee ?? w.waybill_fee ?? 0),
             logisticsPartner: w.logisticsPartner ?? w.carrier ?? "",
             sendingState:     w.sendingState   ?? w.fromLocation ?? w.from_location ?? "",
@@ -18618,7 +18655,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 <h1>ProtoHub CRM — Waybill</h1>
 <h2>${esc(w.id)} · Printed ${new Date().toLocaleDateString("en-GB")}</h2>
 <table>
-<tr><th>Product</th><td>${esc(w.productName)}</td><th>Quantity</th><td>${esc(w.quantity)} units</td></tr>
+${waybillLineItems(w).length > 1
+  ? `<tr><th>Items</th><td colspan="3">${waybillLineItems(w).map((it) => `${String(it.quantity)} × ${esc(it.productName)}`).join("<br/>")}</td></tr>`
+  : `<tr><th>Product</th><td>${esc(w.productName)}</td><th>Quantity</th><td>${esc(String(w.quantity))} units</td></tr>`}
 <tr><th>From</th><td>${esc(w.sendingState)}</td><th>To</th><td>${esc(w.receivingState)}</td></tr>
 <tr><th>Logistics Partner</th><td>${esc(w.logisticsPartner || "—")}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "—"}</td></tr>
 <tr><th>Date Sent</th><td>${esc(w.dateSent)}</td><th>Date Received</th><td>${esc(w.dateReceived || "—")}</td></tr>
@@ -22386,8 +22425,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openCreateWaybillModal = () => {
-    setWaybillProductId("");
-    setWaybillQty("1");
+    setWaybillItems([{ productId: "", quantity: "1" }]);
     setWaybillFee("0");
     setWaybillPartner("");
     setWaybillFromType("Warehouse");
@@ -22408,53 +22446,71 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const createWaybill = () => {
     const errs: Record<string, string> = {};
-    if (!waybillProductId) errs.product = "Select a product.";
-    const qty = Math.max(1, Number(waybillQty) || 1);
-    if (!waybillQty || Number(waybillQty) < 1) errs.qty = "Quantity must be at least 1.";
+    // Collapse the line-item rows: keep the ones with a product chosen, sum
+    // duplicate products into one line, and coerce each quantity to a min of 1.
+    const chosenRows = waybillItems.filter((row) => row.productId);
+    if (chosenRows.length === 0) errs.product = "Add at least one product.";
+    if (waybillItems.some((row) => row.productId && (!row.quantity || Number(row.quantity) < 1)))
+      errs.qty = "Each quantity must be at least 1.";
+    const mergedQty = new Map<string, number>();
+    for (const row of chosenRows) {
+      mergedQty.set(row.productId, (mergedQty.get(row.productId) ?? 0) + Math.max(1, Number(row.quantity) || 1));
+    }
     if (!waybillPartner.trim()) errs.partner = "Logistics partner is required.";
     if (waybillFromType === "Agent" && !waybillFromAgentId) errs.fromAgent = "Select a sending agent.";
     const fromAgent = waybillFromType === "Agent" ? agents.find((a) => a.id === waybillFromAgentId) : null;
     const fromLocation = waybillFromType === "Agent"
       ? (findAgentLocation(fromAgent, waybillFromAgentLocationId) ?? primaryAgentLocation(fromAgent))
       : null;
+    const firstProductId = chosenRows[0]?.productId;
     const toAgent = waybillToAgentId ? agents.find((ag) => ag.id === waybillToAgentId) : null;
     const toLocation = toAgent
-      ? (findAgentLocation(toAgent, waybillToAgentLocationId) ?? bestAgentLocationMatch(toAgent, waybillToState, undefined, waybillProductId) ?? primaryAgentLocation(toAgent))
+      ? (findAgentLocation(toAgent, waybillToAgentLocationId) ?? bestAgentLocationMatch(toAgent, waybillToState, undefined, firstProductId) ?? primaryAgentLocation(toAgent))
       : null;
     const receivingState = toLocation?.state || waybillToState.trim();
     if (waybillFromType === "Agent" && !fromLocation?.id) errs.fromAgent = "Select a sending hub.";
     if (waybillToAgentId && !toLocation?.id) errs.toState = "Select a receiving hub.";
     if (!receivingState) errs.toState = "Receiving state is required.";
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
+
+    // Resolve every line to a product + quantity, then check the source has
+    // enough of ALL items before deducting any (no partial dispatch).
+    const lineItems = [...mergedQty.entries()]
+      .map(([productId, quantity]) => {
+        const product = products.find((p) => p.id === productId);
+        return product ? { product, quantity } : null;
+      })
+      .filter(Boolean) as { product: Product; quantity: number }[];
+    if (Object.keys(errs).length === 0) {
+      for (const { product, quantity } of lineItems) {
+        const available = waybillFromType === "Warehouse"
+          ? product.warehouseStock
+          : (fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, product.id) : 0);
+        if (available < quantity) {
+          errs.qty = `${product.name}: only ${available} available at the source (need ${quantity}).`;
+          break;
+        }
+      }
+    }
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
     setWaybillErrors({});
 
-    const product = products.find((p) => p.id === waybillProductId);
-    if (!product) return;
     const fee = Math.max(0, Number(waybillFee) || 0);
-
-    if (waybillFromType === "Warehouse") {
-      if (product.warehouseStock < qty) {
-        setWaybillErrors({ qty: `Not enough warehouse stock. Available: ${product.warehouseStock}` });
-        return;
-      }
-    } else {
-      const available = fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0;
-      if (!available || available < qty) {
-        setWaybillErrors({ qty: `Not enough hub stock. Available: ${available}` });
-        return;
-      }
-    }
-
     const sendingState = waybillFromType === "Warehouse" ? "Lagos" : (fromLocation?.state || (fromAgent ? agentPrimaryBaseState(fromAgent) : ""));
     const sendingLocationName = waybillFromType === "Warehouse" ? "Warehouse (Lagos)" : (fromLocation?.name || sendingState);
     const receivingLocationName = toLocation?.name || receivingState;
+    const totalQty = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+    const itemsForRecord: WaybillItem[] = lineItems.map((li) => ({ productId: li.product.id, productName: li.product.name, quantity: li.quantity }));
+    const itemsLabel = lineItems.map((li) => `${li.quantity} × ${li.product.name}`).join(", ");
+    const isMulti = lineItems.length > 1;
 
     const record: WaybillRecord = {
       id: `WB-${Date.now().toString(36).toUpperCase()}`,
-      productId: waybillProductId,
-      productName: product.name,
-      quantity: qty,
+      // Legacy columns mirror the first item; `items` carries the full list.
+      productId: lineItems[0].product.id,
+      productName: isMulti ? `${lineItems[0].product.name} +${lineItems.length - 1} more` : lineItems[0].product.name,
+      quantity: isMulti ? totalQty : lineItems[0].quantity,
+      items: itemsForRecord,
       waybillFee: fee,
       logisticsPartner: waybillPartner.trim(),
       sendingState,
@@ -22472,38 +22528,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       createdAt: new Date().toISOString(),
     };
 
-    const fromAgentSnapshot = fromAgent ? { ...fromAgent } : null;
-    if (waybillFromType === "Warehouse") {
-      setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: p.warehouseStock - qty } : p));
-    } else {
-      if (fromLocation?.id) {
-        adjustAgentLocationStock(waybillFromAgentId, fromLocation.id, waybillProductId, (current) => ({
-          productId: waybillProductId,
-          quantity: Math.max(0, Number(current?.quantity ?? 0) - qty),
-          defective: Number(current?.defective ?? 0),
-          missing: Number(current?.missing ?? 0)
-        }));
+    // Optimistically deduct each item from its source + log a movement per item.
+    for (const { product, quantity } of lineItems) {
+      if (waybillFromType === "Warehouse") {
+        setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, warehouseStock: Math.max(0, p.warehouseStock - quantity) } : p));
+      } else {
+        if (fromLocation?.id) {
+          adjustAgentLocationStock(waybillFromAgentId, fromLocation.id, product.id, (current) => ({
+            productId: product.id,
+            quantity: Math.max(0, Number(current?.quantity ?? 0) - quantity),
+            defective: Number(current?.defective ?? 0),
+            missing: Number(current?.missing ?? 0)
+          }));
+        }
+        setAgentStock((prev) => prev.map((s) => s.agentId === waybillFromAgentId && s.productId === product.id ? { ...s, quantity: s.quantity - quantity } : s));
+        setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, agentStock: Math.max(0, p.agentStock - quantity) } : p));
       }
-      setAgentStock((prev) => prev.map((s) => s.agentId === waybillFromAgentId && s.productId === waybillProductId ? { ...s, quantity: s.quantity - qty } : s));
-      setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, agentStock: Math.max(0, p.agentStock - qty) } : p));
+      setStockMovements((prev) => [{
+        id: makeMovementId(),
+        date: new Date().toISOString(),
+        productId: product.id,
+        productName: product.name,
+        type: "Waybill Out",
+        qty: -quantity,
+        balanceAfter: 0,
+        agent: waybillFromType === "Warehouse" ? (toAgent?.name ?? receivingState) : (fromAgent?.name ?? sendingState),
+        by: ownerName,
+        note: `Waybill ${record.id}: ${sendingState} → ${receivingState} via ${waybillPartner.trim()}${waybillNote.trim() ? " — " + waybillNote.trim() : ""}`,
+      }, ...prev]);
     }
-
-    setStockMovements((prev) => [{
-      id: makeMovementId(),
-      date: new Date().toISOString(),
-      productId: product.id,
-      productName: product.name,
-      type: "Waybill Out",
-      qty: -qty,
-      balanceAfter: waybillFromType === "Warehouse" ? product.warehouseStock - qty : 0,
-      agent: waybillFromType === "Warehouse" ? (toAgent?.name ?? receivingState) : (fromAgent?.name ?? sendingState),
-      by: ownerName,
-      note: `Waybill ${record.id}: ${sendingState} → ${receivingState} via ${waybillPartner.trim()}${waybillNote.trim() ? " — " + waybillNote.trim() : ""}`,
-    }, ...prev]);
 
     setWaybillRecords((prev) => [record, ...prev]);
     // Auto-book the waybill fee as a Waybill expense so it shows on the Expense
-    // board and Finance reports. Skip if no fee charged.
+    // board and Finance reports. Skip if no fee charged. One fee per waybill.
     if (fee > 0) {
       const expenseRecord: ExpenseRecord = {
         id: `EXP-WB-${record.id}`,
@@ -22513,7 +22570,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         date: String(record.dateSent ?? todayKey()).slice(0, 10),
         productId: record.productId,
         productName: record.productName,
-        description: `Waybill ${record.id} — ${record.sendingState} → ${record.receivingState} via ${record.logisticsPartner}`,
+        description: `Waybill ${record.id} — ${record.sendingState} → ${record.receivingState} via ${record.logisticsPartner} (${itemsLabel})`,
         waybillId: record.id
       };
       setExpenses((prev) => [expenseRecord, ...prev]);
@@ -22524,11 +22581,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       } as any).catch(() => {});
     }
     closeModal();
-    showToast(`Waybill created — ${qty} × ${product.name} → ${receivingState}.${fee > 0 ? ` Fee ₦${fee.toLocaleString()} booked to expenses.` : ""}`);
+    showToast(`Waybill created — ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ₦${fee.toLocaleString()} booked to expenses.` : ""}`);
     // Roll back the waybill record (and the auto-booked expense) if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
-    waybillsApi.create({ id: record.id, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, notes: record.note, dispatchedDate: record.dateSent }).catch((err: any) => {
+    waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, notes: record.note, dispatchedDate: record.dateSent } as any).catch((err: any) => {
       setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
       if (fee > 0) setExpenses((prev) => prev.filter((e) => e.id !== `EXP-WB-${record.id}`));
       showToast(`Waybill not synced: ${err?.message ?? "please retry"}.`);
@@ -22536,18 +22593,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     pushSystemNotification({
       type: "info",
       title: "Waybill dispatched",
-      message: `${record.id}: ${qty} × ${product.name} · ${sendingState} → ${receivingState} via ${waybillPartner.trim()}`,
-      productId: product.id,
+      message: `${record.id}: ${itemsLabel} · ${sendingState} → ${receivingState} via ${waybillPartner.trim()}`,
+      productId: lineItems[0].product.id,
       link: `/dashboard/admin/waybill`
     });
     if (waybillFromType === "Agent") {
-      maybePushAgentLowStockNotification(
-        product,
-        fromAgent ?? undefined,
-        fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0,
-        Math.max(0, (fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, waybillProductId) : 0) - qty),
-        fromLocation
-      );
+      // Low-stock nudge per item that may have dipped below threshold.
+      for (const { product } of lineItems) {
+        const remaining = fromLocation?.id ? agentLocationStockQuantity(fromAgent, fromLocation.id, product.id) : 0;
+        maybePushAgentLowStockNotification(product, fromAgent ?? undefined, remaining, remaining, fromLocation);
+      }
     }
   };
 
@@ -22569,6 +22624,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const received   = Math.max(0, Math.min(dispatched, options?.actualQty ?? dispatched));
     const diff       = dispatched - received;
     const variance   = options?.variance ?? "return";
+
+    // Multi-item waybills receive in full — per-item variance (short counts) is
+    // not modeled, so add every line's quantity to the destination at once.
+    const lineItems = waybillLineItems(record);
+    if (lineItems.length > 1) {
+      const productsSnapshotPre   = [...products];
+      const agentStockSnapshotPre = [...agentStock];
+      const movementIdsBefore     = new Set(stockMovements.map((m) => m.id));
+      const waybillSnapshotPre    = waybillRecords.find((w) => w.id === waybillId);
+      const toAgent = record.toAgentId ? agents.find((a) => a.id === record.toAgentId) : null;
+      const movements: StockMovement[] = [];
+      for (const it of lineItems) {
+        if (it.quantity <= 0) continue;
+        if (record.toAgentId) {
+          setAgentStock((prev) => {
+            const existing = prev.find((s) => s.agentId === record.toAgentId && s.productId === it.productId);
+            if (existing) return prev.map((s) => s === existing ? { ...s, quantity: s.quantity + it.quantity } : s);
+            return [...prev, { agentId: record.toAgentId!, productId: it.productId, quantity: it.quantity, defective: 0, missing: 0 }];
+          });
+          setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, agentStock: p.agentStock + it.quantity } : p));
+        } else {
+          setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, warehouseStock: p.warehouseStock + it.quantity } : p));
+        }
+        movements.push({
+          id: makeMovementId(),
+          date: new Date().toISOString(),
+          productId: it.productId,
+          productName: it.productName,
+          type: "Waybill In",
+          qty: it.quantity,
+          balanceAfter: 0,
+          agent: toAgent?.name ?? record.receivingState,
+          by: ownerName,
+          note: `Waybill ${record.id} received: ${record.sendingState} → ${record.receivingState}`,
+          waybillId: record.id
+        });
+      }
+      if (movements.length > 0) setStockMovements((prev) => [...movements, ...prev]);
+      setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "Received", dateReceived: today } : w));
+      waybillsApi.updateStatus(waybillId, { status: "Received" }).catch((err: any) => {
+        setProducts(productsSnapshotPre);
+        setAgentStock(agentStockSnapshotPre);
+        setStockMovements((prev) => prev.filter((m) => movementIdsBefore.has(m.id)));
+        if (waybillSnapshotPre) setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? waybillSnapshotPre : w));
+        showToast(`Failed to mark ${waybillId} received: ${err?.message ?? "please retry"}.`);
+      });
+      const itemsLabel = lineItems.map((it) => `${it.quantity} × ${it.productName}`).join(", ");
+      showToast(`Waybill marked received — ${itemsLabel}.`);
+      pushSystemNotification({
+        type: "info",
+        title: "Waybill received",
+        message: `${record.id}: ${itemsLabel} arrived at ${toAgent?.name ?? "warehouse"} (${record.receivingState})`,
+        productId: lineItems[0].productId,
+        link: `/dashboard/admin/waybill`
+      });
+      return;
+    }
 
     // Snapshots for the rollback at the bottom — the function below mutates
     // products + agentStock + stockMovements + waybillRecords. If the API
@@ -22705,29 +22817,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const cancelWaybill = (waybillId: string) => {
     const record = waybillRecords.find((w) => w.id === waybillId);
     if (!record || record.status !== "In Transit") return;
-    const product = products.find((p) => p.id === record.productId);
-
-    if (record.fromAgentId) {
-      setAgentStock((prev) => prev.map((s) => s.agentId === record.fromAgentId && s.productId === record.productId ? { ...s, quantity: s.quantity + record.quantity } : s));
-      setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, agentStock: p.agentStock + record.quantity } : p));
-    } else {
-      setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, warehouseStock: p.warehouseStock + record.quantity } : p));
-    }
-
-    if (product) {
-      setStockMovements((prev) => [{
+    // Restore every line back to the source (per item for multi-item waybills).
+    const lineItems = waybillLineItems(record);
+    const fromAgent = record.fromAgentId ? agents.find((a) => a.id === record.fromAgentId) : null;
+    const movements: StockMovement[] = [];
+    for (const it of lineItems) {
+      if (it.quantity <= 0) continue;
+      const product = products.find((p) => p.id === it.productId);
+      if (record.fromAgentId) {
+        setAgentStock((prev) => prev.map((s) => s.agentId === record.fromAgentId && s.productId === it.productId ? { ...s, quantity: s.quantity + it.quantity } : s));
+        setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, agentStock: p.agentStock + it.quantity } : p));
+      } else {
+        setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, warehouseStock: p.warehouseStock + it.quantity } : p));
+      }
+      movements.push({
         id: makeMovementId(),
         date: new Date().toISOString(),
-        productId: product.id,
-        productName: product.name,
+        productId: it.productId,
+        productName: it.productName || product?.name || "",
         type: "Waybill In",
-        qty: record.quantity,
-        balanceAfter: record.fromAgentId ? 0 : product.warehouseStock + record.quantity,
-        agent: record.fromAgentId ? agents.find((a) => a.id === record.fromAgentId)?.name ?? record.sendingState : "Warehouse",
+        qty: it.quantity,
+        balanceAfter: 0,
+        agent: record.fromAgentId ? (fromAgent?.name ?? record.sendingState) : "Warehouse",
         by: ownerName,
         note: `Waybill ${record.id} cancelled — stock returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
-      }, ...prev]);
+      });
     }
+    if (movements.length > 0) setStockMovements((prev) => [...movements, ...prev]);
 
     setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "Cancelled" } : w));
     waybillsApi.updateStatus(waybillId, { status: "Cancelled" }).catch((err: any) => {
@@ -22735,15 +22851,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`Failed to cancel waybill: ${err.message}`);
     });
     showToast(`Waybill cancelled. Stock returned to sender.`);
-    if (product) {
-      pushSystemNotification({
-        type: "info",
-        title: "Waybill cancelled",
-        message: `${record.id}: ${record.quantity} × ${product.name} returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
-        productId: product.id,
-        link: `/dashboard/admin/waybill`
-      });
-    }
+    const itemsLabel = lineItems.map((it) => `${it.quantity} × ${it.productName}`).join(", ");
+    pushSystemNotification({
+      type: "info",
+      title: "Waybill cancelled",
+      message: `${record.id}: ${itemsLabel} returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
+      productId: lineItems[0]?.productId,
+      link: `/dashboard/admin/waybill`
+    });
   };
 
   const openEditWaybillModal = (waybillId: string, record?: WaybillRecord) => {
@@ -33876,9 +33991,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Route</span>
                             <span className="text-gray-700">{w.sendingState} → {getWaybillDestinationLabel(w)}</span>
                           </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Quantity</span>
-                            <span className="text-gray-700">{w.quantity} units</span>
+                          <div className={`flex flex-col gap-0.5${waybillLineItems(w).length > 1 ? " col-span-2" : ""}`}>
+                            <span className="font-semibold uppercase tracking-wide text-gray-400">{waybillLineItems(w).length > 1 ? `Items · ${w.quantity} units total` : "Quantity"}</span>
+                            {waybillLineItems(w).length > 1 ? (
+                              <ul className="text-gray-700 space-y-0.5 list-none m-0 p-0">
+                                {waybillLineItems(w).map((it, i) => <li key={i}>{it.quantity} × {it.productName}</li>)}
+                              </ul>
+                            ) : (
+                              <span className="text-gray-700">{w.quantity} units</span>
+                            )}
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Partner</span>
@@ -33924,7 +34045,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         {pagedWaybills.map((w) => (
                           <tr key={w.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">{w.id}</td>
-                            <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{w.productName}</td>
+                            <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">
+                              {waybillLineItems(w).length > 1 ? (
+                                <div className="flex flex-col gap-0.5">
+                                  {waybillLineItems(w).map((it, i) => <span key={i} className="whitespace-nowrap">{it.quantity} × {it.productName}</span>)}
+                                </div>
+                              ) : w.productName}
+                            </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${isCustomerDeliveryWaybill(w) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
                                 {getWaybillFlowLabel(w)}
@@ -48967,6 +49094,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {modal === "receiveWaybill" && (() => {
               const wb = waybillRecords.find((w) => w.id === receiveWaybillId);
               if (!wb) return null;
+              const lineItems = waybillLineItems(wb);
+              const isMulti = lineItems.length > 1;
               const dispatched = wb.quantity;
               const actual = Math.max(0, Math.min(dispatched, Number(receiveActualQty) || 0));
               const diff = dispatched - actual;
@@ -48975,10 +49104,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               return (
                 <div className="modal-form">
                   <div className="text-xs text-gray-600 leading-5 px-3 py-2 bg-gray-50 rounded-md border border-gray-200">
-                    <div><strong>{wb.id}</strong> · {wb.productName}</div>
+                    <div><strong>{wb.id}</strong></div>
+                    {isMulti ? (
+                      <ul className="mt-1 mb-1 list-disc pl-4 space-y-0.5">
+                        {lineItems.map((it, i) => <li key={i}>{it.quantity} × {it.productName}</li>)}
+                      </ul>
+                    ) : (
+                      <div>{wb.productName}</div>
+                    )}
                     <div><strong>From:</strong> {senderLabel} → <strong>To:</strong> {receiverLabel}</div>
-                    <div><strong>Dispatched:</strong> {dispatched}</div>
+                    <div><strong>Dispatched:</strong> {dispatched}{isMulti ? " units total" : ""}</div>
                   </div>
+                  {isMulti ? (
+                    <div className="px-3 py-2 rounded-md bg-blue-50 border border-blue-200 text-xs text-blue-900 leading-5">
+                      All {lineItems.length} items will be received in full and added to <strong>{receiverLabel}</strong>. Per-item short-count handling isn't available on multi-item waybills.
+                    </div>
+                  ) : (
                   <label>
                     <span>Actual quantity received *</span>
                     <input
@@ -48990,7 +49131,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     />
                     <small className="text-xs text-gray-500">If everything arrived, leave at <strong>{dispatched}</strong>. If less, set the actual count.</small>
                   </label>
-                  {diff > 0 && (
+                  )}
+                  {!isMulti && diff > 0 && (
                     <>
                       <div className="px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900 leading-5">
                         <strong>{diff} short.</strong> Tell the system what happened to those {diff} {diff === 1 ? "unit" : "units"}.
@@ -49018,7 +49160,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <button
                       className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
                       onClick={() => {
-                        markWaybillReceived(receiveWaybillId, {
+                        markWaybillReceived(receiveWaybillId, isMulti ? undefined : {
                           actualQty: actual,
                           variance: diff > 0 ? receiveVarianceMode : undefined,
                           reason: receiveVarianceReason.trim() || undefined
@@ -49142,17 +49284,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             })()}
 
             {modal === "createWaybill" && (() => {
-              const wbProduct = products.find((p) => p.id === waybillProductId);
-              const warehouseBalance = wbProduct?.warehouseStock ?? null;
-              const fromAgentBalance = waybillFromType === "Agent" && waybillFromAgentId && waybillProductId
-                ? (agentStock.find((s) => s.agentId === waybillFromAgentId && s.productId === waybillProductId)?.quantity ?? 0)
-                : null;
-              const toAgentBalance = waybillToAgentId && waybillProductId
-                ? (agentStock.find((s) => s.agentId === waybillToAgentId && s.productId === waybillProductId)?.quantity ?? 0)
-                : null;
-              const senderBalance = waybillFromType === "Warehouse" ? warehouseBalance : fromAgentBalance;
-              const qty = Number(waybillQty) || 0;
-              const senderAfter = senderBalance !== null ? senderBalance - qty : null;
+              const wbFromAgent = waybillFromType === "Agent" ? agents.find((a) => a.id === waybillFromAgentId) : null;
+              // Units of `pid` available at the currently selected source.
+              const sourceAvail = (pid: string): number | null => {
+                if (!pid) return null;
+                const p = products.find((x) => x.id === pid);
+                if (!p) return null;
+                if (waybillFromType === "Warehouse") return p.warehouseStock;
+                return wbFromAgent ? totalAgentProductStock(wbFromAgent, pid) : 0;
+              };
+              const chosenWbRows = waybillItems.filter((r) => r.productId);
+              const totalWbQty = chosenWbRows.reduce((s, r) => s + Math.max(0, Number(r.quantity) || 0), 0);
               const e = waybillErrors;
               const fieldCls = (key: string) => `w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 ${e[key] ? "border-red-400 bg-red-50 focus:ring-red-200" : "border-gray-200 bg-white focus:ring-blue-200"}`;
               const Req = () => <span className="text-red-500 ml-0.5">*</span>;
@@ -49160,36 +49302,57 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               return (
                 <div className="px-6 py-5 flex flex-col gap-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* One waybill can carry several products — each its own qty, one shared route + fee. */}
                     <div className="sm:col-span-2">
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Product<Req /></label>
-                      <select className={fieldCls("product")} value={waybillProductId} onChange={(e) => { setWaybillProductId(e.target.value); setWaybillErrors((prev) => ({ ...prev, product: "" })); }}>
-                        <option value="">Select product</option>
-                        {catalogProducts.filter((p) => p.active).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-sm font-bold text-gray-900">Items<Req /></label>
+                        {chosenWbRows.length > 0 && (
+                          <span className="text-xs font-semibold text-gray-500">{chosenWbRows.length} {chosenWbRows.length === 1 ? "product" : "products"} · {totalWbQty} units</span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {waybillItems.map((row, idx) => {
+                          const avail = sourceAvail(row.productId);
+                          const rowQty = Math.max(0, Number(row.quantity) || 0);
+                          const after = avail !== null ? avail - rowQty : null;
+                          const chosenElsewhere = new Set(waybillItems.filter((_, i) => i !== idx).map((r) => r.productId).filter(Boolean));
+                          return (
+                            <div key={idx} className="rounded-xl border border-gray-200 bg-gray-50/60 p-2.5">
+                              <div className="flex items-start gap-2">
+                                <select
+                                  className={`flex-1 min-w-0 rounded-lg border px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 ${e.product && !row.productId ? "border-red-400 bg-red-50 focus:ring-red-200" : "border-gray-200 bg-white focus:ring-blue-200"}`}
+                                  value={row.productId}
+                                  onChange={(ev) => { updateWaybillItemRow(idx, { productId: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, product: "", qty: "" })); }}
+                                >
+                                  <option value="">Select product</option>
+                                  {catalogProducts.filter((p) => p.active && (p.id === row.productId || !chosenElsewhere.has(p.id))).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                </select>
+                                <input
+                                  type="number" min={1}
+                                  className={`w-20 shrink-0 rounded-lg border px-3 py-2.5 text-sm text-gray-900 text-center focus:outline-none focus:ring-2 ${e.qty ? "border-red-400 bg-red-50 focus:ring-red-200" : "border-gray-200 bg-white focus:ring-blue-200"}`}
+                                  value={row.quantity}
+                                  onChange={(ev) => { updateWaybillItemRow(idx, { quantity: ev.target.value }); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }}
+                                  aria-label="Quantity"
+                                />
+                                {waybillItems.length > 1 && (
+                                  <button type="button" className="!min-h-0 shrink-0 rounded-lg border border-gray-200 bg-white px-2.5 py-2.5 text-gray-400 hover:text-red-600 hover:border-red-200 transition-colors" onClick={() => removeWaybillItemRow(idx)} aria-label="Remove item" title="Remove item">✕</button>
+                                )}
+                              </div>
+                              {row.productId && avail !== null && (
+                                <div className={`mt-1.5 text-xs font-medium ${after !== null && after < 0 ? "text-red-600" : "text-gray-500"}`}>
+                                  Source has <strong>{avail}</strong>{rowQty > 0 ? <> · after dispatch <strong>{after}</strong></> : null}{after !== null && after < 0 ? " — not enough" : ""}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                       <ErrMsg k="product" />
-                      {wbProduct && (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
-                            Warehouse: <strong>{wbProduct.warehouseStock} units</strong>
-                          </span>
-                          {agents.filter((a) => a.active).map((a) => {
-                            const bal = agentStock.find((s) => s.agentId === a.id && s.productId === waybillProductId)?.quantity ?? 0;
-                            return bal > 0 ? (
-                              <span key={a.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-50 text-gray-600 border border-gray-200">
-                                {a.name}: <strong>{bal}</strong>
-                              </span>
-                            ) : null;
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Quantity<Req /></label>
-                      <input type="number" min={1} className={fieldCls("qty")} value={waybillQty} onChange={(ev) => { setWaybillQty(ev.target.value); setWaybillErrors((prev) => ({ ...prev, qty: "" })); }} />
                       <ErrMsg k="qty" />
+                      <button type="button" className="!min-h-0 mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 transition-colors" onClick={addWaybillItemRow}>+ Add another product</button>
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                     </div>
                     <div className="sm:col-span-2">
@@ -49203,27 +49366,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Warehouse" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Warehouse")}>Warehouse (Lagos)</button>
                         <button type="button" className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${waybillFromType === "Agent" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`} onClick={() => setWaybillFromType("Agent")}>State Agent</button>
                       </div>
-                      {waybillFromType === "Warehouse" && warehouseBalance !== null && (
-                        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${warehouseBalance === 0 ? "bg-red-50 text-red-700 border border-red-200" : senderAfter !== null && senderAfter < 0 ? "bg-orange-50 text-orange-700 border border-orange-200" : "bg-blue-50 text-blue-700 border border-blue-100"}`}>
-                          <span>Warehouse stock: <strong>{warehouseBalance} units</strong></span>
-                          {qty > 0 && senderAfter !== null && <span className="ml-auto text-xs opacity-75">After: {senderAfter} units</span>}
-                        </div>
+                      {waybillFromType === "Warehouse" && (
+                        <p className="text-xs text-gray-500">Each product's warehouse stock (and balance after dispatch) is shown beside it above.</p>
                       )}
                       {waybillFromType === "Agent" && (
                         <>
                           <select className={fieldCls("fromAgent")} value={waybillFromAgentId} onChange={(ev) => { setWaybillFromAgentId(ev.target.value); setWaybillErrors((prev) => ({ ...prev, fromAgent: "" })); }}>
                             <option value="">Select sending agent</option>
-                            {agents.filter((a) => a.active).map((a) => {
-                              const bal = waybillProductId ? totalAgentProductStock(a, waybillProductId) : 0;
-                              return <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)} · stock: {bal}</option>;
-                            })}
+                            {agents.filter((a) => a.active).map((a) => (
+                              <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)}</option>
+                            ))}
                           </select>
                           <ErrMsg k="fromAgent" />
-                          {waybillFromAgentId && fromAgentBalance !== null && (
-                            <div className={`mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${fromAgentBalance === 0 ? "bg-red-50 text-red-700 border border-red-200" : senderAfter !== null && senderAfter < 0 ? "bg-orange-50 text-orange-700 border border-orange-200" : "bg-blue-50 text-blue-700 border border-blue-100"}`}>
-                              <span>Agent stock: <strong>{fromAgentBalance} units</strong></span>
-                              {qty > 0 && senderAfter !== null && <span className="ml-auto text-xs opacity-75">After: {senderAfter} units</span>}
-                            </div>
+                          {waybillFromAgentId && (
+                            <p className="mt-1.5 text-xs text-gray-500">Each product's stock for this agent (and balance after dispatch) is shown beside it above.</p>
                           )}
                         </>
                       )}
@@ -49232,17 +49388,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <label className="block text-sm font-bold text-gray-900 mb-1.5">Sending To (Receiving Agent) <span className="font-normal text-gray-400">(optional)</span></label>
                       <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 mb-2" value={waybillToAgentId} onChange={(ev) => { setWaybillToAgentId(ev.target.value); if (ev.target.value) { const a = agents.find((ag) => ag.id === ev.target.value); setWaybillToState(a ? agentPrimaryBaseState(a) : ""); setWaybillErrors((prev) => ({ ...prev, toState: "" })); } }}>
                         <option value="">No specific agent (enter state below)</option>
-                        {agents.filter((a) => a.active && a.id !== waybillFromAgentId).map((a) => {
-                          const bal = waybillProductId ? totalAgentProductStock(a, waybillProductId) : 0;
-                          return <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)} · stock: {bal}</option>;
-                        })}
+                        {agents.filter((a) => a.active && a.id !== waybillFromAgentId).map((a) => (
+                          <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)}</option>
+                        ))}
                       </select>
-                      {waybillToAgentId && toAgentBalance !== null && (
-                        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-teal-50 text-teal-700 border border-teal-100 mb-2">
-                          <span>Receiver current stock: <strong>{toAgentBalance} units</strong></span>
-                          {qty > 0 && <span className="ml-auto text-xs opacity-75">After receipt: {toAgentBalance + qty} units</span>}
-                        </div>
-                      )}
                       <label className="block text-xs font-bold text-gray-600 mb-1 mt-1">Receiving State<Req /></label>
                       <input type="text" className={fieldCls("toState")} placeholder="e.g. Bayelsa" value={waybillToState} onChange={(ev) => { setWaybillToState(ev.target.value); setWaybillErrors((prev) => ({ ...prev, toState: "" })); }} />
                       <ErrMsg k="toState" />
@@ -49288,7 +49437,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(optional)</span></label>
+                      <label className="block text-sm font-bold text-gray-900 mb-1.5">Waybill Fee (₦) <span className="font-normal text-gray-400">(one fee · whole waybill)</span></label>
                       <input type="number" min={0} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200" value={waybillFee} onChange={(e) => setWaybillFee(e.target.value)} />
                     </div>
                     <div>
