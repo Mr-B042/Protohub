@@ -6642,6 +6642,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedCartJourneyLoading, setAbandonedCartJourneyLoading] = useState(false);
   const [selectedCartJourneyEvents, setSelectedCartJourneyEvents] = useState<CartJourneyEvent[]>([]);
   const [selectedCartJourneyLoading, setSelectedCartJourneyLoading] = useState(false);
+  // Ticking clock used by the Customer Journey "Live" badge + new-step highlight,
+  // so the 30s active-window and the highlight fade re-evaluate while watching.
+  const [journeyNow, setJourneyNow] = useState(() => Date.now());
   useEffect(() => {
     adTrackingCartJourneyMapRef.current = adTrackingCartJourneyMap;
   }, [adTrackingCartJourneyMap]);
@@ -8385,6 +8388,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (pollingHandle) window.clearInterval(pollingHandle);
       if (realtimeChannel && realtimeClient) realtimeClient.removeChannel(realtimeChannel);
     };
+  }, [modal, selectedCartId]);
+
+  // Tick every 5s while a cart is open so the journey "Live" badge expires after
+  // ~30s of inactivity and the new-step highlight fades on its own.
+  useEffect(() => {
+    if (modal !== "cartDetails" || !selectedCartId) return;
+    setJourneyNow(Date.now());
+    const handle = window.setInterval(() => setJourneyNow(Date.now()), 5000);
+    return () => window.clearInterval(handle);
   }, [modal, selectedCartId]);
 
   // If the cart-details modal is open for a cart that isn't in the loaded list
@@ -45261,6 +45273,14 @@ ${waybillLineItems(w).length > 1
 		              const stale = selectedCart.lastActivity ? (Date.now() - new Date(selectedCart.lastActivity).getTime()) / 86_400_000 : 0;
 			              const selectedCartJourney = selectedCartJourneyEvents;
 			              const latestJourneyEvent = selectedCartJourney[selectedCartJourney.length - 1];
+			              // Live status: the cart is "filling now" if it hasn't submitted/converted
+			              // and there was activity in the last 30s. Drives the 🟢 Live badge.
+			              const journeyFinished = selectedCart.status === "Converted" || selectedCartJourney.some((e) => e.eventType === "order_submitted");
+			              const lastJourneyAt = latestJourneyEvent?.createdAt ?? selectedCart.lastActivity ?? "";
+			              const lastJourneyMs = lastJourneyAt ? new Date(lastJourneyAt).getTime() : NaN;
+			              const secondsSinceJourney = Number.isFinite(lastJourneyMs) ? Math.max(0, (journeyNow - lastJourneyMs) / 1000) : Infinity;
+			              const journeyLive = !journeyFinished && secondsSinceJourney <= 30;
+			              const journeyIdleLabel = secondsSinceJourney < 60 ? "moments ago" : secondsSinceJourney < 3600 ? `${Math.floor(secondsSinceJourney / 60)}m ago` : formatMoment(lastJourneyAt);
 			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
 		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
 			              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
@@ -45500,14 +45520,14 @@ ${waybillLineItems(w).length > 1
 	                          <p className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 m-0">Customer journey</p>
 	                          <p className="text-[12px] text-gray-500 dark:text-slate-400 m-0 mt-0.5">What the customer did before they submitted or left the form.</p>
 	                        </div>
-	                        {selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Loading...</span> : null}
+	                        <span className="flex items-center gap-2 shrink-0">{journeyLive ? (<span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-500/12 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" /></span>Live · filling now</span>) : journeyFinished ? (<span className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-slate-700/40 px-2.5 py-1 text-[11px] font-bold text-gray-600 dark:text-slate-300">✓ Submitted</span>) : lastJourneyAt ? (<span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Last active {journeyIdleLabel}</span>) : null}{selectedCartJourneyLoading ? <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500">Loading…</span> : null}</span>
 	                      </div>
 	                      {selectedCartJourney.length === 0 && !selectedCartJourneyLoading ? (
 	                        <p className="text-sm text-gray-500 dark:text-slate-400 m-0">No journey timeline has been captured for this cart yet.</p>
 	                      ) : (
 	                        <div className="grid gap-2">
 	                          {selectedCartJourney.map((event, index) => (
-	                            <div key={event.id} className="flex items-start gap-3 rounded-lg bg-white border border-gray-200 dark:bg-[#101a24] dark:border-slate-800/80 px-3 py-2">
+	                            <div key={event.id} className={`flex items-start gap-3 rounded-lg border px-3 py-2 transition-colors ${(() => { const m = event.createdAt ? new Date(event.createdAt).getTime() : NaN; return Number.isFinite(m) && (journeyNow - m) / 1000 <= 15; })() ? "bg-emerald-50 border-emerald-300 ring-1 ring-emerald-300/60 dark:bg-emerald-500/10 dark:border-emerald-500/30" : "bg-white border-gray-200 dark:bg-[#101a24] dark:border-slate-800/80"}`}>
 	                              <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-blue-50 dark:bg-sky-500/12 text-[#1F8FE0] dark:text-sky-300 text-xs font-extrabold flex items-center justify-center">
 	                                {index + 1}
 	                              </div>
