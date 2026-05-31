@@ -7864,7 +7864,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [whatsAppPicker, setWhatsAppPicker] = useState<null | {
     customerName: string;
     normalUrl: string;
-    businessUrl: string;
+    businessUrl: string | null;
   }>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentView, setAgentView] = useState<"list" | "detail">("list");
@@ -17421,16 +17421,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return clean.length >= 11 && clean.length <= 15 ? clean : null;
   };
 
-  const buildWhatsAppUrl = (phone: string | null | undefined, message: string) => {
+  // Build the deep links for the two WhatsApp apps, per platform. The old code
+  // used `whatsapp-business://send`, which is NOT a scheme WhatsApp Business
+  // actually registers — so the "Business" button silently did nothing.
+  //
+  // - Android: target a specific app by package via an intent:// URL, so
+  //   "Normal" truly opens com.whatsapp and "Business" truly opens
+  //   com.whatsapp.w4b. If the chosen app isn't installed, S.browser_fallback_url
+  //   sends the user to wa.me instead of dead-ending.
+  // - iOS: there's no reliable way to pick between the two installed WhatsApp
+  //   apps, so both buttons use the wa.me universal link (opens whichever is
+  //   associated). The chat still opens with the number + message prefilled.
+  // - Desktop: only normal WhatsApp has a web/desktop client (wa.me / WhatsApp
+  //   Web). The Business app has none, so businessUrl is null and the picker
+  //   hides that button.
+  const buildWhatsAppTargets = (
+    phone: string | null | undefined,
+    message: string
+  ): { normalUrl: string | null; businessUrl: string | null } => {
     const normalized = normalizeWhatsAppPhone(phone);
-    if (!normalized) return null;
-    return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
-  };
-
-  const buildWhatsAppBusinessUrl = (phone: string | null | undefined, message: string) => {
-    const normalized = normalizeWhatsAppPhone(phone);
-    if (!normalized) return null;
-    return `whatsapp-business://send?phone=${normalized}&text=${encodeURIComponent(message)}`;
+    if (!normalized) return { normalUrl: null, businessUrl: null };
+    const enc = encodeURIComponent(message);
+    const waMe = `https://wa.me/${normalized}?text=${enc}`;
+    if (installGuidePlatform === "android") {
+      const fallback = encodeURIComponent(waMe);
+      const intentFor = (pkg: string) =>
+        `intent://send?phone=${normalized}&text=${enc}#Intent;scheme=whatsapp;package=${pkg};S.browser_fallback_url=${fallback};end`;
+      return { normalUrl: intentFor("com.whatsapp"), businessUrl: intentFor("com.whatsapp.w4b") };
+    }
+    if (installGuidePlatform === "ios") {
+      return { normalUrl: waMe, businessUrl: waMe };
+    }
+    return { normalUrl: waMe, businessUrl: null };
   };
 
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
@@ -17590,7 +17612,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`No valid WhatsApp number for ${customerName}.`);
       return;
     }
-    if (/^whatsapp(?:-business)?:\/\//.test(url)) {
+    // App-scheme / intent links (intent://…, whatsapp://, whatsapp-business://)
+    // must be navigated, not opened in a new tab — a blank tab can't resolve a
+    // custom scheme. Only http(s) links (wa.me) open cleanly in a new tab.
+    if (!/^https?:\/\//i.test(url)) {
       window.location.href = url;
       return;
     }
@@ -17609,11 +17634,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     message: string;
     customerName: string;
   }) => {
-    const normalUrl = buildWhatsAppUrl(phone, message);
-    const businessUrl = buildWhatsAppBusinessUrl(phone, message);
+    const { normalUrl, businessUrl } = buildWhatsAppTargets(phone, message);
     const name = customerName || "this contact";
-    if (!normalUrl || !businessUrl) {
-      showToast(`No valid WhatsApp number for ${name}.`);
+    if (!normalUrl) {
+      const raw = (phone ?? "").trim();
+      showToast(`No valid WhatsApp number${raw ? ` (${raw})` : ""} for ${name}.`);
       return;
     }
     setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });
@@ -43091,7 +43116,9 @@ ${waybillLineItems(w).length > 1
                   Open WhatsApp
                 </h3>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Choose which WhatsApp app to use for {whatsAppPicker.customerName}.
+                  {whatsAppPicker.businessUrl
+                    ? `Choose which WhatsApp app to use for ${whatsAppPicker.customerName}.`
+                    : `Open a WhatsApp chat with ${whatsAppPicker.customerName}.`}
                 </p>
               </div>
               <button
@@ -43123,29 +43150,33 @@ ${waybillLineItems(w).length > 1
                 </span>
                 <ExternalLink className="h-4 w-4 shrink-0" />
               </button>
-              <button
-                type="button"
-                className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
-                onClick={() => {
-                  const target = whatsAppPicker.businessUrl;
-                  const customerName = whatsAppPicker.customerName;
-                  setWhatsAppPicker(null);
-                  openWhatsAppUrl(target, customerName);
-                }}
-              >
-                <span className="inline-flex items-center gap-3">
-                  <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
-                  <span>
-                    <span className="block">WhatsApp Business</span>
-                    <span className="block text-xs font-medium text-blue-600/80 dark:text-blue-200/75">Open with the WhatsApp Business app if installed.</span>
+              {whatsAppPicker.businessUrl && (
+                <button
+                  type="button"
+                  className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200 dark:hover:bg-blue-500/15"
+                  onClick={() => {
+                    const target = whatsAppPicker.businessUrl;
+                    const customerName = whatsAppPicker.customerName;
+                    setWhatsAppPicker(null);
+                    openWhatsAppUrl(target, customerName);
+                  }}
+                >
+                  <span className="inline-flex items-center gap-3">
+                    <WhatsAppIcon className="h-5 w-5 text-[#25D366]" />
+                    <span>
+                      <span className="block">WhatsApp Business</span>
+                      <span className="block text-xs font-medium text-blue-600/80 dark:text-blue-200/75">Open with the WhatsApp Business app.</span>
+                    </span>
                   </span>
-                </span>
-                <ExternalLink className="h-4 w-4 shrink-0" />
-              </button>
+                  <ExternalLink className="h-4 w-4 shrink-0" />
+                </button>
+              )}
             </div>
             <div className="border-t border-gray-100 px-5 py-3 dark:border-slate-800/80">
               <p className="m-0 text-xs text-gray-500 dark:text-slate-400">
-                If WhatsApp Business is not installed on this device, choose normal WhatsApp instead.
+                {whatsAppPicker.businessUrl
+                  ? "If the chosen app isn't installed, it falls back to opening WhatsApp."
+                  : "WhatsApp Business has no desktop app — this opens WhatsApp Web."}
               </p>
             </div>
           </section>
