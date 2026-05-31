@@ -3788,19 +3788,27 @@ const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJour
   );
 };
 
-// How much of a lead's contact info an abandoned cart captured, across the 6
-// fields the cart stores. Shared by the cart detail view + the carts list badge
-// so both always agree. (Address isn't captured on carts, only on placed orders.)
-const cartCustomerInfoFields = (cart: AbandonedCartRecord): { label: string; done: boolean }[] => [
-  { label: "Name",     done: Boolean((cart.customer ?? "").trim()) },
-  { label: "Phone",    done: Boolean((cart.phone ?? "").trim()) },
-  { label: "WhatsApp", done: Boolean((cart.whatsapp ?? "").trim()) },
-  { label: "Email",    done: Boolean((cart.email ?? "").trim()) },
-  { label: "City",     done: Boolean((cart.city ?? "").trim()) },
-  { label: "State",    done: Boolean((cart.state ?? "").trim()) },
-];
-const cartCustomerInfoCompletion = (cart: AbandonedCartRecord) => {
-  const fields = cartCustomerInfoFields(cart);
+// How much of a lead's contact info an abandoned cart captured. Only counts the
+// fields the order form actually COLLECTS — if Email or WhatsApp is toggled off
+// in the form settings, it isn't counted (or shown as "missing"). Name, Phone,
+// City, State are always collected. (Address isn't captured on carts.) Shared by
+// the cart detail view + the carts list badge so both always agree.
+type CartInfoFormConfig = { showEmail?: boolean; showWhatsapp?: boolean };
+type CartInfoField = { label: string; value?: string; done: boolean };
+const cartCustomerInfoFields = (cart: AbandonedCartRecord, cfg: CartInfoFormConfig = {}): CartInfoField[] => {
+  const list: CartInfoField[] = [
+    { label: "Name",  value: cart.customer, done: Boolean((cart.customer ?? "").trim()) },
+    { label: "Phone", value: cart.phone,    done: Boolean((cart.phone ?? "").trim()) },
+  ];
+  // WhatsApp is on by default; Email is off by default — only count when the form shows them.
+  if (cfg.showWhatsapp !== false) list.push({ label: "WhatsApp", value: cart.whatsapp, done: Boolean((cart.whatsapp ?? "").trim()) });
+  if (cfg.showEmail) list.push({ label: "Email", value: cart.email, done: Boolean((cart.email ?? "").trim()) });
+  list.push({ label: "City",  value: cart.city,  done: Boolean((cart.city ?? "").trim()) });
+  list.push({ label: "State", value: cart.state, done: Boolean((cart.state ?? "").trim()) });
+  return list;
+};
+const cartCustomerInfoCompletion = (cart: AbandonedCartRecord, cfg: CartInfoFormConfig = {}) => {
+  const fields = cartCustomerInfoFields(cart, cfg);
   const done = fields.filter((f) => f.done).length;
   return { fields, done, total: fields.length, complete: done === fields.length };
 };
@@ -29496,9 +29504,9 @@ ${waybillLineItems(w).length > 1
                             <div className="font-semibold text-sm text-gray-900 truncate">{cart.customer}</div>
                             <div className="text-xs text-gray-500">{cart.phone}</div>
                             {(() => {
-                              const ci = cartCustomerInfoCompletion(cart);
+                              const ci = cartCustomerInfoCompletion(cart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
                               return (
-                                <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (Name, Phone, WhatsApp, Email, City, State)`}>
+                                <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (${ci.fields.map((f) => f.label).join(", ")})`}>
                                   {ci.complete ? "✓ Info complete" : `Info ${ci.done}/${ci.total}`}
                                 </span>
                               );
@@ -29631,9 +29639,9 @@ ${waybillLineItems(w).length > 1
                               <div className="font-medium text-gray-900">{cart.customer}</div>
                               <div className="text-xs text-gray-400">{cart.phone}</div>
                               {(() => {
-                                const ci = cartCustomerInfoCompletion(cart);
+                                const ci = cartCustomerInfoCompletion(cart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
                                 return (
-                                  <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (Name, Phone, WhatsApp, Email, City, State)`}>
+                                  <span className={`mt-1 inline-flex w-fit items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${ci.complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`} title={`Customer info: ${ci.done} of ${ci.total} fields captured (${ci.fields.map((f) => f.label).join(", ")})`}>
                                     {ci.complete ? "✓ Info complete" : `Info ${ci.done}/${ci.total}`}
                                   </span>
                                 );
@@ -45283,9 +45291,10 @@ ${waybillLineItems(w).length > 1
 	                            : "bg-amber-100 text-amber-800";
 	                return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${tone}`}>{s}</span>;
 	              };
-	              // How much of the lead's contact info the cart captured, across the 6
-	              // fields shown below (Name, Phone, WhatsApp, Email, City, State).
-	              const { done: customerInfoDone, total: customerInfoTotal, complete: customerInfoComplete } = cartCustomerInfoCompletion(selectedCart);
+	              // How much of the lead's contact info the cart captured — only across the
+	              // fields the order form actually collects (Email/WhatsApp drop out if toggled off).
+	              const { fields: customerInfoFields, done: customerInfoDone, total: customerInfoTotal, complete: customerInfoComplete } =
+	                cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
 	              return (
 	                <div className="px-6 py-5 flex flex-col gap-5">
 	                  {/* Header */}
@@ -45351,12 +45360,12 @@ ${waybillLineItems(w).length > 1
 	                      <span className="text-[11px] font-bold text-gray-500 tabular-nums">{customerInfoDone}/{customerInfoTotal}</span>
 	                    </div>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "— missing"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "— missing"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "— missing"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className={`font-semibold m-0 ${selectedCart.email ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.email || "— missing"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">City</p><p className={`font-semibold m-0 ${(selectedCart.city ?? "").trim() ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.city || "— missing"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">State</p><p className={`font-semibold m-0 ${(selectedCart.state ?? "").trim() ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.state || "— missing"}</p></div>
+	                      {customerInfoFields.map((f) => (
+	                        <div key={f.label}>
+	                          <p className="text-[11px] text-gray-400 m-0">{f.label}</p>
+	                          <p className={`font-semibold m-0 ${f.done ? "text-gray-900" : "text-gray-400"}`}>{f.done ? f.value : "— missing"}</p>
+	                        </div>
+	                      ))}
 	                    </div>
 	                  </section>
 
