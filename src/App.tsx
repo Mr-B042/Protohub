@@ -43217,9 +43217,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             )}
 
             {modal === "help" && (
-              <div className="px-6 py-5 flex flex-col gap-4">
-                <p className="text-sm text-gray-600">Dashboard controls are connected for this starter. Additional pages can be added as separate modules later.</p>
-                <div className="flex items-center justify-end gap-3">
+              <div className="px-6 py-5 flex flex-col gap-5 text-sm">
+                <p className="text-gray-600">A quick tour so anyone on the team can find their way around. You'll only see the menu items your role has access to.</p>
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-bold text-gray-900">📊 Reading the numbers</h3>
+                  <p className="text-gray-600">The controls at the top — the period (Today, This Week…), the currency, and the product filter — change <strong className="text-gray-800">every</strong> card below. Pick a period and all the numbers recalculate for it. ("This Week" runs Sunday to Saturday.)</p>
+                  <ul className="list-disc pl-5 space-y-1 text-gray-600 marker:text-gray-400">
+                    <li><strong className="text-gray-800">Total Revenue</strong> — money from orders that were actually <em>delivered</em>, not just placed.</li>
+                    <li><strong className="text-gray-800">Gross / Net Profit</strong> — what's left after product cost (gross), then after delivery, ads and other expenses (net).</li>
+                    <li><strong className="text-gray-800">Total Orders</strong> — every order in the period, whatever its status.</li>
+                    <li><strong className="text-gray-800">Fulfillment Rate</strong> — the share of this period's orders that got delivered. (Order Management counts a similar rate a little differently, so the two can differ — both are correct.)</li>
+                  </ul>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-bold text-gray-900">🧭 What each menu item does</h3>
+                  <ul className="space-y-1.5 text-gray-600">
+                    <li><strong className="text-gray-800">Orders</strong> — confirm, edit and assign orders to a delivery agent.</li>
+                    <li><strong className="text-gray-800">Follow-up Queue</strong> — orders waiting on a customer callback.</li>
+                    <li><strong className="text-gray-800">Abandoned Carts</strong> — people who started but didn't finish an order; chase them to recover the sale.</li>
+                    <li><strong className="text-gray-800">Scheduled Deliveries / Deliveries</strong> — what's booked and what's out for delivery.</li>
+                    <li><strong className="text-gray-800">Inventory</strong> — warehouse stock and what each state hub is holding.</li>
+                    <li><strong className="text-gray-800">Agents</strong> — your delivery partners and their stock in each state.</li>
+                    <li><strong className="text-gray-800">Waybill</strong> — move stock between the warehouse and the hubs.</li>
+                    <li><strong className="text-gray-800">Sales Reps / Sales Teams</strong> — your sellers and how they're performing.</li>
+                    <li><strong className="text-gray-800">Weekend Stock Summary</strong> — the weekly per-agent stock breakdown you copy to WhatsApp.</li>
+                    <li><strong className="text-gray-800">Finance &amp; Accounting</strong> — profit, costs, and <em>Remittance</em> (cash agents still owe you).</li>
+                    <li><strong className="text-gray-800">Round-Robin</strong> — who the next incoming order is automatically assigned to.</li>
+                    <li><strong className="text-gray-800">Customers · Expenses · Payroll · Ad Tracking</strong> — customer directory, spending, staff pay, and ad results.</li>
+                  </ul>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-bold text-gray-900">✅ Common things you'll do</h3>
+                  <ul className="list-disc pl-5 space-y-1 text-gray-600 marker:text-gray-400">
+                    <li><strong className="text-gray-800">Send an order to an agent</strong> — open the order and tap <em>Assign to Agent</em>; it picks the hub in the customer's state.</li>
+                    <li><strong className="text-gray-800">Record cash from a partner</strong> — Finance &amp; Accounting → Remittance.</li>
+                    <li><strong className="text-gray-800">Check an agent's weekly stock</strong> — Weekend Stock Summary.</li>
+                  </ul>
+                </section>
+
+                <div className="flex items-center justify-end gap-3 pt-1">
                   <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Got It</button>
                 </div>
               </div>
