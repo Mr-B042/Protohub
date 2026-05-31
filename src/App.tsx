@@ -11446,6 +11446,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const lines: string[] = [];
 
+    // Word each week relative to TODAY, so the copied text reads naturally
+    // whatever day it's pulled on: the Sun–Sat week containing today reads as
+    // "this week", the one before as "last week", the one after as "next week",
+    // and anything further out as "that week" (the date in brackets pins it down).
+    const todayWeekStartKey = sundayKeyFromDate();
+    const relativeWeekPhrase = (weekStartKey: string) => {
+      const diff = Math.round(
+        (dateFromKey(weekStartKey).getTime() - dateFromKey(todayWeekStartKey).getTime()) / (7 * 24 * 60 * 60 * 1000)
+      );
+      if (diff === 0) return "this week";
+      if (diff === -1) return "last week";
+      if (diff === 1) return "next week";
+      return "that week";
+    };
+
     // ── Headline ────────────────────────────────────────────────
     lines.push(`Our Stock Inventory Breakdown`);
     lines.push(`from ${fmtFull(weekStart)} to ${fmtFull(weekEnd)}`);
@@ -11454,7 +11469,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // ── Opening balances per product (what they started the period with) ──
     lines.push(agentBalanceIsCustomRange
       ? `Stock Balance at the start of this period (${fmtFull(weekStart)}):`
-      : `Stock Balance you had at the start of this week (${fmtFull(weekStart)}):`);
+      : `Stock Balance you had at the start of ${relativeWeekPhrase(weekStart)} (${fmtFull(weekStart)}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.openingBalance}`);
@@ -11621,7 +11636,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     lines.push("");
     lines.push(agentBalanceIsCustomRange
       ? `Closing Stock Balance as of ${fmtFull(weekEnd)}:`
-      : `Stock Balance to start next week with (${nextWeekStartLabel}):`);
+      : `Stock Balance to start ${relativeWeekPhrase(addDaysToDateKey(weekEnd, 1))} with (${nextWeekStartLabel}):`);
     lines.push("");
     group.rows.forEach((row, index) => {
       lines.push(`${index + 1}. ${row.productName} = ${row.closingBalance}`);
