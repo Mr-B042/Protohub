@@ -112,7 +112,7 @@ const PublicUpsellAcceptSchema = z.object({
   token: z.string().min(24)
 });
 
-const ALLOWED_SOURCES = ["TikTok", "Facebook", "WhatsApp", "Website", "Direct"] as const;
+const ALLOWED_SOURCES = ["TikTok", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "WhatsApp", "Website", "Direct"] as const;
 const PUBLIC_UPSELL_TTL_MS = 4 * 60 * 60 * 1000;
 
 const normalizeStateName = (value: string | undefined) => {
@@ -126,12 +126,22 @@ const cleanEmbedLabel = (value: string | undefined) => {
   return normalized || null;
 };
 
+// Map a UTM source to an order source. Meta ads run across placements — the
+// utm_source carries Facebook's {{site_source_name}} macro: fb=Facebook,
+// ig=Instagram, an=Audience Network, th=Threads, ms=Messenger. Recognise each
+// (exact short code first, then full names) so paid-ad orders aren't all
+// collapsed into "Website". Mirrors the frontend orderSourceFromUtm.
 function sourceFromUtm(utm: string | undefined): typeof ALLOWED_SOURCES[number] {
-  const s = (utm ?? "").toLowerCase();
-  if (s.includes("tiktok"))   return "TikTok";
-  if (s.includes("facebook") || s.includes("fb")) return "Facebook";
-  if (s.includes("whatsapp") || s.includes("wa")) return "WhatsApp";
-  if (s.includes("direct"))   return "Direct";
+  const s = (utm ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (s === "tt" || s.includes("tiktok")) return "TikTok";
+  if (s === "ig" || s.includes("instagram") || s.includes("insta")) return "Instagram";
+  if (s === "an" || s.includes("audience network")) return "Audience Network";
+  if (s === "ms" || s.includes("messenger")) return "Messenger";
+  if (s === "th" || s.includes("threads")) return "Threads";
+  if (s === "wa" || s.includes("whatsapp")) return "WhatsApp";
+  if (s === "fb" || s.includes("facebook") || s.includes("meta")) return "Facebook";
+  if (s.includes("web") || s.includes("organic") || s.includes("embed")) return "Website";
+  if (!s || s === "direct" || s === "none") return "Direct";
   return "Website";
 }
 
