@@ -21028,6 +21028,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openRepOrderDetail = (order: TrackedOrder) => {
+    // An Owner/Admin/Manager coaching inside the Sales Rep Workspace gets the
+    // order in a POPUP overlay — so clicking "Details" on the Follow-up Queue
+    // keeps them on that view instead of navigating to the full-page Orders
+    // detail. Actual Sales Reps keep their working full-page detail (status,
+    // remittance and note actions live there).
+    if (realRole !== "Sales Rep") {
+      setSelectedOrderId(order.id);
+      setModal("orderDetails");
+      return;
+    }
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
     // Remember the tab we came from (e.g. the Dashboard's Follow-up Queue) before
