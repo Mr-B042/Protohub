@@ -5656,7 +5656,7 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
 };
 
 // ── cartJourneyRecoveryScore ────────────────────
-const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
+const cartJourneyRecoveryScore = (events: CartJourneyEvent[], infoRatio?: number) => {
   if (events.length === 0) {
     return { score: 5, band: "Cold" as const, summary: "No tracked intent yet." };
   }
@@ -5695,6 +5695,10 @@ const cartJourneyRecoveryScore = (events: CartJourneyEvent[]) => {
   if (lastEvent?.eventType === "form_exited" && seen.has("submit_attempted")) score += 6;
   if (lastEvent?.eventType === "form_exited" && additionalAdded > additionalRemoved) score += 4;
   if (seen.has("package_selected") && !seen.has("state_selected") && !seen.has("submit_attempted")) score -= 4;
+
+  // Contact-info completeness adds recoverability: a lead you can actually reach
+  // (more of the form's fields filled in) ranks warmer. Up to +15 at full info.
+  if (typeof infoRatio === "number") score += Math.round(Math.max(0, Math.min(1, infoRatio)) * 15);
 
   score = Math.max(0, Math.min(100, score));
   if (score >= 70) {
@@ -10954,11 +10958,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     [abandonedCartJourneyMap]
   );
   const abandonedCartRecoveryById = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(abandonedCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
-      ),
-    [abandonedCartJourneyMap]
+    () => {
+      const cartById = new Map(abandonedCarts.map((c) => [c.id, c]));
+      const cfg = { showEmail: showEmailField, showWhatsapp: showWhatsappField };
+      return Object.fromEntries(
+        Object.entries(abandonedCartJourneyMap).map(([cartId, events]) => {
+          const cart = cartById.get(cartId);
+          const ci = cart ? cartCustomerInfoCompletion(cart, cfg) : null;
+          const ratio = ci && ci.total ? ci.done / ci.total : undefined;
+          return [cartId, cartJourneyRecoveryScore(events, ratio)];
+        })
+      );
+    },
+    [abandonedCartJourneyMap, abandonedCarts, showEmailField, showWhatsappField]
   );
   const lostCartCount = pfCarts.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
   const cartConversionRate = pfCarts.length === 0 ? 0 : Math.round((convertedCartCount / pfCarts.length) * 100);
@@ -15090,11 +15102,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     [repCartJourneyMap]
   );
   const repCartRecoveryById = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(repCartJourneyMap).map(([cartId, events]) => [cartId, cartJourneyRecoveryScore(events)])
-      ),
-    [repCartJourneyMap]
+    () => {
+      const cartById = new Map(abandonedCarts.map((c) => [c.id, c]));
+      const cfg = { showEmail: showEmailField, showWhatsapp: showWhatsappField };
+      return Object.fromEntries(
+        Object.entries(repCartJourneyMap).map(([cartId, events]) => {
+          const cart = cartById.get(cartId);
+          const ci = cart ? cartCustomerInfoCompletion(cart, cfg) : null;
+          const ratio = ci && ci.total ? ci.done / ci.total : undefined;
+          return [cartId, cartJourneyRecoveryScore(events, ratio)];
+        })
+      );
+    },
+    [repCartJourneyMap, abandonedCarts, showEmailField, showWhatsappField]
   );
   useEffect(() => {
     if (activePage !== "Sales Rep Workspace") {
@@ -45283,7 +45303,8 @@ ${waybillLineItems(w).length > 1
 			              const journeyIdleLabel = secondsSinceJourney < 60 ? "moments ago" : secondsSinceJourney < 3600 ? `${Math.floor(secondsSinceJourney / 60)}m ago` : formatMoment(lastJourneyAt);
 			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
 		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
-			              const recovery = cartJourneyRecoveryScore(selectedCartJourney);
+			              const recoveryInfo = cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
+			              const recovery = cartJourneyRecoveryScore(selectedCartJourney, recoveryInfo.total ? recoveryInfo.done / recoveryInfo.total : undefined);
 		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
 		              const linkedOrderAddOnLines = selectedCartAddOnLinesFromOrder(linkedOrder);
 		              const capturedAddOnLines = capturedCartOfferLinesFor(selectedCart);
