@@ -45250,6 +45250,18 @@ ${waybillLineItems(w).length > 1
 	                            : "bg-amber-100 text-amber-800";
 	                return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${tone}`}>{s}</span>;
 	              };
+	              // How much of the customer's contact info the lead filled in, out of the
+	              // 5 fields shown below: Name, Phone, WhatsApp, Email, Location (city/state).
+	              const customerInfoChecks: { label: string; done: boolean }[] = [
+	                { label: "Name",     done: Boolean((selectedCart.customer ?? "").trim()) },
+	                { label: "Phone",    done: Boolean((selectedCart.phone ?? "").trim()) },
+	                { label: "WhatsApp", done: Boolean((selectedCart.whatsapp ?? "").trim()) },
+	                { label: "Email",    done: Boolean((selectedCart.email ?? "").trim()) },
+	                { label: "Location", done: Boolean((selectedCart.city ?? "").trim() || (selectedCart.state ?? "").trim()) },
+	              ];
+	              const customerInfoTotal = customerInfoChecks.length;
+	              const customerInfoDone = customerInfoChecks.filter((c) => c.done).length;
+	              const customerInfoComplete = customerInfoDone === customerInfoTotal;
 	              return (
 	                <div className="px-6 py-5 flex flex-col gap-5">
 	                  {/* Header */}
@@ -45298,13 +45310,28 @@ ${waybillLineItems(w).length > 1
 
 	                  {/* Customer */}
 	                  <section>
-	                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-100 pb-1.5 mb-2">Customer</h4>
+	                    <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-1.5 mb-2">
+	                      <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 m-0">Customer info</h4>
+	                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${customerInfoComplete ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+	                        {customerInfoComplete ? "✓ All info captured" : `${customerInfoDone} of ${customerInfoTotal} completed`}
+	                      </span>
+	                    </div>
+	                    {/* Completion bar */}
+	                    <div className="mb-2.5 flex items-center gap-2">
+	                      <div className="h-1.5 flex-1 rounded-full bg-gray-100 overflow-hidden">
+	                        <div
+	                          className={`h-full rounded-full transition-all ${customerInfoComplete ? "bg-emerald-500" : "bg-amber-400"}`}
+	                          style={{ width: `${(customerInfoDone / customerInfoTotal) * 100}%` }}
+	                        />
+	                      </div>
+	                      <span className="text-[11px] font-bold text-gray-500 tabular-nums">{customerInfoDone}/{customerInfoTotal}</span>
+	                    </div>
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "—"}</p></div>
-	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "—"}</p></div>
-	                      {selectedCart.email && <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className="font-semibold text-gray-900 m-0">{selectedCart.email}</p></div>}
-	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className="font-semibold text-gray-900 m-0">{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "—"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Name</p><p className="font-semibold text-gray-900 m-0">{selectedCart.customer || "— missing"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Phone</p><p className="font-semibold text-gray-900 m-0">{selectedCart.phone || "— missing"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">WhatsApp</p><p className="font-semibold text-gray-900 m-0">{selectedCart.whatsapp || "— missing"}</p></div>
+	                      <div><p className="text-[11px] text-gray-400 m-0">Email</p><p className={`font-semibold m-0 ${selectedCart.email ? "text-gray-900" : "text-gray-400"}`}>{selectedCart.email || "— missing"}</p></div>
+	                      <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 m-0">Location</p><p className={`font-semibold m-0 ${[selectedCart.city, selectedCart.state].filter(Boolean).length ? "text-gray-900" : "text-gray-400"}`}>{[selectedCart.city, selectedCart.state].filter(Boolean).join(", ") || "— missing"}</p></div>
 	                    </div>
 	                  </section>
 
