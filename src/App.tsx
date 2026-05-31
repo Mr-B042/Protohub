@@ -1,4 +1,5 @@
 import { type Dispatch, type SetStateAction, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   Archive,
@@ -27418,10 +27419,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           
           <div className="ml-auto flex items-center gap-4">
             {/* Notification bell + dropdown */}
-            {/* z-[60] establishes a stacking context for the bell so its
-                dropdown always sits above page content (e.g. the product-filter
-                toolbar), which otherwise overlapped it on desktop. */}
-            <div className="relative z-[60]">
+            <div className="relative">
               <button className="topbar-icon-button text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
                 <Bell className="w-5 h-5" />
                 {unreadNotificationCount > 0 && (
@@ -27430,12 +27428,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </span>
                 )}
               </button>
-              {showNotifPanel && (
+              {showNotifPanel && createPortal(
                 <>
-                  {/* Click-outside overlay */}
-                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifPanel(false)} />
+                  {/* Click-outside overlay. Rendered in a body-level portal so the
+                      panel escapes every page stacking context (the product-filter
+                      toolbar was overlapping it otherwise). z-[60] sits above page
+                      content; modals (z-[70]) still win. */}
+                  <div className="fixed inset-0 z-[59]" onClick={() => setShowNotifPanel(false)} />
                   {/* Panel */}
-                  <div className="fixed left-2 right-2 top-[60px] z-50 bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden sm:absolute sm:left-auto sm:right-0 sm:top-8 sm:w-[380px]" style={{ maxHeight: "480px" }}>
+                  <div className="fixed left-2 right-2 top-[60px] z-[60] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden sm:left-auto sm:right-4 sm:top-16 sm:w-[380px]" style={{ maxHeight: "480px" }}>
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
                       <div>
@@ -27497,7 +27498,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       }}
                     >View all notifications</button>
                   </div>
-                </>
+                </>,
+                document.body
               )}
             </div>
             <button className="topbar-icon-button text-gray-600 hover:text-gray-900 p-1.5" onClick={() => setModal("help")}>
