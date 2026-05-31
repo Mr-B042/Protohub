@@ -11476,7 +11476,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     lines.push("");
 
-    lines.push(`A Detailed Stock Movement`);
+    lines.push(`A Detailed Stock Delivered Movement`);
     lines.push("");
 
     // ── Per-product timeline + summary ──
