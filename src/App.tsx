@@ -2470,16 +2470,6 @@ const sundayKeyFromDate = (source = new Date()) => {
   date.setDate(date.getDate() - date.getDay());
   return formatDateKey(date);
 };
-// Default week for the Weekend Stock Summary: the most recently COMPLETED Sun–Sat
-// week (ending on the most recent Saturday — today if today is Saturday). So on a
-// Sunday you see the week that just finished (e.g. Sun 24 – Sat 30), not a brand-new
-// near-empty week. Weeks run Sunday → Saturday.
-const weekendSummaryWeekStart = (source = new Date()) => {
-  const date = new Date(source);
-  const daysSinceSaturday = (date.getDay() + 1) % 7; // Sun→1 … Sat→0
-  date.setDate(date.getDate() - daysSinceSaturday - 6);
-  return formatDateKey(date);
-};
 
 const normalizeDateKey = (value?: string) => {
   if (!value) {
@@ -6145,13 +6135,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agents, setAgents] = useState<DeliveryAgentRecord[]>([]);
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>([]);
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>([]);
-  const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => weekendSummaryWeekStart());
+  const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => sundayKeyFromDate());
   // Range mode: "week" = the standard Sun–Sat week navigated above; "custom"
   // = an arbitrary [start, end] window the user picks. Custom defaults to the
   // current week's Sun–Sat until the user changes the pickers.
   const [agentBalanceRangeMode, setAgentBalanceRangeMode] = useState<"week" | "custom">("week");
-  const [agentBalanceCustomStart, setAgentBalanceCustomStart] = useState<string>(() => weekendSummaryWeekStart());
-  const [agentBalanceCustomEnd, setAgentBalanceCustomEnd] = useState<string>(() => weekEndFromStartKey(weekendSummaryWeekStart()));
+  const [agentBalanceCustomStart, setAgentBalanceCustomStart] = useState<string>(() => sundayKeyFromDate());
+  const [agentBalanceCustomEnd, setAgentBalanceCustomEnd] = useState<string>(() => weekEndFromStartKey(sundayKeyFromDate()));
   const [agentBalanceRows, setAgentBalanceRows] = useState<AgentWeeklyBalanceRow[]>([]);
   const [agentBalanceSummary, setAgentBalanceSummary] = useState<AgentWeeklyBalanceSummary | null>(null);
   const [agentBalanceGeneratedAt, setAgentBalanceGeneratedAt] = useState("");
@@ -31336,7 +31326,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </button>
                       <button
                         className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                        onClick={() => setAgentBalanceWeekStart(weekendSummaryWeekStart())}
+                        onClick={() => setAgentBalanceWeekStart(sundayKeyFromDate())}
                       >
                         This week
                       </button>
