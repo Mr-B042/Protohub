@@ -7948,6 +7948,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repScheduleCustomDate, setRepScheduleCustomDate] = useState("");
   const [repScheduleWeekStart, setRepScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [repOrderDetailId, setRepOrderDetailId] = useState("");
+  // Which workspace tab the rep order detail was opened FROM (e.g. "Dashboard"
+  // when launched from the Dashboard's Follow-up Queue) — so closing the detail
+  // returns there instead of always dumping the rep on the Orders list.
+  const [repOrderDetailOriginTab, setRepOrderDetailOriginTab] = useState<RepConsoleTab>("Orders");
   const [statusChangeDraft, setStatusChangeDraft] = useState<OrderStatusAction>("Confirmed");
   const [statusChangePreset, setStatusChangePreset] = useState<OrderStatusAction | null>(null);
   const [statusChangeReasonPreset, setStatusChangeReasonPreset] = useState("");
@@ -21026,6 +21030,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const openRepOrderDetail = (order: TrackedOrder) => {
     setSelectedOrderId(order.id);
     setRepOrderDetailId(order.id);
+    // Remember the tab we came from (e.g. the Dashboard's Follow-up Queue) before
+    // the detail forces us onto the Orders tab, so close can return there.
+    setRepOrderDetailOriginTab(repConsoleTab);
     if (!isOrderWorkspacePage(activePage)) {
       setRepConsoleTab("Orders");
     }
@@ -21048,11 +21055,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const closeRepOrderDetail = () => {
     setRepOrderDetailId("");
+    // Map a workspace tab back to its hash section (Dashboard = the base hash).
+    const repTabToSection: Partial<Record<RepConsoleTab, string>> = {
+      Products: "products",
+      Orders: "orders",
+      "Scheduled Deliveries": "scheduled-deliveries",
+      "Abandoned Carts": "abandoned-carts",
+      Customers: "customers",
+      Leaderboard: "leaderboard",
+      Notifications: "notifications",
+      Settings: "settings"
+    };
+    const originSection = repTabToSection[repOrderDetailOriginTab] ?? "";
     const nextHash = isAdminOrderWorkspaceHash(hashRoute)
       ? activeOrderWorkspaceBaseHash
-      : isRepOrderWorkspaceHash(hashRoute)
-        ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
-        : repRouteWithScope("#/dashboard/sales-rep/orders");
+      : repOrderDetailOriginTab !== "Orders"
+        // Opened from another tab (e.g. the Dashboard's Follow-up Queue) — go back there.
+        ? repRouteWithScope(`#/dashboard/sales-rep${originSection ? `/${originSection}` : ""}`)
+        : isRepOrderWorkspaceHash(hashRoute)
+          ? repOrderWorkspaceHash("", activeRepOrderWorkspacePage)
+          : repRouteWithScope("#/dashboard/sales-rep/orders");
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
     setHashRoute(nextHash);
   };
