@@ -4957,7 +4957,7 @@ const SmartStockPlainGuide = ({ audience = "admin" }: SmartStockPlainGuideProps)
   <div className="mt-3 rounded-xl border border-orange-200 bg-white/80 p-3 text-xs text-orange-950 shadow-sm dark:border-orange-500/25 dark:bg-slate-950/35 dark:text-orange-50" aria-label="Simple smart stock explanation">
     <p className="font-extrabold">Simple rule: the system asks, "Are customers buying this product right now?"</p>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      <div className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 dark:border-orange-500/20 dark:bg-orange-500/10">
+      <div className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 dark:border-orange-500/30 dark:bg-orange-500/[0.14]">
         <span className="font-black uppercase tracking-wide text-orange-700 dark:text-orange-200">Urgent</span>
         <p className="mt-1 leading-5 text-orange-900 dark:text-orange-50">
           Low stock + customers ordering = restock soon or confirm carefully.
@@ -41921,7 +41921,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                 </section>
 
-                <section className="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm dark:border-orange-500/30 dark:bg-orange-500/10" aria-label="Demand-aware state stock signals">
+                <section className="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm dark:border-orange-500/30 dark:bg-slate-900/40" aria-label="Demand-aware state stock signals">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h2 className="text-sm font-bold text-orange-950 dark:text-orange-50">Demand-aware state stock signals</h2>
