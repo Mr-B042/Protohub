@@ -9683,6 +9683,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const matchesAdTrackingSourceFilter = (source?: string | null) =>
     adTrackingSourceFilter === "all" || normalizeAdTrackingSource(source) === adTrackingSourceFilter;
   const campaignBaseOrders = trackedOrders
+    // Held duplicates never reached Facebook (no redirect/pixel), so they must
+    // not inflate our own campaign/creative/source counts either. Keyed on the
+    // live flag — a released order re-enters these reports automatically.
+    .filter(o => !o.reviewHold)
     .filter(o => isInPeriod(orderCreatedKey(o), campaignPeriod, campaignDateRange))
     .filter(o => matchesProductFilter(o.productId, o.productName, campaignProductIds));
   const trackedCampaignOrders = campaignBaseOrders.filter((order) => Boolean(normalizeAdTrackingSource(order.utmSource)));
@@ -9832,6 +9836,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
   const adTrackingOrderSourceOptions = adTrackingSourceBreakdown(trackedCampaignOrders.map((order) => order.utmSource));
   const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
+    // A held duplicate must not register as a cart's recovered conversion.
+    if (order.reviewHold) return map;
     if (order.sourceCartId && !map.has(order.sourceCartId)) {
       map.set(order.sourceCartId, order);
     }
@@ -10129,13 +10135,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  // Exclude held duplicates from Daily Ad Spend revenue/orders + Week ROAS — this
+  // is the one internal calc not gated to Delivered, so a held order's amount
+  // would otherwise inflate revenue/ROAS. Released orders count again automatically.
   const revenueForProductDay = (productId: string, day: string) =>
     trackedOrders
-      .filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !["Cancelled", "Failed"].includes(o.status ?? "New"))
+      .filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New"))
       .reduce((sum, o) => sum + o.amount, 0);
 
   const ordersForProductDay = (productId: string, day: string) =>
-    trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !["Cancelled", "Failed"].includes(o.status ?? "New")).length;
+    trackedOrders.filter((o) => o.productId === productId && normalizeDateKey(o.createdAt ?? o.date) === day && !o.reviewHold && !["Cancelled", "Failed"].includes(o.status ?? "New")).length;
 
   const existingAdSpend = (productId: string, day: string) =>
     expenses.filter((e) => (e.type === "Ad Spend" || (e as any).category === "Ad Spend") && e.productId === productId && normalizeDateKey(e.date) === day)
@@ -35486,7 +35495,11 @@ ${waybillLineItems(w).length > 1
                 const placedThisWeek = (
                   weeklyAccountingData?.cohortOrders
                   ?? trackedOrders.filter((o) => inWeek(orderCreatedKey(o)) && matchesPF(o.productId, o.productName))
-                ).filter((o) => matchesPF(o.productId, o.productName));
+                ).filter((o) => matchesPF(o.productId, o.productName))
+                  // Held duplicates don't count toward this week's placed cohort or the
+                  // per-rep delivery rates that gate bonuses (so reps aren't penalized
+                  // for duplicates). Released orders re-enter via the live flag.
+                  .filter((o) => !o.reviewHold);
 
                 // Delivered-week view: orders DELIVERED inside the week
                 const deliveredCash = (
