@@ -218,7 +218,7 @@ type PendingUpsellOffer = {
 type PublicOrderSubmissionState = {
   orderId: string;
   customer: string;
-  mode: "confirmed_order" | "outage_capture" | "browser_queue" | "preview_only" | "local_test";
+  mode: "confirmed_order" | "outage_capture" | "browser_queue" | "preview_only" | "local_test" | "held_review";
 };
 
 type QueuedPublicOrderSubmission = {
@@ -1588,7 +1588,7 @@ export default function PublicOrderFormPage() {
             && publicOrderSubmitted.orderId === entry.id
           ) {
             showToast("Your saved request has now been submitted successfully.");
-            finishPublicOrderJourney(created.id, entry.customer);
+            finishPublicOrderJourney(created.id, entry.customer, { heldForReview: Boolean(created.reviewHold) });
           }
         } catch (error: any) {
           if (shouldCapturePublicOrderOutage(error)) {
@@ -2331,10 +2331,18 @@ export default function PublicOrderFormPage() {
   function finishPublicOrderJourney(
     orderId: string,
     customer: string,
-    options?: { cartId?: string; packageId?: string; state?: string }
+    options?: { cartId?: string; packageId?: string; state?: string; heldForReview?: boolean }
   ) {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
+    // A held (possible-duplicate) order must NOT redirect to the merchant's
+    // landing page — that page carries the Facebook pixel, so redirecting would
+    // count the duplicate as a "Purchase" conversion (and get charged for it).
+    // Show the in-place "order received" thank-you instead; a human confirms it.
+    if (options?.heldForReview) {
+      setPublicOrderSubmitted({ orderId, customer, mode: "held_review" });
+      return;
+    }
     if (publicRedirectUrl) {
       trackCartJourney("redirect_triggered", {
         cartId: options?.cartId,
@@ -2723,7 +2731,8 @@ export default function PublicOrderFormPage() {
       finishPublicOrderJourney(created.id, customerName, {
         cartId: submissionCartId || undefined,
         packageId: submittedPackageId,
-        state: submittedState || undefined
+        state: submittedState || undefined,
+        heldForReview: Boolean(created.reviewHold)
       });
       return;
     } catch (error: any) {
@@ -3457,7 +3466,7 @@ export default function PublicOrderFormPage() {
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#f3f4f6", borderRadius: 999, fontSize: 13, fontWeight: 700, color: "#374151" }}>
                   {publicOrderSubmitted.mode === "local_test" ? "Test Order ID" : publicOrderSubmitted.mode === "preview_only" ? "Mode" : publicOrderSubmitted.mode === "browser_queue" ? "Saved Ref" : publicOrderSubmitted.mode === "outage_capture" ? "Backup Ref" : "Order ID"}: <span style={{ color: "#1F8FE0" }}>{publicOrderSubmitted.orderId}</span>
                 </div>
-                {publicRedirectUrl && publicOrderSubmitted.mode !== "local_test" ? (
+                {publicRedirectUrl && publicOrderSubmitted.mode !== "local_test" && publicOrderSubmitted.mode !== "held_review" ? (
                   <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>Redirecting…</p>
                 ) : (
                   <button

@@ -667,6 +667,9 @@ export const publicOrdersApi = {
         amount: number;
       } | null;
       upsellToken?: string | null;
+      // True when the order was held for manual review (possible duplicate). The
+      // form uses this to skip the landing-page redirect (and its Facebook pixel).
+      reviewHold?: boolean;
     }>(await res.json());
   },
   acceptUpsell: async (orderId: string, body: { token: string }) => {

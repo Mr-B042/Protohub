@@ -390,34 +390,37 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
 
-  // Repeat-order guard: hold the 3rd+ order from the same phone in one day (WAT)
-  // for manual review instead of auto-dispatching it — on pay-on-delivery, a
-  // bogus duplicate (or an accidental re-submit) costs real stock + logistics.
-  // Match on the last 10 Nigerian digits so 080..., 234... and +234... versions
-  // of the same number all count as one person. The order is still created; it's
-  // just parked (not auto-assigned) for an Owner/Admin to release or reject.
+  // Repeat-order guard: only the FIRST order from a phone in a rolling 7-day
+  // window auto-completes. Every later order from the same number is HELD for
+  // review and NOT redirected to the landing page — the redirect is what fires
+  // the Facebook pixel "Purchase", so skipping it means Facebook never counts a
+  // duplicate as a conversion (and never charges for it). A genuine re-order
+  // still arrives; it just waits, parked, for a human to confirm.
+  //
+  // 7 days mirrors Facebook's click-attribution window — beyond it a re-order
+  // is a real fresh conversion again. Identity is matched on the last 10 digits
+  // (the unique Nigerian national number) so 080..., 234... and +234... of the
+  // same line all match, while two genuinely different customers never collide.
+  // We require a full 10-digit number before matching so a malformed / partial
+  // entry can never flag the wrong person.
   const phoneLast10 = normalizedPhone.slice(-10);
   let reviewHold = false;
   let reviewReason: string | null = null;
-  if (phoneLast10.length >= 7) {
-    // Start of today in WAT (UTC+1, no DST), expressed as a UTC instant.
-    const watNow = new Date(Date.now() + 60 * 60 * 1000);
-    const startOfDayUtc = new Date(
-      Date.UTC(watNow.getUTCFullYear(), watNow.getUTCMonth(), watNow.getUTCDate()) - 60 * 60 * 1000
-    );
-    const { data: todaysOrders } = await supabase
+  if (phoneLast10.length >= 10) {
+    const windowStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const { data: recentOrders } = await supabase
       .from("orders")
       .select("phone")
       .eq("org_id", product.org_id)
-      .gte("created_at", startOfDayUtc.toISOString());
-    const priorToday = (todaysOrders ?? []).filter(
+      .gte("created_at", windowStart.toISOString());
+    const priorInWindow = (recentOrders ?? []).filter(
       (o) => String(o.phone ?? "").replace(/\D/g, "").slice(-10) === phoneLast10
     ).length;
-    // Allow up to 2 per day; the 3rd onward is held for review.
-    if (priorToday >= 2) {
+    // One order auto-completes; any other within the window is held.
+    if (priorInWindow >= 1) {
       reviewHold = true;
-      reviewReason = `Possible duplicate: ${priorToday + 1} orders from this number today — held for review.`;
-      logger.warn("public-orders: order held for review (repeat customer)", { priorToday, ip: req.ip });
+      reviewReason = `Possible duplicate: ${priorInWindow + 1} orders from this number in the last 7 days — held for review.`;
+      logger.warn("public-orders: order held for review (repeat customer)", { priorInWindow, ip: req.ip });
     }
   }
 
@@ -786,9 +789,11 @@ router.post("/", submitRateLimit, async (req, res) => {
     changed_by:  null,
     from_status: null,
     to_status:   "New",
-    note:        publicOrderAssignmentMode === "manual_review"
-      ? "Order created from public embed form and is awaiting owner/admin assignment"
-      : "Order created from public embed form and auto-assigned by round-robin"
+    note:        reviewHold
+      ? "Order created from public embed form and HELD FOR REVIEW (possible duplicate — repeat order from this number; not redirected/tracked)"
+      : publicOrderAssignmentMode === "manual_review"
+        ? "Order created from public embed form and is awaiting owner/admin assignment"
+        : "Order created from public embed form and auto-assigned by round-robin"
   });
 
   await notifyOrderEvent(product.org_id, {
@@ -853,8 +858,14 @@ router.post("/", submitRateLimit, async (req, res) => {
     amount:   order.amount,
     currency: order.currency,
     crossSellLines: resolved,
-    upsellOffer,
-    upsellToken
+    // Held orders skip the upsell — accepting one would also redirect to the
+    // landing page and fire the Facebook pixel, which is exactly what we're
+    // avoiding for a possible duplicate.
+    upsellOffer: reviewHold ? null : upsellOffer,
+    upsellToken: reviewHold ? null : upsellToken,
+    // Tells the form NOT to redirect (so no pixel/Purchase) and to show an
+    // in-place "order received" thank-you instead.
+    reviewHold
   });
 });
 

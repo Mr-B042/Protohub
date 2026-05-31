@@ -691,7 +691,7 @@ type TrackedOrder = {
   formContext?: Record<string, string | number | boolean | null>;
   source?: Exclude<OrderSource, "All Sources">;
   status?: Exclude<OrderStatus, "All Orders">;
-  // Parked for manual review (e.g. 3rd+ order from the same phone in one day).
+  // Parked for manual review (a repeat order from the same phone within 7 days).
   // The order is still "New" but not auto-assigned; Owner/Admin releases or rejects.
   reviewHold?: boolean;
   reviewReason?: string;
@@ -43778,7 +43778,7 @@ ${waybillLineItems(w).length > 1
 	                      <div className="min-w-0 flex-1">
 	                        <p className="m-0 text-sm font-bold text-amber-900 dark:text-amber-200">Held for review — possible duplicate</p>
 	                        <p className="mt-0.5 mb-0 text-xs text-amber-800/90 dark:text-amber-200/80">
-	                          {selectedOrder.reviewReason || "This customer placed more than 2 orders in one day, so this one was parked and not auto-assigned."}
+	                          {selectedOrder.reviewReason || "This number already placed an order recently, so this one was parked (not redirected/tracked) for you to confirm."}
 	                        </p>
 	                        {isOwnerOrAdmin ? (
 	                          <div className="mt-2.5 flex flex-wrap gap-2">
