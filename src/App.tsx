@@ -10346,6 +10346,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       breakEvenDeliveries: breakEvenDeliveries != null ? Math.ceil(breakEvenDeliveries) : null,
       headroom: breakEvenRate != null ? currentRate - breakEvenRate : null,
       profitable: breakEvenRate != null && currentRate >= breakEvenRate,
+      // Order-count translation of the "pts" gap: how many MORE of the placed
+      // orders must deliver to reach break-even (vs how many are past it).
+      extraDeliveriesNeeded: breakEvenDeliveries != null ? Math.max(0, Math.ceil(breakEvenDeliveries) - deliveredN) : null,
+      deliveriesPastBreakEven: breakEvenDeliveries != null ? Math.max(0, deliveredN - Math.ceil(breakEvenDeliveries)) : null,
       contribution,
       fixed,
       adSpend,
@@ -10397,6 +10401,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span className="text-xs text-gray-500 dark:text-slate-400">delivery rate · break-even {bePct}%</span>
           </div>
           {breakEvenBar(bePct, curPct, ok)}
+          <p className={`m-0 text-[11px] font-semibold ${ok ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>
+            {ok
+              ? `${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} past break-even`
+              : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} to break even`}
+          </p>
         </div>
       );
     }
@@ -10409,7 +10418,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Break-even rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{bePct}%</p><p className="text-[11px] text-gray-500 m-0">{be.breakEvenDeliveries} of {be.placedN} orders</p></div>
           <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Current rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{curPct}%</p><p className="text-[11px] text-gray-500 m-0">{be.deliveredN} delivered</p></div>
-          <div className={`rounded-lg p-3 ${ok ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-rose-50 dark:bg-rose-500/10"}`}><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">{ok ? "Headroom" : "Shortfall"}</p><p className={`text-2xl font-extrabold m-0 ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{head >= 0 ? `+${head}` : head} pts</p><p className="text-[11px] text-gray-500 m-0">{ok ? "above break-even" : "need to reach break-even"}</p></div>
+          <div className={`rounded-lg p-3 ${ok ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-rose-50 dark:bg-rose-500/10"}`}><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">{ok ? "Headroom" : "Shortfall"}</p><p className={`text-2xl font-extrabold m-0 ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{head >= 0 ? `+${head}` : head} pts</p><p className="text-[11px] text-gray-500 m-0">{ok ? `≈ ${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} clear` : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} needed`}</p></div>
         </div>
         {breakEvenBar(bePct, curPct, ok)}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm pt-1 border-t border-gray-100 dark:border-slate-800/80">
@@ -15056,9 +15065,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // For non-Owner/Admin viewers (e.g., a logged-in Sales Rep), force the scope
   // to their own user ID regardless of the View-as dropdown. The dropdown
   // itself is hidden for these roles, but this is the data-side safety net.
-  const repBonusWeekStart = repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start
+  // The bonus week is always a Sunday→Saturday window and its start key is what
+  // the backend keys bonus-coach records by. The period navigator can now anchor
+  // navStart/dateRange on a non-Sunday (e.g. a month's 1st when the workspace
+  // period is "This Month"), so snap whatever we get back to its week's Sunday.
+  // This is a no-op for the Sunday keys that flowed through here previously.
+  const repBonusWeekAnchor = repWorkspacePeriod === "Custom" && repWorkspaceDateRange.start
     ? repWorkspaceDateRange.start
     : repWorkspaceNavStart;
+  const repBonusWeekStart = (() => {
+    const d = new Date(`${repBonusWeekAnchor}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return repBonusWeekAnchor;
+    d.setDate(d.getDate() - d.getDay());
+    return formatDateKey(d);
+  })();
   const repBonusWeekEnd = weekEndFromStartKey(repBonusWeekStart);
   const repBonusWeekRange = { start: repBonusWeekStart, end: repBonusWeekEnd };
   const bonusCoachDeliveredKey = (order: TrackedOrder) =>
@@ -18287,89 +18307,108 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast("Financial Reports date range cleared. Period reset to This Month.");
   };
 
-  // Reusable week/multi-week navigator — sets period to "Custom" with the computed date range
+  // Reusable period navigator — MIRRORS the active period. Its centre label and
+  // date range are derived from `period`/`dateRange` (the same values that drive
+  // filtering), so selecting a preset above moves this navigator in lockstep.
+  // The arrows step by the period's natural unit (day / week / month / year, or
+  // the range length for a Custom span) and write the result straight back to
+  // `period`/`dateRange`, snapping onto a named preset when the range lines up
+  // so the preset pill stays highlighted.
+  //
+  // `navStart` is still written on every change because other consumers anchor
+  // off it (notably the rep-bonus week, see repBonusWeekStart). `navSpan` /
+  // `setNavSpan` are retained in the signature only for call-site compatibility
+  // — the period now defines the window, so they are no longer read or written.
   const renderWeekNav = (
     navStart: string, setNavStart: (s: string) => void,
     navSpan: NavSpan, setNavSpan: (s: NavSpan) => void,
     setPeriod: (p: Period) => void,
-    setDateRange: (r: DateRange) => void
+    setDateRange: (r: DateRange) => void,
+    period: Period,
+    dateRange: DateRange
   ) => {
-    const end = spanEnd(navStart, navSpan);
-    const apply = (start: string, span: NavSpan) => {
-      // If the user lands exactly on the current Sunday with a 1W span, that's
-      // semantically "This Week" — leave the period pill on it instead of
-      // flipping to Custom.
-      if (span === "1W" && start === getSundayKey()) {
-        setPeriod("This Week");
-        setDateRange({ start: "", end: "" });
-        return;
-      }
-      setPeriod("Custom");
-      setDateRange({ start, end: spanEnd(start, span) });
+    void navSpan; void setNavSpan; // intentionally unused; period defines the window now
+    type Unit = "day" | "week" | "month" | "year" | "custom";
+    const resolved = explicitPeriodRange(period, dateRange);
+    const unit: Unit =
+      period === "Today" || period === "Yesterday" ? "day"
+      : period === "This Week" || period === "Last Week" ? "week"
+      : period === "This Month" || period === "Last Month" ? "month"
+      : period === "This Year" ? "year"
+      : "custom";
+    const startOf = (p: Period) => explicitPeriodRange(p, { start: "", end: "" }).start;
+    // Match a stepped range onto a named preset by its START key, so the
+    // to-date vs full-period end mismatch (e.g. This Week ends today, not
+    // Saturday) doesn't block the snap.
+    const snap = (u: Unit, start: string): Period | null => {
+      if (u === "day") return startOf("Today") === start ? "Today" : startOf("Yesterday") === start ? "Yesterday" : null;
+      if (u === "week") return startOf("This Week") === start ? "This Week" : startOf("Last Week") === start ? "Last Week" : null;
+      if (u === "month") return startOf("This Month") === start ? "This Month" : startOf("Last Month") === start ? "Last Month" : null;
+      if (u === "year") return startOf("This Year") === start ? "This Year" : null;
+      return null;
     };
-    const prev = () => { const d = new Date(`${navStart}T00:00:00`); d.setDate(d.getDate() - (navSpan === "1W" ? 7 : navSpan === "2W" ? 14 : navSpan === "3W" ? 21 : 30)); const s = formatDateKey(d); setNavStart(s); apply(s, navSpan); };
-    const next = () => { const d = new Date(`${navStart}T00:00:00`); d.setDate(d.getDate() + (navSpan === "1W" ? 7 : navSpan === "2W" ? 14 : navSpan === "3W" ? 21 : 30)); const s = formatDateKey(d); setNavStart(s); apply(s, navSpan); };
-    const thisWeek = () => { const s = getSundayKey(); setNavStart(s); apply(s, navSpan); };
-    const changeSpan = (span: NavSpan) => { setNavSpan(span); apply(navStart, span); };
-    // Dynamic label so the centre pill reflects what's actually selected
-    // instead of always reading "This Week". Click still jumps back to the
-    // current period, so the button doubles as a "go to now" shortcut when
-    // navigated away.
-    const currentSundayKey = getSundayKey();
-    const navLabel = (() => {
-      if (navStart === currentSundayKey) {
-        return navSpan === "1M" ? "This Month" : "This Week";
+    const applyRange = (u: Unit, start: string, finish: string) => {
+      const named = snap(u, start);
+      if (named) { setPeriod(named); setDateRange({ start: "", end: "" }); }
+      else { setPeriod("Custom"); setDateRange({ start, end: finish }); }
+      // Keep navStart aligned to the visible range so navStart readers (the rep
+      // bonus week) follow the navigator.
+      setNavStart(start);
+    };
+    const step = (dir: -1 | 1) => {
+      const s = new Date(`${resolved.start}T00:00:00`);
+      if (unit === "day") {
+        s.setDate(s.getDate() + dir);
+        return applyRange("day", formatDateKey(s), formatDateKey(s));
       }
-      const startMs = new Date(`${navStart}T00:00:00`).getTime();
-      const currentMs = new Date(`${currentSundayKey}T00:00:00`).getTime();
-      const weeksBack = Math.round((currentMs - startMs) / (7 * 86_400_000));
-      if (navSpan === "1M") {
-        const monthsBack = Math.round(weeksBack / 4);
-        if (monthsBack === 1) return "Last Month";
-        if (monthsBack > 0) return `${monthsBack} months ago`;
-        if (monthsBack === -1) return "Next Month";
-        if (monthsBack < 0) return `${Math.abs(monthsBack)} months ahead`;
-        return "This Month";
+      if (unit === "week") {
+        s.setDate(s.getDate() + dir * 7);
+        const e = new Date(s); e.setDate(e.getDate() + 6);
+        return applyRange("week", formatDateKey(s), formatDateKey(e));
       }
-      if (weeksBack === 1) return "Last Week";
-      if (weeksBack > 0) return `${weeksBack} weeks ago`;
-      if (weeksBack === -1) return "Next Week";
-      if (weeksBack < 0) return `${Math.abs(weeksBack)} weeks ahead`;
-      return "This Week";
-    })();
-    const isOnCurrent = navStart === currentSundayKey;
-    const navTitle = isOnCurrent
-      ? "You're on the current period"
-      : `Jump back to ${navSpan === "1M" ? "this month" : "this week"}`;
+      if (unit === "month") {
+        const m = new Date(s.getFullYear(), s.getMonth() + dir, 1);
+        const e = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+        return applyRange("month", formatDateKey(m), formatDateKey(e));
+      }
+      if (unit === "year") {
+        const y = new Date(s.getFullYear() + dir, 0, 1);
+        const e = new Date(s.getFullYear() + dir, 11, 31);
+        return applyRange("year", formatDateKey(y), formatDateKey(e));
+      }
+      // Custom: shift by the inclusive range length so clicks walk contiguous
+      // windows of the same size.
+      const e0 = new Date(`${resolved.end}T00:00:00`);
+      const days = Math.max(0, Math.round((e0.getTime() - s.getTime()) / 86_400_000)) + 1;
+      s.setDate(s.getDate() + dir * days);
+      e0.setDate(e0.getDate() + dir * days);
+      return applyRange("custom", formatDateKey(s), formatDateKey(e0));
+    };
+    const prev = () => step(-1);
+    const next = () => step(1);
+    // Centre pill doubles as a "go to now" shortcut for the active unit.
+    const currentPeriodForUnit: Period =
+      unit === "day" ? "Today" : unit === "week" ? "This Week" : unit === "month" ? "This Month" : unit === "year" ? "This Year" : "This Week";
+    const goNow = () => { setPeriod(currentPeriodForUnit); setDateRange({ start: "", end: "" }); setNavStart(startOf(currentPeriodForUnit)); };
+    const isOnCurrent = period === "Today" || period === "This Week" || period === "This Month" || period === "This Year";
+    const navLabel = period === "Custom" ? "Custom range" : period;
+    const navTitle = isOnCurrent ? "You're on the current period" : `Jump back to ${currentPeriodForUnit.toLowerCase()}`;
+    const windowText = unit === "day" ? "1 day" : unit === "week" ? "1 week" : unit === "month" ? "1 month" : unit === "year" ? "1 year" : "Custom range";
+    const sameDay = resolved.start === resolved.end;
     return (
       <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
-        {/* Row 1: Navigation arrows + smart label */}
+        {/* Row 1: Navigation arrows + period label */}
         <div className="period-nav-cluster flex items-center gap-1 w-full sm:w-auto">
           <button onClick={prev} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button onClick={thisWeek} title={navTitle} aria-label={navTitle} className={`period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg transition-colors whitespace-nowrap ${isOnCurrent ? "text-gray-600 hover:bg-gray-100" : "text-[#1F8FE0] border-[#1F8FE0]/40 bg-blue-50/40 hover:bg-blue-50"}`}>{navLabel}</button>
+          <button onClick={goNow} title={navTitle} aria-label={navTitle} className={`period-nav-button period-nav-current !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-lg transition-colors whitespace-nowrap ${isOnCurrent ? "text-gray-600 hover:bg-gray-100" : "text-[#1F8FE0] border-[#1F8FE0]/40 bg-blue-50/40 hover:bg-blue-50"}`}>{navLabel}</button>
           <button onClick={next} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
-        {/* Row 2: Range label — left-aligned on mobile, muted */}
-        <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{displayDateFromKey(navStart)} – {displayDateFromKey(end)}</span>
-        {/* Row 3: Window-size selector, hidden behind a disclosure so the
-            default band stays clean. 90% of admins don't need to change the
-            arrow step size, but power users can expand this to pick 2W/3W
-            scrolls or 1M months. Native <details> means no React state to
-            manage and no extra prop plumbing across every page that mounts
-            renderWeekNav. */}
-        <details className="period-nav-window text-xs text-gray-500 ml-auto sm:ml-2">
-          <summary className="cursor-pointer select-none px-2 py-1 rounded-md hover:bg-gray-100 transition-colors">
-            Window: <span className="font-semibold text-gray-700">{navSpan === "1W" ? "1 week" : navSpan === "2W" ? "2 weeks" : navSpan === "3W" ? "3 weeks" : "1 month"}</span>
-          </summary>
-          <div className="period-nav-segmented flex items-center bg-gray-100 p-0.5 rounded-lg mt-2">
-            {(["1W","2W","3W","1M"] as NavSpan[]).map((s) => (
-              <button key={s} onClick={() => changeSpan(s)}
-                className={`period-nav-button !min-h-0 flex-1 sm:flex-none px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${navSpan === s ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </details>
+        {/* Row 2: Range label — mirrors the active period's resolved range */}
+        <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{sameDay ? displayDateFromKey(resolved.start) : `${displayDateFromKey(resolved.start)} – ${displayDateFromKey(resolved.end)}`}</span>
+        {/* Row 3: Window read-out — reflects the period's natural step unit. */}
+        <span className="period-nav-window text-xs text-gray-500 ml-auto sm:ml-2 px-2 py-1">
+          Window: <span className="font-semibold text-gray-700">{windowText}</span>
+        </span>
       </div>
     );
   };
@@ -26005,7 +26044,7 @@ ${waybillLineItems(w).length > 1
         </select>
         {renderProductFilter(repWorkspaceProductIds, setRepWorkspaceProductIds, showRepWorkspaceProductFilter, setShowRepWorkspaceProductFilter)}
       </div>
-      {renderWeekNav(repWorkspaceNavStart, setRepWorkspaceNavStart, repWorkspaceNavSpan, setRepWorkspaceNavSpan, setRepWorkspacePeriod, setRepWorkspaceDateRange)}
+      {renderWeekNav(repWorkspaceNavStart, setRepWorkspaceNavStart, repWorkspaceNavSpan, setRepWorkspaceNavSpan, setRepWorkspacePeriod, setRepWorkspaceDateRange, repWorkspacePeriod, repWorkspaceDateRange)}
       <div className="meta-chip-row flex flex-wrap items-center gap-3 text-xs text-gray-500 font-medium">
         <span className="meta-chip inline-flex items-center gap-2">
           <span className="meta-chip-label">Currency:</span>
@@ -28102,7 +28141,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange)}
+                {renderWeekNav(dashboardNavStart, setDashboardNavStart, dashboardNavSpan, setDashboardNavSpan, setPeriod, setDateRange, period, dateRange)}
               </div>
 
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full overflow-x-hidden">
@@ -28813,7 +28852,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(ordersNavStart, setOrdersNavStart, ordersNavSpan, setOrdersNavSpan, setOrdersPeriod, setOrdersDateRange)}
+                {renderWeekNav(ordersNavStart, setOrdersNavStart, ordersNavSpan, setOrdersNavSpan, setOrdersPeriod, setOrdersDateRange, ordersPeriod, ordersDateRange)}
               </div>
 
               {/* Active filter context pill */}
@@ -29433,7 +29472,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange)}
+                {renderWeekNav(cartsNavStart, setCartsNavStart, cartsNavSpan, setCartsNavSpan, setCartsPeriod, setCartsDateRange, cartsPeriod, cartsDateRange)}
               </div>
               <section className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4" aria-label="Team abandoned cart recovery outcomes">
                 <article className="relative overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-white via-emerald-50/80 to-sky-50 p-5 shadow-sm dark:border-emerald-500/25 dark:from-[#0d1c2a] dark:via-[#0a1722] dark:to-[#07111b]">
@@ -30489,7 +30528,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange)}
+                {renderWeekNav(deliveriesNavStart, setDeliveriesNavStart, deliveriesNavSpan, setDeliveriesNavSpan, setDeliveriesPeriod, setDeliveriesDateRange, deliveriesPeriod, deliveriesDateRange)}
               </div>
 
               <section className="grid grid-cols-2 xl:grid-cols-6 gap-4" aria-label="Deliveries summary">
@@ -30825,7 +30864,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       {renderProductFilter(salesProductIds, setSalesProductIds, showSalesProductFilter, setShowSalesProductFilter)}
                     </div>
-                    {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
+                    {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange, salesPeriod, salesDateRange)}
                   </div>
 
                   {/* KPI strip */}
@@ -31006,7 +31045,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
+                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange, salesPeriod, salesDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Sales representatives summary">
@@ -31303,7 +31342,7 @@ ${waybillLineItems(w).length > 1
                     {renderProductFilter(salesProductIds, setSalesProductIds, showSalesProductFilter, setShowSalesProductFilter)}
                   </div>
                 </div>
-                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange)}
+                {renderWeekNav(salesNavStart, setSalesNavStart, salesNavSpan, setSalesNavSpan, setSalesPeriod, setSalesDateRange, salesPeriod, salesDateRange)}
               </div>
 
               <DataErrorBanner />
@@ -32464,7 +32503,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       {renderProductFilter(agentProductIds, setAgentProductIds, showAgentProductFilter, setShowAgentProductFilter)}
                     </div>
-                    {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange)}
+                    {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange, agentsPeriod, agentsDateRange)}
                   </div>
 
                   {/* KPI strip */}
@@ -33885,7 +33924,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange)}
+                {renderWeekNav(agentsNavStart, setAgentsNavStart, agentsNavSpan, setAgentsNavSpan, setAgentsPeriod, setAgentsDateRange, agentsPeriod, agentsDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Agents summary">
@@ -34423,7 +34462,7 @@ ${waybillLineItems(w).length > 1
                     <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openCreateWaybill}>+ New Waybill</button>
                   </div>
                 </div>
-                {renderWeekNav(waybillsNavStart, setWaybillsNavStart, waybillsNavSpan, setWaybillsNavSpan, setWaybillsPeriod, setWaybillsDateRange)}
+                {renderWeekNav(waybillsNavStart, setWaybillsNavStart, waybillsNavSpan, setWaybillsNavSpan, setWaybillsPeriod, setWaybillsDateRange, waybillsPeriod, waybillsDateRange)}
               </div>
 
               {/* Table */}
@@ -35130,7 +35169,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(customerNavStart, setCustomerNavStart, customerNavSpan, setCustomerNavSpan, setCustomerPeriod, setCustomerDateRange)}
+                {renderWeekNav(customerNavStart, setCustomerNavStart, customerNavSpan, setCustomerNavSpan, setCustomerPeriod, setCustomerDateRange, customerPeriod, customerDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Customer summary">
@@ -35384,7 +35423,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {renderWeekNav(expenseNavStart, setExpenseNavStart, expenseNavSpan, setExpenseNavSpan, setExpensePeriod, setExpenseDateRange)}
+                {renderWeekNav(expenseNavStart, setExpenseNavStart, expenseNavSpan, setExpenseNavSpan, setExpensePeriod, setExpenseDateRange, expensePeriod, expenseDateRange)}
               </div>
 
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Expense summary">
@@ -35658,7 +35697,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
                 </div>
-                {financeTab !== "Weekly Accounting" && renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange)}
+                {financeTab !== "Weekly Accounting" && renderWeekNav(financeNavStart, setFinanceNavStart, financeNavSpan, setFinanceNavSpan, setFinancePeriod, setFinanceDateRange, financePeriod, financeDateRange)}
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
@@ -37772,7 +37811,7 @@ ${waybillLineItems(w).length > 1
                     />
                   </label>
                 </div>
-                {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
+                {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange, campaignPeriod, campaignDateRange)}
               </div>
               <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracking summary">
                 {[
@@ -38256,7 +38295,7 @@ ${waybillLineItems(w).length > 1
                       {adTrackingCartJourneyLoading && (
                         <p className="m-0 text-xs text-gray-400">Refreshing abandoned-cart attribution…</p>
                       )}
-                      {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange)}
+                      {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange, campaignPeriod, campaignDateRange)}
                     </div>
 
                     <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Ad tracked abandoned cart summary">
@@ -40048,7 +40087,7 @@ ${waybillLineItems(w).length > 1
                   </div>
                   {renderProductFilter(notificationProductIds, setNotificationProductIds, showNotificationProductFilter, setShowNotificationProductFilter)}
                 </div>
-                {renderWeekNav(notificationsNavStart, setNotificationsNavStart, notificationsNavSpan, setNotificationsNavSpan, setNotificationsPeriod, setNotificationsDateRange)}
+                {renderWeekNav(notificationsNavStart, setNotificationsNavStart, notificationsNavSpan, setNotificationsNavSpan, setNotificationsPeriod, setNotificationsDateRange, notificationsPeriod, notificationsDateRange)}
               </div>
 
               {(() => {
