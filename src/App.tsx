@@ -10409,30 +10409,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const ok = be.profitable;
     const targetVal = Math.max(0, Number(String(profitTargetInput).replace(/[^0-9.]/g, "")) || 0);
     // ONE shared plan for the target headroom — consumed by the bar marker, the
-    // dashboard chip, and the full P&L readout, all anchored to be.currentRate.
+    // dashboard chip, and the full P&L readout. PLAN-FROM-HERE: it starts from
+    // where the period already stands (be.netProfit, banked deliveries) and only
+    // applies the benchmark rate to NEW orders — it never re-runs the existing
+    // batch at the benchmark (that was the inflated "fresh week" bug).
     const plan = (targetVal > 0 && be.contribution > 0 && be.placedN > 0) ? (() => {
       const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
       const benchRate = benchPct / 100;
       const fixedPerOrder = be.fixed / be.placedN;
       const beRatePct = (fixedPerOrder / be.contribution) * 100;          // min rate for any profit
+      const marginalNet = benchRate * be.contribution - fixedPerOrder;    // net each NEW order adds at the benchmark
+      const underwater = marginalNet <= 0;                                // benchmark can't clear break-even → volume can't help
+      const netNow = be.netProfit;                                        // where this period already stands
+      const gap = targetVal - netNow;                                     // net still to add
+      const reached = gap <= 0;
+      // Cumulative deliveries that net the target on the EXISTING cohort (fixed lump,
+      // no new ad) — used when the target is reachable by just delivering more of
+      // what you already ran ads for.
       const targetDeliveries = Math.ceil((be.fixed + targetVal) / be.contribution);
-      const targetRateOnCohort = (targetDeliveries / be.placedN) * 100;   // rate the target needs on TODAY's orders
-      const extraDeliveries = targetDeliveries - be.deliveredN;
-      const underwater = beRatePct >= benchPct;                           // benchmark itself can't clear break-even
-      const withinCohort = !underwater && targetRateOnCohort <= benchPct; // reachable by rate alone (realistic)
-      const netPerOrder = benchRate * be.contribution - fixedPerOrder;
-      const ordersToPlace = (!underwater && netPerOrder > 0) ? Math.ceil(targetVal / netPerOrder) : null;
-      const deliveriesAtBench = ordersToPlace != null ? Math.round(ordersToPlace * benchRate) : null;
-      const adBudget = ordersToPlace != null ? Math.round(ordersToPlace * be.adPerPlaced) : null;
-      const moreOrders = ordersToPlace != null ? ordersToPlace - be.placedN : null;
-      const revImplied = targetDeliveries * be.revenuePerDelivered;
-      const revAtBench = deliveriesAtBench != null ? deliveriesAtBench * be.revenuePerDelivered : 0;
-      // Headroom in delivery-rate POINTS, anchored to the SAME current rate the
-      // break-even bar uses — negative = short by rate.
+      const targetRateOnCohort = (targetDeliveries / be.placedN) * 100;
+      const moreDeliveriesInCohort = Math.max(0, targetDeliveries - be.deliveredN);
+      const withinCohort = !underwater && !reached && targetRateOnCohort <= benchPct;
+      // Otherwise close the gap with NEW orders (incremental ad, banked progress kept).
+      const moreOrders = (!underwater && !reached && !withinCohort) ? Math.ceil(gap / marginalNet) : 0;
+      const moreDeliveries = Math.round(moreOrders * benchRate);
+      const moreAd = Math.round(moreOrders * be.adPerPlaced);
+      const totalOrders = be.placedN + moreOrders;
+      const moreRevenue = moreDeliveries * be.revenuePerDelivered;
+      const cohortRevenue = moreDeliveriesInCohort * be.revenuePerDelivered;
+      // Headroom in delivery-rate POINTS vs the rate the target needs on TODAY's
+      // orders — anchored to the same current rate the break-even bar uses.
       const headroomPts = Math.round(be.currentRate - targetRateOnCohort);
-      // Bar marker only when the target rate sits on the 0–100 scale.
       const markerPct = targetRateOnCohort <= 100 ? targetRateOnCohort : null;
-      return { benchPct, beRatePct, targetDeliveries, targetRateOnCohort, extraDeliveries, underwater, withinCohort, ordersToPlace, deliveriesAtBench, adBudget, moreOrders, revImplied, revAtBench, headroomPts, markerPct };
+      return { benchPct, beRatePct, marginalNet, underwater, netNow, gap, reached, targetDeliveries, targetRateOnCohort, moreDeliveriesInCohort, withinCohort, moreOrders, moreDeliveries, moreAd, totalOrders, moreRevenue, cohortRevenue, headroomPts, markerPct };
     })() : null;
     if (compact) {
       return (
@@ -10457,10 +10466,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             let msg: string;
             if (plan.underwater) {
               msg = `rate must beat ${Math.round(plan.beRatePct)}% first`;
+            } else if (plan.reached) {
+              msg = "on track ✅";
             } else if (plan.withinCohort) {
-              msg = plan.headroomPts >= 0 ? "on track ✅" : `+${plan.extraDeliveries} ${plan.extraDeliveries === 1 ? "delivery" : "deliveries"} (${Math.abs(plan.headroomPts)} pts)`;
+              msg = `+${plan.moreDeliveriesInCohort} ${plan.moreDeliveriesInCohort === 1 ? "delivery" : "deliveries"}`;
             } else {
-              msg = `place ~${plan.ordersToPlace} orders${plan.moreOrders && plan.moreOrders > 0 ? ` (+${plan.moreOrders})` : ""} @ ${plan.benchPct}%`;
+              msg = `+${plan.moreOrders} more orders @ ${plan.benchPct}%`;
             }
             return (
               <p className="m-0 text-[11px] font-semibold text-[#1F8FE0] dark:text-sky-300 border-t border-gray-100 dark:border-slate-800/80 pt-2">
@@ -10527,10 +10538,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </div>
                 );
-                // Shared baseline — same current rate the break-even bar/headroom uses,
-                // so the two headrooms can never contradict.
+                // Shared baseline — same current rate + net the break-even bar/headroom
+                // uses, so the two headrooms can never contradict. Plans FROM HERE.
                 const anchor = (
-                  <p className="m-0 text-[11px] text-gray-400">You're at <strong className="text-gray-600 dark:text-slate-300">{Math.round(be.currentRate)}%</strong> now · break-even <strong className="text-gray-600 dark:text-slate-300">{Math.round(pl.beRatePct)}%</strong> · 🎯 marker sits on the bar above</p>
+                  <p className="m-0 text-[11px] text-gray-400">From <strong className={be.netProfit >= 0 ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}>{formatMoney(pl.netNow)}</strong> net now · you're at <strong className="text-gray-600 dark:text-slate-300">{Math.round(be.currentRate)}%</strong> ({be.deliveredN} of {be.placedN}) · break-even <strong className="text-gray-600 dark:text-slate-300">{Math.round(pl.beRatePct)}%</strong> · 🎯 marker on the bar above</p>
                 );
                 let tone: string; let chip: JSX.Element; let detail: JSX.Element;
                 if (pl.underwater) {
@@ -10538,24 +10549,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   chip = <>unreachable at {pl.benchPct}%</>;
                   detail = (
                     <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
-                      At <strong>{pl.benchPct}%</strong> delivery every order still loses money — you only break even at <strong>{Math.round(pl.beRatePct)}%</strong>. Lift delivery above {Math.round(pl.beRatePct)}% (or cut the {formatMoney(Math.round(be.adPerPlaced))}/order ad cost) before adding volume — more orders at this rate just grow the loss.
+                      At <strong>{pl.benchPct}%</strong> delivery every new order still loses money — you only break even at <strong>{Math.round(pl.beRatePct)}%</strong>. Lift delivery above {Math.round(pl.beRatePct)}% (or cut the {formatMoney(Math.round(be.adPerPlaced))}/order ad cost) before adding volume — more orders at this rate just grow the loss.
+                    </p>
+                  );
+                } else if (pl.reached) {
+                  tone = "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200";
+                  chip = <>already at target ✅</>;
+                  detail = (
+                    <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
+                      You're already netting <strong>{formatMoney(pl.netNow)}</strong> — at or above your <strong>{formatMoney(targetVal)}</strong> target. Anything more is upside.
                     </p>
                   );
                 } else if (pl.withinCohort) {
-                  const reached = pl.headroomPts >= 0;
-                  tone = reached ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200" : "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200";
-                  chip = reached ? <>+{pl.headroomPts} pts clear ✅</> : <>{pl.headroomPts} pts → +{pl.extraDeliveries} {pl.extraDeliveries === 1 ? "delivery" : "deliveries"}</>;
+                  tone = "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200";
+                  chip = <>+{pl.moreDeliveriesInCohort} {pl.moreDeliveriesInCohort === 1 ? "delivery" : "deliveries"}</>;
                   detail = (
                     <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
-                      Reachable on your <strong>{be.placedN}</strong> orders by rate: deliver <strong>{pl.targetDeliveries}</strong> ({Math.round(pl.targetRateOnCohort)}%) — within your {pl.benchPct}% benchmark. {reached ? <>You're already past it ✅.</> : <>You're at {be.deliveredN}, so <strong>+{pl.extraDeliveries} more {pl.extraDeliveries === 1 ? "delivery" : "deliveries"}</strong>.</>} Revenue ≈ {formatMoney(pl.revImplied)}.
+                      No new ads needed — reachable by delivering more of the <strong>{be.placedN}</strong> you've already run: get to <strong>{pl.targetDeliveries}</strong> delivered ({Math.round(pl.targetRateOnCohort)}%, within your {pl.benchPct}% benchmark). You're at {be.deliveredN}, so <strong>+{pl.moreDeliveriesInCohort} more {pl.moreDeliveriesInCohort === 1 ? "delivery" : "deliveries"}</strong>. Adds ≈ {formatMoney(pl.cohortRevenue)} revenue.
                     </p>
                   );
                 } else {
                   tone = "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-200";
-                  chip = <>{pl.headroomPts} pts by rate → +{pl.moreOrders ?? 0} orders</>;
+                  chip = <>+{pl.moreOrders} more orders @ {pl.benchPct}%</>;
                   detail = (
                     <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
-                      {pl.targetDeliveries} deliveries would need <strong>{Math.round(pl.targetRateOnCohort)}%</strong> on just {be.placedN} orders — past your {pl.benchPct}% benchmark, so you won't get there by rate. Realistically, at <strong>{pl.benchPct}% delivery</strong> <strong>place ~{pl.ordersToPlace} orders</strong> (deliver ~{pl.deliveriesAtBench}) — {(pl.moreOrders ?? 0) > 0 ? <><strong>{pl.moreOrders} more</strong> than</> : <>about</>} your {be.placedN} now. Ad budget ≈ <strong>{formatMoney(pl.adBudget ?? 0)}</strong>; revenue ≈ {formatMoney(pl.revAtBench)}.
+                      A {Math.round(pl.targetRateOnCohort)}% rate on your {be.placedN} isn't realistic at {pl.benchPct}%, so you close the gap with new orders. From <strong>{formatMoney(pl.netNow)}</strong>, each new order nets <strong>{formatMoney(Math.round(pl.marginalNet))}</strong> at {pl.benchPct}% — so to add the <strong>{formatMoney(Math.round(pl.gap))}</strong> you need, <strong>place ~{pl.moreOrders} more orders</strong> (deliver ~{pl.moreDeliveries}) — {pl.totalOrders} total — for ≈ <strong>{formatMoney(pl.moreAd)}</strong> more ad. Adds ≈ {formatMoney(pl.moreRevenue)} revenue.
                     </p>
                   );
                 }
