@@ -18393,8 +18393,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const isOnCurrent = period === "Today" || period === "This Week" || period === "This Month" || period === "This Year";
     const navLabel = period === "Custom" ? "Custom range" : period;
     const navTitle = isOnCurrent ? "You're on the current period" : `Jump back to ${currentPeriodForUnit.toLowerCase()}`;
-    const windowText = unit === "day" ? "1 day" : unit === "week" ? "1 week" : unit === "month" ? "1 month" : unit === "year" ? "1 year" : "Custom range";
-    const sameDay = resolved.start === resolved.end;
+    const windowText = unit === "day" ? "1 day" : unit === "week" ? "1 week" : unit === "month" ? "1 month" : unit === "year" ? "1 year" : "Custom";
+    // The label shows the period's FULL natural bounds (whole Sun–Sat week,
+    // whole month, whole year) — how the band has always read — not the to-date
+    // range used for filtering. Filtering itself still uses period/dateRange.
+    const displayStart = resolved.start;
+    const displayEnd = (() => {
+      const s = new Date(`${resolved.start}T00:00:00`);
+      if (unit === "week") { const e = new Date(s); e.setDate(e.getDate() + 6); return formatDateKey(e); }
+      if (unit === "month") return formatDateKey(new Date(s.getFullYear(), s.getMonth() + 1, 0));
+      if (unit === "year") return formatDateKey(new Date(s.getFullYear(), 11, 31));
+      if (unit === "custom") return resolved.end;
+      return resolved.start; // day
+    })();
+    const sameDay = displayStart === displayEnd;
     return (
       <div className="period-nav-band flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-2 w-full overflow-x-hidden">
         {/* Row 1: Navigation arrows + period label */}
@@ -18404,7 +18416,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <button onClick={next} className="period-nav-button period-nav-icon !min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors shrink-0"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
         {/* Row 2: Range label — mirrors the active period's resolved range */}
-        <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{sameDay ? displayDateFromKey(resolved.start) : `${displayDateFromKey(resolved.start)} – ${displayDateFromKey(resolved.end)}`}</span>
+        <span className="period-nav-range text-xs font-medium text-gray-500 whitespace-nowrap">{sameDay ? displayDateFromKey(displayStart) : `${displayDateFromKey(displayStart)} – ${displayDateFromKey(displayEnd)}`}</span>
         {/* Row 3: Window read-out — reflects the period's natural step unit. */}
         <span className="period-nav-window text-xs text-gray-500 ml-auto sm:ml-2 px-2 py-1">
           Window: <span className="font-semibold text-gray-700">{windowText}</span>
