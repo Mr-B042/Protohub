@@ -30819,7 +30819,7 @@ ${waybillLineItems(w).length > 1
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {recentRepOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAdminOrderDetail(o.id)}>
+                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
