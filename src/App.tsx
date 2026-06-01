@@ -28266,15 +28266,7 @@ ${waybillLineItems(w).length > 1
                       {(() => {
                         const ranked = Array.from({ length: orderHeatmap.cols }, (_, c) => ({ c, value: orderHeatmap.colTotals[c] }))
                           .sort((a, b) => b.value - a.value);
-                        const visible = orderHeatmap.cols <= 8
-                          ? ranked.map((item) => ({ item, rank: ranked.indexOf(item) }))
-                          : [
-                              ...ranked.slice(0, 6).map((item, rank) => ({ item, rank })),
-                              { item: null as null, rank: -1 },
-                              { item: ranked[ranked.length - 1], rank: ranked.length - 1 }
-                            ];
-                        return visible.map(({ item, rank }, idx) => {
-                          if (!item) return <span key={`gap-${idx}`} className="text-[11px] text-gray-400">…</span>;
+                        return ranked.map((item, rank) => {
                           const isTop = rank === 0 && item.value > 0;
                           const isWorst = rank === ranked.length - 1 && ranked.length > 1;
                           return (
