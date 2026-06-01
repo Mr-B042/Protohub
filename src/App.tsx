@@ -174,7 +174,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
 type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -23073,6 +23073,12 @@ ${waybillLineItems(w).length > 1
     syncHashRoute(`#/dashboard/admin/waybill/${record.id}/receive`);
   };
 
+  const [waybillDetailId, setWaybillDetailId] = useState("");
+  const openWaybillDetail = (record: WaybillRecord) => {
+    setWaybillDetailId(record.id);
+    setModal("waybillDetails");
+  };
+
   const saveEditWaybill = () => {
     const errs: Record<string, string> = {};
     if (!waybillPartner.trim()) errs.partner = "Logistics partner is required.";
@@ -34332,6 +34338,7 @@ ${waybillLineItems(w).length > 1
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => openWaybillDetail(w)}><Eye className="w-4 h-4" /> View</button>
                           {w.status === "In Transit" && (
                             <>
                               <button
@@ -34400,6 +34407,7 @@ ${waybillLineItems(w).length > 1
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="flex gap-2 flex-wrap">
+                                <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#1F8FE0] text-white text-xs font-semibold hover:bg-blue-700 transition-colors" onClick={() => openWaybillDetail(w)}><Eye className="w-3.5 h-3.5" /> View</button>
                                 {w.status === "In Transit" && (
                                   <>
                                     <button
@@ -43480,7 +43488,7 @@ ${waybillLineItems(w).length > 1
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
-          <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <section className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-y-auto ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
@@ -43538,6 +43546,7 @@ ${waybillLineItems(w).length > 1
 	                {modal === "createWaybill" && "New Waybill"}
                 {modal === "editWaybill" && "Edit Waybill"}
                 {modal === "receiveWaybill" && "Receive Waybill"}
+                {modal === "waybillDetails" && "Waybill Details"}
                 {modal === "expenseDetails" && "Expense Details"}
                 {modal === "flagCustomer" && "Flag Customer"}
                 {modal === "newStockCount" && "New Stock Count Session"}
@@ -49550,6 +49559,75 @@ ${waybillLineItems(w).length > 1
                         closeModal();
                       }}
                     >Confirm Received</button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {modal === "waybillDetails" && (() => {
+              const w = waybillRecords.find((x) => x.id === waybillDetailId);
+              if (!w) return <div className="px-6 py-5 text-sm text-gray-500 dark:text-slate-400">Waybill not found.</div>;
+              const items = waybillLineItems(w);
+              const totalQty = items.reduce((s, it) => s + it.quantity, 0);
+              const fromLabel = w.sendingLocationName || w.sendingState || "—";
+              const toLabel = w.receivingLocationName || getWaybillDestinationLabel(w) || w.receivingState || "—";
+              return (
+                <div className="px-6 py-5 flex flex-col gap-5">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500 m-0">Waybill · {w.id}</p>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${statusBadgeClasses(w.status)}`}>{w.status}</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200">{getWaybillFlowLabel(w)}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Waybill fee</p>
+                      <p className="text-base font-extrabold text-gray-900 dark:text-slate-100 m-0">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "—"}</p>
+                    </div>
+                  </div>
+
+                  <section className="rounded-xl border border-gray-200 dark:border-slate-800/80 p-3 flex items-center justify-between gap-3 text-sm">
+                    <div className="min-w-0">
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">From</p>
+                      <p className="font-semibold text-gray-900 dark:text-slate-100 m-0 break-words">{fromLabel}</p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 shrink-0 text-gray-400" />
+                    <div className="min-w-0 text-right">
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">To</p>
+                      <p className="font-semibold text-gray-900 dark:text-slate-100 m-0 break-words">{toLabel}</p>
+                    </div>
+                  </section>
+
+                  <section>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Items ({items.length} · {totalQty} units)</h4>
+                    <div className="flex flex-col gap-1.5">
+                      {items.map((it, i) => (
+                        <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 dark:border-slate-800/80 px-3 py-2 text-sm">
+                          <span className="font-semibold text-gray-900 dark:text-slate-100 break-words">{it.productName}</span>
+                          <span className="shrink-0 font-bold text-gray-700 dark:text-slate-300">× {it.quantity}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800/80 pb-1.5 mb-2">Details</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Logistics partner</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{w.logisticsPartner || "—"}</p></div>
+                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Date sent</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatDateOnly(w.dateSent) || "—"}</p></div>
+                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Date received</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{w.dateReceived ? formatDateOnly(w.dateReceived) : "—"}</p></div>
+                      <div><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Created</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0">{formatMoment(w.createdAt) || "—"}{w.createdBy ? ` · ${w.createdBy}` : ""}</p></div>
+                      {w.note && <div className="sm:col-span-2"><p className="text-[11px] text-gray-400 dark:text-slate-500 m-0">Note</p><p className="font-semibold text-gray-900 dark:text-slate-100 m-0 break-words">{w.note}</p></div>}
+                    </div>
+                  </section>
+
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100 dark:border-slate-800/80">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w)}>Print</button>
+                    {w.status === "In Transit" && (
+                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition-colors" onClick={() => openReceiveWaybill(w)}>Mark Received</button>
+                    )}
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
                   </div>
                 </div>
               );
