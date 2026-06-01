@@ -28238,12 +28238,29 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </div>
                 {orderHeatmap.total > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                    {orderHeatmap.peak.value > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapColLabel(orderHeatmap.peak.col)} ({formatHeatValue(orderHeatmap.peak.value)})</span>
-                    )}
-                    {orderHeatmap.topDay.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Top day: {heatmapDayLabels[orderHeatmap.topDay.i]}</span>}
-                    {orderHeatmap.topCol.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak time: {heatmapColLabel(orderHeatmap.topCol.i)}</span>}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                      {orderHeatmap.peak.value > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapColLabel(orderHeatmap.peak.col)} ({formatHeatValue(orderHeatmap.peak.value)})</span>
+                      )}
+                      {orderHeatmap.topCol.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak time: {heatmapColLabel(orderHeatmap.topCol.i)}</span>}
+                    </div>
+                    {/* Full day ranking: busiest (green) → slowest (rose), with 2nd/3rd/… in between. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-gray-500 mr-0.5">Days, busiest → slowest:</span>
+                      {heatmapDayLabels
+                        .map((label, i) => ({ label, value: orderHeatmap.dayTotals[i] }))
+                        .sort((a, b) => b.value - a.value)
+                        .map((d, rank, arr) => {
+                          const isTop = rank === 0 && d.value > 0;
+                          const isWorst = rank === arr.length - 1 && arr.length > 1;
+                          return (
+                            <span key={d.label} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${isTop ? "bg-emerald-100 text-emerald-800" : isWorst ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
+                              <span className="opacity-50">{rank + 1}.</span> {d.label} · {formatHeatValue(d.value)}{isWorst ? " · slowest" : ""}
+                            </span>
+                          );
+                        })}
+                    </div>
                   </div>
                 )}
                 {orderHeatmap.total === 0 ? (
