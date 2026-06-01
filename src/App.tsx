@@ -6494,7 +6494,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfCompareMode", revPerfCompareMode); }, [revPerfCompareMode]);
   // Order-inflow heatmap controls (metric / fixed window / hour grouping).
   const [heatmapMetric, setHeatmapMetric] = useState<"orders" | "delivered" | "revenue">("orders");
-  const [heatmapWindow, setHeatmapWindow] = useState<"30" | "90" | "all">("90");
+  const [heatmapWindow, setHeatmapWindow] = useState<"dashboard" | "30" | "90" | "all">("dashboard");
   const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">("hour");
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
@@ -10595,7 +10595,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const colSpan = heatmapGroup === "3h" ? 3 : 1;
     const cols = 24 / colSpan;
     const grid: number[][] = Array.from({ length: 7 }, () => new Array(cols).fill(0));
-    const cutoff = heatmapWindow === "all" ? null : Date.now() - (heatmapWindow === "30" ? 30 : 90) * 86_400_000;
+    const useDashboardPeriod = heatmapWindow === "dashboard";
+    const cutoff = (heatmapWindow === "30" || heatmapWindow === "90") ? Date.now() - (heatmapWindow === "30" ? 30 : 90) * 86_400_000 : null;
     let max = 0;
     let total = 0;
     for (const o of trackedOrders) {
@@ -10604,7 +10605,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (!raw) continue;
       const ms = new Date(raw).getTime();
       if (!Number.isFinite(ms)) continue;
-      if (cutoff !== null && ms < cutoff) continue;
+      // Window: either follow the dashboard date filter, or a fixed rolling window.
+      if (useDashboardPeriod) { if (!isInPeriod(orderCreatedKey(o), period, dateRange)) continue; }
+      else if (cutoff !== null && ms < cutoff) continue;
       const delivered = (o.status ?? "New") === "Delivered";
       let value = 0;
       if (heatmapMetric === "orders") value = 1;
@@ -10635,7 +10638,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const formatHeatValue = (v: number) =>
     heatmapMetric === "revenue" ? formatMoney(v) : `${v} order${v === 1 ? "" : "s"}`;
-  const heatmapWindowLabel = heatmapWindow === "all" ? "all time" : `last ${heatmapWindow} days`;
+  const heatmapWindowLabel = heatmapWindow === "dashboard" ? "dashboard date filter" : heatmapWindow === "all" ? "all time" : `last ${heatmapWindow} days`;
   const heatmapMetricLabel = heatmapMetric === "orders" ? "Orders" : heatmapMetric === "delivered" ? "Delivered" : "Revenue";
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
@@ -28223,7 +28226,7 @@ ${waybillLineItems(w).length > 1
                       ))}
                     </div>
                     <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
-                      {([["30", "30d"], ["90", "90d"], ["all", "All"]] as const).map(([id, label]) => (
+                      {([["dashboard", "Dashboard"], ["30", "30d"], ["90", "90d"], ["all", "All"]] as const).map(([id, label]) => (
                         <button key={id} onClick={() => setHeatmapWindow(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapWindow === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
                       ))}
                     </div>
