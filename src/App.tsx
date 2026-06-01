@@ -10394,6 +10394,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const curPct = Math.round(be.currentRate);
     const head = Math.round(be.headroom ?? 0);
     const ok = be.profitable;
+    const targetVal = Math.max(0, Number(String(profitTargetInput).replace(/[^0-9.]/g, "")) || 0);
     if (compact) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-2.5 dark:border-slate-800 dark:bg-[#0f1822]">
@@ -10413,6 +10414,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ? `${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} past break-even`
               : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} to break even`}
           </p>
+          {targetVal > 0 && be.contribution > 0 && (() => {
+            const tD = Math.ceil((be.fixed + targetVal) / be.contribution);
+            const tR = be.placedN > 0 ? (tD / be.placedN) * 100 : 0;
+            const extra = tD - be.deliveredN;
+            return (
+              <p className="m-0 text-[11px] font-semibold text-[#1F8FE0] dark:text-sky-300 border-t border-gray-100 dark:border-slate-800/80 pt-2">
+                🎯 {formatMoney(targetVal)}: {tR > 100 ? `beyond this period's ${be.placedN} orders` : extra <= 0 ? "on track ✅" : `${extra} more ${extra === 1 ? "delivery" : "deliveries"} (${Math.round(tR)}%)`}
+              </p>
+            );
+          })()}
         </div>
       );
     }
@@ -10437,7 +10448,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div><p className="text-[11px] text-gray-400 m-0">Recoverable pipeline</p><p className="font-bold text-[#1F8FE0] m-0">{formatMoney(be.recoverable)}</p><p className="text-[10px] text-gray-400 m-0">already ad-funded</p></div>
         </div>
         {(() => {
-          const targetVal = Math.max(0, Number(String(profitTargetInput).replace(/[^0-9.]/g, "")) || 0);
           const presets: [string, string][] = [["500000", "₦500K"], ["700000", "₦700K"], ["1000000", "₦1M"]];
           return (
             <div className="rounded-lg border border-dashed border-gray-300 dark:border-slate-700 p-3 flex flex-col gap-2.5">
