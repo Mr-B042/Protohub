@@ -6502,6 +6502,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     readPref<string>("protohub.finance.profitTarget", "", (raw) => raw)
   );
   useEffect(() => { writePref("protohub.finance.profitTarget", profitTargetInput); }, [profitTargetInput]);
+  // Realistic delivery-rate benchmark used to size the orders needed for a target
+  // (you can't just assume 92% delivery — you add volume at a believable rate).
+  const [deliveryBenchmarkInput, setDeliveryBenchmarkInput] = useState<string>(() =>
+    readPref<string>("protohub.finance.deliveryBenchmark", "60", (raw) => raw)
+  );
+  useEffect(() => { writePref("protohub.finance.deliveryBenchmark", deliveryBenchmarkInput); }, [deliveryBenchmarkInput]);
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
@@ -10414,13 +10420,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ? `${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} past break-even`
               : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} to break even`}
           </p>
-          {targetVal > 0 && be.contribution > 0 && (() => {
+          {targetVal > 0 && be.contribution > 0 && be.placedN > 0 && (() => {
+            const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
+            const benchRate = benchPct / 100;
+            const fixedPerOrder = be.fixed / be.placedN;
+            const beRatePct = (fixedPerOrder / be.contribution) * 100;
             const tD = Math.ceil((be.fixed + targetVal) / be.contribution);
-            const tR = be.placedN > 0 ? (tD / be.placedN) * 100 : 0;
-            const extra = tD - be.deliveredN;
+            const tR = (tD / be.placedN) * 100;
+            let msg: string;
+            if (beRatePct >= benchPct) {
+              msg = `rate must beat ${Math.round(beRatePct)}% first`;
+            } else if (tR <= benchPct) {
+              const extra = tD - be.deliveredN;
+              msg = extra <= 0 ? "on track ✅" : `${extra} more ${extra === 1 ? "delivery" : "deliveries"}`;
+            } else {
+              const ordersToPlace = Math.ceil(targetVal / (benchRate * be.contribution - fixedPerOrder));
+              const moreOrders = ordersToPlace - be.placedN;
+              msg = `place ~${ordersToPlace} orders${moreOrders > 0 ? ` (+${moreOrders})` : ""} @ ${benchPct}%`;
+            }
             return (
               <p className="m-0 text-[11px] font-semibold text-[#1F8FE0] dark:text-sky-300 border-t border-gray-100 dark:border-slate-800/80 pt-2">
-                🎯 {formatMoney(targetVal)}: {tR > 100 ? `beyond this period's ${be.placedN} orders` : extra <= 0 ? "on track ✅" : `${extra} more ${extra === 1 ? "delivery" : "deliveries"} (${Math.round(tR)}%)`}
+                🎯 {formatMoney(targetVal)}: {msg}
               </p>
             );
           })()}
@@ -10465,28 +10485,62 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </div>
               {targetVal <= 0 ? (
-                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Set a net-profit goal to see the deliveries + delivery rate needed to hit it.</p>
-              ) : be.contribution <= 0 ? (
+                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Set a net-profit goal to see how many orders to place (and deliver at your benchmark rate) to hit it.</p>
+              ) : be.contribution <= 0 || be.placedN <= 0 ? (
                 <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">No per-delivery margin in this period yet — can't plan a target.</p>
               ) : (() => {
+                // Realistic model: you can't wish delivery rate up to 92% on a small
+                // batch. Hold delivery at a believable benchmark and size the ORDERS
+                // to place. Each placed order carries its share of ad+fixed cost
+                // (fixedPerOrder) and delivers with probability = benchmark, so
+                // net per order placed = benchmark × per-delivery margin − fixedPerOrder.
+                const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
+                const benchRate = benchPct / 100;
+                const fixedPerOrder = be.fixed / be.placedN;
+                const beRatePct = (fixedPerOrder / be.contribution) * 100; // min rate for any profit
                 const targetDeliveries = Math.ceil((be.fixed + targetVal) / be.contribution);
-                const targetRate = be.placedN > 0 ? (targetDeliveries / be.placedN) * 100 : 0;
+                const targetRateOnCohort = (targetDeliveries / be.placedN) * 100;
                 const extraDeliveries = targetDeliveries - be.deliveredN;
-                const maxNet = be.placedN * be.contribution - be.fixed;
-                const revImplied = targetDeliveries * be.revenuePerDelivered;
-                const ordersNeeded = be.currentRate > 0 ? Math.ceil(targetDeliveries / (be.currentRate / 100)) : null;
-                if (targetRate <= 100) {
-                  return (
+                const benchInput = (
+                  <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-500 dark:text-slate-400">
+                    <span>Realistic delivery rate</span>
+                    {[50, 60, 70].map((p) => (
+                      <button key={p} type="button" onClick={() => setDeliveryBenchmarkInput(String(p))} className={`!min-h-0 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${benchPct === p ? "bg-emerald-500 text-white border-emerald-500" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300"}`}>{p}%</button>
+                    ))}
+                    <div className="relative">
+                      <input type="number" min={1} max={100} value={deliveryBenchmarkInput} onChange={(e) => setDeliveryBenchmarkInput(e.target.value)} className="w-14 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-2 pr-4 py-0.5 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">%</span>
+                    </div>
+                  </div>
+                );
+                let body: JSX.Element;
+                if (beRatePct >= benchPct) {
+                  body = (
+                    <p className="m-0 text-[13px] text-rose-700 dark:text-rose-300 leading-relaxed">
+                      At a <strong>{benchPct}%</strong> delivery rate every order still loses money — you only break even at <strong>{Math.round(beRatePct)}%</strong>. Lift delivery above {Math.round(beRatePct)}% (or cut the {formatMoney(Math.round(be.adPerPlaced))}/order ad cost) before adding volume — more orders at this rate just grow the loss.
+                    </p>
+                  );
+                } else if (targetRateOnCohort <= benchPct) {
+                  const revImplied = targetDeliveries * be.revenuePerDelivered;
+                  body = (
                     <p className="m-0 text-[13px] text-gray-800 dark:text-slate-200 leading-relaxed">
-                      To net <strong>{formatMoney(targetVal)}</strong>: deliver <strong>{targetDeliveries}</strong> of {be.placedN} orders — a <strong>{Math.round(targetRate)}% delivery rate</strong>. You're at {be.deliveredN} ({Math.round(be.currentRate)}%), so {extraDeliveries > 0 ? <>you need <strong>{extraDeliveries} more {extraDeliveries === 1 ? "delivery" : "deliveries"}</strong> (+{Math.round(targetRate - be.currentRate)} pts)</> : <>you're already there ✅</>}. Revenue ≈ {formatMoney(revImplied)}.
+                      Reachable on your <strong>{be.placedN}</strong> orders: deliver <strong>{targetDeliveries}</strong> ({Math.round(targetRateOnCohort)}%) to net <strong>{formatMoney(targetVal)}</strong> — within your {benchPct}% benchmark. You're at {be.deliveredN} ({Math.round(be.currentRate)}%), so {extraDeliveries > 0 ? <>you need <strong>{extraDeliveries} more {extraDeliveries === 1 ? "delivery" : "deliveries"}</strong></> : <>you're already there ✅</>}. Revenue ≈ {formatMoney(revImplied)}.
+                    </p>
+                  );
+                } else {
+                  const netPerOrder = benchRate * be.contribution - fixedPerOrder; // > 0 here
+                  const ordersToPlace = Math.ceil(targetVal / netPerOrder);
+                  const deliveriesAtBench = Math.round(ordersToPlace * benchRate);
+                  const adBudget = Math.round(ordersToPlace * be.adPerPlaced);
+                  const moreOrders = ordersToPlace - be.placedN;
+                  const revAtBench = deliveriesAtBench * be.revenuePerDelivered;
+                  body = (
+                    <p className="m-0 text-[13px] text-gray-800 dark:text-slate-200 leading-relaxed">
+                      {targetDeliveries} deliveries would need a {Math.round(targetRateOnCohort)}% rate on just {be.placedN} orders — past your {benchPct}% benchmark. Realistically, at <strong>{benchPct}% delivery</strong> you'd <strong>place ~{ordersToPlace} orders</strong> (deliver ~{deliveriesAtBench}) to net <strong>{formatMoney(targetVal)}</strong> — {moreOrders > 0 ? <><strong>{moreOrders} more</strong> than</> : moreOrders < 0 ? <><strong>{Math.abs(moreOrders)} fewer</strong> than</> : <>about the same as</>} your {be.placedN} now. Est. ad budget ≈ <strong>{formatMoney(adBudget)}</strong>; revenue ≈ {formatMoney(revAtBench)}.
                     </p>
                   );
                 }
-                return (
-                  <p className="m-0 text-[13px] text-amber-800 dark:text-amber-200 leading-relaxed">
-                    <strong>{formatMoney(targetVal)}</strong> is beyond this period's {be.placedN} orders — even at 100% delivery you'd net ≈ <strong>{formatMoney(maxNet)}</strong>.{ordersNeeded != null && <> To reach it you'd need ~<strong>{ordersNeeded} orders placed</strong> at today's {Math.round(be.currentRate)}% delivery (more ad spend), delivering {targetDeliveries}.</>}
-                  </p>
-                );
+                return <div className="flex flex-col gap-2">{benchInput}{body}</div>;
               })()}
             </div>
           );
