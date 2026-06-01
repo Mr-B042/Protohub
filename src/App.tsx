@@ -10629,7 +10629,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const colTotals = Array.from({ length: cols }, (_, c) => grid.reduce((a, row) => a + row[c], 0));
     const topDay = dayTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
     const topCol = colTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
-    return { grid, cols, colSpan, max, total, peak, dayTotals, topDay, topCol };
+    return { grid, cols, colSpan, max, total, peak, dayTotals, colTotals, topDay, topCol };
   })();
   // Label for a column (hour or 3h block) and value formatting per metric.
   const heatmapColLabel = (col: number) => {
@@ -28243,7 +28243,6 @@ ${waybillLineItems(w).length > 1
                       {orderHeatmap.peak.value > 0 && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapColLabel(orderHeatmap.peak.col)} ({formatHeatValue(orderHeatmap.peak.value)})</span>
                       )}
-                      {orderHeatmap.topCol.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak time: {heatmapColLabel(orderHeatmap.topCol.i)}</span>}
                     </div>
                     {/* Full day ranking: busiest (green) → slowest (rose), with 2nd/3rd/… in between. */}
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -28260,6 +28259,31 @@ ${waybillLineItems(w).length > 1
                             </span>
                           );
                         })}
+                    </div>
+                    {/* Time ranking: busiest → slowest. Hourly is capped (top 6 … slowest); 3-hr shows all 8. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-gray-500 mr-0.5">Times, busiest → slowest:</span>
+                      {(() => {
+                        const ranked = Array.from({ length: orderHeatmap.cols }, (_, c) => ({ c, value: orderHeatmap.colTotals[c] }))
+                          .sort((a, b) => b.value - a.value);
+                        const visible = orderHeatmap.cols <= 8
+                          ? ranked.map((item) => ({ item, rank: ranked.indexOf(item) }))
+                          : [
+                              ...ranked.slice(0, 6).map((item, rank) => ({ item, rank })),
+                              { item: null as null, rank: -1 },
+                              { item: ranked[ranked.length - 1], rank: ranked.length - 1 }
+                            ];
+                        return visible.map(({ item, rank }, idx) => {
+                          if (!item) return <span key={`gap-${idx}`} className="text-[11px] text-gray-400">…</span>;
+                          const isTop = rank === 0 && item.value > 0;
+                          const isWorst = rank === ranked.length - 1 && ranked.length > 1;
+                          return (
+                            <span key={item.c} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${isTop ? "bg-emerald-100 text-emerald-800" : isWorst ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
+                              <span className="opacity-50">{rank + 1}.</span> {heatmapColLabel(item.c)} · {formatHeatValue(item.value)}{isWorst ? " · slowest" : ""}
+                            </span>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 )}
