@@ -10460,7 +10460,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </div>
         {breakEvenBar(bePct, curPct, ok)}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm pt-1 border-t border-gray-100 dark:border-slate-800/80">
-          <div><p className="text-[11px] text-gray-400 m-0">Profit per extra delivery</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.contribution)}</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Profit per extra delivery</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.contribution)}</p><p className="text-[10px] text-gray-400 m-0">before fixed cost</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Avg net / delivered</p><p className={`font-bold m-0 ${be.deliveredN > 0 && be.netProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{be.deliveredN > 0 ? formatMoney(Math.round(be.netProfit / be.deliveredN)) : "—"}</p><p className="text-[10px] text-gray-400 m-0">after fixed cost</p></div>
           <div><p className="text-[11px] text-gray-400 m-0">Fixed cost (period)</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.fixed)}</p></div>
           <div><p className="text-[11px] text-gray-400 m-0">Net profit</p><p className={`font-bold m-0 ${be.netProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(be.netProfit)}</p></div>
           <div><p className="text-[11px] text-gray-400 m-0">Ad cost / delivered</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.adPerDelivered)}</p><p className="text-[10px] text-gray-400 m-0">vs {formatMoney(be.adPerPlaced)} / placed</p></div>
