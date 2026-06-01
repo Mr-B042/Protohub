@@ -28572,7 +28572,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-gray-600">{renderDeliveryFeeCell(order)}</span>
                             </div>
                           </div>
-                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openAdminOrderDetail(order.id)}>
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>
                             <Eye className="w-4 h-4" /> View details
                           </button>
                         </article>
@@ -28610,7 +28610,7 @@ ${waybillLineItems(w).length > 1
                               {renderOrderStatusSummary(order)}
                             </td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4">
-                              <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openAdminOrderDetail(order.id)}>
+                              <button className="!min-h-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-500" onClick={() => openOrderDetailPopup(order.id)}>
                                 <Eye className="w-4 h-4" />
                               </button>
                             </td>
