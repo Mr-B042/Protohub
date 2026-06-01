@@ -22765,7 +22765,7 @@ ${waybillLineItems(w).length > 1
     // Roll back the waybill record (and the auto-booked expense) if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
-    waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, notes: record.note, dispatchedDate: record.dateSent } as any).catch((err: any) => {
+    waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, fromAgentId: record.fromAgentId, fromAgentLocationId: record.fromAgentLocationId, toAgentId: record.toAgentId, toAgentLocationId: record.toAgentLocationId, notes: record.note, dispatchedDate: record.dateSent } as any).catch((err: any) => {
       setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
       if (fee > 0) setExpenses((prev) => prev.filter((e) => e.id !== `EXP-WB-${record.id}`));
       showToast(`Waybill not synced: ${err?.message ?? "please retry"}.`);
