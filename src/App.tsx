@@ -10374,15 +10374,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   };
   // 0–100 track: fill to current delivery rate (green if profitable, rose if not),
-  // with a marker line at the break-even rate.
-  const breakEvenBar = (bePct: number, curPct: number, ok: boolean) => (
+  // with a marker line at the break-even rate — and, when a profit target is set,
+  // a second (sky) marker at the rate that target needs. Both markers and the fill
+  // share ONE current-rate baseline, so break-even and target headroom can never
+  // tell contradictory stories.
+  const breakEvenBar = (bePct: number, curPct: number, ok: boolean, targetPct: number | null = null) => (
     <div>
       <div className="relative h-3 rounded-full bg-gray-100 dark:bg-slate-800">
         <div className={`absolute inset-y-0 left-0 rounded-full ${ok ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${Math.max(2, Math.min(100, curPct))}%` }} />
         <div className="absolute -top-1.5 -bottom-1.5 w-0.5 bg-gray-800 dark:bg-slate-200" style={{ left: `calc(${Math.min(100, Math.max(0, bePct))}% - 1px)` }} title={`Break-even ${bePct}%`} />
+        {targetPct != null && (
+          <div className="absolute -top-1.5 -bottom-1.5 w-0.5 bg-[#1F8FE0]" style={{ left: `calc(${Math.min(100, Math.max(0, targetPct))}% - 1px)` }} title={`Target ${Math.round(targetPct)}%`} />
+        )}
       </div>
       <div className="mt-1.5 flex items-center justify-between text-[10px] font-semibold text-gray-400">
         <span>▎break-even {bePct}%</span>
+        {targetPct != null && <span className="text-[#1F8FE0]">🎯 target {Math.round(targetPct)}%</span>}
         <span>current {curPct}%</span>
       </div>
     </div>
@@ -10401,6 +10408,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const head = Math.round(be.headroom ?? 0);
     const ok = be.profitable;
     const targetVal = Math.max(0, Number(String(profitTargetInput).replace(/[^0-9.]/g, "")) || 0);
+    // ONE shared plan for the target headroom — consumed by the bar marker, the
+    // dashboard chip, and the full P&L readout, all anchored to be.currentRate.
+    const plan = (targetVal > 0 && be.contribution > 0 && be.placedN > 0) ? (() => {
+      const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
+      const benchRate = benchPct / 100;
+      const fixedPerOrder = be.fixed / be.placedN;
+      const beRatePct = (fixedPerOrder / be.contribution) * 100;          // min rate for any profit
+      const targetDeliveries = Math.ceil((be.fixed + targetVal) / be.contribution);
+      const targetRateOnCohort = (targetDeliveries / be.placedN) * 100;   // rate the target needs on TODAY's orders
+      const extraDeliveries = targetDeliveries - be.deliveredN;
+      const underwater = beRatePct >= benchPct;                           // benchmark itself can't clear break-even
+      const withinCohort = !underwater && targetRateOnCohort <= benchPct; // reachable by rate alone (realistic)
+      const netPerOrder = benchRate * be.contribution - fixedPerOrder;
+      const ordersToPlace = (!underwater && netPerOrder > 0) ? Math.ceil(targetVal / netPerOrder) : null;
+      const deliveriesAtBench = ordersToPlace != null ? Math.round(ordersToPlace * benchRate) : null;
+      const adBudget = ordersToPlace != null ? Math.round(ordersToPlace * be.adPerPlaced) : null;
+      const moreOrders = ordersToPlace != null ? ordersToPlace - be.placedN : null;
+      const revImplied = targetDeliveries * be.revenuePerDelivered;
+      const revAtBench = deliveriesAtBench != null ? deliveriesAtBench * be.revenuePerDelivered : 0;
+      // Headroom in delivery-rate POINTS, anchored to the SAME current rate the
+      // break-even bar uses — negative = short by rate.
+      const headroomPts = Math.round(be.currentRate - targetRateOnCohort);
+      // Bar marker only when the target rate sits on the 0–100 scale.
+      const markerPct = targetRateOnCohort <= 100 ? targetRateOnCohort : null;
+      return { benchPct, beRatePct, targetDeliveries, targetRateOnCohort, extraDeliveries, underwater, withinCohort, ordersToPlace, deliveriesAtBench, adBudget, moreOrders, revImplied, revAtBench, headroomPts, markerPct };
+    })() : null;
     if (compact) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-2.5 dark:border-slate-800 dark:bg-[#0f1822]">
@@ -10414,29 +10447,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span className="text-2xl font-extrabold text-gray-900 dark:text-slate-100">{curPct}%</span>
             <span className="text-xs text-gray-500 dark:text-slate-400">delivery rate · break-even {bePct}%</span>
           </div>
-          {breakEvenBar(bePct, curPct, ok)}
+          {breakEvenBar(bePct, curPct, ok, plan?.markerPct ?? null)}
           <p className={`m-0 text-[11px] font-semibold ${ok ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>
             {ok
               ? `${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} past break-even`
               : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} to break even`}
           </p>
-          {targetVal > 0 && be.contribution > 0 && be.placedN > 0 && (() => {
-            const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
-            const benchRate = benchPct / 100;
-            const fixedPerOrder = be.fixed / be.placedN;
-            const beRatePct = (fixedPerOrder / be.contribution) * 100;
-            const tD = Math.ceil((be.fixed + targetVal) / be.contribution);
-            const tR = (tD / be.placedN) * 100;
+          {plan && (() => {
             let msg: string;
-            if (beRatePct >= benchPct) {
-              msg = `rate must beat ${Math.round(beRatePct)}% first`;
-            } else if (tR <= benchPct) {
-              const extra = tD - be.deliveredN;
-              msg = extra <= 0 ? "on track ✅" : `${extra} more ${extra === 1 ? "delivery" : "deliveries"}`;
+            if (plan.underwater) {
+              msg = `rate must beat ${Math.round(plan.beRatePct)}% first`;
+            } else if (plan.withinCohort) {
+              msg = plan.headroomPts >= 0 ? "on track ✅" : `+${plan.extraDeliveries} ${plan.extraDeliveries === 1 ? "delivery" : "deliveries"} (${Math.abs(plan.headroomPts)} pts)`;
             } else {
-              const ordersToPlace = Math.ceil(targetVal / (benchRate * be.contribution - fixedPerOrder));
-              const moreOrders = ordersToPlace - be.placedN;
-              msg = `place ~${ordersToPlace} orders${moreOrders > 0 ? ` (+${moreOrders})` : ""} @ ${benchPct}%`;
+              msg = `place ~${plan.ordersToPlace} orders${plan.moreOrders && plan.moreOrders > 0 ? ` (+${plan.moreOrders})` : ""} @ ${plan.benchPct}%`;
             }
             return (
               <p className="m-0 text-[11px] font-semibold text-[#1F8FE0] dark:text-sky-300 border-t border-gray-100 dark:border-slate-800/80 pt-2">
@@ -10458,7 +10482,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Current rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{curPct}%</p><p className="text-[11px] text-gray-500 m-0">{be.deliveredN} delivered</p></div>
           <div className={`rounded-lg p-3 ${ok ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-rose-50 dark:bg-rose-500/10"}`}><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">{ok ? "Headroom" : "Shortfall"}</p><p className={`text-2xl font-extrabold m-0 ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{head >= 0 ? `+${head}` : head} pts</p><p className="text-[11px] text-gray-500 m-0">{ok ? `≈ ${be.deliveriesPastBreakEven} ${be.deliveriesPastBreakEven === 1 ? "delivery" : "deliveries"} clear` : `≈ ${be.extraDeliveriesNeeded} more ${be.extraDeliveriesNeeded === 1 ? "delivery" : "deliveries"} needed`}</p></div>
         </div>
-        {breakEvenBar(bePct, curPct, ok)}
+        {breakEvenBar(bePct, curPct, ok, plan?.markerPct ?? null)}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm pt-1 border-t border-gray-100 dark:border-slate-800/80">
           <div><p className="text-[11px] text-gray-400 m-0">Profit per extra delivery</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.contribution)}</p><p className="text-[10px] text-gray-400 m-0">before fixed cost</p></div>
           <div><p className="text-[11px] text-gray-400 m-0">Avg net / delivered</p><p className={`font-bold m-0 ${be.deliveredN > 0 && be.netProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{be.deliveredN > 0 ? formatMoney(Math.round(be.netProfit / be.deliveredN)) : "—"}</p><p className="text-[10px] text-gray-400 m-0">after fixed cost</p></div>
@@ -10486,27 +10510,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </div>
               {targetVal <= 0 ? (
-                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Set a net-profit goal to see how many orders to place (and deliver at your benchmark rate) to hit it.</p>
-              ) : be.contribution <= 0 || be.placedN <= 0 ? (
+                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Set a net-profit goal to see the Target headroom — how far you are from it, by delivery rate or by adding orders.</p>
+              ) : !plan ? (
                 <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">No per-delivery margin in this period yet — can't plan a target.</p>
               ) : (() => {
-                // Realistic model: you can't wish delivery rate up to 92% on a small
-                // batch. Hold delivery at a believable benchmark and size the ORDERS
-                // to place. Each placed order carries its share of ad+fixed cost
-                // (fixedPerOrder) and delivers with probability = benchmark, so
-                // net per order placed = benchmark × per-delivery margin − fixedPerOrder.
-                const benchPct = Math.min(100, Math.max(1, Math.round(Number(deliveryBenchmarkInput) || 60)));
-                const benchRate = benchPct / 100;
-                const fixedPerOrder = be.fixed / be.placedN;
-                const beRatePct = (fixedPerOrder / be.contribution) * 100; // min rate for any profit
-                const targetDeliveries = Math.ceil((be.fixed + targetVal) / be.contribution);
-                const targetRateOnCohort = (targetDeliveries / be.placedN) * 100;
-                const extraDeliveries = targetDeliveries - be.deliveredN;
+                const pl = plan; // non-null in this branch
                 const benchInput = (
                   <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-500 dark:text-slate-400">
                     <span>Realistic delivery rate</span>
                     {[50, 60, 70].map((p) => (
-                      <button key={p} type="button" onClick={() => setDeliveryBenchmarkInput(String(p))} className={`!min-h-0 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${benchPct === p ? "bg-emerald-500 text-white border-emerald-500" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300"}`}>{p}%</button>
+                      <button key={p} type="button" onClick={() => setDeliveryBenchmarkInput(String(p))} className={`!min-h-0 px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${pl.benchPct === p ? "bg-emerald-500 text-white border-emerald-500" : "border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300"}`}>{p}%</button>
                     ))}
                     <div className="relative">
                       <input type="number" min={1} max={100} value={deliveryBenchmarkInput} onChange={(e) => setDeliveryBenchmarkInput(e.target.value)} className="w-14 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-2 pr-4 py-0.5 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
@@ -10514,34 +10527,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </div>
                 );
-                let body: JSX.Element;
-                if (beRatePct >= benchPct) {
-                  body = (
-                    <p className="m-0 text-[13px] text-rose-700 dark:text-rose-300 leading-relaxed">
-                      At a <strong>{benchPct}%</strong> delivery rate every order still loses money — you only break even at <strong>{Math.round(beRatePct)}%</strong>. Lift delivery above {Math.round(beRatePct)}% (or cut the {formatMoney(Math.round(be.adPerPlaced))}/order ad cost) before adding volume — more orders at this rate just grow the loss.
+                // Shared baseline — same current rate the break-even bar/headroom uses,
+                // so the two headrooms can never contradict.
+                const anchor = (
+                  <p className="m-0 text-[11px] text-gray-400">You're at <strong className="text-gray-600 dark:text-slate-300">{Math.round(be.currentRate)}%</strong> now · break-even <strong className="text-gray-600 dark:text-slate-300">{Math.round(pl.beRatePct)}%</strong> · 🎯 marker sits on the bar above</p>
+                );
+                let tone: string; let chip: JSX.Element; let detail: JSX.Element;
+                if (pl.underwater) {
+                  tone = "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-200";
+                  chip = <>unreachable at {pl.benchPct}%</>;
+                  detail = (
+                    <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
+                      At <strong>{pl.benchPct}%</strong> delivery every order still loses money — you only break even at <strong>{Math.round(pl.beRatePct)}%</strong>. Lift delivery above {Math.round(pl.beRatePct)}% (or cut the {formatMoney(Math.round(be.adPerPlaced))}/order ad cost) before adding volume — more orders at this rate just grow the loss.
                     </p>
                   );
-                } else if (targetRateOnCohort <= benchPct) {
-                  const revImplied = targetDeliveries * be.revenuePerDelivered;
-                  body = (
-                    <p className="m-0 text-[13px] text-gray-800 dark:text-slate-200 leading-relaxed">
-                      Reachable on your <strong>{be.placedN}</strong> orders: deliver <strong>{targetDeliveries}</strong> ({Math.round(targetRateOnCohort)}%) to net <strong>{formatMoney(targetVal)}</strong> — within your {benchPct}% benchmark. You're at {be.deliveredN} ({Math.round(be.currentRate)}%), so {extraDeliveries > 0 ? <>you need <strong>{extraDeliveries} more {extraDeliveries === 1 ? "delivery" : "deliveries"}</strong></> : <>you're already there ✅</>}. Revenue ≈ {formatMoney(revImplied)}.
+                } else if (pl.withinCohort) {
+                  const reached = pl.headroomPts >= 0;
+                  tone = reached ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200" : "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200";
+                  chip = reached ? <>+{pl.headroomPts} pts clear ✅</> : <>{pl.headroomPts} pts → +{pl.extraDeliveries} {pl.extraDeliveries === 1 ? "delivery" : "deliveries"}</>;
+                  detail = (
+                    <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
+                      Reachable on your <strong>{be.placedN}</strong> orders by rate: deliver <strong>{pl.targetDeliveries}</strong> ({Math.round(pl.targetRateOnCohort)}%) — within your {pl.benchPct}% benchmark. {reached ? <>You're already past it ✅.</> : <>You're at {be.deliveredN}, so <strong>+{pl.extraDeliveries} more {pl.extraDeliveries === 1 ? "delivery" : "deliveries"}</strong>.</>} Revenue ≈ {formatMoney(pl.revImplied)}.
                     </p>
                   );
                 } else {
-                  const netPerOrder = benchRate * be.contribution - fixedPerOrder; // > 0 here
-                  const ordersToPlace = Math.ceil(targetVal / netPerOrder);
-                  const deliveriesAtBench = Math.round(ordersToPlace * benchRate);
-                  const adBudget = Math.round(ordersToPlace * be.adPerPlaced);
-                  const moreOrders = ordersToPlace - be.placedN;
-                  const revAtBench = deliveriesAtBench * be.revenuePerDelivered;
-                  body = (
-                    <p className="m-0 text-[13px] text-gray-800 dark:text-slate-200 leading-relaxed">
-                      {targetDeliveries} deliveries would need a {Math.round(targetRateOnCohort)}% rate on just {be.placedN} orders — past your {benchPct}% benchmark. Realistically, at <strong>{benchPct}% delivery</strong> you'd <strong>place ~{ordersToPlace} orders</strong> (deliver ~{deliveriesAtBench}) to net <strong>{formatMoney(targetVal)}</strong> — {moreOrders > 0 ? <><strong>{moreOrders} more</strong> than</> : moreOrders < 0 ? <><strong>{Math.abs(moreOrders)} fewer</strong> than</> : <>about the same as</>} your {be.placedN} now. Est. ad budget ≈ <strong>{formatMoney(adBudget)}</strong>; revenue ≈ {formatMoney(revAtBench)}.
+                  tone = "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-200";
+                  chip = <>{pl.headroomPts} pts by rate → +{pl.moreOrders ?? 0} orders</>;
+                  detail = (
+                    <p className="m-0 text-[12px] text-gray-700 dark:text-slate-300 leading-relaxed">
+                      {pl.targetDeliveries} deliveries would need <strong>{Math.round(pl.targetRateOnCohort)}%</strong> on just {be.placedN} orders — past your {pl.benchPct}% benchmark, so you won't get there by rate. Realistically, at <strong>{pl.benchPct}% delivery</strong> <strong>place ~{pl.ordersToPlace} orders</strong> (deliver ~{pl.deliveriesAtBench}) — {(pl.moreOrders ?? 0) > 0 ? <><strong>{pl.moreOrders} more</strong> than</> : <>about</>} your {be.placedN} now. Ad budget ≈ <strong>{formatMoney(pl.adBudget ?? 0)}</strong>; revenue ≈ {formatMoney(pl.revAtBench)}.
                     </p>
                   );
                 }
-                return <div className="flex flex-col gap-2">{benchInput}{body}</div>;
+                const headroom = (
+                  <div className={`rounded-md px-2.5 py-1.5 flex items-center justify-between gap-2 flex-wrap ${tone}`}>
+                    <span className="text-[12px] font-bold">Target headroom · {formatMoney(targetVal)}</span>
+                    <span className="text-[13px] font-extrabold">{chip}</span>
+                  </div>
+                );
+                return <div className="flex flex-col gap-2">{benchInput}{headroom}{detail}{anchor}</div>;
               })()}
             </div>
           );
