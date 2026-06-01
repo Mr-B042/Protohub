@@ -6492,6 +6492,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.currency", currency); }, [currency]);
   useEffect(() => { writePref("protohub.dashboard.revPerfMode", revPerfMode); }, [revPerfMode]);
   useEffect(() => { writePref("protohub.dashboard.revPerfCompareMode", revPerfCompareMode); }, [revPerfCompareMode]);
+  // Order-inflow heatmap controls (metric / fixed window / hour grouping).
+  const [heatmapMetric, setHeatmapMetric] = useState<"orders" | "delivered" | "revenue">("orders");
+  const [heatmapWindow, setHeatmapWindow] = useState<"30" | "90" | "all">("90");
+  const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">("hour");
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
@@ -10580,37 +10584,59 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // org's canonical delivery rate.
   const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
-  // Order-inflow heatmap: count orders by weekday (Sun-Sat) × hour (0-23) in
-  // Nigerian time (WAT = UTC+1), over the dashboard's period + product filter.
-  // Surfaces when orders flow in vs when it's slow.
+  // Order-inflow heatmap: orders by weekday (Sun-Sat) × hour in Nigerian time
+  // (WAT = UTC+1). Bucketed by when the order CAME IN. Configurable metric
+  // (count / delivered / delivered revenue), a fixed rolling window independent
+  // of the dashboard period, and hourly or 3-hour-block columns. Still honours
+  // the dashboard product filter.
+  const heatmapDayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const heatmapHourLabel = (h: number) => `${(h % 12 === 0 ? 12 : h % 12)}${h < 12 ? "a" : "p"}`;
   const orderHeatmap = (() => {
-    const grid: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    const colSpan = heatmapGroup === "3h" ? 3 : 1;
+    const cols = 24 / colSpan;
+    const grid: number[][] = Array.from({ length: 7 }, () => new Array(cols).fill(0));
+    const cutoff = heatmapWindow === "all" ? null : Date.now() - (heatmapWindow === "30" ? 30 : 90) * 86_400_000;
     let max = 0;
     let total = 0;
-    for (const o of dashboardOrders) {
+    for (const o of trackedOrders) {
+      if (!matchesProductFilter(o.productId, o.productName, dashboardProductIds)) continue;
       const raw = o.createdAt ?? o.date;
       if (!raw) continue;
       const ms = new Date(raw).getTime();
       if (!Number.isFinite(ms)) continue;
-      const wat = new Date(ms + 60 * 60 * 1000); // shift to WAT, then read UTC parts
+      if (cutoff !== null && ms < cutoff) continue;
+      const delivered = (o.status ?? "New") === "Delivered";
+      let value = 0;
+      if (heatmapMetric === "orders") value = 1;
+      else if (heatmapMetric === "delivered") value = delivered ? 1 : 0;
+      else value = delivered ? Math.max(0, o.amount || 0) : 0; // revenue (delivered only)
+      if (value <= 0) continue;
+      const wat = new Date(ms + 60 * 60 * 1000);
       const day = wat.getUTCDay();
-      const hour = wat.getUTCHours();
-      grid[day][hour] += 1;
-      total += 1;
-      if (grid[day][hour] > max) max = grid[day][hour];
+      const col = Math.floor(wat.getUTCHours() / colSpan);
+      grid[day][col] += value;
+      total += value;
+      if (grid[day][col] > max) max = grid[day][col];
     }
-    let peak = { day: -1, hour: -1, count: 0 };
-    for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) {
-      if (grid[d][h] > peak.count) peak = { day: d, hour: h, count: grid[d][h] };
+    let peak = { day: -1, col: -1, value: 0 };
+    for (let d = 0; d < 7; d++) for (let c = 0; c < cols; c++) {
+      if (grid[d][c] > peak.value) peak = { day: d, col: c, value: grid[d][c] };
     }
     const dayTotals = grid.map((row) => row.reduce((a, b) => a + b, 0));
-    const hourTotals = Array.from({ length: 24 }, (_, h) => grid.reduce((a, row) => a + row[h], 0));
+    const colTotals = Array.from({ length: cols }, (_, c) => grid.reduce((a, row) => a + row[c], 0));
     const topDay = dayTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
-    const topHour = hourTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
-    return { grid, max, total, peak, dayTotals, hourTotals, topDay, topHour };
+    const topCol = colTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
+    return { grid, cols, colSpan, max, total, peak, dayTotals, topDay, topCol };
   })();
-  const heatmapDayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const heatmapHourLabel = (h: number) => `${(h % 12 === 0 ? 12 : h % 12)}${h < 12 ? "a" : "p"}`;
+  // Label for a column (hour or 3h block) and value formatting per metric.
+  const heatmapColLabel = (col: number) => {
+    const start = col * orderHeatmap.colSpan;
+    return orderHeatmap.colSpan === 3 ? `${heatmapHourLabel(start)}–${heatmapHourLabel((start + 3) % 24)}` : heatmapHourLabel(start);
+  };
+  const formatHeatValue = (v: number) =>
+    heatmapMetric === "revenue" ? formatMoney(v) : `${v} order${v === 1 ? "" : "s"}`;
+  const heatmapWindowLabel = heatmapWindow === "all" ? "all time" : `last ${heatmapWindow} days`;
+  const heatmapMetricLabel = heatmapMetric === "orders" ? "Orders" : heatmapMetric === "delivered" ? "Delivered" : "Revenue";
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
   // have an amount, so the projection still produces a sensible number.
@@ -28185,43 +28211,60 @@ ${waybillLineItems(w).length > 1
               </section>
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-                <div className="flex items-start justify-between flex-wrap gap-2">
+                <div className="flex items-start justify-between flex-wrap gap-3">
                   <div>
                     <h2 className="text-base font-bold text-gray-900 m-0">When orders come in</h2>
-                    <p className="text-xs text-gray-400 m-0">Order inflow by day &amp; hour · Nigerian time (WAT) · matches your dashboard period</p>
+                    <p className="text-xs text-gray-400 m-0">{heatmapMetricLabel} by day &amp; hour · {heatmapWindowLabel} · Nigerian time (WAT)</p>
                   </div>
-                  {orderHeatmap.total > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                      {orderHeatmap.peak.count > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapHourLabel(orderHeatmap.peak.hour)} ({orderHeatmap.peak.count})</span>
-                      )}
-                      {orderHeatmap.topDay.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Top day: {heatmapDayLabels[orderHeatmap.topDay.i]}</span>}
-                      {orderHeatmap.topHour.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak hour: {heatmapHourLabel(orderHeatmap.topHour.i)}</span>}
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {([["orders", "Orders"], ["delivered", "Delivered"], ["revenue", "Revenue"]] as const).map(([id, label]) => (
+                        <button key={id} onClick={() => setHeatmapMetric(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapMetric === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                      ))}
                     </div>
-                  )}
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {([["30", "30d"], ["90", "90d"], ["all", "All"]] as const).map(([id, label]) => (
+                        <button key={id} onClick={() => setHeatmapWindow(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapWindow === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                      ))}
+                    </div>
+                    <div className="inline-flex items-center bg-gray-100 p-0.5 rounded-md">
+                      {([["hour", "Hourly"], ["3h", "3-hr"]] as const).map(([id, label]) => (
+                        <button key={id} onClick={() => setHeatmapGroup(id)} className={`!min-h-0 px-2.5 py-1 rounded transition-colors font-semibold ${heatmapGroup === id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+                {orderHeatmap.total > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                    {orderHeatmap.peak.value > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapColLabel(orderHeatmap.peak.col)} ({formatHeatValue(orderHeatmap.peak.value)})</span>
+                    )}
+                    {orderHeatmap.topDay.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Top day: {heatmapDayLabels[orderHeatmap.topDay.i]}</span>}
+                    {orderHeatmap.topCol.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak time: {heatmapColLabel(orderHeatmap.topCol.i)}</span>}
+                  </div>
+                )}
                 {orderHeatmap.total === 0 ? (
-                  <p className="text-sm text-gray-400 m-0">No orders in this period yet — widen the dashboard period to see the pattern.</p>
+                  <p className="text-sm text-gray-400 m-0">No {heatmapMetric === "revenue" ? "delivered revenue" : heatmapMetric === "delivered" ? "delivered orders" : "orders"} in this window yet — widen the window or switch the metric.</p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <div className="min-w-[640px]">
+                    <div className={heatmapGroup === "3h" ? "min-w-[360px]" : "min-w-[640px]"}>
                       <div className="flex items-center gap-1 mb-1 pl-10">
-                        {Array.from({ length: 24 }, (_, h) => (
-                          <div key={h} className="flex-1 text-center text-[9px] text-gray-400">{h % 3 === 0 ? heatmapHourLabel(h) : ""}</div>
+                        {Array.from({ length: orderHeatmap.cols }, (_, c) => (
+                          <div key={c} className="flex-1 text-center text-[9px] text-gray-400">{(orderHeatmap.colSpan === 3 || c % 3 === 0) ? heatmapColLabel(c) : ""}</div>
                         ))}
                       </div>
                       <div className="flex flex-col gap-1">
                         {orderHeatmap.grid.map((row, d) => (
                           <div key={d} className="flex items-center gap-1">
                             <div className="w-9 shrink-0 text-[11px] font-bold text-gray-500">{heatmapDayLabels[d]}</div>
-                            {row.map((count, h) => {
-                              const intensity = orderHeatmap.max > 0 ? count / orderHeatmap.max : 0;
+                            {row.map((value, c) => {
+                              const intensity = orderHeatmap.max > 0 ? value / orderHeatmap.max : 0;
                               return (
                                 <div
-                                  key={h}
+                                  key={c}
                                   className="flex-1 aspect-square rounded-[3px] min-w-[14px]"
-                                  style={{ backgroundColor: count === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${0.18 + intensity * 0.82})` }}
-                                  title={`${heatmapDayLabels[d]} ${heatmapHourLabel(h)} — ${count} order${count === 1 ? "" : "s"}`}
+                                  style={{ backgroundColor: value === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${0.18 + intensity * 0.82})` }}
+                                  title={`${heatmapDayLabels[d]} ${heatmapColLabel(c)} — ${formatHeatValue(value)}`}
                                 />
                               );
                             })}
