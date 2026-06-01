@@ -24228,6 +24228,16 @@ ${waybillLineItems(w).length > 1
     setSelectedOrderId(orderId);
     setModal("orderDetails");
   };
+  // Same in-place pattern for agents + sales reps — open their profile popup
+  // without navigating away (used from Finance, Round-Robin, Inventory, etc.).
+  const openAgentDetailPopup = (agentId: string) => {
+    setSelectedAgentId(agentId);
+    setModal("agentDetails");
+  };
+  const openSalesRepDetailPopup = (userId: string) => {
+    setSelectedSalesRepId(userId);
+    setModal("salesRepDetails");
+  };
 
   const openScopedOrderEdit = (order: TrackedOrder) => {
     if (currentRole === "Sales Rep") {
@@ -36523,7 +36533,7 @@ ${waybillLineItems(w).length > 1
                                 <div className="font-semibold text-[#1F8FE0]">{formatMoney(row.profitContribution)}</div>
                               </div>
                             </div>
-                            <button className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors w-full" onClick={() => openAdminAgentDetail(row.agent.id)}>Details</button>
+                            <button className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors w-full" onClick={() => openAgentDetailPopup(row.agent.id)}>Details</button>
                           </article>
                         ))
                       )}
@@ -36552,7 +36562,7 @@ ${waybillLineItems(w).length > 1
                                 <td className="px-4 py-4 font-semibold text-gray-900">{formatMoney(row.stockValue)}</td>
                                 <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.profitContribution)}</td>
                                 <td className="px-4 py-4">
-                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminAgentDetail(row.agent.id)}>Details</button>
+                                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAgentDetailPopup(row.agent.id)}>Details</button>
                                 </td>
                               </tr>
                             ))
@@ -39092,7 +39102,7 @@ ${waybillLineItems(w).length > 1
                           </button>
                           <button
                             className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100"
-                            onClick={() => openAdminSalesRepDetail(nextRep.id)}
+                            onClick={() => openSalesRepDetailPopup(nextRep.id)}
                           >
                             <Eye className="h-4 w-4" /> View Performance
                           </button>
@@ -42287,7 +42297,7 @@ ${waybillLineItems(w).length > 1
                                 <PackagePlus className="h-3.5 w-3.5" />
                                 Assign stock
                               </button>
-                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAdminAgentDetail(alert.agentId)}>
+                              <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAgentDetailPopup(alert.agentId)}>
                                 <Eye className="h-3.5 w-3.5" />
                                 Agent
                               </button>
@@ -42333,7 +42343,7 @@ ${waybillLineItems(w).length > 1
                                       <PackagePlus className="h-3.5 w-3.5" />
                                       Assign stock
                                     </button>
-                                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAdminAgentDetail(alert.agentId)}>
+                                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={() => openAgentDetailPopup(alert.agentId)}>
                                       <Eye className="h-3.5 w-3.5" />
                                       View agent
                                     </button>
@@ -43315,7 +43325,7 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
                               <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentAssignStockRoute(row.agent.id)}><PackagePlus className="w-3.5 h-3.5" /> Assign Stock</button>
-                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAdminAgentDetail(row.agent.id)}><Eye className="w-3.5 h-3.5" /> View Details</button>
+                              <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openAgentDetailPopup(row.agent.id)}><Eye className="w-3.5 h-3.5" /> View Details</button>
                             </div>
                           </article>
                         );
