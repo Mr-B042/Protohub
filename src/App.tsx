@@ -10580,6 +10580,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // org's canonical delivery rate.
   const dashboardDeliveryRateExact = dashboardOrders.length === 0 ? 0 : (dashboardDeliveredOrders.length / dashboardOrders.length) * 100;
   const dashboardDeliveryRate = Math.round(dashboardDeliveryRateExact);
+  // Order-inflow heatmap: count orders by weekday (Sun-Sat) × hour (0-23) in
+  // Nigerian time (WAT = UTC+1), over the dashboard's period + product filter.
+  // Surfaces when orders flow in vs when it's slow.
+  const orderHeatmap = (() => {
+    const grid: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    let max = 0;
+    let total = 0;
+    for (const o of dashboardOrders) {
+      const raw = o.createdAt ?? o.date;
+      if (!raw) continue;
+      const ms = new Date(raw).getTime();
+      if (!Number.isFinite(ms)) continue;
+      const wat = new Date(ms + 60 * 60 * 1000); // shift to WAT, then read UTC parts
+      const day = wat.getUTCDay();
+      const hour = wat.getUTCHours();
+      grid[day][hour] += 1;
+      total += 1;
+      if (grid[day][hour] > max) max = grid[day][hour];
+    }
+    let peak = { day: -1, hour: -1, count: 0 };
+    for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) {
+      if (grid[d][h] > peak.count) peak = { day: d, hour: h, count: grid[d][h] };
+    }
+    const dayTotals = grid.map((row) => row.reduce((a, b) => a + b, 0));
+    const hourTotals = Array.from({ length: 24 }, (_, h) => grid.reduce((a, row) => a + row[h], 0));
+    const topDay = dayTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
+    const topHour = hourTotals.reduce((best, n, i) => (n > best.n ? { i, n } : best), { i: -1, n: 0 });
+    return { grid, max, total, peak, dayTotals, hourTotals, topDay, topHour };
+  })();
+  const heatmapDayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const heatmapHourLabel = (h: number) => `${(h % 12 === 0 ? 12 : h % 12)}${h < 12 ? "a" : "p"}`;
   // Average order value for the simulator. Prefer revenue per delivered
   // order; if no deliveries yet, fall back to AOV across all orders that
   // have an amount, so the projection still produces a sensible number.
@@ -28151,6 +28182,62 @@ ${waybillLineItems(w).length > 1
                   <span>− Operating ({dashboardExpenseRate}%)</span><ArrowRight className="w-3 h-3" />
                   <strong className="text-gray-900">Net Profit</strong>
                 </div>
+              </section>
+
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
+                <div className="flex items-start justify-between flex-wrap gap-2">
+                  <div>
+                    <h2 className="text-base font-bold text-gray-900 m-0">When orders come in</h2>
+                    <p className="text-xs text-gray-400 m-0">Order inflow by day &amp; hour · Nigerian time (WAT) · matches your dashboard period</p>
+                  </div>
+                  {orderHeatmap.total > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                      {orderHeatmap.peak.count > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1">🔥 Busiest: {heatmapDayLabels[orderHeatmap.peak.day]} {heatmapHourLabel(orderHeatmap.peak.hour)} ({orderHeatmap.peak.count})</span>
+                      )}
+                      {orderHeatmap.topDay.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Top day: {heatmapDayLabels[orderHeatmap.topDay.i]}</span>}
+                      {orderHeatmap.topHour.i >= 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1">Peak hour: {heatmapHourLabel(orderHeatmap.topHour.i)}</span>}
+                    </div>
+                  )}
+                </div>
+                {orderHeatmap.total === 0 ? (
+                  <p className="text-sm text-gray-400 m-0">No orders in this period yet — widen the dashboard period to see the pattern.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[640px]">
+                      <div className="flex items-center gap-1 mb-1 pl-10">
+                        {Array.from({ length: 24 }, (_, h) => (
+                          <div key={h} className="flex-1 text-center text-[9px] text-gray-400">{h % 3 === 0 ? heatmapHourLabel(h) : ""}</div>
+                        ))}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {orderHeatmap.grid.map((row, d) => (
+                          <div key={d} className="flex items-center gap-1">
+                            <div className="w-9 shrink-0 text-[11px] font-bold text-gray-500">{heatmapDayLabels[d]}</div>
+                            {row.map((count, h) => {
+                              const intensity = orderHeatmap.max > 0 ? count / orderHeatmap.max : 0;
+                              return (
+                                <div
+                                  key={h}
+                                  className="flex-1 aspect-square rounded-[3px] min-w-[14px]"
+                                  style={{ backgroundColor: count === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${0.18 + intensity * 0.82})` }}
+                                  title={`${heatmapDayLabels[d]} ${heatmapHourLabel(h)} — ${count} order${count === 1 ? "" : "s"}`}
+                                />
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5 mt-2 text-[10px] text-gray-400">
+                        <span>Fewer</span>
+                        {[0, 0.4, 0.65, 0.85, 1].map((a, i) => (
+                          <span key={i} className="w-3.5 h-3.5 rounded-[3px]" style={{ backgroundColor: i === 0 ? "rgba(148,163,184,0.12)" : `rgba(31,143,224,${a})` }} />
+                        ))}
+                        <span>More</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
