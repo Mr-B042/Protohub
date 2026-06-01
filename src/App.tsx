@@ -6496,6 +6496,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [heatmapMetric, setHeatmapMetric] = useState<"orders" | "delivered" | "revenue">("orders");
   const [heatmapWindow, setHeatmapWindow] = useState<"dashboard" | "30" | "90" | "all">("dashboard");
   const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">("hour");
+  // Target-profit planner: a net-profit goal for the period; the break-even panel
+  // goal-seeks the deliveries + delivery rate needed to hit it.
+  const [profitTargetInput, setProfitTargetInput] = useState<string>(() =>
+    readPref<string>("protohub.finance.profitTarget", "", (raw) => raw)
+  );
+  useEffect(() => { writePref("protohub.finance.profitTarget", profitTargetInput); }, [profitTargetInput]);
   useEffect(() => { writePref("protohub.dashboard.revPerfGranularity", revPerfGranularity); }, [revPerfGranularity]);
   useEffect(() => { writePref("protohub.dashboard.revPerfShowPrevious", revPerfShowPrevious ? "true" : "false"); }, [revPerfShowPrevious]);
   // Mirror Orders page filters too — same UI-pref rationale.
@@ -10358,6 +10364,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       wastedAd: placedN > 0 ? adSpend * (placedN - deliveredN) / placedN : 0,
       recoverable,
       netProfit: econ.netProfit,
+      revenuePerDelivered: deliveredN > 0 ? econ.revenue / deliveredN : 0,
     };
   };
   // 0–100 track: fill to current delivery rate (green if profitable, rose if not),
@@ -10429,6 +10436,51 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div><p className="text-[11px] text-gray-400 m-0">Ad spent on non-delivered</p><p className="font-bold text-amber-700 m-0 dark:text-amber-300">{formatMoney(be.wastedAd)}</p></div>
           <div><p className="text-[11px] text-gray-400 m-0">Recoverable pipeline</p><p className="font-bold text-[#1F8FE0] m-0">{formatMoney(be.recoverable)}</p><p className="text-[10px] text-gray-400 m-0">already ad-funded</p></div>
         </div>
+        {(() => {
+          const targetVal = Math.max(0, Number(String(profitTargetInput).replace(/[^0-9.]/g, "")) || 0);
+          const presets: [string, string][] = [["500000", "₦500K"], ["700000", "₦700K"], ["1000000", "₦1M"]];
+          return (
+            <div className="rounded-lg border border-dashed border-gray-300 dark:border-slate-700 p-3 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">🎯 Target profit planner</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {presets.map(([v, l]) => (
+                    <button key={v} type="button" onClick={() => setProfitTargetInput(v)} className={`!min-h-0 px-2 py-1 rounded-md text-[11px] font-bold border transition-colors ${targetVal === Number(v) ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300"}`}>{l}</button>
+                  ))}
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">₦</span>
+                    <input type="number" min={0} value={profitTargetInput} onChange={(e) => setProfitTargetInput(e.target.value)} placeholder="custom" className="w-24 rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#101a24] pl-5 pr-2 py-1 text-[12px] text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                  </div>
+                  {targetVal > 0 && <button type="button" onClick={() => setProfitTargetInput("")} className="!min-h-0 px-1.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-gray-700">Clear</button>}
+                </div>
+              </div>
+              {targetVal <= 0 ? (
+                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">Set a net-profit goal to see the deliveries + delivery rate needed to hit it.</p>
+              ) : be.contribution <= 0 ? (
+                <p className="m-0 text-[12px] text-gray-500 dark:text-slate-400">No per-delivery margin in this period yet — can't plan a target.</p>
+              ) : (() => {
+                const targetDeliveries = Math.ceil((be.fixed + targetVal) / be.contribution);
+                const targetRate = be.placedN > 0 ? (targetDeliveries / be.placedN) * 100 : 0;
+                const extraDeliveries = targetDeliveries - be.deliveredN;
+                const maxNet = be.placedN * be.contribution - be.fixed;
+                const revImplied = targetDeliveries * be.revenuePerDelivered;
+                const ordersNeeded = be.currentRate > 0 ? Math.ceil(targetDeliveries / (be.currentRate / 100)) : null;
+                if (targetRate <= 100) {
+                  return (
+                    <p className="m-0 text-[13px] text-gray-800 dark:text-slate-200 leading-relaxed">
+                      To net <strong>{formatMoney(targetVal)}</strong>: deliver <strong>{targetDeliveries}</strong> of {be.placedN} orders — a <strong>{Math.round(targetRate)}% delivery rate</strong>. You're at {be.deliveredN} ({Math.round(be.currentRate)}%), so {extraDeliveries > 0 ? <>you need <strong>{extraDeliveries} more {extraDeliveries === 1 ? "delivery" : "deliveries"}</strong> (+{Math.round(targetRate - be.currentRate)} pts)</> : <>you're already there ✅</>}. Revenue ≈ {formatMoney(revImplied)}.
+                    </p>
+                  );
+                }
+                return (
+                  <p className="m-0 text-[13px] text-amber-800 dark:text-amber-200 leading-relaxed">
+                    <strong>{formatMoney(targetVal)}</strong> is beyond this period's {be.placedN} orders — even at 100% delivery you'd net ≈ <strong>{formatMoney(maxNet)}</strong>.{ordersNeeded != null && <> To reach it you'd need ~<strong>{ordersNeeded} orders placed</strong> at today's {Math.round(be.currentRate)}% delivery (more ad spend), delivering {targetDeliveries}.</>}
+                  </p>
+                );
+              })()}
+            </div>
+          );
+        })()}
       </section>
     );
   };
