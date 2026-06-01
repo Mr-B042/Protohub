@@ -201,7 +201,13 @@ const buildResolvedPackageSnapshot = async (
   return [{
     productId,
     productName,
-    quantity: Math.max(1, Number(targetPackage.quantity) || 1) * normalizedBundleCount,
+    // A component-less cross-sell add-on is ordered + priced PER PIECE
+    // (bundleCount = the pieces the customer chose, line.amount = unitPrice ×
+    // bundleCount). Deduct exactly that many pieces of the add-on product.
+    // Previously this multiplied by units_per_pack (targetPackage.quantity),
+    // inflating e.g. 3 → 12 for a "Starter Pack" (units_per_pack 4) and
+    // over-deducting inventory + showing "12pcs" in the Copy Summary.
+    quantity: normalizedBundleCount,
     isFreeGift: false,
     sourceType: "cross_sell" as const
   }];
