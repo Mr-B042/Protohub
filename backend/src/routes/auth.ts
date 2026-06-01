@@ -526,7 +526,7 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 router.get("/team", requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at, round_robin_position, last_seen_at, permissions, extra_pages, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
+    .select("id, name, email, phone, role, active, created_at, round_robin_position, round_robin_excluded, last_seen_at, permissions, extra_pages, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -586,7 +586,9 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     agentBalanceAgentIds: "agent_balance_agent_ids",
     agent_balance_agent_ids: "agent_balance_agent_ids",
     roundRobinPosition: "round_robin_position",
-    round_robin_position: "round_robin_position"
+    round_robin_position: "round_robin_position",
+    roundRobinExcluded: "round_robin_excluded",
+    round_robin_excluded: "round_robin_excluded"
   };
   const updates: Record<string, unknown> = {};
   for (const [inKey, dbKey] of Object.entries(allowed)) {

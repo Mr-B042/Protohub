@@ -433,6 +433,9 @@ type ManagedUser = {
   agentBalanceAgentIds?: string[];
   assignedAgentIds?: string[];
   roundRobinPosition?: number;
+  // Paused from round-robin auto-assignment only — independent of `active`
+  // (login/visibility). Excluded reps can still log in + be assigned manually.
+  roundRobinExcluded?: boolean;
 };
 
 const WEEKEND_STOCK_SUMMARY_PAGE = "Weekend Stock Summary" as const;
@@ -4679,7 +4682,8 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
     agentBalanceStateScope: Array.isArray(user.agentBalanceStateScope) ? user.agentBalanceStateScope.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     agentBalanceAgentIds: Array.isArray(user.agentBalanceAgentIds) ? user.agentBalanceAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     assignedAgentIds: Array.isArray(user.assignedAgentIds) ? user.assignedAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
-    roundRobinPosition: user.roundRobinPosition ?? 0
+    roundRobinPosition: user.roundRobinPosition ?? 0,
+    roundRobinExcluded: (user.roundRobinExcluded ?? user.round_robin_excluded) === true
   };
 };
 
@@ -9363,7 +9367,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     throw lastError ?? new Error("This product is still syncing to the public order form.");
   };
   const salesRepUsers = users.filter((user) => user.role === "Sales Rep");
-  const activeSalesRepUsers = salesRepUsers.filter((user) => user.active);
+  // Round-robin eligibility = signed-in AND not paused from rotation. `active`
+  // stays login/visibility; `roundRobinExcluded` only pauses auto-assignment.
+  // Manual assignment uses `assignableUsers` (active-only) so paused reps can
+  // still be hand-assigned.
+  const activeSalesRepUsers = salesRepUsers.filter((user) => user.active && !user.roundRobinExcluded);
   useEffect(() => {
     if (!selectedCartId) {
       return;
@@ -15208,7 +15216,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }))
     .sort((a, b) => (a.user.roundRobinPosition ?? 0) - (b.user.roundRobinPosition ?? 0) || a.user.name.localeCompare(b.user.name));
   const roundRobinExcludedRows = salesRepUsers
-    .filter((user) => !user.active)
+    // Paused from rotation (new flag) — NOT account-inactive. Deactivated
+    // accounts are managed in User Management, not here.
+    .filter((user) => user.roundRobinExcluded === true)
     .map((user) => ({
       user,
       openOrders: trackedOrders.filter((order) => order.assignedRepId === user.id && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "New")).length,
@@ -16959,7 +16969,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             agentBalanceStateScope: Array.isArray(u.agentBalanceStateScope ?? u.agent_balance_state_scope) ? (u.agentBalanceStateScope ?? u.agent_balance_state_scope) : [],
             agentBalanceAgentIds: Array.isArray(u.agentBalanceAgentIds ?? u.agent_balance_agent_ids) ? (u.agentBalanceAgentIds ?? u.agent_balance_agent_ids) : [],
             assignedAgentIds: Array.isArray(u.assignedAgentIds ?? u.assigned_agent_ids) ? (u.assignedAgentIds ?? u.assigned_agent_ids) : [],
-            roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0
+            roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0,
+            roundRobinExcluded: (u.roundRobinExcluded ?? u.round_robin_excluded) === true
           })));
         }
       };
@@ -24103,6 +24114,35 @@ ${waybillLineItems(w).length > 1
     usersApi.update(user.id, { active: !prevActive }).catch((err: any) => {
       setUsers((value) => value.map((item) => item.id === user.id ? { ...item, active: prevActive } : item));
       showToast(`Failed to update status: ${err.message}`);
+    });
+  };
+  // Pause / resume a rep in the round-robin WITHOUT touching their login (active).
+  // On re-enable they rejoin at the BACK of the line (max active position + 1) so
+  // they don't jump ahead of reps who covered while they were paused. Persisted via
+  // teamApi (which owns round_robin_position); optimistic with rollback.
+  const toggleManagedUserRoundRobin = (user: ManagedUser) => {
+    if (isTemporaryUserId(user.id)) {
+      showToast("This user is still syncing. Try again in a moment.");
+      return;
+    }
+    const prevExcluded = user.roundRobinExcluded === true;
+    const nextExcluded = !prevExcluded;
+    const prevPosition = user.roundRobinPosition ?? 0;
+    const maxActivePos = users
+      .filter((u) => u.role === "Sales Rep" && u.active && !u.roundRobinExcluded && u.id !== user.id)
+      .reduce((m, u) => Math.max(m, u.roundRobinPosition ?? 0), 0);
+    const nextPosition = nextExcluded ? prevPosition : maxActivePos + 1;
+    setUsers((value) => value.map((item) =>
+      item.id === user.id ? { ...item, roundRobinExcluded: nextExcluded, roundRobinPosition: nextPosition } : item));
+    showToast(nextExcluded
+      ? `${user.name} paused from rotation (still has account access).`
+      : `${user.name} is back in rotation — at the back of the line.`);
+    const payload: Record<string, unknown> = { roundRobinExcluded: nextExcluded };
+    if (!nextExcluded) payload.roundRobinPosition = nextPosition;
+    teamApi.update(user.id, payload).catch((err: any) => {
+      setUsers((value) => value.map((item) =>
+        item.id === user.id ? { ...item, roundRobinExcluded: prevExcluded, roundRobinPosition: prevPosition } : item));
+      showToast(`Failed to update rotation: ${err.message}`);
     });
   };
 
@@ -39500,7 +39540,7 @@ ${waybillLineItems(w).length > 1
                           <span><strong className="text-gray-900">{row.openOrders}</strong> open</span>
                           <span><strong className="text-gray-900">{row.delivered}</strong> delivered</span>
                         </div>
-                        <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => openAdminUserEditRoute(row.user.id)}>{row.user.active ? "Exclude" : "Enable"}</button>
+                        <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors shrink-0" onClick={() => toggleManagedUserRoundRobin(row.user)}>{row.user.roundRobinExcluded ? "Re-enable" : "Exclude from rotation"}</button>
                       </article>
                     ))}
                   </div>
@@ -48946,7 +48986,7 @@ ${waybillLineItems(w).length > 1
                     <div className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg p-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900 m-0">Active</p>
-                        <p className="text-xs text-gray-500 m-0 mt-0.5">When inactive, the user can't sign in. For Sales Reps, they're also removed from round-robin.</p>
+                        <p className="text-xs text-gray-500 m-0 mt-0.5">When inactive, the user can't sign in (and stops getting new orders). To pause a Sales Rep from round-robin only — keeping their login — use "Exclude from rotation" on the Round-Robin page.</p>
                       </div>
                       <button
                         type="button"

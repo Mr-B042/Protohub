@@ -119,6 +119,8 @@ export type ManagedUser = {
   agentBalanceStateScope?: string[];
   agentBalanceAgentIds?: string[];
   assignedAgentIds?: string[];
+  // Paused from round-robin auto-assignment only (not login/visibility).
+  roundRobinExcluded?: boolean;
 };
 
 export type PayStructureType = "Per Delivered Order" | "Fixed Salary" | "Hybrid" | "Performance Bonus";

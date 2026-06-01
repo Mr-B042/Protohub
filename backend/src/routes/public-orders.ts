@@ -671,6 +671,9 @@ router.post("/", submitRateLimit, async (req, res) => {
       .select("id, round_robin_position")
       .eq("org_id", product.org_id)
       .eq("active", true)
+      // Paused-from-rotation reps are skipped by auto-assign (but keep their
+      // login — `active` is untouched). Source of truth for the round-robin.
+      .eq("round_robin_excluded", false)
       .eq("role", "Sales Rep")
       .order("round_robin_position", { ascending: true, nullsFirst: false });
 

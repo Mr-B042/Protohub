@@ -232,9 +232,10 @@ async function main() {
     supabase.from("organizations").select("id, name").eq("id", orgId).single(),
     supabase
       .from("users")
-      .select("id, name, email, role, active, round_robin_position")
+      .select("id, name, email, role, active, round_robin_position, round_robin_excluded")
       .eq("org_id", orgId)
       .eq("active", true)
+      .eq("round_robin_excluded", false)
       .order("round_robin_position", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: true }),
     supabase
