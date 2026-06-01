@@ -22811,6 +22811,7 @@ ${waybillLineItems(w).length > 1
     if (lineItems.length > 1) {
       const productsSnapshotPre   = [...products];
       const agentStockSnapshotPre = [...agentStock];
+      const agentsSnapshotPre     = [...agents];
       const movementIdsBefore     = new Set(stockMovements.map((m) => m.id));
       const waybillSnapshotPre    = waybillRecords.find((w) => w.id === waybillId);
       const toAgent = record.toAgentId ? agents.find((a) => a.id === record.toAgentId) : null;
@@ -22824,6 +22825,14 @@ ${waybillLineItems(w).length > 1
             return [...prev, { agentId: record.toAgentId!, productId: it.productId, quantity: it.quantity, defective: 0, missing: 0 }];
           });
           setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, agentStock: p.agentStock + it.quantity } : p));
+          if (record.toAgentLocationId) {
+            adjustAgentLocationStock(record.toAgentId, record.toAgentLocationId, it.productId, (current) => ({
+              productId: it.productId,
+              quantity: Number(current?.quantity ?? 0) + it.quantity,
+              defective: Number(current?.defective ?? 0),
+              missing: Number(current?.missing ?? 0)
+            }));
+          }
         } else {
           setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, warehouseStock: p.warehouseStock + it.quantity } : p));
         }
@@ -22846,6 +22855,7 @@ ${waybillLineItems(w).length > 1
       waybillsApi.updateStatus(waybillId, { status: "Received" }).catch((err: any) => {
         setProducts(productsSnapshotPre);
         setAgentStock(agentStockSnapshotPre);
+        setAgents(agentsSnapshotPre);
         setStockMovements((prev) => prev.filter((m) => movementIdsBefore.has(m.id)));
         if (waybillSnapshotPre) setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? waybillSnapshotPre : w));
         showToast(`Failed to mark ${waybillId} received: ${err?.message ?? "please retry"}.`);
@@ -22863,10 +22873,11 @@ ${waybillLineItems(w).length > 1
     }
 
     // Snapshots for the rollback at the bottom — the function below mutates
-    // products + agentStock + stockMovements + waybillRecords. If the API
-    // rejects the status flip, restore all of them.
+    // products + agentStock + agents (per-hub stock) + stockMovements +
+    // waybillRecords. If the API rejects the status flip, restore all of them.
     const productsSnapshotPre   = [...products];
     const agentStockSnapshotPre = [...agentStock];
+    const agentsSnapshotPre     = [...agents];
     const movementIdsBefore     = new Set(stockMovements.map((m) => m.id));
     const waybillSnapshotPre    = waybillRecords.find((w) => w.id === waybillId);
 
@@ -22881,6 +22892,14 @@ ${waybillLineItems(w).length > 1
           return [...prev, { agentId: record.toAgentId!, productId: record.productId, quantity: received, defective: 0, missing: 0 }];
         });
         setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, agentStock: p.agentStock + received } : p));
+        if (record.toAgentLocationId) {
+          adjustAgentLocationStock(record.toAgentId, record.toAgentLocationId, record.productId, (current) => ({
+            productId: record.productId,
+            quantity: Number(current?.quantity ?? 0) + received,
+            defective: Number(current?.defective ?? 0),
+            missing: Number(current?.missing ?? 0)
+          }));
+        }
       } else {
         setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, warehouseStock: p.warehouseStock + received } : p));
       }
@@ -22896,6 +22915,14 @@ ${waybillLineItems(w).length > 1
             : s
         ));
         setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, agentStock: p.agentStock + diff } : p));
+        if (record.fromAgentLocationId) {
+          adjustAgentLocationStock(record.fromAgentId, record.fromAgentLocationId, record.productId, (current) => ({
+            productId: record.productId,
+            quantity: Number(current?.quantity ?? 0) + diff,
+            defective: Number(current?.defective ?? 0),
+            missing: Number(current?.missing ?? 0)
+          }));
+        }
       } else {
         // Source was warehouse
         setProducts((prev) => prev.map((p) => p.id === record.productId ? { ...p, warehouseStock: p.warehouseStock + diff } : p));
@@ -22973,6 +23000,7 @@ ${waybillLineItems(w).length > 1
       // Restore every slice this handler touched.
       setProducts(productsSnapshotPre);
       setAgentStock(agentStockSnapshotPre);
+      setAgents(agentsSnapshotPre);
       setStockMovements((prev) => prev.filter((m) => movementIdsBefore.has(m.id)));
       if (waybillSnapshotPre) {
         setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? waybillSnapshotPre : w));
