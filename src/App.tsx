@@ -28758,6 +28758,11 @@ ${waybillLineItems(w).length > 1
                       <p className="text-xs text-gray-400">Model the impact of a higher delivery conversion rate.</p>
                     </div>
                   </div>
+                  {pfDelivered.length === 0 && (
+                    <p className="m-0 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 dark:text-amber-200 dark:bg-amber-500/10 dark:border-amber-500/25">
+                      No delivered orders in this period yet — nothing to model. Widen the date filter (e.g. last month) to see your delivery rate, current revenue and projected uplift.
+                    </p>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
                       <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Current rate</span>
