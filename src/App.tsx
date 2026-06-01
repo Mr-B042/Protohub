@@ -10314,6 +10314,115 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       totalRecognizedExpense: recognizedLogistics + operatingExpense
     };
   };
+  // Break-even / profit-headroom for a period's COHORT (orders placed in the
+  // period). Splits costs into FIXED (ad spend + waybill + other + failed-delivery
+  // — paid up front to acquire/run the orders, independent of how many deliver)
+  // and PER-DELIVERY variable (product cost + delivery fee + rep bonus). The
+  // break-even delivery rate is where cohort profit crosses zero. Reconciles
+  // exactly with summarizeRecognizedProfit's netProfit at the actual rate.
+  const computeBreakEven = (placed: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
+    const delivered = placed.filter((o) => (o.status ?? "New") === "Delivered");
+    const placedN = placed.length;
+    const deliveredN = delivered.length;
+    const econ = summarizeRecognizedProfit(delivered, periodExpenses);
+    // Fixed = every period expense except the per-delivery "Delivery" cost
+    // (that lives in the per-delivery contribution via recognizedLogistics).
+    const fixed = periodExpenses.filter((e) => e.type !== "Delivery").reduce((s, e) => s + e.amount, 0);
+    const adSpend = periodExpenses.filter((e) => e.type === "Ad Spend").reduce((s, e) => s + e.amount, 0);
+    // Per-delivery contribution toward fixed costs (after product cost, delivery, bonus).
+    const contribution = deliveredN > 0 ? (econ.grossProfit - econ.bonusEstimate) / deliveredN : 0;
+    const breakEvenDeliveries = contribution > 0 ? fixed / contribution : null;
+    const breakEvenRate = (breakEvenDeliveries != null && placedN > 0)
+      ? Math.min(100, (breakEvenDeliveries / placedN) * 100)
+      : null;
+    const currentRate = placedN > 0 ? (deliveredN / placedN) * 100 : 0;
+    const OPEN_STATUSES = new Set(["Confirmed", "In Process", "New", "Postponed"]);
+    const recoverable = placed.filter((o) => OPEN_STATUSES.has(o.status ?? "New")).reduce((s, o) => s + o.amount, 0);
+    return {
+      placedN,
+      deliveredN,
+      currentRate,
+      breakEvenRate,
+      breakEvenDeliveries: breakEvenDeliveries != null ? Math.ceil(breakEvenDeliveries) : null,
+      headroom: breakEvenRate != null ? currentRate - breakEvenRate : null,
+      profitable: breakEvenRate != null && currentRate >= breakEvenRate,
+      contribution,
+      fixed,
+      adSpend,
+      adPerDelivered: deliveredN > 0 ? adSpend / deliveredN : 0,
+      adPerPlaced: placedN > 0 ? adSpend / placedN : 0,
+      wastedAd: placedN > 0 ? adSpend * (placedN - deliveredN) / placedN : 0,
+      recoverable,
+      netProfit: econ.netProfit,
+    };
+  };
+  // 0–100 track: fill to current delivery rate (green if profitable, rose if not),
+  // with a marker line at the break-even rate.
+  const breakEvenBar = (bePct: number, curPct: number, ok: boolean) => (
+    <div>
+      <div className="relative h-3 rounded-full bg-gray-100 dark:bg-slate-800">
+        <div className={`absolute inset-y-0 left-0 rounded-full ${ok ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${Math.max(2, Math.min(100, curPct))}%` }} />
+        <div className="absolute -top-1.5 -bottom-1.5 w-0.5 bg-gray-800 dark:bg-slate-200" style={{ left: `calc(${Math.min(100, Math.max(0, bePct))}% - 1px)` }} title={`Break-even ${bePct}%`} />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between text-[10px] font-semibold text-gray-400">
+        <span>▎break-even {bePct}%</span>
+        <span>current {curPct}%</span>
+      </div>
+    </div>
+  );
+  const renderBreakEvenPanel = (be: ReturnType<typeof computeBreakEven>, periodLabel: string, compact = false) => {
+    if (be.breakEvenRate == null) {
+      return (
+        <div className={`rounded-xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#0f1822] ${compact ? "p-4" : "p-5"}`}>
+          <p className="text-xs font-bold uppercase tracking-wider text-gray-400 m-0">Profit headroom</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400 m-0 mt-1">Not enough delivered orders in this period to model break-even — widen the date range.</p>
+        </div>
+      );
+    }
+    const bePct = Math.round(be.breakEvenRate);
+    const curPct = Math.round(be.currentRate);
+    const head = Math.round(be.headroom ?? 0);
+    const ok = be.profitable;
+    if (compact) {
+      return (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-2.5 dark:border-slate-800 dark:bg-[#0f1822]">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Profit headroom</span>
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${ok ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200" : "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200"}`}>
+              {ok ? `+${head} pts clear` : `need +${Math.abs(head)} pts`}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-gray-900 dark:text-slate-100">{curPct}%</span>
+            <span className="text-xs text-gray-500 dark:text-slate-400">delivery rate · break-even {bePct}%</span>
+          </div>
+          {breakEvenBar(bePct, curPct, ok)}
+        </div>
+      );
+    }
+    return (
+      <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm flex flex-col gap-4 dark:border-slate-800 dark:bg-[#0f1822]">
+        <div>
+          <h2 className="text-base font-bold text-gray-900 m-0 dark:text-slate-100">Break-even &amp; Profit Headroom</h2>
+          <p className="text-xs text-gray-400 m-0">The delivery rate that turns this period profitable · {periodLabel}</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Break-even rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{bePct}%</p><p className="text-[11px] text-gray-500 m-0">{be.breakEvenDeliveries} of {be.placedN} orders</p></div>
+          <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Current rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{curPct}%</p><p className="text-[11px] text-gray-500 m-0">{be.deliveredN} delivered</p></div>
+          <div className={`rounded-lg p-3 ${ok ? "bg-emerald-50 dark:bg-emerald-500/10" : "bg-rose-50 dark:bg-rose-500/10"}`}><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">{ok ? "Headroom" : "Shortfall"}</p><p className={`text-2xl font-extrabold m-0 ${ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{head >= 0 ? `+${head}` : head} pts</p><p className="text-[11px] text-gray-500 m-0">{ok ? "above break-even" : "need to reach break-even"}</p></div>
+        </div>
+        {breakEvenBar(bePct, curPct, ok)}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm pt-1 border-t border-gray-100 dark:border-slate-800/80">
+          <div><p className="text-[11px] text-gray-400 m-0">Profit per extra delivery</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.contribution)}</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Fixed cost (period)</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.fixed)}</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Net profit</p><p className={`font-bold m-0 ${be.netProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(be.netProfit)}</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Ad cost / delivered</p><p className="font-bold text-gray-900 m-0 dark:text-slate-100">{formatMoney(be.adPerDelivered)}</p><p className="text-[10px] text-gray-400 m-0">vs {formatMoney(be.adPerPlaced)} / placed</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Ad spent on non-delivered</p><p className="font-bold text-amber-700 m-0 dark:text-amber-300">{formatMoney(be.wastedAd)}</p></div>
+          <div><p className="text-[11px] text-gray-400 m-0">Recoverable pipeline</p><p className="font-bold text-[#1F8FE0] m-0">{formatMoney(be.recoverable)}</p><p className="text-[10px] text-gray-400 m-0">already ad-funded</p></div>
+        </div>
+      </section>
+    );
+  };
   const periodOrders = trackedOrders
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
@@ -10342,6 +10451,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((order) => matchesProductFilter(order.productId, order.productName, dashboardProductIds))
     .filter((order) => isInPeriod(orderDeliveredKey(order), period, dateRange));
   const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && dashboardExpenseMatchesProductFilter(expense));
+  const dashboardBreakEven = computeBreakEven(dashboardOrders, dashboardExpenses);
   const dashboardProfitSummary = summarizeRecognizedProfit(dashboardDeliveredOrders, dashboardExpenses);
   const dashboardRevenue = dashboardProfitSummary.revenue;
   const dashboardCogs = dashboardProfitSummary.cogs;
@@ -12543,6 +12653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeOpexExpenses = financeExpenses.filter((expense) => expense.type !== "Delivery");
   const financeOpex = financeProfitSummary.operatingExpense;
   const financeSharedOpex = financeOpexExpenses.filter((expense) => !expense.productId).reduce((sum, expense) => sum + expense.amount, 0);
+  const financeBreakEven = computeBreakEven(financePeriodOrders, financeExpenses);
   const financeAdSpendTotal = financeExpenses.filter((expense) => expense.type === "Ad Spend").reduce((sum, expense) => sum + expense.amount, 0);
   const financeGrossProfit = financeProfitSummary.grossProfit;
   const financeNetProfit = financeProfitSummary.netProfit;
@@ -28265,6 +28376,8 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
 
+              {renderBreakEvenPanel(dashboardBreakEven, String(period), true)}
+
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                 <div className="flex items-start justify-between flex-wrap gap-3">
                   <div>
@@ -36985,6 +37098,7 @@ ${waybillLineItems(w).length > 1
                 };
                 return (
                 <div className="space-y-4">
+                  {renderBreakEvenPanel(financeBreakEven, selectedFinancePeriodLabel, false)}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="sm:hidden space-y-3 p-4">
                       {[
