@@ -24221,6 +24221,14 @@ ${waybillLineItems(w).length > 1
     openAdminOrderDetailPage(order);
   };
 
+  // Open the order details popup IN PLACE (no page navigation). Use this from
+  // secondary views — rep/agent profiles, Scheduled Deliveries, cart detail —
+  // so clicking an order doesn't bounce you to the Order Management page.
+  const openOrderDetailPopup = (orderId: string) => {
+    setSelectedOrderId(orderId);
+    setModal("orderDetails");
+  };
+
   const openScopedOrderEdit = (order: TrackedOrder) => {
     if (currentRole === "Sales Rep") {
       openRepEditOrderCustomer(order);
@@ -30207,7 +30215,7 @@ ${waybillLineItems(w).length > 1
                           return (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900">
-                                <button className="!min-h-0 hover:underline text-left" onClick={() => openAdminOrderDetail(order.id)}>{order.id}</button>
+                                <button className="!min-h-0 hover:underline text-left" onClick={() => openOrderDetailPopup(order.id)}>{order.id}</button>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="font-bold text-gray-900">{order.customer}</div>
@@ -30258,7 +30266,7 @@ ${waybillLineItems(w).length > 1
                                       <Phone className="w-4 h-4" />
                                     </a>
                                   )}
-                                  <button className="!min-h-0 p-1.5 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors" title="Open order details" onClick={() => openAdminOrderDetail(order.id)}>
+                                  <button className="!min-h-0 p-1.5 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors" title="Open order details" onClick={() => openOrderDetailPopup(order.id)}>
                                     <Eye className="w-4 h-4" />
                                   </button>
                                 </div>
@@ -30819,7 +30827,7 @@ ${waybillLineItems(w).length > 1
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {recentRepOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }}>
+                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openOrderDetailPopup(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-600 whitespace-nowrap">{displayDateFromKey(o.createdAt ?? o.date)}</td>
@@ -33671,7 +33679,7 @@ ${waybillLineItems(w).length > 1
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {visibleOrders.map((o) => (
-                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openAdminOrderDetail(o.id)}>
+                              <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openOrderDetailPopup(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
                                 <td className="px-5 py-3 text-gray-700">{o.productName}</td>
@@ -45366,7 +45374,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     )}
                   </div>
-	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openAdminOrderDetail(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openOrderDetailPopup(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	            )}
 
@@ -49729,7 +49737,7 @@ ${waybillLineItems(w).length > 1
                         {linkedOrder && (
                           <button
                             className="!min-h-0 w-full flex items-start justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-left"
-                            onClick={() => openAdminOrderDetail(linkedOrder.id)}
+                            onClick={() => openOrderDetailPopup(linkedOrder.id)}
                           >
                             <div>
                               <p className="text-sm font-bold text-gray-900 m-0">Order {linkedOrder.id}</p>
