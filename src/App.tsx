@@ -10349,8 +10349,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : null;
     const currentRate = placedN > 0 ? (deliveredN / placedN) * 100 : 0;
     const OPEN_STATUSES = new Set(["Confirmed", "In Process", "New", "Postponed"]);
-    const recoverable = placed.filter((o) => OPEN_STATUSES.has(o.status ?? "New")).reduce((s, o) => s + o.amount, 0);
+    const openOrders = placed.filter((o) => OPEN_STATUSES.has(o.status ?? "New"));
+    const recoverable = openOrders.reduce((s, o) => s + o.amount, 0);
+    const openN = openOrders.length;
+    // A period is still "maturing" while a large share of its orders are in transit
+    // (deliveries lag placement by days). Until they land, the delivery rate + net
+    // are provisional and read artificially low. Calibrated on real data: a settled
+    // week sits ~32% open, a 1–2 day-old window ~62% open → flag at ≥45%.
+    const openShare = placedN > 0 ? (openN / placedN) * 100 : 0;
+    const maturing = placedN > 0 && openShare >= 45;
     return {
+      openN,
+      openShare,
+      maturing,
       placedN,
       deliveredN,
       currentRate,
@@ -10443,6 +10454,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const markerPct = targetRateOnCohort <= 100 ? targetRateOnCohort : null;
       return { benchPct, beRatePct, marginalNet, underwater, netNow, gap, reached, targetDeliveries, targetRateOnCohort, moreDeliveriesInCohort, withinCohort, moreOrders, moreDeliveries, moreAd, totalOrders, moreRevenue, cohortRevenue, headroomPts, markerPct };
     })() : null;
+    // Provisional-period flag: deliveries lag placement, so a young cohort reads an
+    // artificially low rate + net. Warn (numbers unchanged) so the planner isn't read
+    // as gospel on a still-in-transit window.
+    const maturityNote = be.maturing ? (
+      <div className="rounded-md bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-200 leading-snug">
+        ⏳ <strong>Still maturing</strong> — {be.openN} of {be.placedN} orders ({Math.round(be.openShare)}%) are still in transit, so the {Math.round(be.currentRate)}% rate &amp; net here are <strong>provisional</strong> and will rise as they land.
+      </div>
+    ) : null;
     if (compact) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-2.5 dark:border-slate-800 dark:bg-[#0f1822]">
@@ -10456,6 +10475,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span className="text-2xl font-extrabold text-gray-900 dark:text-slate-100">{curPct}%</span>
             <span className="text-xs text-gray-500 dark:text-slate-400">delivery rate · break-even {bePct}%</span>
           </div>
+          {maturityNote}
           {breakEvenBar(bePct, curPct, ok, plan?.markerPct ?? null)}
           <p className={`m-0 text-[11px] font-semibold ${ok ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>
             {ok
@@ -10488,6 +10508,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <h2 className="text-base font-bold text-gray-900 m-0 dark:text-slate-100">Break-even &amp; Profit Headroom</h2>
           <p className="text-xs text-gray-400 m-0">The delivery rate that turns this period profitable · {periodLabel}</p>
         </div>
+        {maturityNote}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Break-even rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{bePct}%</p><p className="text-[11px] text-gray-500 m-0">{be.breakEvenDeliveries} of {be.placedN} orders</p></div>
           <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5"><p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Current rate</p><p className="text-2xl font-extrabold text-gray-900 m-0 dark:text-slate-100">{curPct}%</p><p className="text-[11px] text-gray-500 m-0">{be.deliveredN} delivered</p></div>
