@@ -8,6 +8,7 @@ import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
+import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
@@ -328,6 +329,22 @@ cron.schedule("0 * * * *", async () => {
     }
   } catch (e) {
     logger.error("cron: smart stock alert scan crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Phantom-stock safety net — daily at 06:00 ────────────
+// Flags any order marked Delivered whose agent stock was never actually deducted
+// (no "Order Fulfilled" movement). Should never fire given the deduction guards;
+// notifies Owners/Admins in-app if it ever does, so it's caught in a day not weeks.
+cron.schedule("0 6 * * *", async () => {
+  logger.info("cron: phantom-stock audit");
+  try {
+    const summary = await runPhantomStockCheck();
+    if (summary.phantomOrders > 0) {
+      logger.warn("cron: phantom-stock audit found undeducted deliveries", summary);
+    }
+  } catch (e) {
+    logger.error("cron: phantom-stock audit crashed", { error: (e as Error).message });
   }
 });
 
