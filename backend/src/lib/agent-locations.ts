@@ -278,19 +278,36 @@ export async function syncAgentStockAggregate(orgId: string | string[], agentId:
       .eq("agent_id", agentId)
       .eq("product_id", productId);
     if (deleteError) throw deleteError;
-    return totals;
+  } else {
+    const { error: upsertError } = await supabase
+      .from("agent_stock")
+      .upsert({
+        agent_id: agentId,
+        product_id: productId,
+        quantity: totals.quantity,
+        defective: totals.defective,
+        missing: totals.missing
+      }, { onConflict: "agent_id,product_id" });
+    if (upsertError) throw upsertError;
   }
 
-  const { error: upsertError } = await supabase
+  // Keep the denormalized products.agent_stock rollup in sync with the live sum
+  // of agent_stock for this product. Order deliveries deduct agent_stock through
+  // this function but historically left products.agent_stock untouched, so that
+  // product-level total drifted chronically overstated (it's read by waybill and
+  // agent stock checks). Re-summing here keeps it correct on every inventory delta.
+  const { data: productRows, error: productSumError } = await supabase
     .from("agent_stock")
-    .upsert({
-      agent_id: agentId,
-      product_id: productId,
-      quantity: totals.quantity,
-      defective: totals.defective,
-      missing: totals.missing
-    }, { onConflict: "agent_id,product_id" });
-  if (upsertError) throw upsertError;
+    .select("quantity")
+    .eq("product_id", productId);
+  if (productSumError) throw productSumError;
+  const productAgentTotal = (productRows ?? []).reduce((sum, row) => sum + Math.max(0, Number(row.quantity ?? 0)), 0);
+  const { error: productUpdateError } = await supabase
+    .from("products")
+    .update({ agent_stock: productAgentTotal })
+    .eq("id", productId);
+  if (productUpdateError) throw productUpdateError;
+
   return totals;
 }
 
