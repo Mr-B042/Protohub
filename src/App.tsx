@@ -28012,9 +28012,9 @@ ${waybillLineItems(w).length > 1
   );
 
   return (
-    <div className={`app-shell !flex min-h-[100dvh] lg:h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
+    <div className={`app-shell !flex min-h-[100dvh] lg:h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${isSpying ? "pt-9" : ""} ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
       {isSpying && spiedUser && (
-        <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 px-4 py-2 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
+        <div className="fixed top-0 left-0 right-0 z-[60] h-9 bg-amber-500 text-amber-950 px-4 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
           <Eye className="w-4 h-4" />
           <span>Viewing as <strong>{spiedUser.name}</strong> ({spiedUser.role})</span>
           <button
@@ -28035,7 +28035,7 @@ ${waybillLineItems(w).length > 1
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 bg-[hsl(var(--brand-navy))] border-r border-white/5 transform transition-all duration-200 ease-in-out lg:static lg:translate-x-0 lg:h-screen flex flex-col overflow-hidden
+        className={`fixed ${isSpying ? "top-9 bottom-0" : "inset-y-0"} left-0 z-50 bg-[hsl(var(--brand-navy))] border-r border-white/5 transform transition-all duration-200 ease-in-out lg:static lg:translate-x-0 ${isSpying ? "lg:h-full" : "lg:h-screen"} flex flex-col overflow-hidden
           ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
           ${collapsed ? "w-[72px] py-3" : "w-[280px] py-4"}`}
         aria-label="Primary navigation"
@@ -28150,7 +28150,7 @@ ${waybillLineItems(w).length > 1
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Top Bar */}
-        <header className="app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:static lg:z-auto">
+        <header className={`app-topbar fixed inset-x-0 top-0 z-30 h-14 bg-white border-b border-gray-200 px-4 flex items-center justify-between shrink-0 overflow-visible lg:static lg:z-auto ${isSpying ? "!top-9" : ""}`}>
           <div className="flex items-center lg:hidden">
             <button
               className="topbar-icon-button p-2 -ml-2 text-gray-600 hover:text-gray-900"
@@ -28285,7 +28285,7 @@ ${waybillLineItems(w).length > 1
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className="flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8">
+        <main className={`flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8 ${isSpying ? "!pt-[6.25rem] lg:!pt-8" : ""}`}>
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
