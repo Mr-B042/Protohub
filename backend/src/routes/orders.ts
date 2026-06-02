@@ -976,6 +976,7 @@ router.patch("/:id/status", async (req, res) => {
 
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
+   try {
     const today = new Date().toISOString().split("T")[0];
     const deductionLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
     let resolvedLocation = effectiveAgentLocationId
@@ -1076,6 +1077,16 @@ router.patch("/:id/status", async (req, res) => {
         note:          `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted ${currentQty} → ${nextQty} by agent ${agentName}${serviceStateNote}`
       });
     }
+   } catch (deductionError: any) {
+    // The deduction failed mid-way (e.g. a transient DB error). NEVER leave the
+    // order claiming stock was deducted — flip the flag honest so the gap is
+    // detectable, not a silent phantom. Invariant: an order that is Delivered +
+    // stock_deducted=true has had its deduction run to completion.
+    await supabase.from("orders").update({ stock_deducted: false })
+      .eq("id", req.params.id).eq("org_id", req.user!.orgId);
+    res.status(500).json({ error: "Order marked delivered, but the stock deduction failed and was flagged for review. Re-save the delivery to retry.", code: "DEDUCTION_FAILED" });
+    return;
+   }
   }
 
   // ── Un-delivery side-effects: restore agent stock, delete waybill, log reversal ──
