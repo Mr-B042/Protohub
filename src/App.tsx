@@ -662,6 +662,8 @@ type StockMovement = {
   waybillId?: string;
   fromLocation?: string;
   toLocation?: string;
+  fromAgentLocationId?: string;
+  toAgentLocationId?: string;
 };
 type TrackedOrder = {
   id: string;
@@ -7934,6 +7936,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentProductIds, setAgentProductIds] = useState<Set<string>>(new Set());
   const [showAgentProductFilter, setShowAgentProductFilter] = useState(false);
   const [agentDetailShowAll, setAgentDetailShowAll] = useState(false);
+  // Multi-state agents: which hub the Stock Inventory / Ledger / Orders sections
+  // are scoped to ("all" = combined). Stale ids are treated as "all" at render.
+  const [agentDetailHubId, setAgentDetailHubId] = useState<string>("all");
   useEffect(() => {
     if (modal !== "orderDetails") setExpandedOrderCaptureDataId(null);
     if (modal !== "cartDetails") setExpandedCartCaptureDataId(null);
@@ -16892,7 +16897,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             note:         m.note ?? undefined,
             waybillId:    m.waybillId ?? m.waybill_id ?? undefined,
             fromLocation: m.fromLocation ?? m.from_location ?? undefined,
-            toLocation:   m.toLocation   ?? m.to_location   ?? undefined
+            toLocation:   m.toLocation   ?? m.to_location   ?? undefined,
+            fromAgentLocationId: m.fromAgentLocationId ?? m.from_agent_location_id ?? undefined,
+            toAgentLocationId:   m.toAgentLocationId   ?? m.to_agent_location_id   ?? undefined
           })) as any);
         }
       };
@@ -17415,7 +17422,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               note:         m.note ?? undefined,
               waybillId:    m.waybillId ?? m.waybill_id ?? undefined,
               fromLocation: m.fromLocation ?? m.from_location ?? undefined,
-              toLocation:   m.toLocation   ?? m.to_location   ?? undefined
+              toLocation:   m.toLocation   ?? m.to_location   ?? undefined,
+              fromAgentLocationId: m.fromAgentLocationId ?? m.from_agent_location_id ?? undefined,
+              toAgentLocationId:   m.toAgentLocationId   ?? m.to_agent_location_id   ?? undefined
             })) as any);
           })
           .catch(() => undefined);
@@ -32657,6 +32666,27 @@ ${waybillLineItems(w).length > 1
               );
               const visibleOrders = agentDetailShowAll ? sortedOrders : sortedOrders.slice(0, 8);
 
+              // Multi-state agents: a hub picker scopes the Inventory / Ledger / Orders
+              // sections to one state-hub ("all" = combined, today's behaviour). The
+              // header KPIs + Delivery Performance stay agent-wide. Single-hub agents
+              // never see the picker. Inventory keys on the hub object, orders on the
+              // hub's state, the ledger on the hub id (see those sections).
+              const agentHubs = agentLocationRows(agent).filter((l) => l.active !== false);
+              const isMultiHub = agentHubs.length > 1;
+              const activeHubId = isMultiHub && agentHubs.some((h) => h.id === agentDetailHubId) ? agentDetailHubId : "all";
+              const selectedHub = activeHubId === "all" ? null : (agentHubs.find((h) => h.id === activeHubId) ?? null);
+              const sameStateLabel = (a?: string | null, b?: string | null) =>
+                (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+              const scopedStockRecords = selectedHub
+                ? (selectedHub.stock ?? [])
+                    .filter((r) => Number(r.quantity ?? 0) > 0)
+                    .map((r) => ({ agentId: agent.id, productId: r.productId, quantity: Number(r.quantity ?? 0) }))
+                : stockRecords;
+              const scopedSortedOrders = selectedHub
+                ? sortedOrders.filter((o) => sameStateLabel((o as any).state, selectedHub.state))
+                : sortedOrders;
+              const scopedVisibleOrders = agentDetailShowAll ? scopedSortedOrders : scopedSortedOrders.slice(0, 8);
+
               const initials = (agent.name || "?")
                 .split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s.charAt(0).toUpperCase()).join("") || "?";
 
@@ -33583,17 +33613,39 @@ ${waybillLineItems(w).length > 1
                     </ResponsiveContainer>
                   </section>
 
+                  {/* Hub picker — only for agents that cover multiple state-hubs.
+                      Scopes the three sections below to one hub ("All hubs" = combined). */}
+                  {isMultiHub && (
+                    <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                        <h2 className="text-sm font-bold text-gray-700 m-0">Viewing hub</h2>
+                        <span className="text-[11px] text-gray-400">{agentHubs.length} state hubs · Inventory, Ledger &amp; Orders below scope to your pick</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button type="button" onClick={() => setAgentDetailHubId("all")} className={`!min-h-0 px-3 py-1.5 rounded-md text-xs font-bold border transition-colors ${activeHubId === "all" ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>All hubs</button>
+                        {agentHubs.map((h) => {
+                          const units = (h.stock ?? []).reduce((s, r) => s + Math.max(0, Number(r.quantity ?? 0)), 0);
+                          return (
+                            <button key={h.id} type="button" onClick={() => setAgentDetailHubId(h.id)} className={`!min-h-0 px-3 py-1.5 rounded-md text-xs font-bold border transition-colors ${activeHubId === h.id ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                              {h.state || h.name}<span className={`ml-1.5 font-semibold ${activeHubId === h.id ? "text-white/80" : "text-gray-400"}`}>{units}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
                   {/* Stock Inventory */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                    <h2 className="text-base font-bold text-gray-900 m-0 mb-4">Stock Inventory</h2>
-                    {stockRecords.length === 0 ? (
+                    <h2 className="text-base font-bold text-gray-900 m-0 mb-4">Stock Inventory{selectedHub ? ` · ${selectedHub.state || selectedHub.name}` : ""}</h2>
+                    {scopedStockRecords.length === 0 ? (
                       <div className="flex flex-col items-center justify-center gap-3 py-10 text-gray-300">
                         <Package className="w-10 h-10" />
-                        <p className="text-sm font-medium m-0 text-gray-400">No stock assigned to this agent</p>
+                        <p className="text-sm font-medium m-0 text-gray-400">{selectedHub ? `No stock at the ${selectedHub.state || selectedHub.name} hub` : "No stock assigned to this agent"}</p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {stockRecords.map((s) => {
+                        {scopedStockRecords.map((s) => {
                           const product = products.find((p) => p.id === s.productId);
                           const value = s.quantity * (primaryPricing(product as Product)?.unitCost ?? 0);
                           return (
@@ -33612,9 +33664,14 @@ ${waybillLineItems(w).length > 1
 
                   {/* Stock Ledger — per-product running balance with smart filters */}
                   {(() => {
-                    // All movements that touch this agent
+                    // Hub-scoped when a state-hub is picked above (shadows the agent-wide
+                    // stockRecords so the drift/System column reflects that hub's stock).
+                    const stockRecords = scopedStockRecords;
+                    // All movements that touch this agent — and the selected hub, if any
+                    // (movements carry from/to_agent_location_id).
                     const allAgentMovements = stockMovements.filter((m: any) =>
-                      m.agentId === agent.id || m.agent === agent.name
+                      (m.agentId === agent.id || m.agent === agent.name)
+                      && (selectedHub ? (m.fromAgentLocationId === selectedHub.id || m.toAgentLocationId === selectedHub.id) : true)
                     );
                     if (allAgentMovements.length === 0 && stockRecords.length === 0) return null;
 
@@ -33742,7 +33799,7 @@ ${waybillLineItems(w).length > 1
                       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-wrap gap-3">
                           <div>
-                            <h2 className="text-base font-bold text-gray-900 m-0">Stock Ledger</h2>
+                            <h2 className="text-base font-bold text-gray-900 m-0">Stock Ledger{selectedHub ? ` · ${selectedHub.state || selectedHub.name}` : ""}</h2>
                             <p className="text-xs text-gray-400 mt-0.5">Per-product audit history. Verify what the agent claims is in hand.</p>
                           </div>
                           <button
@@ -34054,8 +34111,8 @@ ${waybillLineItems(w).length > 1
                   {/* Agent Orders */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                      <h2 className="text-base font-bold text-gray-900 m-0">Agent Orders</h2>
-                      {sortedOrders.length > 8 && (
+                      <h2 className="text-base font-bold text-gray-900 m-0">Agent Orders{selectedHub ? ` · ${selectedHub.state || selectedHub.name}` : ""}</h2>
+                      {scopedSortedOrders.length > 8 && (
                         <button
                           className="!min-h-0 text-sm font-semibold text-[#1F8FE0] hover:underline"
                           onClick={() => setAgentDetailShowAll((v) => !v)}
@@ -34064,10 +34121,10 @@ ${waybillLineItems(w).length > 1
                         </button>
                       )}
                     </div>
-                    {visibleOrders.length === 0 ? (
+                    {scopedVisibleOrders.length === 0 ? (
                       <div className="flex flex-col items-center justify-center gap-3 py-12 text-gray-300">
                         <FileText className="w-10 h-10" />
-                        <p className="text-sm font-medium m-0 text-gray-400">No orders found for this period</p>
+                        <p className="text-sm font-medium m-0 text-gray-400">{selectedHub ? `No orders from the ${selectedHub.state || selectedHub.name} hub this period` : "No orders found for this period"}</p>
                       </div>
                     ) : (
                       <div className={`overflow-x-auto ${agentDetailShowAll ? "max-h-[60vh] overflow-y-auto" : ""}`}>
@@ -34083,7 +34140,7 @@ ${waybillLineItems(w).length > 1
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
-                            {visibleOrders.map((o) => (
+                            {scopedVisibleOrders.map((o) => (
                               <tr key={o.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openOrderDetailPopup(o.id)}>
                                 <td className="px-5 py-3 font-bold text-[#1F8FE0]">{o.id}</td>
                                 <td className="px-5 py-3 text-gray-900">{o.customer}</td>
