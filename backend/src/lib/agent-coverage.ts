@@ -34,7 +34,27 @@ type AgentRecordForCoverage = {
 const normalizeText = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
 
-export const normalizeState = (value: unknown) => normalizeText(value);
+// The Abuja / Federal Capital Territory family is written many ways. Fold them
+// all to one spelling so routing matches regardless of how the order or hub
+// labels it (the only Nigerian "state" that is also commonly named by its city).
+const ABUJA_ALIASES = new Set([
+  "fct", "abuja", "fct abuja", "abuja fct", "fct abuja fct",
+  "federal capital territory", "fct federal capital territory"
+]);
+
+// State labels arrive spelled many ways. Canonicalize so the SAME state always
+// matches in routing/coverage: collapse whitespace, drop a trailing " State"
+// descriptor ("Rivers State" -> "Rivers"), and fold the Abuja/FCT family. Only
+// ever merges genuinely-identical states (never collapses two distinct states),
+// so it can only ADD correct matches, never create a wrong one.
+export const normalizeState = (value: unknown) => {
+  const trimmed = normalizeText(value).replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  const canonical = trimmed.replace(/\s+state$/i, "").trim();
+  const key = canonical.toLowerCase().replace(/[.,()]/g, " ").replace(/\s+/g, " ").trim();
+  if (ABUJA_ALIASES.has(key)) return "FCT Abuja";
+  return canonical;
+};
 export const normalizeCity = (value: unknown) => normalizeText(value);
 
 export function buildCoverageRows(
