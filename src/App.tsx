@@ -30894,7 +30894,7 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Schedule Result</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
-                        {isOwnerOrAdmin && <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right" title="Final net profit per order = revenue − product cost − delivery − agent commission − this order's share of period ad spend & overhead. Owner/Admin only.">Net Profit</th>}
+                        {isOwnerOrAdmin && <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right" title="Final net profit per order = revenue − product cost − delivery − sales rep commission − this order's share of period ad spend & overhead. Owner/Admin only.">Net Profit</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -30925,7 +30925,7 @@ ${waybillLineItems(w).length > 1
                             {isOwnerOrAdmin && (() => {
                               const np = deliveriesOrderNet(order);
                               return (
-                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Agent commission  ${formatProductMoney(np.bonus, order.currency)}\n− Ad spend & overhead share  ${formatProductMoney(np.fixedShare, order.currency)}\n= Net profit  ${formatProductMoney(np.net, order.currency)}`}>
+                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n− Ad spend & overhead share  ${formatProductMoney(np.fixedShare, order.currency)}\n= Net profit  ${formatProductMoney(np.net, order.currency)}`}>
                                   {formatProductMoney(np.net, order.currency)}
                                 </td>
                               );
