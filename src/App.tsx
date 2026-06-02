@@ -32848,8 +32848,10 @@ ${waybillLineItems(w).length > 1
                     const turnover = avgInventoryUnits === 0 ? null
                       : Math.round((delivered.reduce((s, o) => s + quantityForOrder(o), 0) / avgInventoryUnits) * 100) / 100;
 
-                    // Shrinkage rate against ever-received units (from stock_movements inbound)
-                    const inboundTypes = new Set(["Waybill In", "Stock Added", "Return"]);
+                    // Shrinkage rate against ever-received units (from stock_movements inbound).
+                    // "Distributed to Agent" is how most hubs are restocked, so it counts
+                    // as received — omitting it understated everReceived and inflated shrinkage.
+                    const inboundTypes = new Set(["Waybill In", "Stock Added", "Return", "Distributed to Agent"]);
                     const everReceived = stockMovements
                       .filter((m: any) => (m.agentId === agent.id || m.agent === agent.name) && inboundTypes.has(m.type))
                       .reduce((s: number, m: any) => s + Math.abs(m.qty ?? 0), 0);
@@ -33616,9 +33618,14 @@ ${waybillLineItems(w).length > 1
                     );
                     if (allAgentMovements.length === 0 && stockRecords.length === 0) return null;
 
-                    // Outbound / inbound classification
-                    const outbound = new Set(["Order Fulfilled", "Waybill Out", "Distributed to Agent"]);
-                    const inbound  = new Set(["Waybill In", "Stock Added", "Return"]);
+                    // Outbound / inbound classification — from THIS AGENT's perspective.
+                    // "Distributed to Agent" is a warehouse→hub restock, i.e. stock
+                    // flowing INTO this hub, so it's INBOUND here (it's only outbound
+                    // from the warehouse's point of view). Classing it outbound made
+                    // every restock count as a loss and the reconstructed balance
+                    // nosedive negative (the −86 you saw) while real stock was fine.
+                    const outbound = new Set(["Order Fulfilled", "Waybill Out"]);
+                    const inbound  = new Set(["Waybill In", "Stock Added", "Return", "Distributed to Agent"]);
                     const correctionTypes = new Set(["Correction"]);
 
                     // Compute the *all-time* running balance per product first
@@ -33873,7 +33880,9 @@ ${waybillLineItems(w).length > 1
                                               <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">{formatMoment(mov.createdAt ?? mov.date)}</td>
                                               <td className="px-3 py-2 whitespace-nowrap"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700">{mov.type}</span></td>
                                               <td className={`px-3 py-2 whitespace-nowrap text-right font-bold ${signed > 0 ? "text-emerald-600" : signed < 0 ? "text-rose-600" : "text-gray-500"}`}>{signed > 0 ? "+" : ""}{signed}</td>
-                                              <td className="px-3 py-2 whitespace-nowrap text-right font-bold text-gray-900">{balance}</td>
+                                              {/* The hub level after this movement — render the stored balance_after
+                                                  (DB truth, matches the note "X → Y"), not the client reconstruction. */}
+                                              <td className="px-3 py-2 whitespace-nowrap text-right font-bold text-gray-900">{mov.balanceAfter ?? balance}</td>
                                               <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{mov.by ?? (mov as any).byName ?? "—"}</td>
                                               <td className="px-3 py-2 text-xs text-gray-500"><span className="inline-flex items-center gap-1">{mov.note ?? "—"} <ChevronRight className="w-3 h-3 text-gray-300" /></span></td>
                                             </tr>
@@ -33915,7 +33924,9 @@ ${waybillLineItems(w).length > 1
                     const linkedWaybill = waybillId ? waybillRecords.find((w) => w.id === waybillId) : null;
                     const linkedProduct = products.find((p) => p.id === m.productId);
                     const cachedQty = stockRecords.find((s) => s.productId === m.productId)?.quantity ?? 0;
-                    const outboundTypes = new Set(["Order Fulfilled", "Waybill Out", "Distributed to Agent"]);
+                    // Same agent-perspective rule as the ledger: "Distributed to Agent"
+                    // is INBOUND to this hub (a restock), not outbound.
+                    const outboundTypes = new Set(["Order Fulfilled", "Waybill Out"]);
                     const signed = m.qty < 0 ? m.qty : (outboundTypes.has(m.type) ? -Math.abs(m.qty) : Math.abs(m.qty));
 
                     const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
