@@ -39524,14 +39524,23 @@ ${waybillLineItems(w).length > 1
               </div>
 
               <div>
-                <h2 className="text-sm font-bold text-gray-700 mb-3">Assignment Sequence</h2>
+                <h2 className="text-sm font-bold text-gray-700 mb-3">{roundRobinTab === "Temporarily Excluded" ? "Paused from rotation" : "Assignment Sequence"}</h2>
                 {roundRobinRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 font-medium italic">No sales representatives found</div>
+                  <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400 font-medium italic">{roundRobinTab === "Temporarily Excluded" ? "No reps are paused from rotation." : "No sales representatives found"}</div>
                 ) : (
                   <div className="flex flex-col gap-2">
                     {roundRobinRows.map((row, index) => (
-                      <article key={row.user.id} className={`bg-white rounded-xl border shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${index === 0 ? "border-[#1F8FE0] ring-1 ring-[#1F8FE0]/20" : "border-gray-200"}`}>
-                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${index === 0 ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>#{index + 1}</span>
+                      <article key={row.user.id} className={`bg-white rounded-xl border shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${roundRobinTab !== "Temporarily Excluded" && index === 0 ? "border-[#1F8FE0] ring-1 ring-[#1F8FE0]/20" : "border-gray-200"}`}>
+                        {roundRobinTab === "Temporarily Excluded" ? (
+                          // Excluded reps aren't in any sequence — show a neutral "paused"
+                          // glyph instead of a rank + the blue next-in-line highlight.
+                          <span className="w-8 h-8 rounded-full flex items-center justify-center gap-[3px] shrink-0 bg-gray-100 text-gray-400" title="Paused from rotation" aria-label="Paused from rotation">
+                            <span className="block w-[3px] h-3 rounded-sm bg-current" />
+                            <span className="block w-[3px] h-3 rounded-sm bg-current" />
+                          </span>
+                        ) : (
+                          <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${index === 0 ? "bg-[#1F8FE0] text-white" : "bg-gray-100 text-gray-500"}`}>#{index + 1}</span>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-gray-900">{row.user.name}</div>
                           <div className="text-xs text-gray-400">{row.user.email}</div>
