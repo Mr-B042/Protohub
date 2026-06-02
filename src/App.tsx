@@ -6067,6 +6067,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     readPref<DeliveryAgent>("protohub.deliveries.agent", "All Agents", (raw) => raw as DeliveryAgent)
   );
   const [deliveriesPage, setDeliveriesPage] = useState(1);
+  // Optional sort of the Deliveries table by per-order net profit (Owner/Admin column).
+  const [deliveriesNetSort, setDeliveriesNetSort] = useState<"off" | "desc" | "asc">("off");
   const [inventorySearch, setInventorySearch] = useState("");
   const [productName, setProductName] = useState("");
   const [productDescription, setProductDescription] = useState("");
@@ -11564,9 +11566,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, {})
   ).sort((a, b) => b[1].units - a[1].units);
   const DELIVERIES_PAGE_SIZE = 25;
+  // Sort by per-order net profit when the Owner/Admin toggles the Net Profit header.
+  // "off" keeps the default order; desc = highest profit → biggest loss; asc = reverse.
+  const deliveriesSortedRows = deliveriesNetSort === "off"
+    ? filteredDeliveryRows
+    : [...filteredDeliveryRows].sort((a, b) => {
+        const diff = deliveriesOrderNet(a).net - deliveriesOrderNet(b).net;
+        return deliveriesNetSort === "desc" ? -diff : diff;
+      });
   const deliveriesTotalPages = Math.max(1, Math.ceil(filteredDeliveryRows.length / DELIVERIES_PAGE_SIZE));
   const deliveriesPageClamped = Math.min(deliveriesPage, deliveriesTotalPages);
-  const pagedDeliveryRows = filteredDeliveryRows.slice((deliveriesPageClamped - 1) * DELIVERIES_PAGE_SIZE, deliveriesPageClamped * DELIVERIES_PAGE_SIZE);
+  const pagedDeliveryRows = deliveriesSortedRows.slice((deliveriesPageClamped - 1) * DELIVERIES_PAGE_SIZE, deliveriesPageClamped * DELIVERIES_PAGE_SIZE);
   const deliveredRevenueInPeriod = pfDeliveryBase.reduce((sum, order) => sum + order.amount, 0);
   const averageFulfillmentDays =
     pfDeliveryBase.length === 0
@@ -30894,7 +30904,19 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Schedule Result</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
-                        {isOwnerOrAdmin && <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right" title="Final net profit per order = revenue − product cost − delivery − sales rep commission − this order's share of period ad spend & overhead. Owner/Admin only.">Net Profit</th>}
+                        {isOwnerOrAdmin && (
+                          <th className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => { setDeliveriesNetSort((s) => s === "off" ? "desc" : s === "desc" ? "asc" : "off"); setDeliveriesPage(1); }}
+                              className={`inline-flex items-center gap-1 font-semibold uppercase text-[10px] tracking-wider transition-colors ${deliveriesNetSort === "off" ? "text-gray-500 hover:text-gray-900" : "text-[#1F8FE0]"}`}
+                              title="Sort by final net profit — click to cycle: highest→loss, then loss→highest, then off. Net = revenue − product cost − delivery − sales rep commission − this order's share of period ad spend & overhead. Owner/Admin only."
+                            >
+                              Net Profit
+                              <span className="text-[9px] leading-none">{deliveriesNetSort === "desc" ? "▼" : deliveriesNetSort === "asc" ? "▲" : "↕"}</span>
+                            </button>
+                          </th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
