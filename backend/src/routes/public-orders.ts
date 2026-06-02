@@ -354,7 +354,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // 1. Resolve package → product → org
   const { data: pkg, error: pkgErr } = await supabase
     .from("product_packages")
-    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock")
+    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock, attribution_product_id")
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
@@ -370,6 +370,30 @@ router.post("/", submitRateLimit, async (req, res) => {
   if (productErr || !product || !product.active) {
     res.status(404).json({ error: "Product not available." });
     return;
+  }
+
+  // Attribution override: if this package rolls up to a DIFFERENT product (a combo
+  // bundle sitting under a single-tool parent — set via "Attribute orders to a
+  // different product"), stamp the order with that attribution product so orders,
+  // analytics, inventory rollup, SMS and the WhatsApp dispatch all read correctly —
+  // mirroring the authenticated create path (orders.ts). The public form previously
+  // skipped this, so combo orders kept the parent product's name. Stock still
+  // deducts by the package's components, and cross-sell config stays keyed to the
+  // owner `product`, so ONLY the order's product_id/product_name change here.
+  let stampProductId = product.id;
+  let stampProductName = product.name;
+  const attributionId = (pkg as { attribution_product_id?: string | null }).attribution_product_id ?? null;
+  if (attributionId && attributionId !== pkg.product_id) {
+    const { data: attribProduct } = await supabase
+      .from("products")
+      .select("id, name")
+      .eq("id", attributionId)
+      .eq("org_id", product.org_id)
+      .maybeSingle();
+    if (attribProduct) {
+      stampProductId = attribProduct.id;
+      stampProductName = attribProduct.name;
+    }
   }
 
   if (!packageAllowsState(pkg, d.state)) {
@@ -704,9 +728,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     address:           d.address ?? null,
     city:              d.city ?? null,
     state:             d.state ?? null,
-    product_id:        product.id,
+    product_id:        stampProductId,
     package_id:        pkg.id,
-    product_name:      product.name,
+    product_name:      stampProductName,
     package_name:      pkg.name,
     quantity:          pkg.quantity,
     amount,
