@@ -10646,6 +10646,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
   const deliveredOrderRows = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
+  // Per-delivered-order "final net profit" for the Deliveries list. Same model as
+  // the break-even panel: an order's own contribution (revenue − product cost −
+  // delivery − rep bonus) minus an even share of the period's FIXED costs (ad
+  // spend + waybill + every other non-Delivery expense) across the period's
+  // delivered orders. Summed over the period it reconciles exactly with
+  // summarizeRecognizedProfit().netProfit — i.e. the panel's bottom line.
+  const deliveriesPeriodExpenses = expenses.filter((expense) => isInPeriod(expense.date, deliveriesPeriod, deliveriesDateRange));
+  const deliveriesFixedTotal = deliveriesPeriodExpenses.filter((e) => e.type !== "Delivery").reduce((s, e) => s + e.amount, 0);
+  const deliveriesRecordedDeliveryExpense = deliveriesPeriodExpenses.filter((e) => e.type === "Delivery").reduce((s, e) => s + e.amount, 0);
+  const deliveriesDeliveredN = deliveredInPeriodRows.length;
+  const deliveriesFixedPerDelivered = deliveriesDeliveredN > 0 ? deliveriesFixedTotal / deliveriesDeliveredN : 0;
+  // Delivery cost: prefer the per-order logisticsCost when the period records any;
+  // otherwise allocate the recorded "Delivery" expense evenly (mirrors recognizedLogistics).
+  const deliveriesLogisticsFromOrders = deliveredInPeriodRows.reduce((s, o) => s + (o.logisticsCost ?? 0), 0);
+  const deliveriesUseOrderLogistics = deliveriesLogisticsFromOrders > 0;
+  const deliveriesDeliveryAllocated = deliveriesDeliveredN > 0 ? deliveriesRecordedDeliveryExpense / deliveriesDeliveredN : 0;
+  const deliveriesOrderNet = (order: TrackedOrder) => {
+    const revenue = order.amount;
+    const cogs = costForOrder(order);
+    const delivery = deliveriesUseOrderLogistics ? (order.logisticsCost ?? 0) : deliveriesDeliveryAllocated;
+    const bonus = recognizedBonusTotalForRows([order]);
+    const fixedShare = deliveriesFixedPerDelivered;
+    return { revenue, cogs, delivery, bonus, fixedShare, net: revenue - cogs - delivery - bonus - fixedShare };
+  };
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const ordersRevenue = periodDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
   const dashboardDeliveredCohortOrders = dashboardOrders.filter((order) => (order.status ?? "New") === "Delivered");
@@ -30870,11 +30894,12 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Schedule Result</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
+                        {isOwnerOrAdmin && <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right" title="Final net profit per order = revenue − product cost − delivery − agent commission − this order's share of period ad spend & overhead. Owner/Admin only.">Net Profit</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredDeliveryRows.length === 0 ? (
-                        <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
+                        <tr><td colSpan={isOwnerOrAdmin ? 10 : 9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
                       ) : (
                         pagedDeliveryRows.map((order) => {
                           const scheduleOutcome = deliveryScheduleOutcomeForOrder(order);
@@ -30897,6 +30922,14 @@ ${waybillLineItems(w).length > 1
                             </td>
                             <td className="px-4 py-4 font-medium text-gray-900">{fulfillmentDaysForOrder(order).toFixed(1)} days</td>
                             <td className="px-4 py-4 font-bold text-[#1F8FE0]">{formatProductMoney(order.amount, order.currency)}</td>
+                            {isOwnerOrAdmin && (() => {
+                              const np = deliveriesOrderNet(order);
+                              return (
+                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Agent commission  ${formatProductMoney(np.bonus, order.currency)}\n− Ad spend & overhead share  ${formatProductMoney(np.fixedShare, order.currency)}\n= Net profit  ${formatProductMoney(np.net, order.currency)}`}>
+                                  {formatProductMoney(np.net, order.currency)}
+                                </td>
+                              );
+                            })()}
                           </tr>
                         )})
                       )}
