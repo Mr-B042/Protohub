@@ -17950,6 +17950,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       return `${qtyLabel} Of ${cleanProductName || "item"}`;
     };
+    // For a combo package, use the package's own marketed description verbatim as
+    // the dispatch line (e.g. "1 Set (8pcs) of Home Cleaning Combo Tools - Small
+    // Pack + FREE DELIVERY + TWO FREE GIFTS 🎁") — the merchant writes the combo's
+    // customer-facing name in that field. Resolved live from the catalog by the
+    // order's packageId; falls back to the derived line for non-combos or when no
+    // description is set.
+    const comboDispatchName = () => {
+      const pkg = order.packageId
+        ? products.flatMap((product) => product.packages).find((candidate) => candidate.id === order.packageId)
+        : undefined;
+      if (!pkg) return null;
+      const isCombo = (pkg.packageComponents?.length ?? 0) > 0;
+      const description = (pkg.description ?? "").trim();
+      return isCombo && description ? description : null;
+    };
+    const mainPackageDispatch = comboDispatchName()
+      ?? buildPreferredPackageLine(order.productName, order.packageName, quantityForOrder(order));
     const lines = [
       `Full Name:  ${order.customer || "—"}`,
       `Active Phone Number:  ${order.phone || "—"}`,
@@ -17958,8 +17975,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       `City:  ${order.city || "—"}`,
       `Full Delivery: ${fullDeliveryLabel}`,
       hasMultiplePricedPackages
-        ? `Preferred Package 1: ${buildPreferredPackageLine(order.productName, order.packageName, quantityForOrder(order))} = ${formatProductMoney(mainOfferTotal, order.currency)}`
-        : `Preferred Package: ${buildPreferredPackageLine(order.productName, order.packageName, quantityForOrder(order))} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+        ? `Preferred Package 1: ${mainPackageDispatch} = ${formatProductMoney(mainOfferTotal, order.currency)}`
+        : `Preferred Package: ${mainPackageDispatch} = ${formatProductMoney(mainOfferTotal, order.currency)}`
     ];
     extraPricedPackages.forEach((line, index) => {
       lines.push(
