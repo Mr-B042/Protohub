@@ -978,7 +978,7 @@ router.patch("/:id/status", async (req, res) => {
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
     const today = new Date().toISOString().split("T")[0];
     const deductionLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
-    const resolvedLocation = effectiveAgentLocationId
+    let resolvedLocation = effectiveAgentLocationId
       ? await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
           desiredState: existing.state,
           desiredCity: existing.city,
@@ -993,7 +993,26 @@ router.patch("/:id/status", async (req, res) => {
           requiredLines: deductionLines
         });
 
+    // An order being marked Delivered was ALREADY physically fulfilled by this
+    // agent. Strict in-state routing (correct for NEW assignment) can return null
+    // on a state-LABEL mismatch — e.g. order "Rivers" vs hub "Rivers State", or
+    // "Cross River" vs its capital "Calabar" — which previously left the order
+    // Delivered + stock_deducted=true with NO deduction and NO ledger row (phantom
+    // stock). Fall back to the agent's stock-holding hub regardless of state label
+    // so an already-delivered order always deducts from where the stock actually is.
     if (!resolvedLocation) {
+      resolvedLocation = await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+        desiredCity: existing.city,
+        productId: inventoryProductId,
+        requiredLines: deductionLines
+      });
+    }
+
+    if (!resolvedLocation) {
+      // Genuinely no hub for this agent at all. Keep the flag HONEST (don't leave
+      // it claiming the stock was deducted) so the gap is detectable, then surface it.
+      await supabase.from("orders").update({ stock_deducted: false })
+        .eq("id", req.params.id).eq("org_id", req.user!.orgId);
       res.status(400).json({ error: "No stock location is configured for this agent yet." });
       return;
     }
