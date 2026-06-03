@@ -38229,6 +38229,10 @@ ${waybillLineItems(w).length > 1
                 const drTone = !w ? "text-gray-900" : w.trueDeliveryRate >= 0.8 ? "text-emerald-600" : w.trueDeliveryRate >= 0.6 ? "text-amber-600" : "text-rose-600";
                 const netTone = !w ? "text-gray-900" : w.netProfit >= 0 ? "text-emerald-600" : "text-rose-600";
                 const underwater = w && w.netProfit < 0;
+                // Orders linked but the three cost inputs are still ₦0 → the net is just
+                // revenue minus add-on cost and looks misleadingly high. Flag it loudly.
+                const costsUnset = !!batch && w && w.totalOrders > 0
+                  && Number(batch.adSpend) === 0 && Number(batch.productCostPerSet) === 0 && Number(batch.deliveryCostPerOrder) === 0;
                 const closed = !!econ?.closed;
                 return (
                 <div className="space-y-6">
@@ -38365,7 +38369,13 @@ ${waybillLineItems(w).length > 1
                     </div>
                   ) : (
                   <>
-                    {underwater && (
+                    {costsUnset && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 text-sm text-amber-900">
+                        <AlertTriangle className="w-5 h-5 shrink-0 text-amber-500" />
+                        <span>Costs aren't set for this batch yet — only the orders are linked, so the net below is just <strong>revenue minus add-on cost</strong> and looks higher than reality. Click <strong>Pull from my data</strong>, then <strong>Save costs &amp; recalculate</strong>, to load your real ad, product and delivery costs.</span>
+                      </div>
+                    )}
+                    {underwater && !costsUnset && (
                       <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center gap-3 text-sm text-rose-800">
                         <AlertTriangle className="w-5 h-5 shrink-0 text-rose-500" />
                         <span>This batch is <strong>underwater</strong> at the worst-case floor — {fmt(Math.abs(w.netProfit))} in the red. {closed ? "It's closed, so this is final." : `It needs the still-open orders to land to climb toward its ${fmt(b.netProfit)} ceiling.`}</span>
