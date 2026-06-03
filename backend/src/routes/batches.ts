@@ -236,6 +236,13 @@ router.post("/:id/assign-orders", async (req, res) => {
   }
   const { data, error } = await q.select("id");
   if (error) { res.status(500).json({ error: error.message }); return; }
+
+  // Remember the chosen date window on the batch so autofill scopes ad spend to the
+  // EXACT dates the user picked (not the orders' min/max). null = full-history / all-time.
+  await supabase.from("batch_economics")
+    .update({ period_start: d.dateFrom ?? null, period_end: d.dateTo ?? null, updated_at: new Date().toISOString() })
+    .eq("id", req.params.id).eq("org_id", orgId);
+
   res.json({ assigned: (data ?? []).length });
 });
 
@@ -274,7 +281,7 @@ router.get("/:id/autofill", async (req, res) => {
   const orgId = req.user!.orgId;
   const id = req.params.id;
   const { data: batch } = await supabase
-    .from("batch_economics").select("id").eq("id", id).eq("org_id", orgId).single();
+    .from("batch_economics").select("id, period_start, period_end").eq("id", id).eq("org_id", orgId).single();
   if (!batch) { res.status(404).json({ error: "Batch not found." }); return; }
 
   const { data: orderRows } = await supabase
@@ -297,10 +304,13 @@ router.get("/:id/autofill", async (req, res) => {
     return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   };
   const dates = orders.map((o) => lagosDay(o.created_at)).filter(Boolean).sort();
-  const start = dates[0];
-  const end = dates[dates.length - 1];
+  // Prefer the EXACT date range the user picked when linking (stored on the batch);
+  // fall back to the linked orders' own span for full-history / product-only batches.
+  const start = (batch.period_start as string) || dates[0];
+  const end = (batch.period_end as string) || dates[dates.length - 1];
+  const windowFromChosenDates = !!(batch.period_start && batch.period_end);
   const productIds = [...new Set(orders.map((o) => o.product_id).filter(Boolean))] as string[];
-  meta.window = { start, end, orderCount: orders.length, productCount: productIds.length };
+  meta.window = { start, end, orderCount: orders.length, productCount: productIds.length, fromChosenDates: windowFromChosenDates };
 
   // ── Ad spend: product-scoped SUM of "Ad Spend" expenses over the window (NGN) ──
   if (start && end && productIds.length) {
