@@ -6644,6 +6644,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [newBatchLabel, setNewBatchLabel] = useState("");
   const [batchAssignFrom, setBatchAssignFrom] = useState("");
   const [batchAssignTo, setBatchAssignTo] = useState("");
+  const [batchAssignProductId, setBatchAssignProductId] = useState("");
   const [showBatchTierConfig, setShowBatchTierConfig] = useState(false);
   const [batchAutofillMeta, setBatchAutofillMeta] = useState<any | null>(null);
   const loadBatchEconomics = async (id: string) => {
@@ -6689,8 +6690,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!selectedBatchId || !batchAssignFrom || !batchAssignTo) { showToast("Pick a from + to date for the batch."); return; }
     setBatchBusy(true);
     try {
-      const r = await batchesApi.assignOrders(selectedBatchId, { dateFrom: batchAssignFrom, dateTo: batchAssignTo });
-      showToast(`Linked ${r.assigned} order(s) placed in that range to this batch.`);
+      const r = await batchesApi.assignOrders(selectedBatchId, { dateFrom: batchAssignFrom, dateTo: batchAssignTo, ...(batchAssignProductId ? { productIds: [batchAssignProductId] } : {}) });
+      const scope = batchAssignProductId ? (products.find((p) => p.id === batchAssignProductId)?.name ?? "that product") : "all products";
+      showToast(`Linked ${r.assigned} ${scope} order(s) placed in that range to this batch.`);
       await loadBatchEconomics(selectedBatchId);
       await loadBatches();
     } catch (err: any) { showToast(`Assign failed: ${err?.message ?? err}`); }
@@ -38516,8 +38518,19 @@ ${waybillLineItems(w).length > 1
                       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
                         <div>
                           <h2 className="text-sm font-bold text-gray-800">Link orders to this batch</h2>
-                          <p className="text-xs text-gray-400">Pull in every order placed between two dates. Re-running just re-links them — orders only ever belong to one batch.</p>
+                          <p className="text-xs text-gray-400">Pull in the orders placed between two dates — optionally just one product, so a batch can be a single push. Re-running just re-links them; orders only ever belong to one batch.</p>
                         </div>
+                        <label className="block">
+                          <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Product</span>
+                          <select
+                            value={batchAssignProductId}
+                            onChange={(e) => setBatchAssignProductId(e.target.value)}
+                            className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          >
+                            <option value="">All products in range</option>
+                            {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                          </select>
+                        </label>
                         <div className="grid grid-cols-2 gap-3">
                           <label className="block">
                             <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Placed from</span>
