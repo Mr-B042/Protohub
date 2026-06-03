@@ -6648,8 +6648,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [batchAssignAllTime, setBatchAssignAllTime] = useState(false);
   const [showBatchTierConfig, setShowBatchTierConfig] = useState(false);
   const [batchAutofillMeta, setBatchAutofillMeta] = useState<any | null>(null);
+  const autofilledBatches = useRef<Set<string>>(new Set());
   const loadBatchEconomics = async (id: string) => {
-    try { setBatchEconomics(await batchesApi.economics(id)); } catch { setBatchEconomics(null); }
+    try {
+      const econ = await batchesApi.economics(id);
+      setBatchEconomics(econ);
+      // Auto-load costs from data the first time a batch with orders is opened while its
+      // three cost inputs are still ₦0 — only when ALL are unset, so a number you typed is
+      // never overwritten. (Re-pull/refresh stays manual via the "Pull from my data" button.)
+      const b = econ?.batch;
+      const totalOrders = econ?.economics?.worstCase?.totalOrders ?? 0;
+      const unset = b && Number(b.adSpend) === 0 && Number(b.productCostPerSet) === 0 && Number(b.deliveryCostPerOrder) === 0;
+      if (unset && totalOrders > 0 && !autofilledBatches.current.has(id)) {
+        autofilledBatches.current.add(id);
+        const r = await batchesApi.autofill(id);
+        setBatchAutofillMeta(r?.meta ?? null);
+        const s = r?.suggestions ?? {};
+        if (Object.keys(s).length > 0) {
+          await batchesApi.update(id, s);
+          setBatchEconomics(await batchesApi.economics(id));
+          await loadBatches();
+        }
+      }
+    } catch { setBatchEconomics(null); }
   };
   const loadBatches = async () => {
     try {
