@@ -49317,10 +49317,15 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                   {isExcess && (
-                    <label>
-                      <span>Note for excess cash (optional)</span>
-                      <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
-                    </label>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
+                        <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(variance, remittanceTargetOrder.currency)}</strong> more than this order owed. The full {formatProductMoney(receivedValue, remittanceTargetOrder.currency)} is booked as cash received, and the extra is logged on its own as an owner-approved <strong>“Excess cash / overpayment”</strong> — never mixed into the short-cash reasons, so it can’t hide a missing-cash problem. A reason isn’t required (extra cash isn’t a risk); add a note only if you know why.
+                      </p>
+                      <label>
+                        <span>Note for excess cash (optional)</span>
+                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
+                      </label>
+                    </div>
                   )}
                   <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                     If the difference is a real waybill/logistics fee, enter it under <strong>Logistics Cost</strong> so the expected cash is reduced correctly.<br />
@@ -49399,10 +49404,15 @@ ${waybillLineItems(w).length > 1
                   </div>
                 )}
                 {remittanceBatchExcessAmount > 0 && (
-                  <label>
-                    <span>Note for excess cash (optional)</span>
-                    <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
-                  </label>
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
+                      <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}</strong> more than these orders owed. The full {formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} is booked as cash received, and the extra is logged on its own as an owner-approved <strong>“Excess cash / overpayment”</strong> (spread across the orders) — never mixed into the short-cash reasons. A reason isn’t required; add a note only if you know why.
+                    </p>
+                    <label>
+                      <span>Note for excess cash (optional)</span>
+                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
+                    </label>
+                  </div>
                 )}
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
