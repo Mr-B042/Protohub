@@ -296,6 +296,35 @@ export async function sendPushToSubscriptions(
   return { attempted, delivered, failed };
 }
 
+// Per-event accent colour — FCM tints the brand status-bar small icon + the app
+// name with this, giving each notification type its own recognisable premium look.
+const NOTIFICATION_ACCENT: Record<string, string> = {
+  order_new: "#1F8FE0",        // blue
+  order_assigned: "#1F8FE0",   // blue
+  order_confirmed: "#0EA5A4",  // teal
+  order_delivered: "#16A34A",  // green
+  order_failed: "#DC2626",     // red
+  order_cancelled: "#DC2626",  // red
+  order_rescheduled: "#F59E0B",// amber
+  order_follow_up: "#7C3AED",  // violet
+  abandoned_cart_new: "#F59E0B", // amber
+  low_stock: "#EA580C",        // orange
+  remittance_overdue: "#DC2626" // red
+};
+const DEFAULT_ACCENT = "#1F8FE0";
+const accentForKind = (kind?: string): string => (kind && NOTIFICATION_ACCENT[kind]) || DEFAULT_ACCENT;
+
+// Brand logo shown as the notification image. FCM must be able to DOWNLOAD it, so a
+// relative per-org logo path (/api/public/branding/...) is made absolute against the
+// backend's public URL; falls back to the committed brand asset served by the web CDN.
+const PUBLIC_BACKEND_URL = (process.env.PUBLIC_BACKEND_URL || "https://protohub-production.up.railway.app").replace(/\/+$/, "");
+const DEFAULT_BRAND_IMAGE = "https://protohub-zeta.vercel.app/brand/company-logo.png";
+const brandPushImage = (brandLogo?: string): string => {
+  if (brandLogo && /^https?:\/\//i.test(brandLogo)) return brandLogo;
+  if (brandLogo && brandLogo.startsWith("/")) return PUBLIC_BACKEND_URL + brandLogo;
+  return DEFAULT_BRAND_IMAGE;
+};
+
 export async function sendNativePushToDevices(
   devices: StoredNativePushDevice[] | null | undefined,
   payload: PushPayload,
@@ -336,7 +365,10 @@ export async function sendNativePushToDevices(
                 // looks "delivered" while the phone shows nothing.
                 channelId: "protohub-alerts",
                 tag: payload.tag,
-                image: payload.image
+                // Per-event accent colour (tints the brand small-icon + title) + the
+                // brand logo as the image — premium, recognisable per notification type.
+                color: accentForKind(payload.kind),
+                image: payload.image ?? brandPushImage(payload.brandLogo)
               }
             },
             apns: {
