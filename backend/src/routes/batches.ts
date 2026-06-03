@@ -201,14 +201,16 @@ router.delete("/:id", async (req, res) => {
   res.json({ message: "Batch deleted." });
 });
 
-// ── Assign orders (by explicit ids OR a placed-date range, optional product filter) ──
+// ── Assign orders: explicit ids, a placed-date range, and/or a product. At least
+//    one scope is required (so a bare request can never sweep the whole org). A
+//    product on its OWN links that product's FULL history (first order → now). ──
 const AssignSchema = z.object({
   orderIds: z.array(z.string()).optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   productIds: z.array(z.string().uuid()).optional()
-}).refine((d) => (d.orderIds && d.orderIds.length) || (d.dateFrom && d.dateTo), {
-  message: "Provide orderIds, or a dateFrom + dateTo range."
+}).refine((d) => (d.orderIds && d.orderIds.length) || (d.dateFrom && d.dateTo) || (d.productIds && d.productIds.length), {
+  message: "Provide orderIds, a product, or a dateFrom + dateTo range."
 });
 
 router.post("/:id/assign-orders", async (req, res) => {
@@ -225,7 +227,11 @@ router.post("/:id/assign-orders", async (req, res) => {
   if (d.orderIds && d.orderIds.length) {
     q = q.in("id", d.orderIds);
   } else {
-    q = q.gte("created_at", `${d.dateFrom}T00:00:00`).lte("created_at", `${d.dateTo}T23:59:59`);
+    // Date bounds + product filter are each optional; the refine guarantees at least
+    // one scope is present, so this never updates the whole org. Product alone =
+    // that product's full history.
+    if (d.dateFrom) q = q.gte("created_at", `${d.dateFrom}T00:00:00`);
+    if (d.dateTo) q = q.lte("created_at", `${d.dateTo}T23:59:59`);
     if (d.productIds && d.productIds.length) q = q.in("product_id", d.productIds);
   }
   const { data, error } = await q.select("id");

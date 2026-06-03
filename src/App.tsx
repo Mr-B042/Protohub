@@ -6645,6 +6645,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [batchAssignFrom, setBatchAssignFrom] = useState("");
   const [batchAssignTo, setBatchAssignTo] = useState("");
   const [batchAssignProductId, setBatchAssignProductId] = useState("");
+  const [batchAssignAllTime, setBatchAssignAllTime] = useState(false);
   const [showBatchTierConfig, setShowBatchTierConfig] = useState(false);
   const [batchAutofillMeta, setBatchAutofillMeta] = useState<any | null>(null);
   const loadBatchEconomics = async (id: string) => {
@@ -6687,12 +6688,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     finally { setBatchBusy(false); }
   };
   const assignBatchOrders = async () => {
-    if (!selectedBatchId || !batchAssignFrom || !batchAssignTo) { showToast("Pick a from + to date for the batch."); return; }
+    if (!selectedBatchId) return;
+    if (batchAssignAllTime) {
+      if (!batchAssignProductId) { showToast("Pick a product to pull its full history."); return; }
+    } else if (!batchAssignFrom || !batchAssignTo) {
+      showToast("Pick a from + to date, or switch on full history."); return;
+    }
     setBatchBusy(true);
     try {
-      const r = await batchesApi.assignOrders(selectedBatchId, { dateFrom: batchAssignFrom, dateTo: batchAssignTo, ...(batchAssignProductId ? { productIds: [batchAssignProductId] } : {}) });
+      const body: any = batchAssignProductId ? { productIds: [batchAssignProductId] } : {};
+      if (!batchAssignAllTime) { body.dateFrom = batchAssignFrom; body.dateTo = batchAssignTo; }
+      const r = await batchesApi.assignOrders(selectedBatchId, body);
       const scope = batchAssignProductId ? (products.find((p) => p.id === batchAssignProductId)?.name ?? "that product") : "all products";
-      showToast(`Linked ${r.assigned} ${scope} order(s) placed in that range to this batch.`);
+      const when = batchAssignAllTime ? "all-time" : "placed in that range";
+      showToast(`Linked ${r.assigned} ${scope} order(s) ${when} to this batch.`);
       await loadBatchEconomics(selectedBatchId);
       await loadBatches();
     } catch (err: any) { showToast(`Assign failed: ${err?.message ?? err}`); }
@@ -38527,34 +38536,38 @@ ${waybillLineItems(w).length > 1
                       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
                         <div>
                           <h2 className="text-sm font-bold text-gray-800">Link orders to this batch</h2>
-                          <p className="text-xs text-gray-400">Pull in the orders placed between two dates — optionally just one product, so a batch can be a single push. Re-running just re-links them; orders only ever belong to one batch.</p>
+                          <p className="text-xs text-gray-400">Pull in the orders placed between two dates — optionally just one product, so a batch can be a single push. Or tick <strong>full history</strong> to pull a product's entire run, first order to now. Re-running just re-links them; orders only ever belong to one batch.</p>
                         </div>
                         <label className="block">
-                          <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Product</span>
+                          <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Product{batchAssignAllTime ? " (required)" : ""}</span>
                           <select
                             value={batchAssignProductId}
                             onChange={(e) => setBatchAssignProductId(e.target.value)}
                             className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                           >
-                            <option value="">All products in range</option>
+                            <option value="">{batchAssignAllTime ? "Pick a product…" : "All products in range"}</option>
                             {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
                           </select>
                         </label>
-                        <div className="grid grid-cols-2 gap-3">
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                          <input type="checkbox" checked={batchAssignAllTime} onChange={(e) => setBatchAssignAllTime(e.target.checked)} className="h-4 w-4 accent-[#1F8FE0]" />
+                          Full history — this product's entire run (first order → now), ignore the dates
+                        </label>
+                        <div className={`grid grid-cols-2 gap-3 ${batchAssignAllTime ? "opacity-40 pointer-events-none" : ""}`}>
                           <label className="block">
                             <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Placed from</span>
-                            <input type="date" value={batchAssignFrom} onChange={(e) => setBatchAssignFrom(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
+                            <input type="date" disabled={batchAssignAllTime} value={batchAssignFrom} onChange={(e) => setBatchAssignFrom(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
                           </label>
                           <label className="block">
                             <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Placed to</span>
-                            <input type="date" value={batchAssignTo} onChange={(e) => setBatchAssignTo(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
+                            <input type="date" disabled={batchAssignAllTime} value={batchAssignTo} onChange={(e) => setBatchAssignTo(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
                           </label>
                         </div>
                         <button
                           onClick={assignBatchOrders}
                           disabled={batchBusy}
                           className="h-10 w-full rounded-lg bg-gray-900 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                        >Link orders in range</button>
+                        >{batchAssignAllTime ? "Link this product's full history" : "Link orders in range"}</button>
                       </div>
                     </div>
                   </>
