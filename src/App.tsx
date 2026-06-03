@@ -50,6 +50,8 @@ import {
   Sparkles,
   ShieldCheck,
   Trash2,
+  Calculator,
+  Settings,
   Truck,
   Upload,
   UserPlus,
@@ -105,7 +107,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
@@ -191,7 +193,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance";
+type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -1375,7 +1377,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1436,6 +1438,12 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Performance"],
     summary: "Use this to judge which states are worth scaling, pausing, or tightening lead screening on based on cohort delivery outcomes.",
     caution: "Treat this as a cohort-performance board with delivered profit contribution, not a full state-by-state accounting statement."
+  },
+  "Profitability": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting"],
+    summary: "Use this for a campaign batch's honest unit economics: worst-case net (every non-delivered order treated as a failure) as the headline, with CPP, true delivery rate, AOV, and the breakeven AOV.",
+    caution: "This is a planning lens on MANUAL cost assumptions per batch (ad spend, product cost/set, delivery/order) — not the recognised P&L. The worst-case is the floor; the best-case is only a ceiling."
   }
 };
 const financeLensToneClasses: Record<FinanceLens, string> = {
@@ -6627,6 +6635,74 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showFinanceDateRange, setShowFinanceDateRange] = useState(false);
   const [financeDateRange, setFinanceDateRange] = useState<DateRange>({ start: "", end: "" });
   const [financeTab, setFinanceTab] = useState<FinanceTab>("Financial Overview");
+  // ── Batch unit-economics (Profitability tab) ──
+  const [batches, setBatches] = useState<any[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [batchEconomics, setBatchEconomics] = useState<any | null>(null);
+  const [batchTierConfig, setBatchTierConfig] = useState<{ tiers: any[]; statusMap: any[] } | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [newBatchLabel, setNewBatchLabel] = useState("");
+  const [batchAssignFrom, setBatchAssignFrom] = useState("");
+  const [batchAssignTo, setBatchAssignTo] = useState("");
+  const [showBatchTierConfig, setShowBatchTierConfig] = useState(false);
+  const loadBatchEconomics = async (id: string) => {
+    try { setBatchEconomics(await batchesApi.economics(id)); } catch { setBatchEconomics(null); }
+  };
+  const loadBatches = async () => {
+    try {
+      const [list, config] = await Promise.all([batchesApi.list(), batchesApi.getConfig()]);
+      setBatches(Array.isArray(list) ? list : []);
+      setBatchTierConfig(config);
+      setSelectedBatchId((cur) => cur ?? ((Array.isArray(list) && list[0]) ? list[0].id : null));
+    } catch (err: any) { showToast(`Failed to load batches: ${err?.message ?? err}`); }
+  };
+  useEffect(() => {
+    if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
+  }, [activePage, financeTab]);
+  useEffect(() => {
+    if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
+    else setBatchEconomics(null);
+  }, [selectedBatchId]);
+  const createBatch = async () => {
+    setBatchBusy(true);
+    try {
+      const b = await batchesApi.create({ label: newBatchLabel.trim() || "Untitled batch" });
+      setNewBatchLabel("");
+      await loadBatches();
+      setSelectedBatchId(b.id);
+    } catch (err: any) { showToast(`Create failed: ${err?.message ?? err}`); }
+    finally { setBatchBusy(false); }
+  };
+  const patchBatch = async (patch: any) => {
+    if (!selectedBatchId) return;
+    setBatchBusy(true);
+    try {
+      await batchesApi.update(selectedBatchId, patch);
+      await loadBatchEconomics(selectedBatchId);
+      await loadBatches();
+    } catch (err: any) { showToast(`Update failed: ${err?.message ?? err}`); }
+    finally { setBatchBusy(false); }
+  };
+  const assignBatchOrders = async () => {
+    if (!selectedBatchId || !batchAssignFrom || !batchAssignTo) { showToast("Pick a from + to date for the batch."); return; }
+    setBatchBusy(true);
+    try {
+      const r = await batchesApi.assignOrders(selectedBatchId, { dateFrom: batchAssignFrom, dateTo: batchAssignTo });
+      showToast(`Linked ${r.assigned} order(s) placed in that range to this batch.`);
+      await loadBatchEconomics(selectedBatchId);
+      await loadBatches();
+    } catch (err: any) { showToast(`Assign failed: ${err?.message ?? err}`); }
+    finally { setBatchBusy(false); }
+  };
+  const saveBatchTierConfig = async (tiers: any[], statusMap: any[]) => {
+    setBatchBusy(true);
+    try {
+      const cfg = await batchesApi.updateConfig({ tiers, statusMap });
+      setBatchTierConfig(cfg);
+      if (selectedBatchId) await loadBatchEconomics(selectedBatchId);
+    } catch (err: any) { showToast(`Tier save failed: ${err?.message ?? err}`); }
+    finally { setBatchBusy(false); }
+  };
   // Weekly Accounting (Sun→Sat). Default to the Sunday of the current week.
   const [weeklyAcctSunday, setWeeklyAcctSunday] = useState<string>(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0);
@@ -38091,6 +38167,328 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </div>
               )}
+              {financeTab === "Profitability" && (() => {
+                const fmt = (n: any) => "₦" + Math.round(Number(n) || 0).toLocaleString();
+                const ck = (s: string) => String(s).replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+                const econ = batchEconomics?.economics;
+                const w = econ?.worstCase;
+                const b = econ?.bestCase;
+                const batch = batchEconomics?.batch;
+                const tiers = (batchTierConfig?.tiers ?? []).slice().sort((x: any, y: any) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
+                const statusMap = batchTierConfig?.statusMap ?? [];
+                const pct = (f: number) => `${Math.round((Number(f) || 0) * 100)}%`;
+                const cppTone = !w ? "text-gray-900" : w.cpp <= 2000 ? "text-emerald-600" : w.cpp <= 3000 ? "text-amber-600" : "text-rose-600";
+                const aovTone = !w ? "text-gray-900" : w.aovSets >= 1.8 ? "text-emerald-600" : w.aovSets >= 1.4 ? "text-amber-600" : "text-rose-600";
+                const drTone = !w ? "text-gray-900" : w.trueDeliveryRate >= 0.8 ? "text-emerald-600" : w.trueDeliveryRate >= 0.6 ? "text-amber-600" : "text-rose-600";
+                const netTone = !w ? "text-gray-900" : w.netProfit >= 0 ? "text-emerald-600" : "text-rose-600";
+                const underwater = w && w.netProfit < 0;
+                const closed = !!econ?.closed;
+                return (
+                <div className="space-y-6">
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5 flex flex-col sm:flex-row items-start gap-4">
+                    <span className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><Calculator className="w-5 h-5" /></span>
+                    <div className="flex-1 text-sm text-indigo-900">
+                      <h2 className="text-sm font-bold mb-1">Batch profitability — a planning lens, not the books</h2>
+                      <p className="m-0 text-[13px] leading-relaxed">Group the orders from one ad push into a named batch, type in what that batch actually cost you (ad spend, product cost per set, delivery per order), and see the floor and the ceiling. <strong>Worst case</strong> treats every order that hasn't delivered yet as a write-off — that's your guaranteed-safe number. <strong>Best case</strong> assumes every still-open order delivers. Your real result lands between the two and walks toward the worst case as the batch closes out. These are <em>manual cost assumptions</em> for decision-making — they don't change the recognised P&amp;L on the other tabs.</p>
+                    </div>
+                  </div>
+
+                  {/* Batch toolbar */}
+                  <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex flex-col gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                      <label className="flex-1">
+                        <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Active batch</span>
+                        <select
+                          value={selectedBatchId ?? ""}
+                          onChange={(e) => setSelectedBatchId(e.target.value || null)}
+                          className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                        >
+                          {batches.length === 0 && <option value="">No batches yet — create one →</option>}
+                          {batches.map((bx: any) => (
+                            <option key={bx.id} value={bx.id}>
+                              {bx.label}{bx.status === "closed" ? " (closed)" : ""} — {fmt(bx.worstCaseNet)} worst
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="flex items-end gap-2">
+                        <label className="flex-1 sm:w-56">
+                          <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">New batch name</span>
+                          <input
+                            value={newBatchLabel}
+                            onChange={(e) => setNewBatchLabel(e.target.value)}
+                            placeholder="e.g. Edge Brusher — May push"
+                            className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          />
+                        </label>
+                        <button
+                          onClick={createBatch}
+                          disabled={batchBusy}
+                          className="h-10 rounded-lg bg-[#1F8FE0] px-4 text-sm font-semibold text-white hover:bg-[#1a7bc4] disabled:opacity-50"
+                        >Create</button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setShowBatchTierConfig((s) => !s)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                      ><Settings className="w-3.5 h-3.5" />{showBatchTierConfig ? "Hide" : "Edit"} cost-tier rules</button>
+                      {selectedBatchId && (
+                        <button
+                          onClick={() => { if (window.confirm("Delete this batch? Orders stay; they just un-link from it.")) batchesApi.delete(selectedBatchId!).then(() => { setSelectedBatchId(null); setBatchEconomics(null); loadBatches(); }); }}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                        ><Trash2 className="w-3.5 h-3.5" />Delete batch</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tier-config editor */}
+                  {showBatchTierConfig && batchTierConfig && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
+                      <div>
+                        <h2 className="text-sm font-bold text-gray-800">Cost-tier rules</h2>
+                        <p className="text-xs text-gray-400">Every order falls into a tier based on its status. Each tier decides what that order earns and what it costs you. Add as many tiers as you need.</p>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-[10px] uppercase tracking-wider text-gray-400 text-left">
+                              <th className="px-2 py-2">Tier</th>
+                              <th className="px-2 py-2 text-center">Earns revenue</th>
+                              <th className="px-2 py-2 text-center">Charge ad</th>
+                              <th className="px-2 py-2 text-center">Charge product</th>
+                              <th className="px-2 py-2 text-center">Charge delivery</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {tiers.map((t: any, i: number) => {
+                              const upd = (patch: any) => setBatchTierConfig((cfg: any) => ({ ...cfg, tiers: cfg.tiers.map((x: any) => x.tierKey === t.tierKey ? { ...x, ...patch } : x) }));
+                              return (
+                                <tr key={t.tierKey} className="border-t border-gray-100">
+                                  <td className="px-2 py-2">
+                                    <input value={t.label} onChange={(e) => upd({ label: e.target.value })} className="w-44 rounded border border-gray-200 px-2 py-1 text-sm" />
+                                    <div className="text-[10px] text-gray-400 font-mono mt-0.5">{t.tierKey}</div>
+                                  </td>
+                                  {(["earnsRevenue", "chargeAd", "chargeProduct", "chargeDelivery"] as const).map((flag) => (
+                                    <td key={flag} className="px-2 py-2 text-center">
+                                      <input type="checkbox" checked={!!t[flag]} onChange={(e) => upd({ [flag]: e.target.checked })} className="h-4 w-4 accent-[#1F8FE0]" />
+                                    </td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <button
+                        onClick={() => { const key = (newBatchLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")) || `tier_${tiers.length + 1}`; setBatchTierConfig((cfg: any) => ({ ...cfg, tiers: [...cfg.tiers, { tierKey: key, label: newBatchLabel.trim() || `Tier ${tiers.length + 1}`, earnsRevenue: false, chargeAd: true, chargeProduct: false, chargeDelivery: false, sortOrder: cfg.tiers.length }] })); setNewBatchLabel(""); }}
+                        className="text-xs font-semibold text-[#1F8FE0] hover:underline"
+                      >+ Add a tier (type the name in “New batch name” above first)</button>
+
+                      <div>
+                        <h3 className="text-xs font-bold text-gray-700 mb-2">Which status falls into which tier</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {statusMap.map((m: any) => {
+                            const updM = (patch: any) => setBatchTierConfig((cfg: any) => ({ ...cfg, statusMap: cfg.statusMap.map((x: any) => x.orderStatus === m.orderStatus ? { ...x, ...patch } : x) }));
+                            return (
+                              <div key={m.orderStatus} className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2">
+                                <span className="w-24 text-xs font-semibold text-gray-700">{m.orderStatus}</span>
+                                <select value={m.tierKey} onChange={(e) => updM({ tierKey: e.target.value })} className="flex-1 rounded border border-gray-200 px-2 py-1 text-xs">
+                                  {tiers.map((t: any) => <option key={t.tierKey} value={t.tierKey}>{t.label}</option>)}
+                                </select>
+                                <label className="flex items-center gap-1 text-[10px] text-gray-500" title="Still open = best-case assumes it will deliver">
+                                  <input type="checkbox" checked={!!m.isOpen} onChange={(e) => updM({ isOpen: e.target.checked })} className="h-3.5 w-3.5 accent-[#1F8FE0]" />open
+                                </label>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => saveBatchTierConfig(batchTierConfig.tiers, batchTierConfig.statusMap)}
+                        disabled={batchBusy}
+                        className="h-10 rounded-lg bg-gray-900 px-5 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                      >Save tier rules</button>
+                    </div>
+                  )}
+
+                  {!batch || !w ? (
+                    <div className="bg-white rounded-xl border border-gray-200 px-5 py-12 text-center text-sm text-gray-400 italic">
+                      {batches.length === 0 ? "Create your first batch above, then link the orders from that ad push to see its true profit." : "Pick a batch above to see its economics."}
+                    </div>
+                  ) : (
+                  <>
+                    {underwater && (
+                      <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center gap-3 text-sm text-rose-800">
+                        <AlertTriangle className="w-5 h-5 shrink-0 text-rose-500" />
+                        <span>This batch is <strong>underwater</strong> at the worst-case floor — {fmt(Math.abs(w.netProfit))} in the red. {closed ? "It's closed, so this is final." : `It needs the still-open orders to land to climb toward its ${fmt(b.netProfit)} ceiling.`}</span>
+                      </div>
+                    )}
+
+                    {/* Headline */}
+                    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{closed ? "Final net profit" : "Worst-case net profit (the floor)"}</p>
+                            {closed && <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">CLOSED</span>}
+                          </div>
+                          <strong className={`block text-4xl font-bold ${netTone}`}>{fmt(w.netProfit)}</strong>
+                          <p className="m-0 mt-1 text-xs text-gray-500">{fmt(w.profitPerOrder)} per order placed · {w.deliveredOrders}/{w.totalOrders} delivered</p>
+                        </div>
+                        {!closed && (
+                          <div className="lg:text-right">
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Best-case ceiling</p>
+                            <strong className={`block text-2xl font-bold ${b.netProfit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{fmt(b.netProfit)}</strong>
+                            <p className="m-0 mt-1 text-xs text-gray-500">if all {b.deliveredOrders - w.deliveredOrders} open order(s) land</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* KPI dials */}
+                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Batch KPIs">
+                      {[
+                        { title: "Cost per order", value: fmt(w.cpp), helper: "ad spend ÷ orders placed", tone: cppTone },
+                        { title: "Avg sets / delivered", value: (Number(w.aovSets) || 0).toFixed(2), helper: `${fmt(w.aovValue)} avg order value`, tone: aovTone },
+                        { title: "True delivery rate", value: pct(w.trueDeliveryRate), helper: `${pct(w.failureRate)} fell through`, tone: drTone },
+                        { title: "Net profit", value: fmt(w.netProfit), helper: closed ? "final" : "worst-case floor", tone: netTone }
+                      ].map((k) => (
+                        <article key={k.title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                          <h2 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">{k.title}</h2>
+                          <strong className={`text-2xl font-bold block my-1 ${k.tone}`}>{k.value}</strong>
+                          <p className="text-[10px] text-gray-400 font-medium">{k.helper}</p>
+                        </article>
+                      ))}
+                    </section>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Money waterfall */}
+                      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                        <h2 className="text-sm font-bold text-gray-800 mb-1">Where the money goes</h2>
+                        <p className="text-xs text-gray-400 mb-4">Worst-case build-up from revenue to net.</p>
+                        <div className="space-y-2 text-sm">
+                          {[
+                            { label: "Revenue (delivered)", val: w.revenue, sign: 1 },
+                            { label: "Ad spend (sunk)", val: -w.adCost, sign: -1 },
+                            { label: "Product cost (delivered sets)", val: -w.productCost, sign: -1 },
+                            { label: "Delivery — delivered", val: -w.deliveredDelivery, sign: -1 },
+                            { label: "Delivery — wasted (failed after dispatch)", val: -w.wastedDelivery, sign: -1 }
+                          ].map((r) => (
+                            <div key={r.label} className="flex items-center justify-between border-b border-gray-50 pb-2">
+                              <span className="text-gray-600">{r.label}</span>
+                              <span className={`font-semibold ${r.sign > 0 ? "text-emerald-600" : "text-rose-600"}`}>{r.sign > 0 ? "" : "−"}{fmt(Math.abs(r.val))}</span>
+                            </div>
+                          ))}
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="font-bold text-gray-800">Net profit</span>
+                            <span className={`text-lg font-bold ${netTone}`}>{fmt(w.netProfit)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Order mix / tier breakdown */}
+                      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                        <h2 className="text-sm font-bold text-gray-800 mb-1">Order mix</h2>
+                        <p className="text-xs text-gray-400 mb-4">How the {w.totalOrders} placed order(s) split across cost tiers.</p>
+                        <div className="space-y-2 text-sm">
+                          {tiers.map((t: any) => {
+                            const count = w.tierCounts?.[ck(t.tierKey)] ?? 0;
+                            return (
+                              <div key={t.tierKey} className="flex items-center justify-between border-b border-gray-50 pb-2">
+                                <span className="flex items-center gap-2">
+                                  <span className={`inline-block w-2 h-2 rounded-full ${t.earnsRevenue ? "bg-emerald-500" : t.chargeDelivery ? "bg-amber-500" : "bg-gray-300"}`} />
+                                  <span className="text-gray-600">{t.label}</span>
+                                </span>
+                                <span className="font-semibold text-gray-900">{count}</span>
+                              </div>
+                            );
+                          })}
+                          {(w.tierCounts?.unmapped ?? 0) > 0 && (
+                            <div className="flex items-center justify-between border-b border-gray-50 pb-2">
+                              <span className="text-gray-400 italic">Unmapped status</span>
+                              <span className="font-semibold text-gray-400">{w.tierCounts.unmapped}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="font-bold text-gray-800">Write-offs {closed ? "" : "(so far)"}</span>
+                            <span className="text-lg font-bold text-rose-600">{econ.writeOffCount}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Break-even helper */}
+                    {econ.breakevenAovValue != null && (
+                      <div className={`rounded-xl border p-5 ${w.aovValue >= econ.breakevenAovValue ? "bg-emerald-50 border-emerald-100" : "bg-amber-50 border-amber-100"}`}>
+                        <h2 className={`text-sm font-bold mb-1 ${w.aovValue >= econ.breakevenAovValue ? "text-emerald-900" : "text-amber-900"}`}>Break-even average order value</h2>
+                        <p className="m-0 text-[13px] text-gray-700">At this batch's costs and delivery rate, each delivered order needs to be worth at least <strong>{fmt(econ.breakevenAovValue)}</strong> to get the whole batch to ₦0. You're delivering at <strong>{fmt(w.aovValue)}</strong> — {w.aovValue >= econ.breakevenAovValue ? "above break-even, so the batch carries its own costs." : `${fmt(econ.breakevenAovValue - w.aovValue)} short, so either AOV or the delivery rate has to climb.`}</p>
+                      </div>
+                    )}
+
+                    {/* Inputs + assign */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-sm font-bold text-gray-800">Batch costs</h2>
+                          <button
+                            onClick={() => patchBatch({ status: batch.status === "open" ? "closed" : "open" })}
+                            disabled={batchBusy}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${batch.status === "open" ? "border border-gray-200 text-gray-600 hover:bg-gray-50" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
+                          >{batch.status === "open" ? "Close batch" : "Re-open batch"}</button>
+                        </div>
+                        {([
+                          { key: "adSpend", label: "Total ad spend for this batch" },
+                          { key: "productCostPerSet", label: "Product cost per set" },
+                          { key: "deliveryCostPerOrder", label: "Delivery cost per order" }
+                        ] as const).map((f) => (
+                          <label key={f.key} className="block">
+                            <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">{f.label}</span>
+                            <div className="relative">
+                              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₦</span>
+                              <input
+                                type="number" min={0}
+                                value={batch[f.key]}
+                                onChange={(e) => setBatchEconomics((p: any) => p ? { ...p, batch: { ...p.batch, [f.key]: Number(e.target.value) || 0 } } : p)}
+                                className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                              />
+                            </div>
+                          </label>
+                        ))}
+                        <button
+                          onClick={() => patchBatch({ adSpend: batch.adSpend, productCostPerSet: batch.productCostPerSet, deliveryCostPerOrder: batch.deliveryCostPerOrder })}
+                          disabled={batchBusy}
+                          className="h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1a7bc4] disabled:opacity-50"
+                        >Save costs &amp; recalculate</button>
+                      </div>
+
+                      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
+                        <div>
+                          <h2 className="text-sm font-bold text-gray-800">Link orders to this batch</h2>
+                          <p className="text-xs text-gray-400">Pull in every order placed between two dates. Re-running just re-links them — orders only ever belong to one batch.</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block">
+                            <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Placed from</span>
+                            <input type="date" value={batchAssignFrom} onChange={(e) => setBatchAssignFrom(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
+                          </label>
+                          <label className="block">
+                            <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Placed to</span>
+                            <input type="date" value={batchAssignTo} onChange={(e) => setBatchAssignTo(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" />
+                          </label>
+                        </div>
+                        <button
+                          onClick={assignBatchOrders}
+                          disabled={batchBusy}
+                          className="h-10 w-full rounded-lg bg-gray-900 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                        >Link orders in range</button>
+                      </div>
+                    </div>
+                  </>
+                  )}
+                </div>
+                );
+              })()}
               </div>
             </div>
           ) : activePage === "Ad Tracking" ? (

@@ -366,6 +366,18 @@ export const ordersApi = {
   logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
+// ── Batch unit-economics ─────────────────────────────────
+export const batchesApi = {
+  list: () => get<any[]>("/api/batches"),
+  create: (body: unknown) => post<any>("/api/batches", body),
+  update: (id: string, body: unknown) => patch<any>(`/api/batches/${id}`, body),
+  delete: (id: string) => del<void>(`/api/batches/${id}`),
+  assignOrders: (id: string, body: unknown) => post<{ assigned: number }>(`/api/batches/${id}/assign-orders`, body),
+  economics: (id: string) => get<any>(`/api/batches/${id}/economics`),
+  getConfig: () => get<{ tiers: any[]; statusMap: any[] }>("/api/batches/config/tiers"),
+  updateConfig: (body: unknown) => patch<{ tiers: any[]; statusMap: any[] }>("/api/batches/config/tiers", body)
+};
+
 export const weeklyAccountingApi = {
   summary: (params: { weekStart: string; productIds?: string }) => {
     const qs = new URLSearchParams({
