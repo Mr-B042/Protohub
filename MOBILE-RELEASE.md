@@ -33,6 +33,36 @@ npx cap open android          # opens Android Studio
 `android/` and `google-services.json` are git-ignored on purpose — they're
 regenerated from `capacitor.config.ts` and must not be committed.
 
+## Brand icons (re-apply after `cap add android`)
+
+The launcher icon + status-bar notification icon are NOT Capacitor defaults — they
+must be regenerated into the fresh `android/` project:
+
+```bash
+node scripts/gen-android-icons.mjs   # writes the brand launcher + ic_stat_notify drawables
+```
+
+Then re-apply these two edits (lost when android/ is regenerated):
+
+1. `android/app/src/main/res/values/ic_launcher_background.xml` — set the adaptive
+   background + accent colour:
+   ```xml
+   <color name="ic_launcher_background">#20262E</color>
+   <color name="notification_accent">#1F8FE0</color>
+   ```
+2. `android/app/src/main/AndroidManifest.xml` — inside `<application>`, the FCM
+   defaults (brand white-silhouette small icon + accent tint; per-event colour is
+   sent per-message and overrides it):
+   ```xml
+   <meta-data android:name="com.google.firebase.messaging.default_notification_icon"
+              android:resource="@drawable/ic_stat_notify" />
+   <meta-data android:name="com.google.firebase.messaging.default_notification_color"
+              android:resource="@color/notification_accent" />
+   ```
+
+The icon design lives in `scripts/gen-android-icons.mjs` (SVG source) — edit there
+to change it. `sharp` (used by the script) is resolved from `backend/node_modules`.
+
 ## Cutting the release (in Android Studio)
 
 1. Bump **versionCode** (integer, must increase) and **versionName** in
