@@ -1584,6 +1584,9 @@ router.patch("/:id", async (req, res) => {
       )
     );
   }
+  // A real (re)assignment to a rep OTHER than the person doing it should ping that
+  // rep. Captured here; the notification fires after the update commits (below).
+  let newlyAssignedRepId: string | null = null;
   if (Object.prototype.hasOwnProperty.call(updates, "assigned_rep_id")) {
     const nextAssignedRepId = updates.assigned_rep_id ? String(updates.assigned_rep_id) : null;
     const currentAssignedRepId = current.assigned_rep_id ? String(current.assigned_rep_id) : null;
@@ -1591,6 +1594,7 @@ router.patch("/:id", async (req, res) => {
       if (nextAssignedRepId) {
         updates.assigned_by_user_id = req.user!.id;
         updates.assigned_by_name_snapshot = req.user!.name;
+        if (nextAssignedRepId !== req.user!.id) newlyAssignedRepId = nextAssignedRepId;
       } else {
         updates.assigned_by_user_id = null;
         updates.assigned_by_name_snapshot = null;
@@ -1702,6 +1706,18 @@ router.patch("/:id", async (req, res) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  // Ping a newly-assigned rep with an in-app + push "Order Assigned" notification.
+  // The "Assigned" config targets ONLY the assigned rep (no Owner/Admin), mirroring
+  // the order_new alert reps get when an order is created already on them — this
+  // closes the gap where a later (re)assignment fired no notification at all.
+  if (newlyAssignedRepId) {
+    await notifyOrderEvent(req.user!.orgId, {
+      id: data.id, customer: data.customer, phone: data.phone, amount: data.amount, currency: data.currency,
+      productName: data.product_name, packageName: data.package_name,
+      assignedRepId: newlyAssignedRepId
+    }, "Assigned");
+  }
 
   // ── Per-field audit trail ────────────────────────────────
   // order_audit only tracks status changes. This catches everything else
