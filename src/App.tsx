@@ -1696,12 +1696,17 @@ const remittanceVarianceReasons = [
   { value: "partial_cash", label: "Partial cash received" },
   { value: "agent_shortage", label: "Agent shortage / missing cash" },
   { value: "excess_cash", label: "Excess cash / overpayment" },
+  { value: "customer_overpaid", label: "Customer overpaid" },
+  { value: "repaid_shortage", label: "Repaid an earlier shortage" },
+  { value: "rounding_extra", label: "Rounding / extra" },
   { value: "correction", label: "Correction / other" }
 ] as const;
-// Excess cash is its OWN logged event — auto-recorded as "Excess cash / overpayment"
-// with an optional note (see recordRemittance / recordBatchRemittance). The short-cash
-// reason picker therefore must NOT offer it: those reasons explain MISSING cash only.
-const remittanceShortCashReasons = remittanceVarianceReasons.filter((reason) => reason.value !== "excess_cash");
+// Short-cash explains MISSING cash; excess explains EXTRA cash — each picker shows only
+// its own reasons (+ the shared "Correction / other"), never the other side's.
+const SHORT_CASH_REASON_VALUES = new Set(["waybill_logistics", "extra_delivery_fee", "customer_paid_less", "partial_cash", "agent_shortage", "correction"]);
+const EXCESS_CASH_REASON_VALUES = new Set(["excess_cash", "customer_overpaid", "repaid_shortage", "rounding_extra", "correction"]);
+const remittanceShortCashReasons = remittanceVarianceReasons.filter((reason) => SHORT_CASH_REASON_VALUES.has(reason.value));
+const remittanceExcessCashReasons = remittanceVarianceReasons.filter((reason) => EXCESS_CASH_REASON_VALUES.has(reason.value));
 const remittanceVarianceReasonLabel = (value: string) =>
   remittanceVarianceReasons.find((reason) => reason.value === value)?.label ?? "";
 
@@ -13235,8 +13240,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Owner approval is required before short or excess cash can enter the system.");
       return;
     }
-    if (variance < 0 && !remittanceVarianceReason) {
+    if (variance < 0 && !SHORT_CASH_REASON_VALUES.has(remittanceVarianceReason)) {
       showToast("Select the reason for the short cash before saving.");
+      return;
+    }
+    if (variance > 0 && !EXCESS_CASH_REASON_VALUES.has(remittanceVarianceReason)) {
+      showToast("Select the reason for the excess cash before saving.");
       return;
     }
     if (remittanceVarianceReason === "correction" && variance !== 0 && remittanceVarianceNote.trim().length < 3) {
@@ -13245,8 +13254,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const remittanceReason = buildRemittanceVarianceReason({
       scope: "Single order",
-      // Excess auto-logs as excess; short uses the chosen short-cash reason.
-      category: variance > 0 ? "excess_cash" : remittanceVarianceReason,
+      // Short and excess both use the chosen reason (required for either now).
+      category: remittanceVarianceReason,
       note: remittanceVarianceNote,
       expected,
       received: newRemitted,
@@ -13257,7 +13266,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
     const prevOrders = trackedOrders;
     const varianceNote = variance > 0
-      ? ` Excess cash ${formatMoney(variance)} owner-approved and recorded.${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}`
+      ? ` Excess cash ${formatMoney(variance)} owner-approved. Reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
       : variance < 0
         ? ` Short by ${formatMoney(Math.abs(variance))}. Owner-approved reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
         : "";
@@ -13324,8 +13333,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Owner approval is required before short or excess batch cash can enter the system.");
       return;
     }
-    if (remittanceBatchShortAmount > 0 && !remittanceBatchVarianceReason) {
+    if (remittanceBatchShortAmount > 0 && !SHORT_CASH_REASON_VALUES.has(remittanceBatchVarianceReason)) {
       showToast("Select the reason for the short batch cash before saving.");
+      return;
+    }
+    if (remittanceBatchExcessAmount > 0 && !EXCESS_CASH_REASON_VALUES.has(remittanceBatchVarianceReason)) {
+      showToast("Select the reason for the excess batch cash before saving.");
       return;
     }
     if (remittanceBatchVarianceReason === "correction" && remittanceBatchHasVariance && remittanceBatchVarianceNote.trim().length < 3) {
@@ -13341,7 +13354,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const batchReason = buildRemittanceVarianceReason({
       scope: "Batch",
       // Excess auto-logs as excess; short uses the chosen short-cash reason.
-      category: remittanceBatchExcessAmount > 0 ? "excess_cash" : remittanceBatchVarianceReason,
+      category: remittanceBatchVarianceReason,
       note: remittanceBatchVarianceNote,
       expected: remittanceBatchOutstandingTotal,
       received: remittanceBatchAmountValue,
@@ -49325,12 +49338,21 @@ ${waybillLineItems(w).length > 1
                   {isExcess && (
                     <div className="flex flex-col gap-2">
                       <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
-                        <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(variance, remittanceTargetOrder.currency)}</strong> more than this order owed. The full {formatProductMoney(receivedValue, remittanceTargetOrder.currency)} is booked as cash received, and the extra is logged on its own as an owner-approved <strong>“Excess cash / overpayment”</strong> — never mixed into the short-cash reasons, so it can’t hide a missing-cash problem. A reason isn’t required (extra cash isn’t a risk); add a note only if you know why.
+                        <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(variance, remittanceTargetOrder.currency)}</strong> more than this order owed. The full {formatProductMoney(receivedValue, remittanceTargetOrder.currency)} is booked as cash received, and the extra is logged on its own as owner-approved excess — never mixed into the short-cash reasons. Pick why below.
                       </p>
-                      <label>
-                        <span>Note for excess cash (optional)</span>
-                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
-                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label>
+                          <span>Reason for excess cash *</span>
+                          <select value={remittanceVarianceReason} onChange={(e) => setRemittanceVarianceReason(e.target.value)}>
+                            <option value="">Select a reason...</option>
+                            {remittanceExcessCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Reason note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                          <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
+                        </label>
+                      </div>
                     </div>
                   )}
                   <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
@@ -49363,7 +49385,7 @@ ${waybillLineItems(w).length > 1
                 </div>
                 <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                   This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.<br />
-                  <span>Enter the <strong>full amount the partner handed over</strong>. Pay <strong>over</strong> the expected total → the extra is logged as owner-approved <strong>excess</strong> (spread across the orders, kept separate from shortages). Pay <strong>under</strong> → you&apos;ll pick a short-cash reason. Either way needs Owner approval.</span>
+                  <span>Enter the <strong>full amount the partner handed over</strong>. Pay <strong>over</strong> the expected total → pick an <strong>excess</strong> reason; the extra is logged as owner-approved excess (spread across the orders, kept separate from shortages). Pay <strong>under</strong> → pick a short-cash reason. Either way needs Owner approval.</span>
                 </p>
                 <label>
                   <span>Total Amount Remitted By Partner</span>
@@ -49413,12 +49435,21 @@ ${waybillLineItems(w).length > 1
                 {remittanceBatchExcessAmount > 0 && (
                   <div className="flex flex-col gap-2">
                     <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
-                      <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}</strong> more than these orders owed. The full {formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} is booked as cash received, and the extra is logged on its own as an owner-approved <strong>“Excess cash / overpayment”</strong> (spread across the orders) — never mixed into the short-cash reasons. A reason isn’t required; add a note only if you know why.
+                      <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}</strong> more than these orders owed. The full {formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} is booked as cash received, and the extra is logged on its own as owner-approved excess (spread across the orders) — never mixed into the short-cash reasons. Pick why below.
                     </p>
-                    <label>
-                      <span>Note for excess cash (optional)</span>
-                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
-                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label>
+                        <span>Reason for excess cash *</span>
+                        <select value={remittanceBatchVarianceReason} onChange={(e) => setRemittanceBatchVarianceReason(e.target.value)}>
+                          <option value="">Select a reason...</option>
+                          {remittanceExcessCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Reason note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                        <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
+                      </label>
+                    </div>
                   </div>
                 )}
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
