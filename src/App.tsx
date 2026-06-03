@@ -38409,7 +38409,10 @@ ${waybillLineItems(w).length > 1
                         <p className="text-xs text-gray-400 mb-4">From the money your delivered orders brought in, we take out each cost one at a time — ad money, product, add-ons, delivery — so you see what's left in hand. (Worst-case build-up.)</p>
                         <div className="space-y-2 text-sm">
                           {[
-                            { label: "Revenue (delivered)", val: w.revenue, sign: 1 },
+                            ...(Number(w.addonRevenue) > 0
+                              ? [{ label: "Product revenue (delivered)", val: w.revenue - w.addonRevenue, sign: 1 },
+                                 { label: "Add-on revenue (rode along — bonus)", val: w.addonRevenue, sign: 1 }]
+                              : [{ label: "Revenue (delivered)", val: w.revenue, sign: 1 }]),
                             { label: "Ad spend (sunk)", val: -w.adCost, sign: -1 },
                             { label: "Product cost (delivered sets)", val: -w.productCost, sign: -1 },
                             ...(Number(w.addonCost) > 0 ? [{ label: "Add-on cost (cross-sell + gifts)", val: -w.addonCost, sign: -1 }] : []),
@@ -38426,8 +38429,8 @@ ${waybillLineItems(w).length > 1
                             <span className={`text-lg font-bold ${netTone}`}>{fmt(w.netProfit)}</span>
                           </div>
                         </div>
-                        {Number(w.addonCost) > 0 && (
-                          <p className="mt-3 text-[11px] leading-snug text-indigo-500">Add-ons are bonus value riding on the same order — extra money in, with no extra ad or delivery cost.</p>
+                        {(Number(w.addonRevenue) > 0 || Number(w.addonCost) > 0) && (
+                          <p className="mt-3 text-[11px] leading-snug text-indigo-500">Add-ons: +{fmt(w.addonRevenue)} revenue − {fmt(w.addonCost)} cost = <strong>{fmt(w.addonRevenue - w.addonCost)} bonus profit</strong> — riding on the same order, no extra ad or delivery.</p>
                         )}
                       </div>
 

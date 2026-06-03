@@ -172,3 +172,21 @@ test("absent addonCost defaults to 0 (back-compat with set-only orders)", () => 
   const orders: BatchOrder[] = [{ status: "Delivered", amount: 5000, sets: 1 }];
   assert.equal(computeBatchEconomics(orders, BATCH, TIERS, STATUS_MAP).worstCase.addonCost, 0);
 });
+
+test("add-on revenue is split out of total revenue (bonus value, delivered orders only)", () => {
+  const orders: BatchOrder[] = [
+    { status: "Delivered", amount: 5000, sets: 1, addonRevenue: 1500, addonCost: 800 },
+    { status: "Failed",    amount: 5000, sets: 1, addonRevenue: 1500, addonCost: 800 } // not delivered -> no revenue at all
+  ];
+  const w = computeBatchEconomics(orders, BATCH, TIERS, STATUS_MAP).worstCase;
+  assert.equal(w.revenue, 5000);                  // total delivered revenue (incl add-on)
+  assert.equal(w.addonRevenue, 1500);             // the bonus portion
+  assert.equal(w.revenue - w.addonRevenue, 3500); // implied main-product revenue
+});
+
+test("addonRevenue is capped at the order amount and defaults to 0", () => {
+  const over: BatchOrder[] = [{ status: "Delivered", amount: 5000, sets: 1, addonRevenue: 9999 }];
+  assert.equal(computeBatchEconomics(over, BATCH, TIERS, STATUS_MAP).worstCase.addonRevenue, 5000); // capped at amount
+  const none: BatchOrder[] = [{ status: "Delivered", amount: 5000, sets: 1 }];
+  assert.equal(computeBatchEconomics(none, BATCH, TIERS, STATUS_MAP).worstCase.addonRevenue, 0);    // default
+});

@@ -94,13 +94,21 @@ const addonCostForOrder = (o: any, map: PricingMap): number => {
   }
   return total;
 };
+// Add-on REVENUE = the cross-sell money already inside the order's amount (free gifts earn ₦0).
+const addonRevenueForOrder = (o: any): number => {
+  if (!Array.isArray(o.cross_sell_lines)) return 0;
+  let total = 0;
+  for (const l of o.cross_sell_lines) total += Math.max(0, Number(l?.amount) || 0);
+  return total;
+};
 // Sets per order = the pack/set count of the package (single=1, double=2, ...).
 // Pass a PricingMap to also price the order's add-ons; omit it for set-only math.
 const orderToBatchOrder = (o: any, pricingMap?: PricingMap): BatchOrder => ({
   status: o.status ?? "New",
   amount: Number(o.amount) || 0,
   sets: Math.max(1, Number(o.quantity) || 1),
-  addonCost: pricingMap ? addonCostForOrder(o, pricingMap) : 0
+  addonCost: pricingMap ? addonCostForOrder(o, pricingMap) : 0,
+  addonRevenue: addonRevenueForOrder(o)
 });
 const BATCH_ORDER_SELECT = "status, amount, quantity, currency, cross_sell_lines, free_gift_lines";
 

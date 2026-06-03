@@ -39,18 +39,21 @@ export interface BatchInputs {
 
 export interface BatchOrder {
   status: string;
-  amount: number;           // revenue recognised if its tier earns revenue
+  amount: number;           // FULL order revenue (already includes any add-on money) — recognised if its tier earns revenue
   sets: number;             // sets/packs in this order (single=1, double=2, ...)
   addonCost?: number;       // REAL COGS of this order's cross-sell add-ons + free gifts
                             // (priced from product costs). Charged on product-charging tiers,
                             // on top of productCostPerSet × sets. 0 / absent when none.
+  addonRevenue?: number;    // the add-on/cross-sell PORTION already inside `amount` (bonus order
+                            // value that rode along — no extra ad/delivery). Split out for display.
 }
 
 export interface ScenarioResult {
   totalOrders: number;
   deliveredOrders: number;
   setsDelivered: number;
-  revenue: number;
+  revenue: number;          // total delivered revenue (includes addonRevenue)
+  addonRevenue: number;     // the cross-sell/gift portion of revenue (bonus order value)
   adCost: number;
   productCost: number;
   addonCost: number;        // real cross-sell/free-gift COGS on product-charging orders
@@ -102,7 +105,7 @@ function runScenario(
   deliveredKey: string | null,
   treatOpenAsDelivered: boolean
 ): ScenarioResult {
-  let revenue = 0, productCost = 0, addonCost = 0, deliveredDelivery = 0, wastedDelivery = 0;
+  let revenue = 0, addonRevenue = 0, productCost = 0, addonCost = 0, deliveredDelivery = 0, wastedDelivery = 0;
   let deliveredOrders = 0, setsDelivered = 0;
   const tierCounts: Record<string, number> = {};
 
@@ -120,6 +123,7 @@ function runScenario(
 
     if (tier.earnsRevenue) {
       revenue += num(o.amount);
+      addonRevenue += Math.min(num(o.addonRevenue), num(o.amount)); // bonus portion, never above the order total
       deliveredOrders += 1;
       setsDelivered += sets;
     }
@@ -143,6 +147,7 @@ function runScenario(
     deliveredOrders,
     setsDelivered,
     revenue,
+    addonRevenue,
     adCost,
     productCost,
     addonCost,
