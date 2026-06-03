@@ -325,6 +325,28 @@ const brandPushImage = (brandLogo?: string): string => {
   return DEFAULT_BRAND_IMAGE;
 };
 
+// Per-event monochrome status-bar glyph (a drawable baked into the app by
+// scripts/gen-android-icons.mjs). Unmapped kinds — or a name an older installed
+// app doesn't have — safely fall back to the manifest default (ic_stat_notify,
+// the brand diamond), so this never breaks notification delivery.
+const NATIVE_ICON: Record<string, string> = {
+  order_new: "ic_stat_order_new",
+  order_assigned: "ic_stat_order_assigned",
+  order_confirmed: "ic_stat_order_confirmed",
+  order_delivered: "ic_stat_order_delivered",
+  order_cancelled: "ic_stat_order_cancelled",
+  order_failed: "ic_stat_order_failed",
+  order_rescheduled: "ic_stat_order_rescheduled",
+  low_stock: "ic_stat_low_stock",
+  remittance_overdue: "ic_stat_remittance_overdue",
+  abandoned_cart_new: "ic_stat_stale_carts",
+  waybill_dispatched: "ic_stat_waybill",
+  waybill_updated: "ic_stat_waybill",
+  waybill_status_changed: "ic_stat_waybill",
+  info: "ic_stat_info"
+};
+const nativeIconForKind = (kind?: string): string | undefined => (kind ? NATIVE_ICON[kind] : undefined);
+
 export async function sendNativePushToDevices(
   devices: StoredNativePushDevice[] | null | undefined,
   payload: PushPayload,
@@ -365,8 +387,9 @@ export async function sendNativePushToDevices(
                 // looks "delivered" while the phone shows nothing.
                 channelId: "protohub-alerts",
                 tag: payload.tag,
-                // Per-event accent colour (tints the brand small-icon + title) + the
-                // brand logo as the image — premium, recognisable per notification type.
+                // Per-event status-bar glyph + accent colour (tints it) + the brand
+                // logo as the image — premium, recognisable per notification type.
+                icon: nativeIconForKind(payload.kind),
                 color: accentForKind(payload.kind),
                 image: payload.image ?? brandPushImage(payload.brandLogo)
               }
