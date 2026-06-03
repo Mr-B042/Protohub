@@ -49356,7 +49356,8 @@ ${waybillLineItems(w).length > 1
                   <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Last Cash Received</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.lastReceivedAt ? displayDateFromKey(remittanceBatchTargetRow.lastReceivedAt.slice(0, 10)) : "—"}</strong></article>
                 </div>
                 <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                  This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.
+                  This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.<br />
+                  <span>Enter the <strong>full amount the partner handed over</strong>. Pay <strong>over</strong> the expected total → the extra is logged as owner-approved <strong>excess</strong> (spread across the orders, kept separate from shortages). Pay <strong>under</strong> → you&apos;ll pick a short-cash reason. Either way needs Owner approval.</span>
                 </p>
                 <label>
                   <span>Total Amount Remitted By Partner</span>
