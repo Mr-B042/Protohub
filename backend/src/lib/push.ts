@@ -329,7 +329,12 @@ export async function sendNativePushToDevices(
             android: {
               priority: "high",
               notification: {
-                channelId: "default",
+                // MUST match the channel the app registers in src/lib/native-push.ts
+                // (createChannel id "protohub-alerts", importance MAX). Posting to a
+                // non-existent channel ("default") makes Android 8+ route the push to a
+                // silent fallback channel or drop it — FCM still returns 200, so it
+                // looks "delivered" while the phone shows nothing.
+                channelId: "protohub-alerts",
                 tag: payload.tag,
                 image: payload.image
               }
