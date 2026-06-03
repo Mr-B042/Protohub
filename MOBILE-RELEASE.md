@@ -35,33 +35,29 @@ regenerated from `capacitor.config.ts` and must not be committed.
 
 ## Brand icons (re-apply after `cap add android`)
 
-The launcher icon + status-bar notification icon are NOT Capacitor defaults — they
-must be regenerated into the fresh `android/` project:
+The launcher icon (the brand logo from `public/brand/company-logo.png`) + the
+white status-bar silhouette are NOT Capacitor defaults — regenerate them into the
+fresh `android/` project (this also writes `res/values/ic_launcher_background.xml`):
 
 ```bash
-node scripts/gen-android-icons.mjs   # writes the brand launcher + ic_stat_notify drawables
+node scripts/gen-android-icons.mjs
 ```
 
-Then re-apply these two edits (lost when android/ is regenerated):
+Then re-apply the FCM defaults in `android/app/src/main/AndroidManifest.xml` (lost
+when android/ is regenerated) — inside `<application>` (brand white-silhouette small
+icon + accent tint; per-event colour is sent per-message and overrides it):
 
-1. `android/app/src/main/res/values/ic_launcher_background.xml` — set the adaptive
-   background + accent colour:
-   ```xml
-   <color name="ic_launcher_background">#20262E</color>
-   <color name="notification_accent">#1F8FE0</color>
-   ```
-2. `android/app/src/main/AndroidManifest.xml` — inside `<application>`, the FCM
-   defaults (brand white-silhouette small icon + accent tint; per-event colour is
-   sent per-message and overrides it):
-   ```xml
-   <meta-data android:name="com.google.firebase.messaging.default_notification_icon"
-              android:resource="@drawable/ic_stat_notify" />
-   <meta-data android:name="com.google.firebase.messaging.default_notification_color"
-              android:resource="@color/notification_accent" />
-   ```
+```xml
+<meta-data android:name="com.google.firebase.messaging.default_notification_icon"
+           android:resource="@drawable/ic_stat_notify" />
+<meta-data android:name="com.google.firebase.messaging.default_notification_color"
+           android:resource="@color/notification_accent" />
+```
 
-The icon design lives in `scripts/gen-android-icons.mjs` (SVG source) — edit there
-to change it. `sharp` (used by the script) is resolved from `backend/node_modules`.
+The launcher icon = `public/brand/company-logo.png`; the status-bar silhouette + the
+sizing/padding live in `scripts/gen-android-icons.mjs`. `sharp` (used by the script)
+is resolved from `backend/node_modules`. If `android/app/build/` has stale resource
+artifacts, run `rm -rf app/build/intermediates` before rebuilding.
 
 ## Cutting the release (in Android Studio)
 
