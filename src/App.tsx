@@ -716,6 +716,7 @@ type TrackedOrder = {
   logisticsCost?: number;
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
+  remittanceReason?: string;
   callOutcome?: CallOutcome;
   buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
   followUpAttemptCount?: number;
@@ -4563,6 +4564,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     embedLabel: value?.embedLabel ?? value?.embed_label ?? undefined,
     reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
+    remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -37420,6 +37422,7 @@ ${waybillLineItems(w).length > 1
                                   <div className="col-span-2">
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
                                     <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
+                                    {order.remittanceReason && <div className="text-[11px] text-gray-500 italic mt-0.5" title={order.remittanceReason}>{order.remittanceReason.replace(/^(Single order|Batch) remittance:\s*/i, "")}</div>}
                                   </div>
                                 </div>
                                 <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}</button>
@@ -37462,7 +37465,10 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-4 py-3 text-gray-700">{formatProductMoney(order.amount, order.currency)}</td>
                                   <td className="px-4 py-3 text-gray-600">{formatProductMoney(orderLogisticsCost(order), order.currency)}</td>
                                   <td className="px-4 py-3 font-semibold text-blue-700">{formatProductMoney(orderAmountToRemit(order), order.currency)}</td>
-                                  <td className="px-4 py-3 font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="font-semibold text-green-700">{formatProductMoney(orderAmountRemitted(order), order.currency)}</div>
+                                    {order.remittanceReason && <div className="text-[11px] text-gray-500 italic mt-0.5 max-w-[260px] truncate" title={order.remittanceReason}>{order.remittanceReason.replace(/^(Single order|Batch) remittance:\s*/i, "")}</div>}
+                                  </td>
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
                                   <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button></td>
                                 </tr>
