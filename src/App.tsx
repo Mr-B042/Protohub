@@ -1697,6 +1697,10 @@ const remittanceVarianceReasons = [
   { value: "excess_cash", label: "Excess cash / overpayment" },
   { value: "correction", label: "Correction / other" }
 ] as const;
+// Excess cash is its OWN logged event — auto-recorded as "Excess cash / overpayment"
+// with an optional note (see recordRemittance / recordBatchRemittance). The short-cash
+// reason picker therefore must NOT offer it: those reasons explain MISSING cash only.
+const remittanceShortCashReasons = remittanceVarianceReasons.filter((reason) => reason.value !== "excess_cash");
 const remittanceVarianceReasonLabel = (value: string) =>
   remittanceVarianceReasons.find((reason) => reason.value === value)?.label ?? "";
 
@@ -13229,8 +13233,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Owner approval is required before short or excess cash can enter the system.");
       return;
     }
-    if (hasVariance && !remittanceVarianceReason) {
-      showToast("Select the cash variance reason before saving.");
+    if (variance < 0 && !remittanceVarianceReason) {
+      showToast("Select the reason for the short cash before saving.");
       return;
     }
     if (remittanceVarianceReason === "correction" && variance !== 0 && remittanceVarianceNote.trim().length < 3) {
@@ -13239,7 +13243,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const remittanceReason = buildRemittanceVarianceReason({
       scope: "Single order",
-      category: remittanceVarianceReason,
+      // Excess auto-logs as excess; short uses the chosen short-cash reason.
+      category: variance > 0 ? "excess_cash" : remittanceVarianceReason,
       note: remittanceVarianceNote,
       expected,
       received: newRemitted,
@@ -13250,7 +13255,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
     const prevOrders = trackedOrders;
     const varianceNote = variance > 0
-      ? ` Excess cash ${formatMoney(variance)} owner-approved and recorded.`
+      ? ` Excess cash ${formatMoney(variance)} owner-approved and recorded.${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}`
       : variance < 0
         ? ` Short by ${formatMoney(Math.abs(variance))}. Owner-approved reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
         : "";
@@ -13317,8 +13322,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Owner approval is required before short or excess batch cash can enter the system.");
       return;
     }
-    if (remittanceBatchHasVariance && !remittanceBatchVarianceReason) {
-      showToast("Select the batch cash variance reason before saving.");
+    if (remittanceBatchShortAmount > 0 && !remittanceBatchVarianceReason) {
+      showToast("Select the reason for the short batch cash before saving.");
       return;
     }
     if (remittanceBatchVarianceReason === "correction" && remittanceBatchHasVariance && remittanceBatchVarianceNote.trim().length < 3) {
@@ -13333,7 +13338,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const batchCurrency = remittanceRowCurrency(remittanceBatchTargetRow);
     const batchReason = buildRemittanceVarianceReason({
       scope: "Batch",
-      category: remittanceBatchVarianceReason,
+      // Excess auto-logs as excess; short uses the chosen short-cash reason.
+      category: remittanceBatchExcessAmount > 0 ? "excess_cash" : remittanceBatchVarianceReason,
       note: remittanceBatchVarianceNote,
       expected: remittanceBatchOutstandingTotal,
       received: remittanceBatchAmountValue,
@@ -49295,20 +49301,26 @@ ${waybillLineItems(w).length > 1
                     {ownerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this variance.</p>}
                     {ownerApprovalRequired && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
                   </div>
-                  {(isShort || isExcess) && (
+                  {isShort && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label>
-                        <span>{isShort ? "Reason for short cash *" : "Reason for excess cash *"}</span>
+                        <span>Reason for short cash *</span>
                         <select value={remittanceVarianceReason} onChange={(e) => setRemittanceVarianceReason(e.target.value)}>
                           <option value="">Select a reason...</option>
-                          {remittanceVarianceReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                          {remittanceShortCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
                         </select>
                       </label>
                       <label>
                         <span>Reason note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, agent overpaid..." />
+                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, customer paid less..." />
                       </label>
                     </div>
+                  )}
+                  {isExcess && (
+                    <label>
+                      <span>Note for excess cash (optional)</span>
+                      <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
+                    </label>
                   )}
                   <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                     If the difference is a real waybill/logistics fee, enter it under <strong>Logistics Cost</strong> so the expected cash is reduced correctly.<br />
@@ -49371,20 +49383,26 @@ ${waybillLineItems(w).length > 1
                   {remittanceBatchNeedsOwnerApproval && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
                   <p className="m-0 mt-1 text-xs"><strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.</p>
                 </div>
-                {(remittanceBatchShortAmount > 0 || remittanceBatchExcessAmount > 0) && (
+                {remittanceBatchShortAmount > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label>
-                      <span>{remittanceBatchShortAmount > 0 ? "Reason for short batch cash *" : "Reason for excess cash *"}</span>
+                      <span>Reason for short batch cash *</span>
                       <select value={remittanceBatchVarianceReason} onChange={(e) => setRemittanceBatchVarianceReason(e.target.value)}>
                         <option value="">Select a reason...</option>
-                        {remittanceVarianceReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                        {remittanceShortCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
                       </select>
                     </label>
                     <label>
                       <span>Reason note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, agent sent extra cash..." />
+                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, customer paid less..." />
                     </label>
                   </div>
+                )}
+                {remittanceBatchExcessAmount > 0 && (
+                  <label>
+                    <span>Note for excess cash (optional)</span>
+                    <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
+                  </label>
                 )}
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
