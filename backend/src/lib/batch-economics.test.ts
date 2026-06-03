@@ -141,3 +141,34 @@ test("unmapped status earns nothing and costs nothing but ad (counted as unmappe
   assert.equal(w.wastedDelivery, 0);
   assert.equal(w.tierCounts["unmapped"], 1);
 });
+
+test("add-on COGS is charged only on product-charging (delivered) tiers, on TOP of per-set cost", () => {
+  const orders: BatchOrder[] = [
+    { status: "Delivered", amount: 5000, sets: 1, addonCost: 800 }, // delivered -> add-on charged
+    { status: "Failed",    amount: 5000, sets: 1, addonCost: 800 }, // dispatched-failed -> no product, no add-on (delivery wasted)
+    { status: "New",       amount: 5000, sets: 1, addonCost: 800 }  // pre-dispatch open -> nothing but ad (worst); delivered in best
+  ];
+  const e = computeBatchEconomics(orders, BATCH, TIERS, STATUS_MAP);
+  const w = e.worstCase;
+  assert.equal(w.addonCost, 800);                 // only the delivered order
+  assert.equal(w.productCost, 1000);              // 1 delivered set x 1000 (add-on is ON TOP)
+  assert.equal(w.totalCost, 10000 + 1000 + 800 + 500 + 500); // ad + product + add-on + delivered-delivery + wasted
+  assert.equal(w.netProfit, 5000 - 12800);
+  assert.equal(e.bestCase.addonCost, 1600);       // New re-tiered to delivered -> its add-on now charged; Failed stays failed
+});
+
+test("breakeven AOV includes add-on COGS in total cost", () => {
+  const orders: BatchOrder[] = [
+    { status: "Delivered", amount: 6000, sets: 1, addonCost: 500 },
+    { status: "Delivered", amount: 6000, sets: 1, addonCost: 500 }
+  ];
+  const e = computeBatchEconomics(orders, BATCH, TIERS, STATUS_MAP);
+  assert.equal(e.worstCase.addonCost, 1000);
+  // totalCost = ad 10000 + product 2000 + add-on 1000 + delivery 1000 = 14000; / 2 delivered = 7000
+  close(e.breakevenAovValue!, 7000);
+});
+
+test("absent addonCost defaults to 0 (back-compat with set-only orders)", () => {
+  const orders: BatchOrder[] = [{ status: "Delivered", amount: 5000, sets: 1 }];
+  assert.equal(computeBatchEconomics(orders, BATCH, TIERS, STATUS_MAP).worstCase.addonCost, 0);
+});

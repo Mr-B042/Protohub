@@ -52,12 +52,57 @@ const batchInputs = (b: any): BatchInputs => ({
   deliveryCostPerOrder: Number(b.delivery_cost_per_order) || 0,
   status: b.status === "closed" ? "closed" : "open"
 });
+// Per-product unit cost lookup (currency-aware, primary fallback) — mirrors the
+// frontend's unitCostForProductInCurrency, used to price an order's add-ons.
+type PricingMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+async function loadPricingMap(orgId: string): Promise<PricingMap> {
+  const { data: prods } = await supabase.from("products").select("id").eq("org_id", orgId);
+  const ids = (prods ?? []).map((p) => p.id);
+  const map: PricingMap = new Map();
+  if (ids.length === 0) return map;
+  const { data: pricings } = await supabase
+    .from("product_pricings").select("product_id, currency, unit_cost, is_primary").in("product_id", ids);
+  for (const r of pricings ?? []) {
+    let e = map.get(r.product_id);
+    if (!e) { e = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(r.product_id, e); }
+    const cost = Number(r.unit_cost) || 0;
+    if (r.currency) e.byCurrency.set(r.currency, cost);
+    if (r.is_primary) { e.primary = cost; e.hasPrimary = true; } // commit to the primary row even if its cost is ₦0 (mirrors primaryPricing)
+  }
+  return map;
+}
+const unitCostFor = (map: PricingMap, productId?: string | null, currency?: string | null): number => {
+  if (!productId) return 0;
+  const e = map.get(productId);
+  if (!e) return 0;
+  if (currency && e.byCurrency.has(currency)) return e.byCurrency.get(currency)!;
+  if (e.hasPrimary) return e.primary;
+  const first = e.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
+// Real COGS of an order's cross-sell add-ons + free gifts (each line: qty x unit cost).
+const addonCostForOrder = (o: any, map: PricingMap): number => {
+  let total = 0;
+  const lines = [
+    ...(Array.isArray(o.cross_sell_lines) ? o.cross_sell_lines : []),
+    ...(Array.isArray(o.free_gift_lines) ? o.free_gift_lines : [])
+  ];
+  for (const l of lines) {
+    const qty = Math.max(0, Number(l?.quantity) || 0);
+    const pid = l?.productId ?? l?.product_id; // tolerate either shape, like order-inventory.ts
+    if (qty > 0) total += qty * unitCostFor(map, pid, o.currency);
+  }
+  return total;
+};
 // Sets per order = the pack/set count of the package (single=1, double=2, ...).
-const orderToBatchOrder = (o: any): BatchOrder => ({
+// Pass a PricingMap to also price the order's add-ons; omit it for set-only math.
+const orderToBatchOrder = (o: any, pricingMap?: PricingMap): BatchOrder => ({
   status: o.status ?? "New",
   amount: Number(o.amount) || 0,
-  sets: Math.max(1, Number(o.quantity) || 1)
+  sets: Math.max(1, Number(o.quantity) || 1),
+  addonCost: pricingMap ? addonCostForOrder(o, pricingMap) : 0
 });
+const BATCH_ORDER_SELECT = "status, amount, quantity, currency, cross_sell_lines, free_gift_lines";
 
 async function loadTierConfig(orgId: string): Promise<{ tiers: CostTier[]; statusMap: StatusTierEntry[] }> {
   await ensureOrgTierDefaults(orgId);
@@ -75,11 +120,12 @@ router.get("/", async (req, res) => {
     .from("batch_economics").select("*").eq("org_id", orgId).order("created_at", { ascending: false });
   if (error) { res.status(500).json({ error: error.message }); return; }
   const { tiers, statusMap } = await loadTierConfig(orgId);
+  const pricingMap = await loadPricingMap(orgId);
 
   const rows = await Promise.all((batches ?? []).map(async (b) => {
     const { data: orders } = await supabase
-      .from("orders").select("status, amount, quantity").eq("org_id", orgId).eq("batch_id", b.id);
-    const econ = computeBatchEconomics((orders ?? []).map(orderToBatchOrder), batchInputs(b), tiers, statusMap);
+      .from("orders").select(BATCH_ORDER_SELECT).eq("org_id", orgId).eq("batch_id", b.id);
+    const econ = computeBatchEconomics((orders ?? []).map((o) => orderToBatchOrder(o, pricingMap)), batchInputs(b), tiers, statusMap);
     return {
       id: b.id, label: b.label, periodStart: b.period_start, periodEnd: b.period_end, status: b.status,
       adSpend: Number(b.ad_spend) || 0, productCostPerSet: Number(b.product_cost_per_set) || 0,
@@ -186,9 +232,10 @@ router.get("/:id/economics", async (req, res) => {
     .from("batch_economics").select("*").eq("id", req.params.id).eq("org_id", orgId).single();
   if (error || !batch) { res.status(404).json({ error: "Batch not found." }); return; }
   const { tiers, statusMap } = await loadTierConfig(orgId);
+  const pricingMap = await loadPricingMap(orgId);
   const { data: orders } = await supabase
-    .from("orders").select("status, amount, quantity").eq("org_id", orgId).eq("batch_id", req.params.id);
-  const econ = computeBatchEconomics((orders ?? []).map(orderToBatchOrder), batchInputs(batch), tiers, statusMap);
+    .from("orders").select(BATCH_ORDER_SELECT).eq("org_id", orgId).eq("batch_id", req.params.id);
+  const econ = computeBatchEconomics((orders ?? []).map((o) => orderToBatchOrder(o, pricingMap)), batchInputs(batch), tiers, statusMap);
   res.json({
     batch: {
       id: batch.id, label: batch.label, periodStart: batch.period_start, periodEnd: batch.period_end,

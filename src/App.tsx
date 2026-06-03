@@ -38410,6 +38410,7 @@ ${waybillLineItems(w).length > 1
                             { label: "Revenue (delivered)", val: w.revenue, sign: 1 },
                             { label: "Ad spend (sunk)", val: -w.adCost, sign: -1 },
                             { label: "Product cost (delivered sets)", val: -w.productCost, sign: -1 },
+                            ...(Number(w.addonCost) > 0 ? [{ label: "Add-on cost (cross-sell + gifts)", val: -w.addonCost, sign: -1 }] : []),
                             { label: "Delivery — delivered", val: -w.deliveredDelivery, sign: -1 },
                             { label: "Delivery — wasted (failed after dispatch)", val: -w.wastedDelivery, sign: -1 }
                           ].map((r) => (

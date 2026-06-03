@@ -41,6 +41,9 @@ export interface BatchOrder {
   status: string;
   amount: number;           // revenue recognised if its tier earns revenue
   sets: number;             // sets/packs in this order (single=1, double=2, ...)
+  addonCost?: number;       // REAL COGS of this order's cross-sell add-ons + free gifts
+                            // (priced from product costs). Charged on product-charging tiers,
+                            // on top of productCostPerSet × sets. 0 / absent when none.
 }
 
 export interface ScenarioResult {
@@ -50,6 +53,7 @@ export interface ScenarioResult {
   revenue: number;
   adCost: number;
   productCost: number;
+  addonCost: number;        // real cross-sell/free-gift COGS on product-charging orders
   deliveredDelivery: number;
   wastedDelivery: number;
   totalCost: number;
@@ -98,7 +102,7 @@ function runScenario(
   deliveredKey: string | null,
   treatOpenAsDelivered: boolean
 ): ScenarioResult {
-  let revenue = 0, productCost = 0, deliveredDelivery = 0, wastedDelivery = 0;
+  let revenue = 0, productCost = 0, addonCost = 0, deliveredDelivery = 0, wastedDelivery = 0;
   let deliveredOrders = 0, setsDelivered = 0;
   const tierCounts: Record<string, number> = {};
 
@@ -119,7 +123,10 @@ function runScenario(
       deliveredOrders += 1;
       setsDelivered += sets;
     }
-    if (tier.chargeProduct) productCost += sets * num(batch.productCostPerSet);
+    if (tier.chargeProduct) {
+      productCost += sets * num(batch.productCostPerSet);
+      addonCost += num(o.addonCost); // add-on/gift stock leaves only when the order is fulfilled
+    }
     if (tier.chargeDelivery) {
       if (tier.earnsRevenue) deliveredDelivery += num(batch.deliveryCostPerOrder);
       else wastedDelivery += num(batch.deliveryCostPerOrder);
@@ -128,7 +135,7 @@ function runScenario(
 
   const totalOrders = orders.length;
   const adCost = num(batch.adSpend); // sunk on the whole batch, regardless of delivery
-  const totalCost = adCost + productCost + deliveredDelivery + wastedDelivery;
+  const totalCost = adCost + productCost + addonCost + deliveredDelivery + wastedDelivery;
   const netProfit = revenue - totalCost;
 
   return {
@@ -138,6 +145,7 @@ function runScenario(
     revenue,
     adCost,
     productCost,
+    addonCost,
     deliveredDelivery,
     wastedDelivery,
     totalCost,
