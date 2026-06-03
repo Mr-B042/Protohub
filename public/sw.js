@@ -19,6 +19,7 @@ const PUSH_PRESENTATION = {
   low_stock:               { icon: "/icons/notifications/low-stock.png",            color: "#D97706", requireInteraction: true,  vibrate: [240, 90, 180],  defaultTitle: "Low Stock Alert" },
   remittance_overdue:      { icon: "/icons/notifications/remittance-overdue.png",   color: "#C2410C", requireInteraction: true,  vibrate: [260, 100, 200], defaultTitle: "Remittance Overdue" },
   stale_carts:             { icon: "/icons/notifications/stale-carts.png",          color: "#C26B14", requireInteraction: true,  vibrate: [200, 80, 160],  defaultTitle: "Stale Abandoned Carts" },
+  abandoned_cart_new:      { icon: "/icons/notifications/stale-carts.png",          color: "#F59E0B", requireInteraction: false, vibrate: [120, 50, 120],  defaultTitle: "Abandoned Cart" },
   waybill_dispatched:      { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Dispatched" },
   waybill_updated:         { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Updated" },
   waybill_status_changed:  { icon: "/icons/notifications/waybill.png",              color: "#3F5CE8", requireInteraction: false, vibrate: [110, 40, 110],  defaultTitle: "Waybill Update" },
@@ -250,11 +251,15 @@ self.addEventListener("push", (event) => {
     ? payload.brandName.trim()
     : DEFAULT_BRAND_NAME;
   const brandLogo = sanitizeBrandLogo(payload.brandLogo);
-  const iconCandidate = brandLogo || payload.icon || presentation.icon || "/icons/icon-192.png";
+  // Per-event glyph is the MAIN icon (so a delivery looks different from a failure
+  // at a glance); the brand logo rides along as the expanded image (see options.image
+  // below) + the brand name in the title, so identity is kept without hiding the glyph.
+  const iconCandidate = payload.icon || presentation.icon || brandLogo || "/icons/icon-192.png";
   const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
   const options = {
     body: payload.body || "",
     icon: iconCandidate,
+    image: payload.image || brandLogo || undefined,
     badge: payload.badge || DEFAULT_BADGE,
     tag: payload.tag || `protohub-${kind}`,
     renotify: true,
