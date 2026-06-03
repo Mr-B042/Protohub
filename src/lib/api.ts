@@ -702,7 +702,8 @@ export const publicOrdersApi = {
 // ── Pay Structures ───────────────────────────────────────
 export const payStructuresApi = {
   list: () => get<any[]>("/api/pay-structures"),
-  save: (body: unknown) => post<any>("/api/pay-structures", body)
+  save: (body: unknown) => post<any>("/api/pay-structures", body),
+  delete: (userId: string) => del<{ message: string; removed: number }>(`/api/pay-structures/${userId}`)
 };
 
 // ── Sales Teams ──────────────────────────────────────────

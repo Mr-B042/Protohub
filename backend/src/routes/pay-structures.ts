@@ -61,4 +61,18 @@ router.post("/", async (req, res) => {
   res.json(data);
 });
 
+// ── DELETE /api/pay-structures/:userId ───────────────────
+// Remove a user's pay structure entirely (they revert to "Not set"). Org-scoped,
+// so one org can never delete another's. Past payroll runs are snapshots and are
+// unaffected — only future payroll for this user has no rate until one is set again.
+router.delete("/:userId", async (req, res) => {
+  const { error, count } = await supabase
+    .from("pay_structures")
+    .delete({ count: "exact" })
+    .eq("org_id", req.user!.orgId)
+    .eq("user_id", req.params.userId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ message: "Pay structure removed.", removed: count ?? 0 });
+});
+
 export default router;
