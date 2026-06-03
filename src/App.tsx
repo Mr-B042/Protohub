@@ -6645,6 +6645,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [batchAssignFrom, setBatchAssignFrom] = useState("");
   const [batchAssignTo, setBatchAssignTo] = useState("");
   const [showBatchTierConfig, setShowBatchTierConfig] = useState(false);
+  const [batchAutofillMeta, setBatchAutofillMeta] = useState<any | null>(null);
   const loadBatchEconomics = async (id: string) => {
     try { setBatchEconomics(await batchesApi.economics(id)); } catch { setBatchEconomics(null); }
   };
@@ -6660,6 +6661,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
   }, [activePage, financeTab]);
   useEffect(() => {
+    setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
     else setBatchEconomics(null);
   }, [selectedBatchId]);
@@ -6701,6 +6703,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setBatchTierConfig(cfg);
       if (selectedBatchId) await loadBatchEconomics(selectedBatchId);
     } catch (err: any) { showToast(`Tier save failed: ${err?.message ?? err}`); }
+    finally { setBatchBusy(false); }
+  };
+  const pullBatchCostsFromData = async () => {
+    if (!selectedBatchId) return;
+    setBatchBusy(true);
+    try {
+      const r = await batchesApi.autofill(selectedBatchId);
+      setBatchAutofillMeta(r?.meta ?? null);
+      const s: Record<string, number> = r?.suggestions ?? {};
+      const keys = Object.keys(s);
+      if (keys.length === 0) {
+        showToast(r?.meta?.note ?? "No values could be pulled — check the note under each field for what's missing.");
+      } else {
+        const cur = batchEconomics?.batch ?? {};
+        const fieldLabel = (k: string) => k === "adSpend" ? "Ad spend" : k === "productCostPerSet" ? "Product cost / set" : "Delivery / order";
+        // Don't silently overwrite a number the owner already typed — only auto-fill
+        // empty/zero fields; for real conflicts, ask before replacing.
+        const conflicts = keys.filter((k) => Number(cur[k]) > 0 && Number(cur[k]) !== Number(s[k]));
+        let applyKeys = keys;
+        if (conflicts.length > 0) {
+          const lines = conflicts.map((k) => `• ${fieldLabel(k)}: ₦${Number(cur[k]).toLocaleString()} → ₦${Number(s[k]).toLocaleString()}`).join("\n");
+          const ok = window.confirm(`Replace value(s) you already have?\n\n${lines}\n\nOK = use the pulled numbers · Cancel = keep yours (still fills any empty fields).`);
+          if (!ok) applyKeys = keys.filter((k) => !conflicts.includes(k));
+        }
+        const merge: Record<string, number> = {};
+        for (const k of applyKeys) merge[k] = s[k];
+        if (Object.keys(merge).length > 0) {
+          setBatchEconomics((p: any) => p ? { ...p, batch: { ...p.batch, ...merge } } : p);
+          showToast(`Pulled ${Object.keys(merge).length} value(s) — review, then Save to recalculate.`);
+        } else {
+          showToast("Kept your typed values. Suggested numbers are noted under each field.");
+        }
+      }
+    } catch (err: any) { showToast(`Pull failed: ${err?.message ?? err}`); }
     finally { setBatchBusy(false); }
   };
   // Weekly Accounting (Sun→Sat). Default to the Sunday of the current week.
@@ -38437,11 +38473,16 @@ ${waybillLineItems(w).length > 1
                             className={`rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${batch.status === "open" ? "border border-gray-200 text-gray-600 hover:bg-gray-50" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
                           >{batch.status === "open" ? "Close batch" : "Re-open batch"}</button>
                         </div>
+                        <p className="text-xs text-gray-400 -mt-2">Type these in, or pull them from data you already have. Every value stays editable, and nothing recalculates until you save.</p>
                         {([
                           { key: "adSpend", label: "Total ad spend for this batch" },
                           { key: "productCostPerSet", label: "Product cost per set" },
                           { key: "deliveryCostPerOrder", label: "Delivery cost per order" }
-                        ] as const).map((f) => (
+                        ] as const).map((f) => {
+                          const m = batchAutofillMeta?.[f.key];
+                          const lowConf = m?.confidence === "low";
+                          const hint = m?.missingData ? m.missingData : m?.basis ? `Suggested · ${m.basis}${typeof m.orderCount === "number" ? ` · ${m.orderCount} order(s)` : ""}${lowConf ? " · low confidence" : ""}` : null;
+                          return (
                           <label key={f.key} className="block">
                             <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">{f.label}</span>
                             <div className="relative">
@@ -38453,13 +38494,23 @@ ${waybillLineItems(w).length > 1
                                 className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                               />
                             </div>
+                            {hint && <p className={`mt-1 text-[10px] ${(m?.missingData || lowConf) ? "text-amber-600" : "text-gray-400"}`}>{hint}</p>}
                           </label>
-                        ))}
-                        <button
-                          onClick={() => patchBatch({ adSpend: batch.adSpend, productCostPerSet: batch.productCostPerSet, deliveryCostPerOrder: batch.deliveryCostPerOrder })}
-                          disabled={batchBusy}
-                          className="h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1a7bc4] disabled:opacity-50"
-                        >Save costs &amp; recalculate</button>
+                          );
+                        })}
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <button
+                            onClick={pullBatchCostsFromData}
+                            disabled={batchBusy}
+                            className="h-10 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#1F8FE0] text-sm font-semibold text-[#1F8FE0] hover:bg-blue-50 disabled:opacity-50"
+                            title="Pre-fill these from your Ad Spend, pricing-editor cost, and recorded delivery fees — you review, then save."
+                          ><Sparkles className="w-4 h-4" />Pull from my data</button>
+                          <button
+                            onClick={() => patchBatch({ adSpend: batch.adSpend, productCostPerSet: batch.productCostPerSet, deliveryCostPerOrder: batch.deliveryCostPerOrder })}
+                            disabled={batchBusy}
+                            className="h-10 flex-1 rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1a7bc4] disabled:opacity-50"
+                          >Save costs &amp; recalculate</button>
+                        </div>
                       </div>
 
                       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">

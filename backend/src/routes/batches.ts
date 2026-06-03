@@ -200,6 +200,118 @@ router.get("/:id/economics", async (req, res) => {
   });
 });
 
+// ── Auto-fill: SUGGEST the three cost inputs from data the app already has ──────
+// Read-only. Never writes batch_economics — the owner reviews each suggestion in
+// the editable inputs, then saves via the existing PATCH. Per-input + independent:
+//   adSpend             = SUM of "Ad Spend" expenses for the batch's product(s) over
+//                         the placed-date window of its linked orders (sunk total).
+//   productCostPerSet   = set-weighted avg of product_pricings.unit_cost (currency-
+//                         aware, primary fallback) across the linked orders.
+//   deliveryCostPerOrder= avg of the REAL per-order logistics_cost on delivered
+//                         orders that actually carry a fee (blank if none yet).
+router.get("/:id/autofill", async (req, res) => {
+  const orgId = req.user!.orgId;
+  const id = req.params.id;
+  const { data: batch } = await supabase
+    .from("batch_economics").select("id").eq("id", id).eq("org_id", orgId).single();
+  if (!batch) { res.status(404).json({ error: "Batch not found." }); return; }
+
+  const { data: orderRows } = await supabase
+    .from("orders").select("status, quantity, product_id, created_at, logistics_cost, currency")
+    .eq("org_id", orgId).eq("batch_id", id);
+  const orders = orderRows ?? [];
+  const suggestions: Record<string, number> = {};
+  const meta: Record<string, unknown> = {};
+
+  if (orders.length === 0) {
+    res.json({ suggestions, meta: { note: "No orders are linked to this batch yet — link orders first, then pull." } });
+    return;
+  }
+
+  // Placed-date window (whole days) + product scope, both straight from the orders.
+  // created_at is a UTC timestamptz; expenses.date is the operator's Lagos-local
+  // day — derive the window in Africa/Lagos so the BETWEEN lines up at day edges.
+  const lagosDay = (ts: unknown) => {
+    const d = new Date(String(ts ?? ""));
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+  };
+  const dates = orders.map((o) => lagosDay(o.created_at)).filter(Boolean).sort();
+  const start = dates[0];
+  const end = dates[dates.length - 1];
+  const productIds = [...new Set(orders.map((o) => o.product_id).filter(Boolean))] as string[];
+  meta.window = { start, end, orderCount: orders.length, productCount: productIds.length };
+
+  // ── Ad spend: product-scoped SUM of "Ad Spend" expenses over the window (NGN) ──
+  if (start && end && productIds.length) {
+    const { data: adRows } = await supabase
+      .from("expenses").select("amount, currency")
+      .eq("org_id", orgId).eq("category", "Ad Spend")
+      .gte("date", start).lte("date", end)
+      .in("product_id", productIds);
+    const rows = adRows ?? [];
+    const ngn = rows.filter((r) => !r.currency || r.currency === "NGN");
+    if (ngn.length > 0) {
+      // At least one NGN row → a real number. If some rows were non-NGN, the NGN
+      // total is only partial, so flag it low-confidence rather than solid.
+      suggestions.adSpend = Math.round(ngn.reduce((s, r) => s + (Number(r.amount) || 0), 0));
+      const partial = rows.length - ngn.length > 0;
+      meta.adSpend = { basis: `Ad Spend tagged to this product, ${start} → ${end}`, rowCount: rows.length, confidence: partial ? "low" as const : "high" as const, ...(partial ? { missingData: `${rows.length - ngn.length} non-NGN spend row(s) skipped — NGN total may be partial` } : {}) };
+    } else if (rows.length > 0) {
+      // Spend exists but ALL non-NGN → don't suggest a fake ₦0; leave it manual.
+      meta.adSpend = { basis: `Ad Spend, ${start} → ${end}`, rowCount: rows.length, missingData: `${rows.length} Ad Spend row(s) found but none in NGN — enter the NGN total manually.` };
+    } else {
+      meta.adSpend = { basis: `Ad Spend, ${start} → ${end}`, rowCount: 0, missingData: "No Ad Spend logged for this product in that date range." };
+    }
+  } else {
+    meta.adSpend = { missingData: "Linked orders have no product/date to scope ad spend by." };
+  }
+
+  // ── Product cost per set: set-weighted avg of unit_cost (currency-aware) ──
+  if (productIds.length) {
+    const { data: pricingRows } = await supabase
+      .from("product_pricings").select("product_id, currency, unit_cost, is_primary")
+      .in("product_id", productIds);
+    const pricings = pricingRows ?? [];
+    const unitCost = (pid: string, currency?: string | null) => {
+      const ps = pricings.filter((p) => p.product_id === pid);
+      const match = currency ? ps.find((p) => p.currency === currency) : undefined;
+      const chosen = match ?? ps.find((p) => p.is_primary) ?? ps[0];
+      return chosen ? Number(chosen.unit_cost) || 0 : 0;
+    };
+    // Weight over DELIVERED orders to match what the engine charges (product cost
+    // only on delivered sets); fall back to all orders when none have delivered yet.
+    const delivered = orders.filter((o) => o.status === "Delivered");
+    const basisOrders = delivered.length > 0 ? delivered : orders;
+    let costSets = 0, totalSets = 0;
+    const missing = new Set<string>();
+    for (const o of basisOrders) {
+      const sets = Math.max(1, Number(o.quantity) || 1);
+      const c = o.product_id ? unitCost(o.product_id, o.currency) : 0;
+      if (o.product_id && c <= 0) missing.add(o.product_id);
+      costSets += c * sets;
+      totalSets += sets;
+    }
+    if (totalSets > 0 && costSets > 0) {
+      suggestions.productCostPerSet = Math.round(costSets / totalSets);
+      meta.productCostPerSet = { basis: productIds.length === 1 ? "Unit cost from your pricing editor" : `Set-weighted avg unit cost${delivered.length > 0 ? " (delivered orders)" : ""}`, confidence: missing.size ? "low" as const : "high" as const, ...(missing.size ? { missingData: `${missing.size} product(s) have no cost set — counted as ₦0.` } : {}) };
+    } else {
+      // No real cost on any relevant product → don't suggest a fake ₦0.
+      meta.productCostPerSet = { basis: "Unit cost from your pricing editor", missingData: "No unit cost set on these product(s) — enter manually." };
+    }
+  }
+
+  // ── Delivery cost per order: avg of the REAL fee on delivered orders ──
+  const fees = orders.filter((o) => o.status === "Delivered" && (Number(o.logistics_cost) || 0) > 0);
+  if (fees.length > 0) {
+    suggestions.deliveryCostPerOrder = Math.round(fees.reduce((s, o) => s + (Number(o.logistics_cost) || 0), 0) / fees.length);
+    meta.deliveryCostPerOrder = { basis: `Avg of ${fees.length} delivered order(s) with a recorded fee`, orderCount: fees.length, confidence: fees.length >= 3 ? "high" as const : "low" as const };
+  } else {
+    meta.deliveryCostPerOrder = { orderCount: 0, missingData: "No delivery fees recorded yet — enter manually." };
+  }
+
+  res.json({ suggestions, meta });
+});
+
 // ── Tier config (the N-tier cost model + status->tier map) ─────────────────────
 router.get("/config/tiers", async (req, res) => {
   const { tiers, statusMap } = await loadTierConfig(req.user!.orgId);

@@ -374,6 +374,7 @@ export const batchesApi = {
   delete: (id: string) => del<void>(`/api/batches/${id}`),
   assignOrders: (id: string, body: unknown) => post<{ assigned: number }>(`/api/batches/${id}/assign-orders`, body),
   economics: (id: string) => get<any>(`/api/batches/${id}/economics`),
+  autofill: (id: string) => get<{ suggestions: Record<string, number>; meta: any }>(`/api/batches/${id}/autofill`),
   getConfig: () => get<{ tiers: any[]; statusMap: any[] }>("/api/batches/config/tiers"),
   updateConfig: (body: unknown) => patch<{ tiers: any[]; statusMap: any[] }>("/api/batches/config/tiers", body)
 };
