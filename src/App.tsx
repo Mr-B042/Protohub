@@ -38373,12 +38373,14 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <strong className={`block text-4xl font-bold ${netTone}`}>{fmt(w.netProfit)}</strong>
                           <p className="m-0 mt-1 text-xs text-gray-500">{fmt(w.profitPerOrder)} per order placed · {w.deliveredOrders}/{w.totalOrders} delivered</p>
+                          {!closed && <p className="m-0 mt-2 max-w-md text-[11px] leading-snug text-gray-400">Your safe number: counts only orders already delivered and treats every pending one as if it'll fail — not a guess that they will, so it can only go up from here.</p>}
                         </div>
                         {!closed && (
-                          <div className="lg:text-right">
+                          <div className="lg:max-w-[17rem] lg:text-right">
                             <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Best-case ceiling</p>
                             <strong className={`block text-2xl font-bold ${b.netProfit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{fmt(b.netProfit)}</strong>
                             <p className="m-0 mt-1 text-xs text-gray-500">if all {b.deliveredOrders - w.deliveredOrders} open order(s) land</p>
+                            <p className="m-0 mt-2 text-[11px] leading-snug text-gray-400">The most this batch can make if every order still in play delivers — failed and cancelled ones stay gone. Not a promise; your real number lands below this.</p>
                           </div>
                         )}
                       </div>
@@ -38404,7 +38406,7 @@ ${waybillLineItems(w).length > 1
                       {/* Money waterfall */}
                       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                         <h2 className="text-sm font-bold text-gray-800 mb-1">Where the money goes</h2>
-                        <p className="text-xs text-gray-400 mb-4">Worst-case build-up from revenue to net.</p>
+                        <p className="text-xs text-gray-400 mb-4">From the money your delivered orders brought in, we take out each cost one at a time — ad money, product, add-ons, delivery — so you see what's left in hand. (Worst-case build-up.)</p>
                         <div className="space-y-2 text-sm">
                           {[
                             { label: "Revenue (delivered)", val: w.revenue, sign: 1 },
@@ -38424,6 +38426,9 @@ ${waybillLineItems(w).length > 1
                             <span className={`text-lg font-bold ${netTone}`}>{fmt(w.netProfit)}</span>
                           </div>
                         </div>
+                        {Number(w.addonCost) > 0 && (
+                          <p className="mt-3 text-[11px] leading-snug text-indigo-500">Add-ons are bonus value riding on the same order — extra money in, with no extra ad or delivery cost.</p>
+                        )}
                       </div>
 
                       {/* Order mix / tier breakdown */}
