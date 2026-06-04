@@ -10811,23 +10811,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // spend + waybill + every other non-Delivery expense) across the period's
   // delivered orders. Summed over the period it reconciles exactly with
   // summarizeRecognizedProfit().netProfit — i.e. the panel's bottom line.
-  const deliveriesPeriodExpenses = expenses.filter((expense) => isInPeriod(expense.date, deliveriesPeriod, deliveriesDateRange));
-  const deliveriesFixedTotal = deliveriesPeriodExpenses.filter((e) => e.type !== "Delivery").reduce((s, e) => s + e.amount, 0);
-  const deliveriesRecordedDeliveryExpense = deliveriesPeriodExpenses.filter((e) => e.type === "Delivery").reduce((s, e) => s + e.amount, 0);
-  const deliveriesDeliveredN = deliveredInPeriodRows.length;
-  const deliveriesFixedPerDelivered = deliveriesDeliveredN > 0 ? deliveriesFixedTotal / deliveriesDeliveredN : 0;
-  // Delivery cost: prefer the per-order logisticsCost when the period records any;
-  // otherwise allocate the recorded "Delivery" expense evenly (mirrors recognizedLogistics).
-  const deliveriesLogisticsFromOrders = deliveredInPeriodRows.reduce((s, o) => s + (o.logisticsCost ?? 0), 0);
-  const deliveriesUseOrderLogistics = deliveriesLogisticsFromOrders > 0;
-  const deliveriesDeliveryAllocated = deliveriesDeliveredN > 0 ? deliveriesRecordedDeliveryExpense / deliveriesDeliveredN : 0;
+  // Per-delivered-order STABLE profit for the Deliveries list: the order's OWN
+  // margin only — revenue − product cost − its own delivery − its rep commission.
+  // It does NOT carry a share of period overhead (ad spend / opex stay in the
+  // period P&L, where they're already counted), so this is a fixed property of the
+  // order and never drifts as the period fills with more expenses or deliveries.
   const deliveriesOrderNet = (order: TrackedOrder) => {
     const revenue = order.amount;
     const cogs = costForOrder(order);
-    const delivery = deliveriesUseOrderLogistics ? (order.logisticsCost ?? 0) : deliveriesDeliveryAllocated;
-    const bonus = recognizedBonusTotalForRows([order]);
-    const fixedShare = deliveriesFixedPerDelivered;
-    return { revenue, cogs, delivery, bonus, fixedShare, net: revenue - cogs - delivery - bonus - fixedShare };
+    const delivery = order.logisticsCost ?? 0;            // the order's OWN recorded delivery fee
+    const bonus = recognizedBonusTotalForRows([order]);   // the order's own rep commission
+    return { revenue, cogs, delivery, bonus, net: revenue - cogs - delivery - bonus };
   };
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const ordersRevenue = periodDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
@@ -31127,7 +31121,7 @@ ${waybillLineItems(w).length > 1
                               type="button"
                               onClick={() => { setDeliveriesNetSort((s) => s === "off" ? "desc" : s === "desc" ? "asc" : "off"); setDeliveriesPage(1); }}
                               className={`inline-flex items-center gap-1 font-semibold uppercase text-[10px] tracking-wider transition-colors ${deliveriesNetSort === "off" ? "text-gray-500 hover:text-gray-900" : "text-[#1F8FE0]"}`}
-                              title="Sort by final net profit — click to cycle: highest→loss, then loss→highest, then off. Net = revenue − product cost − delivery − sales rep commission − this order's share of period ad spend & overhead. Owner/Admin only."
+                              title="Sort by net profit — click to cycle: highest→loss, then loss→highest, then off. Net = revenue − product cost − delivery − sales rep commission (this order only; period ad spend & overhead stay in the P&L). A fixed figure per order — it doesn't drift as the period fills. Owner/Admin only."
                             >
                               Net Profit
                               <span className="text-[9px] leading-none">{deliveriesNetSort === "desc" ? "▼" : deliveriesNetSort === "asc" ? "▲" : "↕"}</span>
@@ -31164,7 +31158,7 @@ ${waybillLineItems(w).length > 1
                             {isOwnerOrAdmin && (() => {
                               const np = deliveriesOrderNet(order);
                               return (
-                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n− Ad spend & overhead share  ${formatProductMoney(np.fixedShare, order.currency)}\n= Net profit  ${formatProductMoney(np.net, order.currency)}`}>
+                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n= Net profit (this order only)  ${formatProductMoney(np.net, order.currency)}`}>
                                   {formatProductMoney(np.net, order.currency)}
                                 </td>
                               );
