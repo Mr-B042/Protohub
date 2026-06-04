@@ -31134,17 +31134,12 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
                         {isOwnerOrAdmin && (
-                          <th className="px-4 py-3 text-right font-semibold text-gray-500 uppercase text-[10px] tracking-wider" title="The order's OWN profit: revenue − product cost − its own delivery − its sales rep commission. A fixed figure per order — never drifts. (Ad spend & overhead are added in Final Net.)">
-                            Order Net
-                          </th>
-                        )}
-                        {isOwnerOrAdmin && (
                           <th className="px-4 py-3 text-right">
                             <button
                               type="button"
                               onClick={() => { setDeliveriesNetSort((s) => s === "off" ? "desc" : s === "desc" ? "asc" : "off"); setDeliveriesPage(1); }}
                               className={`inline-flex items-center gap-1 font-semibold uppercase text-[10px] tracking-wider transition-colors ${deliveriesNetSort === "off" ? "text-gray-500 hover:text-gray-900" : "text-[#1F8FE0]"}`}
-                              title="Sort by FINAL net — click to cycle: highest→loss, then loss→highest, then off. Final = Order Net − this order's share of its delivery-WEEK ad spend & overhead (that week's expenses ÷ the week's deliveries). Tied to the order's own week, so it doesn't change when you switch the date filter; a finished week is locked, the current week refines until it ends. Owner/Admin only."
+                              title="Sort by FINAL net — click to cycle: highest→loss, then loss→highest, then off. Final = revenue − product cost − its own delivery − sales rep commission − this order's share of its delivery-WEEK ad spend & overhead (that week's expenses ÷ the week's deliveries). Tied to the order's own week, so it doesn't change when you switch the date filter; a finished week is locked, the current week refines until it ends. Owner/Admin only."
                             >
                               Final Net
                               <span className="text-[9px] leading-none">{deliveriesNetSort === "desc" ? "▼" : deliveriesNetSort === "asc" ? "▲" : "↕"}</span>
@@ -31155,7 +31150,7 @@ ${waybillLineItems(w).length > 1
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredDeliveryRows.length === 0 ? (
-                        <tr><td colSpan={isOwnerOrAdmin ? 11 : 9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
+                        <tr><td colSpan={isOwnerOrAdmin ? 10 : 9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
                       ) : (
                         pagedDeliveryRows.map((order) => {
                           const scheduleOutcome = deliveryScheduleOutcomeForOrder(order);
@@ -31181,14 +31176,9 @@ ${waybillLineItems(w).length > 1
                             {isOwnerOrAdmin && (() => {
                               const np = deliveriesOrderNet(order);
                               return (
-                                <>
-                                  <td className={`px-4 py-4 font-bold text-right ${np.ownNet >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n= Order net  ${formatProductMoney(np.ownNet, order.currency)}`}>
-                                    {formatProductMoney(np.ownNet, order.currency)}
-                                  </td>
-                                  <td className={`px-4 py-4 font-bold text-right ${np.finalNet >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Order net  ${formatProductMoney(np.ownNet, order.currency)}\n− Ad spend & overhead (this order's week share)  ${formatProductMoney(np.overheadShare, order.currency)}\n= Final net  ${formatProductMoney(np.finalNet, order.currency)}`}>
-                                    {formatProductMoney(np.finalNet, order.currency)}
-                                  </td>
-                                </>
+                                <td className={`px-4 py-4 font-bold text-right ${np.finalNet >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n− Ad spend & overhead (this order's week share)  ${formatProductMoney(np.overheadShare, order.currency)}\n= Final net  ${formatProductMoney(np.finalNet, order.currency)}`}>
+                                  {formatProductMoney(np.finalNet, order.currency)}
+                                </td>
                               );
                             })()}
                           </tr>
