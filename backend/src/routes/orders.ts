@@ -892,6 +892,7 @@ router.patch("/:id/status", async (req, res) => {
     updates.remittance_variance_reviewed_by = null;
     updates.remittance_variance_reviewed_at = null;
     updates.remittance_variance_review_note = null;
+    updates.remittance_variance_reason      = null;
   }
 
   let { data, error } = await supabase
@@ -1314,6 +1315,7 @@ const POST_TERMINAL_FIELDS = new Set([
   "remittance_variance_reviewed_by",
   "remittance_variance_reviewed_at",
   "remittance_variance_review_note",
+  "remittance_variance_reason",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
@@ -1481,7 +1483,7 @@ router.patch("/:id", async (req, res) => {
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
   let remittanceReason = typeof (req.body.remittance_reason ?? req.body.remittanceReason) === "string"
-    ? String(req.body.remittance_reason ?? req.body.remittanceReason).trim().slice(0, 240)
+    ? String(req.body.remittance_reason ?? req.body.remittanceReason).trim().slice(0, 500)
     : "";
   if (remittanceReceivedAt === null) {
     res.status(400).json({ error: "Remittance received date must be in YYYY-MM-DD format." });
@@ -1600,6 +1602,12 @@ router.patch("/:id", async (req, res) => {
         res.status(400).json({ error: "A remittance variance reason is required for short or excess cash." });
         return;
       }
+      // Persist the (required) reason so the Owner's approval review can show it.
+      // Strip the verbose "· Expected … · received … · Logged by …" tail the frontend
+      // builds — the modal already renders that math/state, so the stored reason stays
+      // the clean human category + note. Falls back to the full string if the delimiter
+      // is ever absent.
+      updates.remittance_variance_reason = remittanceReason.split(" · Expected")[0].trim().slice(0, 500);
       if (role === "Owner") {
         updates.remittance_variance_status = "approved";
         updates.remittance_variance_reviewed_by = req.user!.id;
@@ -1625,6 +1633,7 @@ router.patch("/:id", async (req, res) => {
       updates.remittance_variance_reviewed_by = null;
       updates.remittance_variance_reviewed_at = null;
       updates.remittance_variance_review_note = null;
+      updates.remittance_variance_reason = null;
     }
   }
   const requestedTerminalSafeKeys = new Set(Object.keys(updates));

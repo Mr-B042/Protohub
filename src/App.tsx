@@ -720,6 +720,7 @@ type TrackedOrder = {
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   remittanceReason?: string;
   remittanceVarianceStatus?: "pending" | "approved" | "rejected" | null;
+  remittanceVarianceReason?: string | null;
   callOutcome?: CallOutcome;
   buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
   followUpAttemptCount?: number;
@@ -4580,6 +4581,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
     remittanceVarianceStatus: value?.remittanceVarianceStatus ?? value?.remittance_variance_status ?? null,
+    remittanceVarianceReason: value?.remittanceVarianceReason ?? value?.remittance_variance_reason ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -8253,6 +8255,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceAmount, setRemittanceAmount] = useState("");
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
+  const [showVarianceReview, setShowVarianceReview] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
   const [remittanceVarianceNote, setRemittanceVarianceNote] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
@@ -21172,6 +21175,26 @@ ${waybillLineItems(w).length > 1
       showToast(`Could not ${action} the variance: ${err?.message ?? "please retry"}.`);
     });
     showToast(action === "approve" ? `Cash variance approved on ${orderId}.` : `Cash variance rejected on ${orderId}.`);
+  };
+
+  // Approve a whole batch of pending variances at once (one confirm, then fire each).
+  const approveVarianceBatch = async (orderIds: string[]) => {
+    if (orderIds.length === 0) return;
+    if (!window.confirm(`Approve all ${orderIds.length} cash variance(s) in this batch? The cash is already recorded — this signs them off.`)) return;
+    const snapshot = trackedOrders;
+    setTrackedOrders((prev) => prev.map((o) => orderIds.includes(o.id) ? { ...o, remittanceVarianceStatus: "approved" } : o));
+    const results = await Promise.allSettled(orderIds.map((id) => ordersApi.reviewRemittanceVariance(id, { action: "approve" })));
+    let ok = 0;
+    results.forEach((res, i) => {
+      if (res.status === "rejected") {
+        const id = orderIds[i];
+        setTrackedOrders((prev) => prev.map((o) => o.id === id ? (snapshot.find((s) => s.id === id) ?? o) : o));
+      } else ok += 1;
+    });
+    const failed = orderIds.length - ok;
+    if (failed === 0) showToast(`Approved ${ok} cash variance(s).`);
+    else if (ok > 0) showToast(`Approved ${ok}; ${failed} failed — please retry.`);
+    else showToast(`Could not approve — all ${failed} failed. Please retry.`);
   };
 
   const updateOrderStatus = (
@@ -37413,35 +37436,21 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
 
-                  {/* Cash variance — pending Owner approval (Admin-logged short/excess) */}
-                  {realRole === "Owner" && trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length > 0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                      <div className="flex items-start gap-3">
+                  {/* Cash variance — pending Owner approval: compact alert that opens a review modal */}
+                  {realRole === "Owner" && (() => {
+                    const pendingCount = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length;
+                    if (pendingCount === 0) return null;
+                    return (
+                      <div className="flex items-center gap-3 rounded-xl border border-amber-300/70 bg-amber-50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
                         <span className="text-lg leading-none shrink-0">🕓</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-amber-800">Cash variance — pending your approval ({trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length})</p>
-                          <p className="text-xs text-amber-700 mt-0.5">An Admin logged short or excess cash on these orders. The cash is already recorded — approve to sign off, or reject to send it back for correction.</p>
-                          <div className="mt-2 flex flex-col gap-2">
-                            {trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").map((o) => {
-                              const expected = Math.max(0, (o.amount ?? 0) - (o.logisticsCost ?? 0));
-                              const v = Math.round((o.amountRemitted ?? 0) - expected);
-                              return (
-                                <div key={o.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white border border-amber-100 px-3 py-2 text-xs">
-                                  <button onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }} className="font-bold text-[#1F8FE0] hover:underline">#{o.id}</button>
-                                  <span className="text-gray-600 truncate max-w-[12rem]">{o.customer}</span>
-                                  <span className={`font-semibold ${v >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{v >= 0 ? "Excess " : "Short "}{formatProductMoney(Math.abs(v), o.currency)}</span>
-                                  <span className="ml-auto flex gap-2">
-                                    <button onClick={() => reviewRemittanceVariance(o.id, "approve")} className="!min-h-0 px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700">Approve</button>
-                                    <button onClick={() => reviewRemittanceVariance(o.id, "reject")} className="!min-h-0 px-2.5 py-1 rounded bg-red-600 text-white font-semibold hover:bg-red-700">Reject</button>
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="m-0 text-sm font-bold text-amber-900 dark:text-amber-200">{pendingCount} cash variance{pendingCount === 1 ? "" : "s"} pending your approval</p>
+                          <p className="m-0 text-xs text-amber-700/90 dark:text-amber-300/70">An Admin logged short/excess cash — review the breakdown, then sign off.</p>
                         </div>
+                        <button onClick={() => setShowVarianceReview(true)} className="!min-h-0 shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600">Review</button>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Per-partner table */}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -44641,6 +44650,102 @@ ${waybillLineItems(w).length > 1
         </div>
       )}
 
+      {showVarianceReview && realRole === "Owner" && (() => {
+        const pending = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending");
+        return (
+          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => setShowVarianceReview(false)}>
+            <section className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Cash variance — pending approval{pending.length ? ` (${pending.length})` : ""}</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">An Admin logged short/excess cash. The cash is already recorded — review each, then approve to sign off or reject to send back.</p>
+                </div>
+                <button type="button" className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100" aria-label="Close" onClick={() => setShowVarianceReview(false)}>
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                {pending.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">All clear — nothing pending. 🎉</p>
+                ) : (() => {
+                  // Group by logistics partner so a batch remittance's orders show together.
+                  const groups = new Map<string, TrackedOrder[]>();
+                  for (const o of pending) {
+                    const k = agentNameForOrder(o);
+                    if (!groups.has(k)) groups.set(k, []);
+                    groups.get(k)!.push(o);
+                  }
+                  const orderCard = (o: TrackedOrder) => {
+                    const amount = o.amount ?? 0;
+                    const logistics = o.logisticsCost ?? 0;
+                    const expected = Math.max(0, amount - logistics);
+                    const received = o.amountRemitted ?? 0;
+                    const v = Math.round(received - expected);
+                    const tone = v >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+                    return (
+                      <div key={o.id} className="rounded-lg bg-gray-50/70 p-3 dark:bg-slate-800/30">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <button onClick={() => { setShowVarianceReview(false); setSelectedOrderId(o.id); setModal("orderDetails"); }} className="!min-h-0 font-bold text-[#1F8FE0] hover:underline">#{o.id}</button>
+                            <span className="ml-2 text-sm text-gray-600 dark:text-slate-300">{o.customer}</span>
+                          </div>
+                          <span className={`shrink-0 text-sm font-bold ${tone}`}>{v >= 0 ? "Excess" : "Short"} {formatProductMoney(Math.abs(v), o.currency)}</span>
+                        </div>
+                        <div className="mt-2 rounded-lg bg-white p-3 text-xs dark:bg-slate-900/40">
+                          {[
+                            { label: "Order amount", val: amount, neg: false },
+                            { label: "Logistics / delivery", val: logistics, neg: true },
+                            { label: "Expected to remit", val: expected, strong: true, neg: false },
+                            { label: "Cash received", val: received, neg: false },
+                          ].map((r) => (
+                            <div key={r.label} className={`flex items-center justify-between py-1 ${r.strong ? "mt-1 border-t border-gray-200 pt-2 font-semibold text-gray-800 dark:border-slate-700 dark:text-slate-100" : "text-gray-500 dark:text-slate-400"}`}>
+                              <span>{r.neg ? "− " : ""}{r.label}</span>
+                              <span>{formatProductMoney(r.val, o.currency)}</span>
+                            </div>
+                          ))}
+                          <div className={`mt-1 flex items-center justify-between border-t border-gray-200 pt-2 font-bold dark:border-slate-700 ${tone}`}>
+                            <span>{v >= 0 ? "Excess cash" : "Short cash"}</span>
+                            <span>{v >= 0 ? "+" : "−"}{formatProductMoney(Math.abs(v), o.currency)}</span>
+                          </div>
+                        </div>
+                        <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+                          <span className="font-semibold">Reason: </span>{o.remittanceVarianceReason || "— (not captured on this order)"}
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button onClick={() => reviewRemittanceVariance(o.id, "approve")} className="!min-h-0 flex-1 rounded-lg bg-emerald-600 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700">Approve</button>
+                          <button onClick={() => reviewRemittanceVariance(o.id, "reject")} className="!min-h-0 flex-1 rounded-lg bg-rose-600 py-1.5 text-sm font-semibold text-white hover:bg-rose-700">Reject</button>
+                        </div>
+                      </div>
+                    );
+                  };
+                  return [...groups.entries()].map(([partner, orders]) => {
+                    const isBatch = orders.length > 1;
+                    const groupTotal = orders.reduce((s, o) => s + Math.round((o.amountRemitted ?? 0) - Math.max(0, (o.amount ?? 0) - (o.logisticsCost ?? 0))), 0);
+                    const curr = orders[0]?.currency;
+                    return (
+                      <div key={partner} className="overflow-hidden rounded-xl border border-gray-200 dark:border-slate-700">
+                        <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2.5 dark:border-slate-700 dark:bg-slate-800/50">
+                          <div className="min-w-0">
+                            <p className="m-0 truncate text-sm font-bold text-gray-800 dark:text-slate-100">{partner}</p>
+                            <p className="m-0 text-[11px] text-gray-500 dark:text-slate-400">{isBatch ? `${orders.length} orders in this batch` : "1 order"} · net {groupTotal >= 0 ? "excess" : "short"} {formatProductMoney(Math.abs(groupTotal), curr)}</p>
+                          </div>
+                          {isBatch && (
+                            <button onClick={() => approveVarianceBatch(orders.map((o) => o.id))} className="!min-h-0 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">Approve all ({orders.length})</button>
+                          )}
+                        </div>
+                        <div className="space-y-3 p-3">
+                          {orders.map(orderCard)}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
       {whatsAppPicker && (
         <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
           <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-picker-title">
@@ -45282,7 +45387,7 @@ ${waybillLineItems(w).length > 1
 	                          {selectedOrder.remittanceVarianceStatus === "pending" ? "Cash variance — pending Owner approval" : "Cash variance — rejected by Owner"}
 	                        </p>
 	                        <p className="mt-0.5 mb-0 text-xs text-gray-600 dark:text-gray-300">
-	                          {selectedOrder.remittanceReason || "Short or excess cash was recorded on this order."}
+	                          {selectedOrder.remittanceVarianceReason || selectedOrder.remittanceReason || "Short or excess cash was recorded on this order."}
 	                        </p>
 	                        {realRole === "Owner" && selectedOrder.remittanceVarianceStatus === "pending" && (
 	                          <div className="mt-2.5 flex flex-wrap gap-2">
