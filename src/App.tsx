@@ -721,6 +721,7 @@ type TrackedOrder = {
   remittanceReason?: string;
   remittanceVarianceStatus?: "pending" | "approved" | "rejected" | null;
   remittanceVarianceReason?: string | null;
+  remittanceVarianceReviewedAt?: string | null;
   callOutcome?: CallOutcome;
   buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
   followUpAttemptCount?: number;
@@ -4582,6 +4583,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
     remittanceVarianceStatus: value?.remittanceVarianceStatus ?? value?.remittance_variance_status ?? null,
     remittanceVarianceReason: value?.remittanceVarianceReason ?? value?.remittance_variance_reason ?? null,
+    remittanceVarianceReviewedAt: value?.remittanceVarianceReviewedAt ?? value?.remittance_variance_reviewed_at ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -44686,8 +44688,11 @@ ${waybillLineItems(w).length > 1
                       <div key={o.id} className="rounded-lg bg-gray-50/70 p-3 dark:bg-slate-800/30">
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <button onClick={() => { setShowVarianceReview(false); setSelectedOrderId(o.id); setModal("orderDetails"); }} className="!min-h-0 font-bold text-[#1F8FE0] hover:underline">#{o.id}</button>
-                            <span className="ml-2 text-sm text-gray-600 dark:text-slate-300">{o.customer}</span>
+                            <div className="flex items-center">
+                              <button onClick={() => { setShowVarianceReview(false); setSelectedOrderId(o.id); setModal("orderDetails"); }} className="!min-h-0 font-bold text-[#1F8FE0] hover:underline">#{o.id}</button>
+                              <span className="ml-2 truncate text-sm text-gray-600 dark:text-slate-300">{o.customer}</span>
+                            </div>
+                            {o.updatedAt && <span className="text-[11px] text-gray-400 dark:text-slate-500">Logged {formatMoment(o.updatedAt)}</span>}
                           </div>
                           <span className={`shrink-0 text-sm font-bold ${tone}`}>{v >= 0 ? "Excess" : "Short"} {formatProductMoney(Math.abs(v), o.currency)}</span>
                         </div>
@@ -45388,6 +45393,11 @@ ${waybillLineItems(w).length > 1
 	                        </p>
 	                        <p className="mt-0.5 mb-0 text-xs text-gray-600 dark:text-gray-300">
 	                          {selectedOrder.remittanceVarianceReason || selectedOrder.remittanceReason || "Short or excess cash was recorded on this order."}
+	                        </p>
+	                        <p className="mt-1 mb-0 text-[11px] text-gray-400 dark:text-slate-500">
+	                          {selectedOrder.remittanceVarianceStatus === "pending"
+	                            ? (selectedOrder.updatedAt ? `Logged ${formatMoment(selectedOrder.updatedAt)}` : "")
+	                            : selectedOrder.remittanceVarianceReviewedAt ? `${selectedOrder.remittanceVarianceStatus === "rejected" ? "Rejected" : "Approved"} ${formatMoment(selectedOrder.remittanceVarianceReviewedAt)}` : ""}
 	                        </p>
 	                        {realRole === "Owner" && selectedOrder.remittanceVarianceStatus === "pending" && (
 	                          <div className="mt-2.5 flex flex-wrap gap-2">
