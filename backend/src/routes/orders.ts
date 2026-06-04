@@ -886,6 +886,12 @@ router.patch("/:id/status", async (req, res) => {
     updates.amount_remitted   = 0;
     updates.logistics_cost    = 0;
     updates.remittance_status = "Pending";
+    // The cash is gone, so any prior variance-approval state is stale — clear it
+    // (don't leave a 'pending' lingering in the Owner's queue for cash that's zeroed).
+    updates.remittance_variance_status      = null;
+    updates.remittance_variance_reviewed_by = null;
+    updates.remittance_variance_reviewed_at = null;
+    updates.remittance_variance_review_note = null;
   }
 
   let { data, error } = await supabase
@@ -1433,6 +1439,37 @@ router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
   res.json(data);
 });
 
+// Owner approves or rejects a pending remittance variance (the cash is already
+// recorded — this is the after-the-fact sign-off). Owner-only.
+router.patch("/:id/remittance-variance", requireRole("Owner"), async (req, res) => {
+  const action = req.body?.action;
+  if (action !== "approve" && action !== "reject") {
+    res.status(400).json({ error: "action must be 'approve' or 'reject'." });
+    return;
+  }
+  const note = typeof req.body?.note === "string" ? req.body.note.slice(0, 500) : null;
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      remittance_variance_status: action === "approve" ? "approved" : "rejected",
+      remittance_variance_reviewed_by: req.user!.id,
+      remittance_variance_reviewed_at: new Date().toISOString(),
+      remittance_variance_review_note: note,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .eq("remittance_variance_status", "pending") // only pending ones can be reviewed (idempotent)
+    .select()
+    .single();
+  if (error) {
+    const notFound = (error as any).code === "PGRST116";
+    res.status(notFound ? 404 : 500).json({ error: notFound ? "No pending remittance variance to review on this order." : error.message });
+    return;
+  }
+  res.json(data);
+});
+
 router.patch("/:id", async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
@@ -1544,18 +1581,44 @@ router.patch("/:id", async (req, res) => {
     const nextAmountRemitted = numericAmount(hasOwn(updates, "amount_remitted") ? updates.amount_remitted : current.amount_remitted);
     const expectedRemittance = Math.max(0, roundMoney(nextOrderAmount - nextLogisticsCost));
     const remittanceVariance = roundMoney(nextAmountRemitted - expectedRemittance);
+    const role = req.user!.role;
     if (remittanceVariance !== 0) {
-      if (req.user!.role !== "Owner") {
-        res.status(403).json({ error: "Owner approval is required before short or excess remittance cash can enter finance." });
+      // Reps/Agents stay blocked. Admins may LOG a variance — the cash records now,
+      // but it's marked pending for the Owner to approve/reject later. Owners log it
+      // approved at source.
+      if (role !== "Owner" && role !== "Admin") {
+        res.status(403).json({ error: "Only an Admin or the Owner can record short or excess remittance cash." });
         return;
       }
       if (!remittanceReason) {
         res.status(400).json({ error: "A remittance variance reason is required for short or excess cash." });
         return;
       }
-      if (!/owner approved/i.test(remittanceReason)) {
-        remittanceReason = `${remittanceReason} · Owner approved by ${req.user!.name}`.slice(0, 500);
+      if (role === "Owner") {
+        updates.remittance_variance_status = "approved";
+        updates.remittance_variance_reviewed_by = req.user!.id;
+        updates.remittance_variance_reviewed_at = new Date().toISOString();
+        updates.remittance_variance_review_note = null;
+        if (!/owner approved/i.test(remittanceReason)) {
+          remittanceReason = `${remittanceReason} · Owner approved by ${req.user!.name}`.slice(0, 500);
+        }
+      } else {
+        // Admin → pending Owner approval (the cash itself still records immediately).
+        updates.remittance_variance_status = "pending";
+        updates.remittance_variance_reviewed_by = null;
+        updates.remittance_variance_reviewed_at = null;
+        updates.remittance_variance_review_note = null;
       }
+    } else if ((role === "Owner" || role === "Admin")
+               && current.remittance_variance_status != null
+               && current.remittance_variance_status !== "rejected") {
+      // Balanced now → only an Owner/Admin may clear a prior 'pending'/'approved'
+      // variance state. Reps can't wipe it, and an Owner's 'rejected' decision is
+      // preserved so a later balancing edit can't erase the audit trail.
+      updates.remittance_variance_status = null;
+      updates.remittance_variance_reviewed_by = null;
+      updates.remittance_variance_reviewed_at = null;
+      updates.remittance_variance_review_note = null;
     }
   }
   const requestedTerminalSafeKeys = new Set(Object.keys(updates));

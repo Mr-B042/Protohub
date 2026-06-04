@@ -719,6 +719,7 @@ type TrackedOrder = {
   amountRemitted?: number;
   remittanceStatus?: "Pending" | "Partial" | "Paid";
   remittanceReason?: string;
+  remittanceVarianceStatus?: "pending" | "approved" | "rejected" | null;
   callOutcome?: CallOutcome;
   buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
   followUpAttemptCount?: number;
@@ -4578,6 +4579,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     reviewHold: value?.reviewHold ?? value?.review_hold ?? false,
     reviewReason: value?.reviewReason ?? value?.review_reason ?? undefined,
     remittanceReason: value?.remittanceReason ?? value?.remittance_reason ?? undefined,
+    remittanceVarianceStatus: value?.remittanceVarianceStatus ?? value?.remittance_variance_status ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -13247,8 +13249,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const remittanceBatchShortAmount = Math.max(0, roundCash(remittanceBatchOutstandingTotal - remittanceBatchAmountValue));
   const remittanceBatchExcessAmount = Math.max(0, roundCash(remittanceBatchAmountValue - remittanceBatchOutstandingTotal));
   const remittanceBatchHasVariance = remittanceBatchShortAmount > 0 || remittanceBatchExcessAmount > 0;
-  const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && realRole !== "Owner";
   const remittanceBatchOwnerApprovalGranted = remittanceBatchHasVariance && realRole === "Owner";
+  const remittanceBatchVariancePending = remittanceBatchHasVariance && realRole === "Admin"; // admin logs → pending owner approval
+  const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && realRole !== "Owner" && realRole !== "Admin"; // reps/agents still locked
   const financeRemittanceEditableOrders = financeDeliveredRows
     .slice()
     .sort((a, b) => {
@@ -13380,8 +13383,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const expected = Math.max(0, order.amount - newLogistics);
     const variance = roundCash(newRemitted - expected);
     const hasVariance = variance !== 0;
-    if (hasVariance && realRole !== "Owner") {
-      showToast("Owner approval is required before short or excess cash can enter the system.");
+    const isOwnerVariance = hasVariance && realRole === "Owner"; // Owner = approved at source; Admin = pending
+    if (hasVariance && realRole !== "Owner" && realRole !== "Admin") {
+      showToast("Only an Admin or the Owner can record short or excess cash.");
       return;
     }
     if (variance < 0 && !SHORT_CASH_REASON_VALUES.has(remittanceVarianceReason)) {
@@ -13406,19 +13410,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       logisticsCost: newLogistics,
       currency: order.currency
     });
-    const approvedRemittanceReason = hasVariance ? `${remittanceReason} · Owner approved by ${ownerName}` : remittanceReason;
+    const approvedRemittanceReason = !hasVariance
+      ? remittanceReason
+      : isOwnerVariance
+        ? `${remittanceReason} · Owner approved by ${ownerName}`
+        : `${remittanceReason} · Logged by ${ownerName}, pending Owner approval`;
+    const approvalPhrase = isOwnerVariance ? "owner-approved" : "pending Owner approval";
     const status: "Pending" | "Partial" | "Paid" = newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
     const prevOrders = trackedOrders;
     const varianceNote = variance > 0
-      ? ` Excess cash ${formatMoney(variance)} owner-approved. Reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
+      ? ` Excess cash ${formatMoney(variance)} (${approvalPhrase}). Reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
       : variance < 0
-        ? ` Short by ${formatMoney(Math.abs(variance))}. Owner-approved reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
+        ? ` Short by ${formatMoney(Math.abs(variance))} (${approvalPhrase}). Reason: ${remittanceVarianceReasonLabel(remittanceVarianceReason)}${remittanceVarianceNote.trim() ? ` — ${remittanceVarianceNote.trim()}` : ""}.`
         : "";
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
+      remittanceVarianceStatus: hasVariance ? (isOwnerVariance ? "approved" : "pending") : null,
       notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.${varianceNote}`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
@@ -13428,7 +13438,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceReceivedDate(todayKey());
     setRemittanceVarianceReason("");
     setRemittanceVarianceNote("");
-    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? " Owner approval recorded." : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
+    showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? (isOwnerVariance ? " Owner approval recorded." : " Sent to the Owner for approval.") : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
     ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate, remittance_reason: approvedRemittanceReason }).then(() => {
       void loadFinanceSummaryData({ quiet: true });
       void loadFinanceRemittanceData({ quiet: true });
@@ -13473,10 +13483,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Enter the total amount remitted by the logistics partner.");
       return;
     }
-    if (remittanceBatchHasVariance && realRole !== "Owner") {
-      showToast("Owner approval is required before short or excess batch cash can enter the system.");
+    if (remittanceBatchHasVariance && realRole !== "Owner" && realRole !== "Admin") {
+      showToast("Only an Admin or the Owner can record short or excess batch cash.");
       return;
     }
+    const isOwnerBatchVariance = remittanceBatchHasVariance && realRole === "Owner"; // Owner approves at source; Admin → pending
     if (remittanceBatchShortAmount > 0 && !SHORT_CASH_REASON_VALUES.has(remittanceBatchVarianceReason)) {
       showToast("Select the reason for the short batch cash before saving.");
       return;
@@ -13504,24 +13515,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       received: remittanceBatchAmountValue,
       currency: batchCurrency
     });
-    const approvedBatchReason = remittanceBatchHasVariance ? `${batchReason} · Owner approved by ${ownerName}` : batchReason;
+    const approvedBatchReason = !remittanceBatchHasVariance
+      ? batchReason
+      : isOwnerBatchVariance
+        ? `${batchReason} · Owner approved by ${ownerName}`
+        : `${batchReason} · Logged by ${ownerName}, pending Owner approval`;
+    const batchVarianceStatus: TrackedOrder["remittanceVarianceStatus"] = isOwnerBatchVariance ? "approved" : "pending";
     const previousOrders = trackedOrders;
     const optimisticMap = new Map(allocations.map((entry) => {
       const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
+      const entryExpected = orderAmountToRemit(entry.order);
+      const entryHasVariance = roundCash(nextAmountRemitted - entryExpected) !== 0;
       const nextStatus: "Pending" | "Partial" | "Paid" =
         nextAmountRemitted <= 0
           ? "Pending"
-          : nextAmountRemitted >= orderAmountToRemit(entry.order)
+          : nextAmountRemitted >= entryExpected
             ? "Paid"
             : "Partial";
       const lineNote = entry.excessApplied > 0
-        ? ` Includes owner-approved excess cash ${formatMoney(entry.excessApplied)}.`
+        ? ` Includes excess cash ${formatMoney(entry.excessApplied)} (${isOwnerBatchVariance ? "owner-approved" : "pending Owner approval"}).`
         : "";
       return [entry.order.id, {
         ...entry.order,
         amountRemitted: nextAmountRemitted,
         remittanceStatus: nextStatus,
-        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.${remittanceBatchHasVariance ? " Owner approval recorded." : ""}${lineNote}`), ...orderNotesFor(entry.order)]
+        remittanceVarianceStatus: entryHasVariance ? batchVarianceStatus : null,
+        notes: [orderTimelineNote(`Batch remittance updated — received ${formatMoney(entry.applied)} on ${remittanceBatchReceivedDate} via ${remittanceBatchTargetRow.partnerName}.${remittanceBatchHasVariance ? (isOwnerBatchVariance ? " Owner approval recorded." : " Pending Owner approval.") : ""}${lineNote}`), ...orderNotesFor(entry.order)]
       }];
     }));
     setTrackedOrders((prev) => prev.map((order) => optimisticMap.get(order.id) ?? order));
@@ -13531,7 +13550,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceBatchReceivedDate(todayKey());
     setRemittanceBatchVarianceReason("");
     setRemittanceBatchVarianceNote("");
-    showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, batchCurrency)} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.${remittanceBatchHasVariance ? " Owner approval recorded." : ""}${remittanceBatchExcessAmount > 0 ? ` Excess ${formatProductMoney(remittanceBatchExcessAmount, batchCurrency)} recorded.` : ""}`);
+    showToast(`${remittanceBatchTargetRow.partnerName} remittance saved: ${formatProductMoney(remittanceBatchAmountValue, batchCurrency)} allocated across ${allocations.length} delivered order${allocations.length === 1 ? "" : "s"}.${remittanceBatchHasVariance ? (isOwnerBatchVariance ? " Owner approval recorded." : " Sent to the Owner for approval.") : ""}${remittanceBatchExcessAmount > 0 ? ` Excess ${formatProductMoney(remittanceBatchExcessAmount, batchCurrency)} recorded.` : ""}`);
     try {
       await Promise.all(allocations.map((entry) => {
         const nextAmountRemitted = orderAmountRemitted(entry.order) + entry.applied;
@@ -21121,6 +21140,26 @@ ${waybillLineItems(w).length > 1
       showToast(`Could not release the order: ${err?.message ?? "please retry"}.`);
     });
     showToast(`Order ${orderId} released — it will be handled like a normal order now.`);
+  };
+
+  // Owner signs off on (or rejects) a cash variance an Admin logged. The cash is
+  // already recorded — this is the after-the-fact approval.
+  const reviewRemittanceVariance = (orderId: string, action: "approve" | "reject") => {
+    const order = trackedOrders.find((o) => o.id === orderId);
+    if (!order) return;
+    let note: string | undefined;
+    if (action === "reject") {
+      note = (window.prompt("Reason for rejecting this cash variance (optional):") ?? "").trim() || undefined;
+    } else if (!window.confirm("Approve this cash variance? The cash is already recorded — this signs off on it.")) {
+      return;
+    }
+    const nextStatus: TrackedOrder["remittanceVarianceStatus"] = action === "approve" ? "approved" : "rejected";
+    setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, remittanceVarianceStatus: nextStatus } : o));
+    ordersApi.reviewRemittanceVariance(orderId, { action, note }).catch((err: any) => {
+      setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
+      showToast(`Could not ${action} the variance: ${err?.message ?? "please retry"}.`);
+    });
+    showToast(action === "approve" ? `Cash variance approved on ${orderId}.` : `Cash variance rejected on ${orderId}.`);
   };
 
   const updateOrderStatus = (
@@ -45192,6 +45231,27 @@ ${waybillLineItems(w).length > 1
 
 	            {modal === "orderDetails" && selectedOrder && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
+	                {selectedOrder.remittanceVarianceStatus && selectedOrder.remittanceVarianceStatus !== "approved" && (
+	                  <div className={`rounded-xl border px-4 py-3 ${selectedOrder.remittanceVarianceStatus === "pending" ? "border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10"}`}>
+	                    <div className="flex items-start gap-2.5">
+	                      <span className="text-lg leading-none">{selectedOrder.remittanceVarianceStatus === "pending" ? "🕓" : "⛔"}</span>
+	                      <div className="min-w-0 flex-1">
+	                        <p className={`m-0 text-sm font-bold ${selectedOrder.remittanceVarianceStatus === "pending" ? "text-amber-900 dark:text-amber-200" : "text-rose-900 dark:text-rose-200"}`}>
+	                          {selectedOrder.remittanceVarianceStatus === "pending" ? "Cash variance — pending Owner approval" : "Cash variance — rejected by Owner"}
+	                        </p>
+	                        <p className="mt-0.5 mb-0 text-xs text-gray-600 dark:text-gray-300">
+	                          {selectedOrder.remittanceReason || "Short or excess cash was recorded on this order."}
+	                        </p>
+	                        {realRole === "Owner" && selectedOrder.remittanceVarianceStatus === "pending" && (
+	                          <div className="mt-2.5 flex flex-wrap gap-2">
+	                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors" onClick={() => reviewRemittanceVariance(selectedOrder.id, "approve")}>Approve cash</button>
+	                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition-colors" onClick={() => reviewRemittanceVariance(selectedOrder.id, "reject")}>Reject</button>
+	                          </div>
+	                        )}
+	                      </div>
+	                    </div>
+	                  </div>
+	                )}
 	                {selectedOrder.reviewHold && (
 	                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
 	                    <div className="flex items-start gap-2.5">
@@ -49819,8 +49879,12 @@ ${waybillLineItems(w).length > 1
               const variance = roundCash(receivedValue - expectedValue);
               const isShort = variance < 0;
               const isExcess = variance > 0;
-              const ownerApprovalRequired = (isShort || isExcess) && realRole !== "Owner";
-              const ownerApprovalGranted = (isShort || isExcess) && realRole === "Owner";
+              const hasVariance = isShort || isExcess;
+              // Owner logs it approved at source; Admin can log it (pending owner approval);
+              // reps/agents are still blocked from recording cash variance.
+              const ownerApprovalGranted = hasVariance && realRole === "Owner";
+              const adminVariancePending = hasVariance && realRole === "Admin";
+              const ownerApprovalRequired = hasVariance && realRole !== "Owner" && realRole !== "Admin";
               return (
                 <div className="modal-form">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -49849,16 +49913,17 @@ ${waybillLineItems(w).length > 1
                     <p className="m-0 mt-2 text-xs">
                       {isShort
                         ? ownerApprovalRequired
-                          ? "Cash is below expected. Owner approval is required before this can enter finance."
-                          : "Cash is below expected. Select why before saving; this save will record Owner approval."
+                          ? "Cash is below expected. Only an Admin or the Owner can record this."
+                          : "Cash is below expected. Select why before saving."
                         : isExcess
                           ? ownerApprovalRequired
-                            ? "Extra cash found. Owner approval is required before this can enter finance."
-                            : "Extra cash will be recorded on this order as an Owner-approved excess remittance."
+                            ? "Extra cash found. Only an Admin or the Owner can record this."
+                            : "Extra cash will be recorded on this order."
                           : "Cash received matches the expected remittance."}
                     </p>
                     {ownerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this variance.</p>}
-                    {ownerApprovalRequired && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
+                    {adminVariancePending && <p className="m-0 mt-1 text-xs font-semibold">Saving records this cash now and sends the variance to the Owner to approve.</p>}
+                    {ownerApprovalRequired && <p className="m-0 mt-1 text-xs font-semibold">This save is locked — only an Admin or the Owner can record cash variance.</p>}
                   </div>
                   {isShort && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -49907,7 +49972,7 @@ ${waybillLineItems(w).length > 1
                       onClick={recordRemittance}
                       disabled={ownerApprovalRequired}
                     >
-                      {ownerApprovalRequired ? "Owner Approval Required" : ownerApprovalGranted ? "Approve & Save Remittance" : "Save Remittance"}
+                      {ownerApprovalRequired ? "Admin / Owner Approval Required" : ownerApprovalGranted ? "Approve & Save Remittance" : adminVariancePending ? "Save (pending Owner approval)" : "Save Remittance"}
                     </button>
                   </div>
                 </div>
@@ -49945,16 +50010,17 @@ ${waybillLineItems(w).length > 1
                   <p className="m-0 mt-2 text-xs">
                     {remittanceBatchShortAmount > 0
                       ? remittanceBatchNeedsOwnerApproval
-                        ? "Cash is below the batch outstanding. Owner approval is required before this can enter finance."
-                        : "Cash is below the batch outstanding. Select why before saving; this save will record Owner approval."
+                        ? "Cash is below the batch outstanding. Only an Admin or the Owner can record this."
+                        : "Cash is below the batch outstanding. Select why before saving."
                       : remittanceBatchExcessAmount > 0
                         ? remittanceBatchNeedsOwnerApproval
-                          ? "Extra cash found. Owner approval is required before this can enter finance."
-                          : "Extra cash will be recorded on the final order in this batch as an Owner-approved excess remittance."
+                          ? "Extra cash found. Only an Admin or the Owner can record this."
+                          : "Extra cash will be recorded on the final order in this batch."
                         : "This batch exactly settles the current outstanding cash."}
                   </p>
                   {remittanceBatchOwnerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this batch variance.</p>}
-                  {remittanceBatchNeedsOwnerApproval && <p className="m-0 mt-1 text-xs font-semibold">This save is locked because only the signed-in Owner can approve cash variance.</p>}
+                  {remittanceBatchVariancePending && <p className="m-0 mt-1 text-xs font-semibold">Saving records this cash now and sends the variance to the Owner to approve.</p>}
+                  {remittanceBatchNeedsOwnerApproval && <p className="m-0 mt-1 text-xs font-semibold">This save is locked — only an Admin or the Owner can record cash variance.</p>}
                   <p className="m-0 mt-1 text-xs"><strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.</p>
                 </div>
                 {remittanceBatchShortAmount > 0 && (
@@ -50036,7 +50102,7 @@ ${waybillLineItems(w).length > 1
                     onClick={recordBatchRemittance}
                     disabled={remittanceBatchNeedsOwnerApproval}
                   >
-                    {remittanceBatchNeedsOwnerApproval ? "Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : "Save Batch Remittance"}
+                    {remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
                   </button>
                 </div>
               </div>
