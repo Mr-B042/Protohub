@@ -37413,6 +37413,36 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
 
+                  {/* Cash variance — pending Owner approval (Admin-logged short/excess) */}
+                  {realRole === "Owner" && trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                      <div className="flex items-start gap-3">
+                        <span className="text-lg leading-none shrink-0">🕓</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-amber-800">Cash variance — pending your approval ({trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length})</p>
+                          <p className="text-xs text-amber-700 mt-0.5">An Admin logged short or excess cash on these orders. The cash is already recorded — approve to sign off, or reject to send it back for correction.</p>
+                          <div className="mt-2 flex flex-col gap-2">
+                            {trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").map((o) => {
+                              const expected = Math.max(0, (o.amount ?? 0) - (o.logisticsCost ?? 0));
+                              const v = Math.round((o.amountRemitted ?? 0) - expected);
+                              return (
+                                <div key={o.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white border border-amber-100 px-3 py-2 text-xs">
+                                  <button onClick={() => { setSelectedOrderId(o.id); setModal("orderDetails"); }} className="font-bold text-[#1F8FE0] hover:underline">#{o.id}</button>
+                                  <span className="text-gray-600 truncate max-w-[12rem]">{o.customer}</span>
+                                  <span className={`font-semibold ${v >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{v >= 0 ? "Excess " : "Short "}{formatProductMoney(Math.abs(v), o.currency)}</span>
+                                  <span className="ml-auto flex gap-2">
+                                    <button onClick={() => reviewRemittanceVariance(o.id, "approve")} className="!min-h-0 px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700">Approve</button>
+                                    <button onClick={() => reviewRemittanceVariance(o.id, "reject")} className="!min-h-0 px-2.5 py-1 rounded bg-red-600 text-white font-semibold hover:bg-red-700">Reject</button>
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Per-partner table */}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
