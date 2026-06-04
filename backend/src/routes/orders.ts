@@ -1308,6 +1308,12 @@ const POST_TERMINAL_FIELDS = new Set([
   "remittance_status", "remittanceStatus",
   "remittance_received_at", "remittanceReceivedAt",
   "remittance_reason", "remittanceReason",
+  // Variance-approval state is set server-side during a remittance on a (delivered)
+  // order, so it must be allowed past the terminal-order guard too.
+  "remittance_variance_status",
+  "remittance_variance_reviewed_by",
+  "remittance_variance_reviewed_at",
+  "remittance_variance_review_note",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
