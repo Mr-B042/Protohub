@@ -10805,23 +10805,41 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter(o => isInPeriod(orderCreatedKey(o), period, dateRange));
   const deliveredOrderRows = trackedOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const deliveredInPeriodRows = deliveredOrderRows.filter((order) => isInPeriod(orderDeliveredKey(order), deliveriesPeriod, deliveriesDateRange));
-  // Per-delivered-order "final net profit" for the Deliveries list. Same model as
-  // the break-even panel: an order's own contribution (revenue − product cost −
-  // delivery − rep bonus) minus an even share of the period's FIXED costs (ad
-  // spend + waybill + every other non-Delivery expense) across the period's
-  // delivered orders. Summed over the period it reconciles exactly with
-  // summarizeRecognizedProfit().netProfit — i.e. the panel's bottom line.
-  // Per-delivered-order STABLE profit for the Deliveries list: the order's OWN
-  // margin only — revenue − product cost − its own delivery − its rep commission.
-  // It does NOT carry a share of period overhead (ad spend / opex stay in the
-  // period P&L, where they're already counted), so this is a fixed property of the
-  // order and never drifts as the period fills with more expenses or deliveries.
+  // Per-delivered-order economics for the Deliveries list, as TWO figures:
+  //  • Order Net = the order's OWN margin (revenue − product cost − its own delivery
+  //    − its rep commission). A fixed property of the order — never drifts.
+  //  • Final Net = Order Net minus a share of its delivery-WEEK's ad spend & overhead:
+  //    (that week's expenses − the per-order delivery already counted) ÷ the week's
+  //    delivered orders. Bucketed by the order's OWN Sunday-week, so it is INDEPENDENT
+  //    of the date filter; a finished week is locked, the current week refines until
+  //    it ends. Summed over a week, Final Net reconciles to that week's true net.
+  // Overhead = non-Delivery expenses (ad spend, waybill, opex) bucketed by Sunday-week;
+  // delivery itself is already per-order in Order Net, so it's excluded here.
+  const deliveriesWeekOverhead = new Map<string, number>();
+  for (const e of expenses) {
+    if (e.type === "Delivery") continue;
+    const wk = weekStartSundayForDateKey(e.date);
+    if (wk) deliveriesWeekOverhead.set(wk, (deliveriesWeekOverhead.get(wk) ?? 0) + e.amount);
+  }
+  const deliveriesWeekDelivered = new Map<string, number>();
+  for (const o of deliveredOrderRows) {
+    const wk = weekStartSundayForDateKey(orderDeliveredKey(o));
+    if (wk) deliveriesWeekDelivered.set(wk, (deliveriesWeekDelivered.get(wk) ?? 0) + 1);
+  }
+  const deliveriesWeekOverheadShare = (order: TrackedOrder) => {
+    const wk = weekStartSundayForDateKey(orderDeliveredKey(order));
+    if (!wk) return 0;
+    const n = deliveriesWeekDelivered.get(wk) ?? 0;
+    return n > 0 ? (deliveriesWeekOverhead.get(wk) ?? 0) / n : 0;
+  };
   const deliveriesOrderNet = (order: TrackedOrder) => {
     const revenue = order.amount;
     const cogs = costForOrder(order);
     const delivery = order.logisticsCost ?? 0;            // the order's OWN recorded delivery fee
     const bonus = recognizedBonusTotalForRows([order]);   // the order's own rep commission
-    return { revenue, cogs, delivery, bonus, net: revenue - cogs - delivery - bonus };
+    const ownNet = revenue - cogs - delivery - bonus;
+    const overheadShare = deliveriesWeekOverheadShare(order);
+    return { revenue, cogs, delivery, bonus, ownNet, overheadShare, finalNet: ownNet - overheadShare };
   };
   const periodDeliveredOrders = periodOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const ordersRevenue = periodDeliveredOrders.reduce((sum, order) => sum + order.amount, 0);
@@ -11722,7 +11740,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const deliveriesSortedRows = deliveriesNetSort === "off"
     ? filteredDeliveryRows
     : [...filteredDeliveryRows].sort((a, b) => {
-        const diff = deliveriesOrderNet(a).net - deliveriesOrderNet(b).net;
+        const diff = deliveriesOrderNet(a).finalNet - deliveriesOrderNet(b).finalNet;
         return deliveriesNetSort === "desc" ? -diff : diff;
       });
   const deliveriesTotalPages = Math.max(1, Math.ceil(filteredDeliveryRows.length / DELIVERIES_PAGE_SIZE));
@@ -31116,14 +31134,19 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Fulfillment</th>
                         <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
                         {isOwnerOrAdmin && (
+                          <th className="px-4 py-3 text-right font-semibold text-gray-500 uppercase text-[10px] tracking-wider" title="The order's OWN profit: revenue − product cost − its own delivery − its sales rep commission. A fixed figure per order — never drifts. (Ad spend & overhead are added in Final Net.)">
+                            Order Net
+                          </th>
+                        )}
+                        {isOwnerOrAdmin && (
                           <th className="px-4 py-3 text-right">
                             <button
                               type="button"
                               onClick={() => { setDeliveriesNetSort((s) => s === "off" ? "desc" : s === "desc" ? "asc" : "off"); setDeliveriesPage(1); }}
                               className={`inline-flex items-center gap-1 font-semibold uppercase text-[10px] tracking-wider transition-colors ${deliveriesNetSort === "off" ? "text-gray-500 hover:text-gray-900" : "text-[#1F8FE0]"}`}
-                              title="Sort by net profit — click to cycle: highest→loss, then loss→highest, then off. Net = revenue − product cost − delivery − sales rep commission (this order only; period ad spend & overhead stay in the P&L). A fixed figure per order — it doesn't drift as the period fills. Owner/Admin only."
+                              title="Sort by FINAL net — click to cycle: highest→loss, then loss→highest, then off. Final = Order Net − this order's share of its delivery-WEEK ad spend & overhead (that week's expenses ÷ the week's deliveries). Tied to the order's own week, so it doesn't change when you switch the date filter; a finished week is locked, the current week refines until it ends. Owner/Admin only."
                             >
-                              Net Profit
+                              Final Net
                               <span className="text-[9px] leading-none">{deliveriesNetSort === "desc" ? "▼" : deliveriesNetSort === "asc" ? "▲" : "↕"}</span>
                             </button>
                           </th>
@@ -31132,7 +31155,7 @@ ${waybillLineItems(w).length > 1
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredDeliveryRows.length === 0 ? (
-                        <tr><td colSpan={isOwnerOrAdmin ? 10 : 9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
+                        <tr><td colSpan={isOwnerOrAdmin ? 11 : 9} className="px-4 py-12 text-center text-gray-400 font-medium italic">No deliveries found for this period</td></tr>
                       ) : (
                         pagedDeliveryRows.map((order) => {
                           const scheduleOutcome = deliveryScheduleOutcomeForOrder(order);
@@ -31158,9 +31181,14 @@ ${waybillLineItems(w).length > 1
                             {isOwnerOrAdmin && (() => {
                               const np = deliveriesOrderNet(order);
                               return (
-                                <td className={`px-4 py-4 font-bold text-right ${np.net >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n= Net profit (this order only)  ${formatProductMoney(np.net, order.currency)}`}>
-                                  {formatProductMoney(np.net, order.currency)}
-                                </td>
+                                <>
+                                  <td className={`px-4 py-4 font-bold text-right ${np.ownNet >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Revenue  ${formatProductMoney(np.revenue, order.currency)}\n− Product cost  ${formatProductMoney(np.cogs, order.currency)}\n− Delivery  ${formatProductMoney(np.delivery, order.currency)}\n− Sales rep commission  ${formatProductMoney(np.bonus, order.currency)}\n= Order net  ${formatProductMoney(np.ownNet, order.currency)}`}>
+                                    {formatProductMoney(np.ownNet, order.currency)}
+                                  </td>
+                                  <td className={`px-4 py-4 font-bold text-right ${np.finalNet >= 0 ? "text-emerald-600" : "text-rose-600"}`} title={`Order net  ${formatProductMoney(np.ownNet, order.currency)}\n− Ad spend & overhead (this order's week share)  ${formatProductMoney(np.overheadShare, order.currency)}\n= Final net  ${formatProductMoney(np.finalNet, order.currency)}`}>
+                                    {formatProductMoney(np.finalNet, order.currency)}
+                                  </td>
+                                </>
                               );
                             })()}
                           </tr>
