@@ -37778,7 +37778,8 @@ ${waybillLineItems(w).length > 1
                                 </div>
                                 {(() => {
                                   const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
-                                  if (locked && realRole !== "Owner") return <span className="inline-flex w-full items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold text-gray-400" title="Settled — ask the Owner to open it for correction.">🔒 Settled — Owner must open</span>;
+                                  // Non-Owners see NO correction UI on a settled order until the Owner opens it — just a muted, non-actionable note (Status column already shows "Paid").
+                                  if (locked && realRole !== "Owner") return <span className="inline-flex w-full items-center justify-center px-2.5 py-2.5 text-xs font-medium text-gray-300">Settled</span>;
                                   return (
                                     <div className="flex flex-col gap-1.5">
                                       <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}{order.remittanceEditOpen ? " · open" : ""}</button>
@@ -37832,7 +37833,8 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
                                   <td className="px-4 py-3">{(() => {
                                     const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
-                                    if (locked && realRole !== "Owner") return <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-400" title="Settled — ask the Owner to open it for correction.">🔒 Locked</span>;
+                                    // Non-Owners see NO correction UI on a settled order until the Owner opens it (Status column already shows "Paid").
+                                    if (locked && realRole !== "Owner") return <span className="text-xs font-medium text-gray-300">—</span>;
                                     return (
                                       <div className="flex items-center gap-1.5">
                                         <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button>
