@@ -13272,9 +13272,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const remittanceBatchShortAmount = Math.max(0, roundCash(remittanceBatchOutstandingTotal - remittanceBatchAmountValue));
   const remittanceBatchExcessAmount = Math.max(0, roundCash(remittanceBatchAmountValue - remittanceBatchOutstandingTotal));
   const remittanceBatchHasVariance = remittanceBatchShortAmount > 0 || remittanceBatchExcessAmount > 0;
-  const remittanceBatchOwnerApprovalGranted = remittanceBatchHasVariance && realRole === "Owner";
-  const remittanceBatchVariancePending = remittanceBatchHasVariance && realRole === "Admin"; // admin logs → pending owner approval
-  const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && realRole !== "Owner" && realRole !== "Admin"; // reps/agents still locked
+  const remittanceBatchOwnerApprovalGranted = remittanceBatchHasVariance && currentRole === "Owner";
+  const remittanceBatchVariancePending = remittanceBatchHasVariance && currentRole === "Admin"; // admin logs → pending owner approval
+  const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && currentRole !== "Owner" && currentRole !== "Admin"; // reps/agents still locked
   const financeRemittanceEditableOrders = financeDeliveredRows
     .slice()
     .sort((a, b) => {
@@ -37501,7 +37501,7 @@ ${waybillLineItems(w).length > 1
                   )}
 
                   {/* Cash variance — pending Owner approval: compact alert that opens a review modal */}
-                  {realRole === "Owner" && (() => {
+                  {currentRole === "Owner" && (() => {
                     const pendingCount = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending").length;
                     if (pendingCount === 0) return null;
                     return (
@@ -37660,10 +37660,10 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.transactionCount > 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{row.transactionCount}</span></td>
                                   <td className="px-4 py-4">
                                     {(() => {
-                                      const lockedIds = realRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
+                                      const lockedIds = currentRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
                                       const hasBatch = row.outstanding > 0;
                                       // Batch correction: Owner anytime there's recorded cash; Admin only once the batch is opened.
-                                      const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (realRole === "Owner" || (realRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
+                                      const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (currentRole === "Owner" || (currentRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
                                       if (!hasBatch && lockedIds.length === 0 && !canCorrect) return <span className="text-gray-300 text-xs">—</span>;
                                       return (
                                         <div className="flex items-center gap-1.5">
@@ -37779,11 +37779,11 @@ ${waybillLineItems(w).length > 1
                                 {(() => {
                                   const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
                                   // Non-Owners see NO correction UI on a settled order until the Owner opens it — just a muted, non-actionable note (Status column already shows "Paid").
-                                  if (locked && realRole !== "Owner") return <span className="inline-flex w-full items-center justify-center px-2.5 py-2.5 text-xs font-medium text-gray-300">Settled</span>;
+                                  if (locked && currentRole !== "Owner") return <span className="inline-flex w-full items-center justify-center px-2.5 py-2.5 text-xs font-medium text-gray-300">Settled</span>;
                                   return (
                                     <div className="flex flex-col gap-1.5">
                                       <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}{order.remittanceEditOpen ? " · open" : ""}</button>
-                                      {realRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors w-full" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)}>Open for correction</button>}
+                                      {currentRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors w-full" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)}>Open for correction</button>}
                                     </div>
                                   );
                                 })()}
@@ -37834,11 +37834,11 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-4 py-3">{(() => {
                                     const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
                                     // Non-Owners see NO correction UI on a settled order until the Owner opens it (Status column already shows "Paid").
-                                    if (locked && realRole !== "Owner") return <span className="text-xs font-medium text-gray-300">—</span>;
+                                    if (locked && currentRole !== "Owner") return <span className="text-xs font-medium text-gray-300">—</span>;
                                     return (
                                       <div className="flex items-center gap-1.5">
                                         <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button>
-                                        {realRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)} title="Unlock so an Admin can correct it">Open</button>}
+                                        {currentRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)} title="Unlock so an Admin can correct it">Open</button>}
                                         {order.remittanceEditOpen && <span className="text-[10px] font-semibold text-amber-600" title="Opened for Admin correction">● open</span>}
                                       </div>
                                     );
@@ -44750,7 +44750,7 @@ ${waybillLineItems(w).length > 1
         </div>
       )}
 
-      {showVarianceReview && realRole === "Owner" && (() => {
+      {showVarianceReview && currentRole === "Owner" && (() => {
         const pending = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending");
         return (
           <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => setShowVarianceReview(false)}>
@@ -45551,7 +45551,7 @@ ${waybillLineItems(w).length > 1
 	                            ? (selectedOrder.updatedAt ? `Logged ${formatMoment(selectedOrder.updatedAt)}` : "")
 	                            : selectedOrder.remittanceVarianceReviewedAt ? `${selectedOrder.remittanceVarianceStatus === "rejected" ? "Rejected" : "Approved"} ${formatMoment(selectedOrder.remittanceVarianceReviewedAt)}` : ""}
 	                        </p>
-	                        {realRole === "Owner" && selectedOrder.remittanceVarianceStatus === "pending" && (
+	                        {currentRole === "Owner" && selectedOrder.remittanceVarianceStatus === "pending" && (
 	                          <div className="mt-2.5 flex flex-wrap gap-2">
 	                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors" onClick={() => reviewRemittanceVariance(selectedOrder.id, "approve")}>Approve cash</button>
 	                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition-colors" onClick={() => reviewRemittanceVariance(selectedOrder.id, "reject")}>Reject</button>
@@ -50191,9 +50191,9 @@ ${waybillLineItems(w).length > 1
               const hasVariance = isShort || isExcess;
               // Owner logs it approved at source; Admin can log it (pending owner approval);
               // reps/agents are still blocked from recording cash variance.
-              const ownerApprovalGranted = hasVariance && realRole === "Owner";
-              const adminVariancePending = hasVariance && realRole === "Admin";
-              const ownerApprovalRequired = hasVariance && realRole !== "Owner" && realRole !== "Admin";
+              const ownerApprovalGranted = hasVariance && currentRole === "Owner";
+              const adminVariancePending = hasVariance && currentRole === "Admin";
+              const ownerApprovalRequired = hasVariance && currentRole !== "Owner" && currentRole !== "Admin";
               return (
                 <div className="modal-form">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
