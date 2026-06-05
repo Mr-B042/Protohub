@@ -8264,6 +8264,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [correctBatchTotal, setCorrectBatchTotal] = useState("");
   const [correctBatchReason, setCorrectBatchReason] = useState("");
   const [correctBatchBusy, setCorrectBatchBusy] = useState(false);
+  const [remittanceOpenRequest, setRemittanceOpenRequest] = useState<{ orderIds: string[]; label: string } | null>(null);
+  const [remittanceOpenBusy, setRemittanceOpenBusy] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
   const [remittanceVarianceNote, setRemittanceVarianceNote] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
@@ -21207,14 +21209,22 @@ ${waybillLineItems(w).length > 1
 
   // Owner unlocks a settled remittance (one order, or a whole partner's orders) so an
   // Admin can correct it. Re-locks automatically once the Admin saves.
-  const openRemittanceForEdit = async (orderIds: string[], label: string) => {
+  const openRemittanceForEdit = (orderIds: string[], label: string) => {
     if (orderIds.length === 0) { showToast("Nothing settled to open here."); return; }
-    if (!window.confirm(`Open ${label} for correction? An Admin can edit ${orderIds.length === 1 ? "this remittance" : `these ${orderIds.length} remittances`} until they save — then it re-locks.`)) return;
+    setRemittanceOpenRequest({ orderIds, label });
+  };
+
+  const confirmOpenRemittanceForEdit = async () => {
+    if (!remittanceOpenRequest || remittanceOpenBusy) return;
+    const { orderIds } = remittanceOpenRequest;
+    setRemittanceOpenBusy(true);
     try {
       const r = await ordersApi.openRemittanceForEdit(orderIds);
       setTrackedOrders((prev) => prev.map((o) => orderIds.includes(o.id) ? { ...o, remittanceEditOpen: true } : o));
+      setRemittanceOpenRequest(null);
       showToast(`Opened ${r.opened} remittance(s) for correction.`);
     } catch (err: any) { showToast(`Could not open: ${err?.message ?? err}`); }
+    finally { setRemittanceOpenBusy(false); }
   };
 
   // Re-spread a corrected TOTAL across a partner's batch (fill each order to its
@@ -37540,6 +37550,8 @@ ${waybillLineItems(w).length > 1
                         <>
                           {filteredRemittanceRows.map((row) => {
                             const aging = row.outstanding > 0 ? remittanceAgingLabel(row.oldestUnpaidDays) : null;
+                            const openedCount = row.orders.filter((o) => o.remittanceEditOpen).length;
+                            const lockedSettledCount = row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).length;
                             return (
                               <article key={row.partnerName} className="px-5 py-4 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -37551,6 +37563,12 @@ ${waybillLineItems(w).length > 1
                                     {row.transactionCount > 0 ? `${row.transactionCount} receipt${row.transactionCount === 1 ? "" : "s"}` : "No cash logged"}
                                   </span>
                                 </div>
+                                {(openedCount > 0 || (currentRole === "Owner" && lockedSettledCount > 0)) && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {openedCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">Open for Admin · {openedCount}</span>}
+                                    {currentRole === "Owner" && lockedSettledCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500">Locked · {lockedSettledCount}</span>}
+                                  </div>
+                                )}
                                 <div className="grid grid-cols-2 gap-3 text-sm">
                                   <div>
                                     <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
@@ -37660,11 +37678,19 @@ ${waybillLineItems(w).length > 1
                             <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
                           ) : (
                             filteredRemittanceRows.map((row) => {
+                              const openedCount = row.orders.filter((o) => o.remittanceEditOpen).length;
+                              const lockedSettledCount = row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).length;
                               return (
                                 <tr key={row.key} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-4">
                                     <div className="font-bold text-gray-900">{row.partnerName}</div>
                                     {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "—"}</div>}
+                                    {(openedCount > 0 || (currentRole === "Owner" && lockedSettledCount > 0)) && (
+                                      <div className="mt-1 flex flex-wrap gap-1.5">
+                                        {openedCount > 0 && <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Open for Admin · {openedCount}</span>}
+                                        {currentRole === "Owner" && lockedSettledCount > 0 && <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">Locked · {lockedSettledCount}</span>}
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="px-4 py-4 text-gray-700">{row.orderCount}</td>
                                   <td className="px-4 py-4 text-gray-700">{formatMoney(row.revenue)}</td>
@@ -44864,6 +44890,61 @@ ${waybillLineItems(w).length > 1
                     );
                   });
                 })()}
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {remittanceOpenRequest && (() => {
+        const orders = trackedOrders.filter((o) => remittanceOpenRequest.orderIds.includes(o.id));
+        const visibleOrders = orders.slice(0, 5);
+        const remaining = Math.max(0, orders.length - visibleOrders.length);
+        return (
+          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => !remittanceOpenBusy && setRemittanceOpenRequest(null)}>
+            <section className="w-full max-w-md overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-2xl dark:border-amber-500/25 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-gradient-to-br from-amber-50 via-white to-emerald-50 px-5 py-5 dark:from-amber-500/10 dark:via-[#0f1822] dark:to-emerald-500/10">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-200">Owner approval</span>
+                    <h3 className="mt-3 text-xl font-black text-gray-950 dark:text-slate-100">Open for Admin correction?</h3>
+                    <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-slate-300">{remittanceOpenRequest.label}</p>
+                  </div>
+                  <button onClick={() => !remittanceOpenBusy && setRemittanceOpenRequest(null)} className="!min-h-0 rounded-full p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-700 dark:hover:bg-slate-800 dark:hover:text-slate-100" aria-label="Close"><X className="h-5 w-5" /></button>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl border border-white/80 bg-white/85 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">Remittances</p>
+                    <p className="m-0 text-2xl font-black text-gray-950 dark:text-slate-100">{remittanceOpenRequest.orderIds.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/80 bg-white/85 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">After Admin saves</p>
+                    <p className="m-0 text-sm font-black text-emerald-700 dark:text-emerald-300">Auto re-locks</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3 px-5 py-4">
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                  This does not change cash yet. It only opens the selected settled remittance(s) so an Admin can make one correction. Once saved, each order locks again.
+                </div>
+                {visibleOrders.length > 0 && (
+                  <div className="overflow-hidden rounded-2xl border border-gray-100 dark:border-slate-700">
+                    {visibleOrders.map((order) => (
+                      <div key={order.id} className="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0 dark:border-slate-700">
+                        <div className="min-w-0">
+                          <p className="m-0 truncate text-sm font-bold text-gray-900 dark:text-slate-100">#{order.id} · {order.customer}</p>
+                          <p className="m-0 text-[11px] text-gray-400">{formatProductMoney(orderAmountRemitted(order), order.currency)} received</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-300">locked</span>
+                      </div>
+                    ))}
+                    {remaining > 0 && <div className="px-3 py-2 text-center text-xs font-semibold text-gray-400">+ {remaining} more remittance{remaining === 1 ? "" : "s"}</div>}
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col-reverse gap-2 border-t border-gray-100 px-5 py-4 dark:border-slate-800 sm:flex-row sm:justify-end">
+                <button onClick={() => !remittanceOpenBusy && setRemittanceOpenRequest(null)} className="!min-h-0 h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Keep locked</button>
+                <button onClick={confirmOpenRemittanceForEdit} disabled={remittanceOpenBusy} className="!min-h-0 h-10 rounded-xl bg-amber-500 px-4 text-sm font-black text-white shadow-lg shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-60">{remittanceOpenBusy ? "Opening..." : `Open ${remittanceOpenRequest.orderIds.length} for Admin`}</button>
               </div>
             </section>
           </div>
