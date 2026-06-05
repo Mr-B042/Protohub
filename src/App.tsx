@@ -37587,15 +37587,36 @@ ${waybillLineItems(w).length > 1
                                     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${aging.cls}`}>{aging.label}</span>
                                   </div>
                                 )}
-                                {row.outstanding > 0 && (
-                                  <button
-                                    className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full"
-                                    onClick={() => openRecordBatchRemittance(row.key)}
-                                  >
-                                    <HandCoins className="w-3 h-3" />
-                                    Record Batch Remittance
-                                  </button>
-                                )}
+                                {(() => {
+                                  const lockedIds = currentRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
+                                  const hasBatch = row.outstanding > 0;
+                                  // Mobile gets the same correction gates as desktop: Owner opens; Admin corrects only after opened.
+                                  const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (currentRole === "Owner" || (currentRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
+                                  if (!hasBatch && lockedIds.length === 0 && !canCorrect) return null;
+                                  return (
+                                    <div className="grid grid-cols-1 gap-2">
+                                      {hasBatch && (
+                                        <button
+                                          className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full"
+                                          onClick={() => openRecordBatchRemittance(row.key)}
+                                        >
+                                          <HandCoins className="w-3 h-3" />
+                                          Record Batch Remittance
+                                        </button>
+                                      )}
+                                      {lockedIds.length > 0 && (
+                                        <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors w-full" onClick={() => openRemittanceForEdit(lockedIds, `${row.partnerName} — ${lockedIds.length} settled order(s)`)} title="Open all this partner's settled remittances for Admin correction">
+                                          Open all ({lockedIds.length})
+                                        </button>
+                                      )}
+                                      {canCorrect && (
+                                        <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors w-full" onClick={() => { setCorrectBatchKey(row.key); setCorrectBatchTotal(String(Math.round(row.remitted))); setCorrectBatchReason(""); }} title="Set the corrected total for this whole batch in one go">
+                                          Correct total
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </article>
                             );
                           })}
