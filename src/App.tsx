@@ -44955,7 +44955,9 @@ ${waybillLineItems(w).length > 1
         const row = remittanceRows.find((r) => r.key === correctBatchKey);
         if (!row) return null;
         const expectedTotal = row.orders.reduce((s, o) => s + orderAmountToRemit(o), 0);
+        const currentTotal = roundCash(row.remitted);
         const newTotal = Math.max(0, Number(correctBatchTotal) || 0);
+        const totalDelta = roundCash(newTotal - currentTotal);
         const alloc = batchCorrectionAllocation(row.orders, newTotal);
         const changedCount = alloc.filter((a) => roundCash(a.newRemitted) !== roundCash(orderAmountRemitted(a.order))).length;
         return (
@@ -44963,21 +44965,30 @@ ${waybillLineItems(w).length > 1
             <section className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Correct batch total — {row.partnerName}</h3>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Set the corrected total cash remitted; it re-spreads across {row.orders.length} order(s) — each filled to its expected, any extra as excess on the last.</p>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Correct / reverse batch total — {row.partnerName}</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Enter the actual cash this partner remitted for this selected period. This replaces the current total; it does not add on top.</p>
                 </div>
                 <button onClick={() => !correctBatchBusy && setCorrectBatchKey(null)} className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834]" aria-label="Close"><X className="h-5 w-5" /></button>
               </div>
               <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Currently remitted</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.remitted)}</div></div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+                  If the system shows a wrong old total, type the real total here. To reverse first, set it to <strong>₦0</strong>, save with a reason, then record the correct remittance again.
+                </div>
+                <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Current in system</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(currentTotal)}</div></div>
                   <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Expected (batch)</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(expectedTotal)}</div></div>
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Change after save</div><div className={`font-bold ${totalDelta < 0 ? "text-rose-600 dark:text-rose-300" : totalDelta > 0 ? "text-emerald-600 dark:text-emerald-300" : "text-gray-900 dark:text-slate-100"}`}>{totalDelta > 0 ? "+" : totalDelta < 0 ? "-" : ""}{formatMoney(Math.abs(totalDelta))}</div></div>
                 </div>
                 <label className="block">
-                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Corrected total remitted</span>
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Actual total remitted (replaces current total)</span>
                   <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₦</span>
                     <input type="number" min={0} value={correctBatchTotal} onChange={(e) => setCorrectBatchTotal(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   </div>
+                  {currentTotal > 0 && (
+                    <button type="button" onClick={() => setCorrectBatchTotal("0")} className="!min-h-0 mt-2 inline-flex rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10">
+                      Reverse to ₦0
+                    </button>
+                  )}
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Reason for the correction</span>
@@ -44995,10 +45006,10 @@ ${waybillLineItems(w).length > 1
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-gray-400">{changedCount} order(s) will change. Any short/excess vs expected goes through the usual Owner approval.</p>
+                <p className="text-[11px] text-gray-400">{changedCount} order(s) will change. The preview above shows old → new per order; the partner total becomes exactly {formatMoney(newTotal)} after save.</p>
               </div>
               <div className="border-t border-gray-100 px-5 py-4 dark:border-slate-800/80">
-                <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason)} disabled={correctBatchBusy || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving…" : `Save correction (${changedCount} order${changedCount === 1 ? "" : "s"})`}</button>
+                <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason)} disabled={correctBatchBusy || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving…" : `Replace total with ${formatMoney(newTotal)} (${changedCount} order${changedCount === 1 ? "" : "s"})`}</button>
               </div>
             </section>
           </div>
