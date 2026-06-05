@@ -1316,6 +1316,9 @@ const POST_TERMINAL_FIELDS = new Set([
   "remittance_variance_reviewed_at",
   "remittance_variance_review_note",
   "remittance_variance_reason",
+  "remittance_edit_open",
+  "remittance_edit_opened_by",
+  "remittance_edit_opened_at",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
   "manual_bonus_reason", "manualBonusReason",
@@ -1478,6 +1481,27 @@ router.patch("/:id/remittance-variance", requireRole("Owner"), async (req, res) 
   res.json(data);
 });
 
+// Owner opens a settled remittance for correction — a single order, or a whole
+// logistics-partner batch (pass all the partner's order ids). Owner-only, org-scoped.
+// The lock re-engages automatically once an Admin saves the correction.
+router.post("/open-remittance", requireRole("Owner"), async (req, res) => {
+  const ids = Array.isArray(req.body?.orderIds) ? req.body.orderIds.filter((x: unknown) => typeof x === "string") : [];
+  if (ids.length === 0) { res.status(400).json({ error: "Provide orderIds to open for correction." }); return; }
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      remittance_edit_open: true,
+      remittance_edit_opened_by: req.user!.id,
+      remittance_edit_opened_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq("org_id", req.user!.orgId)
+    .in("id", ids)
+    .select("id");
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ opened: (data ?? []).length });
+});
+
 router.patch("/:id", async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
@@ -1580,6 +1604,24 @@ router.patch("/:id", async (req, res) => {
   for (const [dbKey, inputKeys] of Object.entries(allowed)) {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
+    }
+  }
+  // Settled-remittance correction lock. Editing a 'Paid' remittance's money-affecting
+  // fields (amount remitted, logistics, status) is blocked for EVERYONE but the Owner
+  // unless the Owner has opened it for correction. Pending/Partial stay freely editable
+  // (normal work). The lock is keyed on all three fields (not just amount_remitted) so a
+  // logistics- or status-only edit can't slip past it. It re-locks once ANY save touches
+  // it while open (so an Owner edit doesn't leave a lingering Admin window).
+  const touchesSettledRemittance = hasOwn(updates, "amount_remitted") || hasOwn(updates, "logistics_cost") || hasOwn(updates, "remittance_status");
+  if (touchesSettledRemittance) {
+    if (req.user!.role !== "Owner" && current.remittance_status === "Paid" && !current.remittance_edit_open) {
+      res.status(403).json({ error: "This remittance is settled and locked. Ask the Owner to open it for correction." });
+      return;
+    }
+    if (current.remittance_edit_open) {
+      updates.remittance_edit_open = false;
+      updates.remittance_edit_opened_by = null;
+      updates.remittance_edit_opened_at = null;
     }
   }
   const touchesRemittanceMoney = hasOwn(updates, "amount_remitted");

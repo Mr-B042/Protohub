@@ -722,6 +722,7 @@ type TrackedOrder = {
   remittanceVarianceStatus?: "pending" | "approved" | "rejected" | null;
   remittanceVarianceReason?: string | null;
   remittanceVarianceReviewedAt?: string | null;
+  remittanceEditOpen?: boolean;
   callOutcome?: CallOutcome;
   buyerHealth?: "healthy" | "watch" | "at_risk" | "not_serious_candidate";
   followUpAttemptCount?: number;
@@ -4584,6 +4585,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     remittanceVarianceStatus: value?.remittanceVarianceStatus ?? value?.remittance_variance_status ?? null,
     remittanceVarianceReason: value?.remittanceVarianceReason ?? value?.remittance_variance_reason ?? null,
     remittanceVarianceReviewedAt: value?.remittanceVarianceReviewedAt ?? value?.remittance_variance_reviewed_at ?? null,
+    remittanceEditOpen: value?.remittanceEditOpen ?? value?.remittance_edit_open ?? false,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -21199,6 +21201,18 @@ ${waybillLineItems(w).length > 1
     else showToast(`Could not approve — all ${failed} failed. Please retry.`);
   };
 
+  // Owner unlocks a settled remittance (one order, or a whole partner's orders) so an
+  // Admin can correct it. Re-locks automatically once the Admin saves.
+  const openRemittanceForEdit = async (orderIds: string[], label: string) => {
+    if (orderIds.length === 0) { showToast("Nothing settled to open here."); return; }
+    if (!window.confirm(`Open ${label} for correction? An Admin can edit ${orderIds.length === 1 ? "this remittance" : `these ${orderIds.length} remittances`} until they save — then it re-locks.`)) return;
+    try {
+      const r = await ordersApi.openRemittanceForEdit(orderIds);
+      setTrackedOrders((prev) => prev.map((o) => orderIds.includes(o.id) ? { ...o, remittanceEditOpen: true } : o));
+      showToast(`Opened ${r.opened} remittance(s) for correction.`);
+    } catch (err: any) { showToast(`Could not open: ${err?.message ?? err}`); }
+  };
+
   const updateOrderStatus = (
     orderId: string,
     nextStatus: Exclude<OrderStatus, "All Orders">,
@@ -37597,17 +37611,25 @@ ${waybillLineItems(w).length > 1
                                   </td>
                                   <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${row.transactionCount > 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{row.transactionCount}</span></td>
                                   <td className="px-4 py-4">
-                                    {row.outstanding > 0 ? (
-                                      <button
-                                        className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors"
-                                        onClick={() => openRecordBatchRemittance(row.key)}
-                                      >
-                                        <HandCoins className="w-3 h-3" />
-                                        Batch
-                                      </button>
-                                    ) : (
-                                      <span className="text-gray-300 text-xs">—</span>
-                                    )}
+                                    {(() => {
+                                      const lockedIds = realRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
+                                      const hasBatch = row.outstanding > 0;
+                                      if (!hasBatch && lockedIds.length === 0) return <span className="text-gray-300 text-xs">—</span>;
+                                      return (
+                                        <div className="flex items-center gap-1.5">
+                                          {hasBatch && (
+                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordBatchRemittance(row.key)}>
+                                              <HandCoins className="w-3 h-3" />Batch
+                                            </button>
+                                          )}
+                                          {lockedIds.length > 0 && (
+                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit(lockedIds, `${row.partnerName} — ${lockedIds.length} settled order(s)`)} title="Open all this partner's settled remittances for Admin correction">
+                                              Open all ({lockedIds.length})
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                   </td>
                                 </tr>
                               );
@@ -37699,7 +37721,16 @@ ${waybillLineItems(w).length > 1
                                     {order.remittanceReason && <div className="text-[11px] text-gray-500 italic mt-0.5" title={order.remittanceReason}>{order.remittanceReason.replace(/^(Single order|Batch) remittance:\s*/i, "")}</div>}
                                   </div>
                                 </div>
-                                <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}</button>
+                                {(() => {
+                                  const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
+                                  if (locked && realRole !== "Owner") return <span className="inline-flex w-full items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold text-gray-400" title="Settled — ask the Owner to open it for correction.">🔒 Settled — Owner must open</span>;
+                                  return (
+                                    <div className="flex flex-col gap-1.5">
+                                      <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors w-full" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit Remittance" : "Record Remittance"}{order.remittanceEditOpen ? " · open" : ""}</button>
+                                      {realRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors w-full" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)}>Open for correction</button>}
+                                    </div>
+                                  );
+                                })()}
                               </article>
                             );
                           })}
@@ -37744,7 +37775,17 @@ ${waybillLineItems(w).length > 1
                                     {order.remittanceReason && <div className="text-[11px] text-gray-500 italic mt-0.5 max-w-[260px] truncate" title={order.remittanceReason}>{order.remittanceReason.replace(/^(Single order|Batch) remittance:\s*/i, "")}</div>}
                                   </td>
                                   <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${statusTone}`}>{status}</span></td>
-                                  <td className="px-4 py-3"><button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button></td>
+                                  <td className="px-4 py-3">{(() => {
+                                    const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
+                                    if (locked && realRole !== "Owner") return <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-400" title="Settled — ask the Owner to open it for correction.">🔒 Locked</span>;
+                                    return (
+                                      <div className="flex items-center gap-1.5">
+                                        <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordRemittance(order)}><HandCoins className="w-3 h-3" /> {orderAmountRemitted(order) > 0 ? "Edit" : "Record"}</button>
+                                        {realRole === "Owner" && locked && <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit([order.id], `order #${order.id}`)} title="Unlock so an Admin can correct it">Open</button>}
+                                        {order.remittanceEditOpen && <span className="text-[10px] font-semibold text-amber-600" title="Opened for Admin correction">● open</span>}
+                                      </div>
+                                    );
+                                  })()}</td>
                                 </tr>
                               );
                             });

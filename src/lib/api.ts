@@ -360,6 +360,7 @@ export const ordersApi = {
   update: (id: string, body: unknown) => patch<any>(`/api/orders/${id}`, body),
   reviewRemittanceVariance: (id: string, body: { action: "approve" | "reject"; note?: string }) =>
     patch<any>(`/api/orders/${id}/remittance-variance`, body),
+  openRemittanceForEdit: (orderIds: string[]) => post<{ opened: number }>("/api/orders/open-remittance", { orderIds }),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
   audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
   fieldEdits: (id: string) => get<any[]>(`/api/orders/${id}/field-edits`),
