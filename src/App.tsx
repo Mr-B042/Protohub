@@ -8260,6 +8260,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceLogisticsCost, setRemittanceLogisticsCost] = useState("");
   const [remittanceReceivedDate, setRemittanceReceivedDate] = useState(todayKey());
   const [showVarianceReview, setShowVarianceReview] = useState(false);
+  const [correctBatchKey, setCorrectBatchKey] = useState<string | null>(null);
+  const [correctBatchTotal, setCorrectBatchTotal] = useState("");
+  const [correctBatchReason, setCorrectBatchReason] = useState("");
+  const [correctBatchBusy, setCorrectBatchBusy] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
   const [remittanceVarianceNote, setRemittanceVarianceNote] = useState("");
   const [remittanceBatchPartnerKeyValue, setRemittanceBatchPartnerKeyValue] = useState("");
@@ -21211,6 +21215,50 @@ ${waybillLineItems(w).length > 1
       setTrackedOrders((prev) => prev.map((o) => orderIds.includes(o.id) ? { ...o, remittanceEditOpen: true } : o));
       showToast(`Opened ${r.opened} remittance(s) for correction.`);
     } catch (err: any) { showToast(`Could not open: ${err?.message ?? err}`); }
+  };
+
+  // Re-spread a corrected TOTAL across a partner's batch (fill each order to its
+  // expected, excess to the last). Patches only the orders whose remitted changes;
+  // the per-order lock + variance approval still apply (the Owner has opened them).
+  const batchCorrectionAllocation = (orders: TrackedOrder[], newTotal: number) => {
+    const sorted = orders.slice().sort((a, b) => remittanceOrderSortValue(a) - remittanceOrderSortValue(b));
+    let remaining = Math.max(0, newTotal);
+    const rows = sorted.map((order) => {
+      const expected = orderAmountToRemit(order);
+      const amt = Math.max(0, Math.min(remaining, expected));
+      remaining = roundCash(remaining - amt);
+      return { order, expected, newRemitted: amt };
+    });
+    if (remaining > 0 && rows.length > 0) rows[rows.length - 1].newRemitted = roundCash(rows[rows.length - 1].newRemitted + remaining);
+    return rows;
+  };
+  const saveBatchCorrection = async (row: { key: string; partnerName: string; orders: TrackedOrder[] }, newTotal: number, reason: string) => {
+    if (!reason.trim()) { showToast("Add a short reason for the batch correction."); return; }
+    const alloc = batchCorrectionAllocation(row.orders, newTotal);
+    const changed = alloc.filter((a) => roundCash(a.newRemitted) !== roundCash(orderAmountRemitted(a.order)));
+    if (changed.length === 0) { showToast("Nothing to change — that total already matches."); setCorrectBatchKey(null); return; }
+    setCorrectBatchBusy(true);
+    const statusFor = (newRemitted: number, expected: number) => newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
+    setTrackedOrders((prev) => prev.map((o) => {
+      const a = changed.find((c) => c.order.id === o.id);
+      return a ? { ...o, amountRemitted: a.newRemitted, remittanceStatus: statusFor(a.newRemitted, a.expected) as TrackedOrder["remittanceStatus"], remittanceEditOpen: false } : o;
+    }));
+    const results = await Promise.allSettled(changed.map((a) =>
+      ordersApi.update(a.order.id, {
+        amount_remitted: a.newRemitted,
+        remittance_status: statusFor(a.newRemitted, a.expected),
+        remittance_received_at: todayKey(),
+        remittance_reason: `Batch correction — ${row.partnerName}: ${reason.trim()}`
+      })
+    ));
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const failed = changed.length - ok;
+    void loadFinanceRemittanceData({ quiet: true });
+    void loadFinanceSummaryData({ quiet: true });
+    setCorrectBatchBusy(false);
+    setCorrectBatchKey(null);
+    if (failed === 0) showToast(`Corrected ${ok} order(s) for ${row.partnerName}.`);
+    else showToast(`Corrected ${ok}; ${failed} couldn't save (locked or error) — retry.`);
   };
 
   const updateOrderStatus = (
@@ -37614,7 +37662,9 @@ ${waybillLineItems(w).length > 1
                                     {(() => {
                                       const lockedIds = realRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
                                       const hasBatch = row.outstanding > 0;
-                                      if (!hasBatch && lockedIds.length === 0) return <span className="text-gray-300 text-xs">—</span>;
+                                      // Batch correction: Owner anytime there's recorded cash; Admin only once the batch is opened.
+                                      const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (realRole === "Owner" || (realRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
+                                      if (!hasBatch && lockedIds.length === 0 && !canCorrect) return <span className="text-gray-300 text-xs">—</span>;
                                       return (
                                         <div className="flex items-center gap-1.5">
                                           {hasBatch && (
@@ -37625,6 +37675,11 @@ ${waybillLineItems(w).length > 1
                                           {lockedIds.length > 0 && (
                                             <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit(lockedIds, `${row.partnerName} — ${lockedIds.length} settled order(s)`)} title="Open all this partner's settled remittances for Admin correction">
                                               Open all ({lockedIds.length})
+                                            </button>
+                                          )}
+                                          {canCorrect && (
+                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors" onClick={() => { setCorrectBatchKey(row.key); setCorrectBatchTotal(String(Math.round(row.remitted))); setCorrectBatchReason(""); }} title="Set the corrected total for this whole batch in one go">
+                                              Correct total
                                             </button>
                                           )}
                                         </div>
@@ -44786,6 +44841,60 @@ ${waybillLineItems(w).length > 1
                     );
                   });
                 })()}
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {correctBatchKey && (() => {
+        const row = remittanceRows.find((r) => r.key === correctBatchKey);
+        if (!row) return null;
+        const expectedTotal = row.orders.reduce((s, o) => s + orderAmountToRemit(o), 0);
+        const newTotal = Math.max(0, Number(correctBatchTotal) || 0);
+        const alloc = batchCorrectionAllocation(row.orders, newTotal);
+        const changedCount = alloc.filter((a) => roundCash(a.newRemitted) !== roundCash(orderAmountRemitted(a.order))).length;
+        return (
+          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => !correctBatchBusy && setCorrectBatchKey(null)}>
+            <section className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Correct batch total — {row.partnerName}</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Set the corrected total cash remitted; it re-spreads across {row.orders.length} order(s) — each filled to its expected, any extra as excess on the last.</p>
+                </div>
+                <button onClick={() => !correctBatchBusy && setCorrectBatchKey(null)} className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834]" aria-label="Close"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Currently remitted</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.remitted)}</div></div>
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Expected (batch)</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(expectedTotal)}</div></div>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Corrected total remitted</span>
+                  <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₦</span>
+                    <input type="number" min={0} value={correctBatchTotal} onChange={(e) => setCorrectBatchTotal(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Reason for the correction</span>
+                  <input value={correctBatchReason} onChange={(e) => setCorrectBatchReason(e.target.value)} placeholder="e.g. partner under-remitted; reconciled to bank statement" className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                </label>
+                <div className="divide-y divide-gray-100 rounded-lg border border-gray-100 text-xs dark:divide-slate-700 dark:border-slate-700">
+                  {alloc.map((a) => {
+                    const cur = orderAmountRemitted(a.order);
+                    const ch = roundCash(a.newRemitted) !== roundCash(cur);
+                    return (
+                      <div key={a.order.id} className={`flex items-center justify-between px-3 py-1.5 ${ch ? "" : "opacity-50"}`}>
+                        <span className="truncate text-gray-600 dark:text-slate-300">#{a.order.id} <span className="text-gray-400">{a.order.customer}</span></span>
+                        <span className="shrink-0 font-semibold text-gray-700 dark:text-slate-200">{formatMoney(cur)} → <span className={ch ? "text-[#1F8FE0]" : "text-gray-400"}>{formatMoney(a.newRemitted)}</span></span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-400">{changedCount} order(s) will change. Any short/excess vs expected goes through the usual Owner approval.</p>
+              </div>
+              <div className="border-t border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason)} disabled={correctBatchBusy || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving…" : `Save correction (${changedCount} order${changedCount === 1 ? "" : "s"})`}</button>
               </div>
             </section>
           </div>
