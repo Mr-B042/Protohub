@@ -8263,6 +8263,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [correctBatchKey, setCorrectBatchKey] = useState<string | null>(null);
   const [correctBatchTotal, setCorrectBatchTotal] = useState("");
   const [correctBatchReason, setCorrectBatchReason] = useState("");
+  const [correctBatchSelectedOrderIds, setCorrectBatchSelectedOrderIds] = useState<string[]>([]);
   const [correctBatchBusy, setCorrectBatchBusy] = useState(false);
   const [remittanceOpenRequest, setRemittanceOpenRequest] = useState<{ orderIds: string[]; label: string } | null>(null);
   const [remittanceOpenBusy, setRemittanceOpenBusy] = useState(false);
@@ -21242,11 +21243,32 @@ ${waybillLineItems(w).length > 1
     if (remaining > 0 && rows.length > 0) rows[rows.length - 1].newRemitted = roundCash(rows[rows.length - 1].newRemitted + remaining);
     return rows;
   };
-  const saveBatchCorrection = async (row: { key: string; partnerName: string; orders: TrackedOrder[] }, newTotal: number, reason: string) => {
+
+  const openBatchCorrection = (row: { key: string; orders: TrackedOrder[] }) => {
+    const selectedIds = row.orders.filter((order) => orderAmountRemitted(order) > 0).map((order) => order.id);
+    const fallbackIds = selectedIds.length > 0 ? selectedIds : row.orders.map((order) => order.id);
+    const currentSelectedTotal = row.orders
+      .filter((order) => fallbackIds.includes(order.id))
+      .reduce((sum, order) => sum + orderAmountRemitted(order), 0);
+    setCorrectBatchKey(row.key);
+    setCorrectBatchSelectedOrderIds(fallbackIds);
+    setCorrectBatchTotal(String(Math.round(currentSelectedTotal)));
+    setCorrectBatchReason("");
+  };
+
+  const closeBatchCorrection = () => {
+    if (correctBatchBusy) return;
+    setCorrectBatchKey(null);
+    setCorrectBatchSelectedOrderIds([]);
+  };
+
+  const saveBatchCorrection = async (row: { key: string; partnerName: string; orders: TrackedOrder[] }, newTotal: number, reason: string, selectedIds: string[]) => {
     if (!reason.trim()) { showToast("Add a short reason for the batch correction."); return; }
-    const alloc = batchCorrectionAllocation(row.orders, newTotal);
+    const selectedOrders = row.orders.filter((order) => selectedIds.includes(order.id));
+    if (selectedOrders.length === 0) { showToast("Mark at least one order to correct."); return; }
+    const alloc = batchCorrectionAllocation(selectedOrders, newTotal);
     const changed = alloc.filter((a) => roundCash(a.newRemitted) !== roundCash(orderAmountRemitted(a.order)));
-    if (changed.length === 0) { showToast("Nothing to change — that total already matches."); setCorrectBatchKey(null); return; }
+    if (changed.length === 0) { showToast("Nothing to change — that total already matches."); setCorrectBatchKey(null); setCorrectBatchSelectedOrderIds([]); return; }
     setCorrectBatchBusy(true);
     const statusFor = (newRemitted: number, expected: number) => newRemitted <= 0 ? "Pending" : newRemitted >= expected ? "Paid" : "Partial";
     setTrackedOrders((prev) => prev.map((o) => {
@@ -21267,6 +21289,7 @@ ${waybillLineItems(w).length > 1
     void loadFinanceSummaryData({ quiet: true });
     setCorrectBatchBusy(false);
     setCorrectBatchKey(null);
+    setCorrectBatchSelectedOrderIds([]);
     if (failed === 0) showToast(`Corrected ${ok} order(s) for ${row.partnerName}.`);
     else showToast(`Corrected ${ok}; ${failed} couldn't save (locked or error) — retry.`);
   };
@@ -37628,7 +37651,7 @@ ${waybillLineItems(w).length > 1
                                         </button>
                                       )}
                                       {canCorrect && (
-                                        <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors w-full" onClick={() => { setCorrectBatchKey(row.key); setCorrectBatchTotal(String(Math.round(row.remitted))); setCorrectBatchReason(""); }} title="Set the corrected total for this whole batch in one go">
+                                        <button className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-2.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors w-full" onClick={() => openBatchCorrection(row)} title="Set the corrected total for selected orders in this batch">
                                           Correct total
                                         </button>
                                       )}
@@ -37725,7 +37748,7 @@ ${waybillLineItems(w).length > 1
                                             </button>
                                           )}
                                           {canCorrect && (
-                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors" onClick={() => { setCorrectBatchKey(row.key); setCorrectBatchTotal(String(Math.round(row.remitted))); setCorrectBatchReason(""); }} title="Set the corrected total for this whole batch in one go">
+                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors" onClick={() => openBatchCorrection(row)} title="Set the corrected total for selected orders in this batch">
                                               Correct total
                                             </button>
                                           )}
@@ -44801,7 +44824,7 @@ ${waybillLineItems(w).length > 1
         const pending = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending");
         return (
           <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => setShowVarianceReview(false)}>
-            <section className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <section className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Cash variance — pending approval{pending.length ? ` (${pending.length})` : ""}</h3>
@@ -44954,39 +44977,76 @@ ${waybillLineItems(w).length > 1
       {correctBatchKey && (() => {
         const row = remittanceRows.find((r) => r.key === correctBatchKey);
         if (!row) return null;
-        const expectedTotal = row.orders.reduce((s, o) => s + orderAmountToRemit(o), 0);
-        const currentTotal = roundCash(row.remitted);
+        const selectableOrders = row.orders.slice().sort((a, b) => remittanceOrderSortValue(a) - remittanceOrderSortValue(b));
+        const selectedOrders = selectableOrders.filter((order) => correctBatchSelectedOrderIds.includes(order.id));
+        const selectedOrderIds = new Set(correctBatchSelectedOrderIds);
+        const selectedCurrentTotal = roundCash(selectedOrders.reduce((s, o) => s + orderAmountRemitted(o), 0));
+        const expectedTotal = selectedOrders.reduce((s, o) => s + orderAmountToRemit(o), 0);
         const newTotal = Math.max(0, Number(correctBatchTotal) || 0);
-        const totalDelta = roundCash(newTotal - currentTotal);
-        const alloc = batchCorrectionAllocation(row.orders, newTotal);
+        const totalDelta = roundCash(newTotal - selectedCurrentTotal);
+        const alloc = batchCorrectionAllocation(selectedOrders, newTotal);
         const changedCount = alloc.filter((a) => roundCash(a.newRemitted) !== roundCash(orderAmountRemitted(a.order))).length;
+        const selectedTotalFor = (ids: string[]) => selectableOrders.filter((order) => ids.includes(order.id)).reduce((sum, order) => sum + orderAmountRemitted(order), 0);
+        const setSelectedCorrectionOrders = (ids: string[]) => {
+          setCorrectBatchSelectedOrderIds(ids);
+          setCorrectBatchTotal(String(Math.round(selectedTotalFor(ids))));
+        };
+        const correctionDateLabel = (order: TrackedOrder) => displayDateFromKey(normalizeDateKey(order.deliveredDate || order.date || order.createdAt));
         return (
-          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => !correctBatchBusy && setCorrectBatchKey(null)}>
+          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={closeBatchCorrection}>
             <section className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Correct / reverse batch total — {row.partnerName}</h3>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Enter the actual cash this partner remitted for this selected period. This replaces the current total; it does not add on top.</p>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Mark only the orders you want to correct, then enter the actual total for those selected orders.</p>
                 </div>
-                <button onClick={() => !correctBatchBusy && setCorrectBatchKey(null)} className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834]" aria-label="Close"><X className="h-5 w-5" /></button>
+                <button onClick={closeBatchCorrection} className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834]" aria-label="Close"><X className="h-5 w-5" /></button>
               </div>
               <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
-                  If the system shows a wrong old total, type the real total here. To reverse first, set it to <strong>₦0</strong>, save with a reason, then record the correct remittance again.
+                  If only some orders are wrong, mark just those orders. To reverse them, set selected orders to <strong>₦0</strong>, save with a reason, then record the correct remittance again.
                 </div>
-                <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Current in system</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(currentTotal)}</div></div>
-                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Expected (batch)</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(expectedTotal)}</div></div>
+                <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-4">
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Selected orders</div><div className="font-bold text-gray-900 dark:text-slate-100">{selectedOrders.length}</div></div>
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Selected expected</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(expectedTotal)}</div></div>
+                  <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Selected current</div><div className="font-bold text-gray-900 dark:text-slate-100">{formatMoney(selectedCurrentTotal)}</div></div>
                   <div className="rounded-lg bg-gray-50 p-3 dark:bg-slate-800/40"><div className="text-[10px] uppercase tracking-wider text-gray-400">Change after save</div><div className={`font-bold ${totalDelta < 0 ? "text-rose-600 dark:text-rose-300" : totalDelta > 0 ? "text-emerald-600 dark:text-emerald-300" : "text-gray-900 dark:text-slate-100"}`}>{totalDelta > 0 ? "+" : totalDelta < 0 ? "-" : ""}{formatMoney(Math.abs(totalDelta))}</div></div>
                 </div>
+                <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-slate-700">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Mark orders to correct</span>
+                    <div className="flex gap-2">
+                      <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0]" onClick={() => setSelectedCorrectionOrders(selectableOrders.map((order) => order.id))}>Select all</button>
+                      <button type="button" className="!min-h-0 text-xs font-bold text-gray-400 hover:text-gray-600" onClick={() => setSelectedCorrectionOrders([])}>Clear</button>
+                    </div>
+                  </div>
+                  <div className="max-h-56 divide-y divide-gray-100 overflow-y-auto dark:divide-slate-700">
+                    {selectableOrders.map((order) => {
+                      const checked = selectedOrderIds.has(order.id);
+                      const nextIds = checked
+                        ? correctBatchSelectedOrderIds.filter((id) => id !== order.id)
+                        : [...correctBatchSelectedOrderIds, order.id];
+                      return (
+                        <label key={order.id} className={`flex cursor-pointer items-start gap-3 px-3 py-2 text-sm transition-colors ${checked ? "bg-blue-50/70 dark:bg-blue-500/10" : "hover:bg-gray-50 dark:hover:bg-slate-800/40"}`}>
+                          <input type="checkbox" checked={checked} onChange={() => setSelectedCorrectionOrders(nextIds)} className="mt-1 h-4 w-4 accent-[#1F8FE0]" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-bold text-gray-900 dark:text-slate-100">#{order.id} · {order.customer}</span>
+                            <span className="block text-[11px] text-gray-400">{correctionDateLabel(order)} · {formatProductMoney(orderAmountRemitted(order), order.currency)} currently remitted</span>
+                          </span>
+                          <span className="shrink-0 text-xs font-bold text-gray-700 dark:text-slate-200">{checked ? "marked" : "skip"}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
                 <label className="block">
-                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Actual total remitted (replaces current total)</span>
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400">Actual total for selected orders</span>
                   <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₦</span>
                     <input type="number" min={0} value={correctBatchTotal} onChange={(e) => setCorrectBatchTotal(e.target.value)} className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   </div>
-                  {currentTotal > 0 && (
+                  {selectedCurrentTotal > 0 && (
                     <button type="button" onClick={() => setCorrectBatchTotal("0")} className="!min-h-0 mt-2 inline-flex rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10">
-                      Reverse to ₦0
+                      Reverse selected to ₦0
                     </button>
                   )}
                 </label>
@@ -45000,16 +45060,16 @@ ${waybillLineItems(w).length > 1
                     const ch = roundCash(a.newRemitted) !== roundCash(cur);
                     return (
                       <div key={a.order.id} className={`flex items-center justify-between px-3 py-1.5 ${ch ? "" : "opacity-50"}`}>
-                        <span className="truncate text-gray-600 dark:text-slate-300">#{a.order.id} <span className="text-gray-400">{a.order.customer}</span></span>
+                        <span className="truncate text-gray-600 dark:text-slate-300">#{a.order.id} <span className="text-gray-400">{a.order.customer} · {correctionDateLabel(a.order)}</span></span>
                         <span className="shrink-0 font-semibold text-gray-700 dark:text-slate-200">{formatMoney(cur)} → <span className={ch ? "text-[#1F8FE0]" : "text-gray-400"}>{formatMoney(a.newRemitted)}</span></span>
                       </div>
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-gray-400">{changedCount} order(s) will change. The preview above shows old → new per order; the partner total becomes exactly {formatMoney(newTotal)} after save.</p>
+                <p className="text-[11px] text-gray-400">{changedCount} selected order(s) will change. Unmarked orders stay exactly as they are.</p>
               </div>
               <div className="border-t border-gray-100 px-5 py-4 dark:border-slate-800/80">
-                <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason)} disabled={correctBatchBusy || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving…" : `Replace total with ${formatMoney(newTotal)} (${changedCount} order${changedCount === 1 ? "" : "s"})`}</button>
+                <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason, correctBatchSelectedOrderIds)} disabled={correctBatchBusy || selectedOrders.length === 0 || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving..." : `Apply to ${changedCount} selected order${changedCount === 1 ? "" : "s"}`}</button>
               </div>
             </section>
           </div>
