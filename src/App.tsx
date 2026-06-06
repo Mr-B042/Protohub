@@ -193,7 +193,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
+type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -1415,7 +1415,7 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1446,6 +1446,12 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Operational", "Accounting"],
     summary: "Use this to watch delivery costs, stock value, stock-loss pressure, and which agents are driving delivery output.",
     caution: "This is strongest for operational control. Profit contribution here is directional, not a full landed-cost accounting model."
+  },
+  "Delivery Fee Audit": {
+    primaryLens: "Operational",
+    lenses: ["Operational", "Accounting"],
+    summary: "Use this to catch logistics partners charging different delivery fees for the same address-area pattern inside the selected period.",
+    caution: "The audit trusts repeated area phrases from the delivery address more than city/state. City-only matches are separated as weak signals so the team can verify before challenging an agent."
   },
   "Remittance": {
     primaryLens: "Cash Flow",
@@ -8327,6 +8333,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceBatchVarianceNote, setRemittanceBatchVarianceNote] = useState("");
   const [remittanceSearch, setRemittanceSearch] = useState("");
   const [remittancePartnerFilter, setRemittancePartnerFilter] = useState("All Partners");
+  const [deliveryFeeAuditSearch, setDeliveryFeeAuditSearch] = useState("");
+  const [deliveryFeeAuditView, setDeliveryFeeAuditView] = useState<"Confirmed areas" | "Needs cleaner address">("Confirmed areas");
   const [repDeliveryFee, setRepDeliveryFee] = useState("");
   const [repAmountToRemit, setRepAmountToRemit] = useState("");
   const [repRemittanceReceivedDate, setRepRemittanceReceivedDate] = useState(todayKey());
@@ -13523,6 +13531,173 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return { ...row, deliveries: delivered.length, profitContribution: revenue - cogs - logistics };
   });
   const financeAgentDeliveredCount = financeAgentRows.reduce((sum, row) => sum + row.deliveries, 0);
+
+  // ===== Delivery fee audit (same agent + same address area, different fee) =====
+  const deliveryFeeNormalizeText = (value?: string | null) =>
+    (value ?? "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/&/g, " and ")
+      .replace(/\bg\s*r\s*a\b/g, "gra")
+      .replace(/\bp\s*h\b/g, "port harcourt")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const deliveryFeeTitle = (value: string) =>
+    value.replace(/\b\w/g, (match) => match.toUpperCase()).replace(/\bGra\b/g, "GRA");
+  const deliveryFeeNoiseWords = new Set([
+    "a", "an", "and", "at", "by", "for", "from", "in", "inside", "into", "of", "on", "the", "to",
+    "after", "around", "before", "behind", "beside", "between", "near", "opposite", "opp", "through",
+    "house", "flat", "floor", "room", "unit", "block", "plot", "no", "num", "number", "compound",
+    "road", "rd", "street", "st", "avenue", "ave", "drive", "lane", "close", "crescent", "way",
+    "junction", "junctn", "roundabout", "bus", "stop", "market", "estate", "phase", "zone", "layout",
+    "area", "gate", "park", "bridge", "express", "expressway", "bypass", "new", "old", "main"
+  ]);
+  const deliveryFeeGenericSingles = new Set([
+    "road", "street", "estate", "junction", "market", "layout", "phase", "zone", "area", "gate",
+    "school", "church", "mosque", "hospital", "plaza", "mall", "park", "village", "community"
+  ]);
+  const deliveryFeeBoundaryTokens = (order: TrackedOrder) => {
+    const tokens = new Set<string>();
+    const add = (value?: string) => deliveryFeeNormalizeText(value).split(" ").filter(Boolean).forEach((token) => tokens.add(token));
+    add(order.state);
+    add(order.city);
+    (order.location ?? "").split(",").forEach((part) => add(part));
+    return tokens;
+  };
+  const deliveryFeeBoundaryForOrder = (order: TrackedOrder) => {
+    const city = deliveryFeeNormalizeText(order.city || (order.location ?? "").split(",")[0] || "");
+    const state = deliveryFeeNormalizeText(order.state || (order.location ?? "").split(",")[1] || "");
+    const label = [order.city || (order.location ?? "").split(",")[0], order.state || (order.location ?? "").split(",")[1]]
+      .map((part) => (part ?? "").trim())
+      .filter(Boolean)
+      .join(", ") || order.location || "Unknown city/state";
+    return { key: `${state || "unknown-state"}::${city || "unknown-city"}`, label };
+  };
+  const deliveryFeeAddressTokens = (order: TrackedOrder) => {
+    const boundaryTokens = deliveryFeeBoundaryTokens(order);
+    const rawTokens = deliveryFeeNormalizeText(order.address).split(" ").filter(Boolean);
+    return rawTokens.filter((token, index, arr) => {
+      if (boundaryTokens.has(token)) return false;
+      if (/^\d+$/.test(token)) {
+        return ["mile", "phase", "zone"].includes(arr[index - 1] ?? "") || ["mile", "phase", "zone"].includes(arr[index + 1] ?? "");
+      }
+      if (token.length < 3) return false;
+      return !deliveryFeeNoiseWords.has(token);
+    });
+  };
+  const deliveryFeeAreaCandidates = (order: TrackedOrder) => {
+    const tokens = deliveryFeeAddressTokens(order);
+    const candidates = new Set<string>();
+    tokens.forEach((token, index) => {
+      if (!deliveryFeeGenericSingles.has(token)) candidates.add(token);
+      [2, 3].forEach((length) => {
+        const slice = tokens.slice(index, index + length);
+        if (slice.length !== length) return;
+        if (slice.every((part) => deliveryFeeGenericSingles.has(part))) return;
+        candidates.add(slice.join(" "));
+      });
+    });
+    return Array.from(candidates);
+  };
+  const deliveryFeeAuditedOrders = financeDeliveredRows
+    .filter((order) => (order.logisticsCost ?? 0) > 0 && order.agentId)
+    .map((order) => {
+      const agent = agents.find((row) => row.id === order.agentId);
+      const boundary = deliveryFeeBoundaryForOrder(order);
+      return {
+        order,
+        agentId: order.agentId ?? "unassigned",
+        agentName: agent?.name ?? "Unassigned",
+        boundary,
+        fee: roundCash(order.logisticsCost ?? 0),
+        candidates: deliveryFeeAreaCandidates(order)
+      };
+    });
+  const deliveryFeeCandidateCounts = (() => {
+    const counts = new Map<string, number>();
+    deliveryFeeAuditedOrders.forEach((row) => {
+      const seen = new Set(row.candidates);
+      seen.forEach((candidate) => {
+        const key = `${row.agentId}::${row.boundary.key}::${candidate}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      });
+    });
+    return counts;
+  })();
+  const deliveryFeeAuditRows = (() => {
+    const groups = new Map<string, {
+      key: string;
+      agentName: string;
+      areaLabel: string;
+      boundaryLabel: string;
+      confidence: "Confirmed area" | "Needs cleaner address";
+      currency: ProductCurrencyCode;
+      orders: { id: string; customer: string; fee: number; amount: number; address: string; date: string; status: string }[];
+    }>();
+    deliveryFeeAuditedOrders.forEach((row) => {
+      const ranked = row.candidates
+        .map((candidate) => ({
+          candidate,
+          count: deliveryFeeCandidateCounts.get(`${row.agentId}::${row.boundary.key}::${candidate}`) ?? 0
+        }))
+        .filter((item) => item.count >= 2)
+        .sort((a, b) => b.count - a.count || b.candidate.split(" ").length - a.candidate.split(" ").length || b.candidate.length - a.candidate.length)[0];
+      const confidence: "Confirmed area" | "Needs cleaner address" = ranked ? "Confirmed area" : "Needs cleaner address";
+      const areaKey = ranked ? ranked.candidate : `weak:${row.boundary.key}`;
+      const areaLabel = ranked ? deliveryFeeTitle(ranked.candidate) : row.boundary.label;
+      const groupKey = `${row.agentId}::${row.boundary.key}::${areaKey}`;
+      const current = groups.get(groupKey) ?? {
+        key: groupKey,
+        agentName: row.agentName,
+        areaLabel,
+        boundaryLabel: row.boundary.label,
+        confidence,
+        currency: row.order.currency ?? "NGN",
+        orders: []
+      };
+      current.orders.push({
+        id: row.order.id,
+        customer: row.order.customer,
+        fee: row.fee,
+        amount: row.order.amount,
+        address: row.order.address || row.order.location || "No address captured",
+        date: orderDeliveredKey(row.order) || orderCreatedKey(row.order),
+        status: row.order.status ?? "New"
+      });
+      groups.set(groupKey, current);
+    });
+    return Array.from(groups.values())
+      .map((row) => {
+        const fees = row.orders.map((order) => order.fee);
+        const feeCounts = new Map<number, number>();
+        fees.forEach((fee) => feeCounts.set(fee, (feeCounts.get(fee) ?? 0) + 1));
+        const commonFee = Array.from(feeCounts.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? 0;
+        const minFee = Math.min(...fees);
+        const maxFee = Math.max(...fees);
+        const spread = maxFee - minFee;
+        const possibleOvercharge = row.orders.reduce((sum, order) => sum + Math.max(0, order.fee - commonFee), 0);
+        const sortedDates = row.orders.map((order) => order.date).filter(Boolean).sort();
+        const latestDate = sortedDates[sortedDates.length - 1] ?? "";
+        const severity = row.confidence === "Confirmed area" && (spread >= 2000 || maxFee >= commonFee * 1.5) ? "High" : row.confidence === "Confirmed area" ? "Watch" : "Review";
+        return { ...row, minFee, maxFee, commonFee, spread, possibleOvercharge, latestDate, severity, distinctFees: Array.from(feeCounts.keys()).sort((a, b) => a - b) };
+      })
+      .filter((row) => row.orders.length >= 2 && row.spread > 0)
+      .sort((a, b) => {
+        const confidenceWeight = (row: typeof a) => row.confidence === "Confirmed area" ? 1 : 0;
+        return confidenceWeight(b) - confidenceWeight(a) || b.spread - a.spread || b.orders.length - a.orders.length;
+      });
+  })();
+  const deliveryFeeConfirmedRows = deliveryFeeAuditRows.filter((row) => row.confidence === "Confirmed area");
+  const deliveryFeeWeakRows = deliveryFeeAuditRows.filter((row) => row.confidence === "Needs cleaner address");
+  const filteredDeliveryFeeRows = (deliveryFeeAuditView === "Confirmed areas" ? deliveryFeeConfirmedRows : deliveryFeeWeakRows).filter((row) => {
+    const search = deliveryFeeAuditSearch.trim().toLowerCase();
+    if (!search) return true;
+    return `${row.agentName} ${row.areaLabel} ${row.boundaryLabel} ${row.orders.map((order) => `${order.id} ${order.customer} ${order.address}`).join(" ")}`.toLowerCase().includes(search);
+  });
+  const deliveryFeePossibleLeak = deliveryFeeConfirmedRows.reduce((sum, row) => sum + row.possibleOvercharge, 0);
+  const deliveryFeeHighestSpread = deliveryFeeConfirmedRows.reduce((max, row) => Math.max(max, row.spread), 0);
 
   // ===== Remittance (Pay-on-Delivery cash reconciliation) =====
   const orderLogisticsCost = (order: TrackedOrder) => order.logisticsCost ?? 0;
@@ -37960,6 +38135,183 @@ ${waybillLineItems(w).length > 1
                       </table>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {financeTab === "Delivery Fee Audit" && (
+                <div className="space-y-4">
+                  <section className="rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-3xl">
+                        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-wider text-orange-700">
+                          <MapPin className="h-3.5 w-3.5" />
+                          Address-area intelligence
+                        </div>
+                        <h2 className="m-0 text-xl font-black text-gray-950">Catch inconsistent delivery charges before they quietly become normal.</h2>
+                        <p className="m-0 mt-2 text-sm leading-relaxed text-gray-600">
+                          Protohub compares the same logistics partner against the same repeated area phrase inside the delivery address. City and state are only used as a safety boundary — they are not treated as the real area.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-[320px]">
+                        <div className="rounded-xl border border-orange-100 bg-white/80 p-3">
+                          <p className="m-0 font-black uppercase tracking-wider text-orange-700">Confirmed rule</p>
+                          <p className="m-0 mt-1 text-gray-600">Same agent + same address-area + different fee.</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                          <p className="m-0 font-black uppercase tracking-wider text-slate-600">Weak rule</p>
+                          <p className="m-0 mt-1 text-gray-600">Only city/state matched, so review the address first.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Delivery fee audit summary">
+                    {[
+                      { title: "Confirmed Area Mismatches", value: String(deliveryFeeConfirmedRows.length), helper: "Repeated address-area phrases with different fees", tone: "rose", icon: AlertTriangle },
+                      { title: "Possible Fee Leakage", value: formatMoney(deliveryFeePossibleLeak), helper: "Amount above the most common fee in confirmed areas", tone: "orange", icon: CircleDollarSign },
+                      { title: "Highest Spread", value: formatMoney(deliveryFeeHighestSpread), helper: "Largest gap between lowest and highest fee", tone: "blue", icon: Scale },
+                      { title: "Needs Cleaner Address", value: String(deliveryFeeWeakRows.length), helper: "Broad city/state matches that need human review", tone: "slate", icon: ClipboardCheck },
+                    ].map(({ title, value, helper, tone, icon: Icon }) => (
+                      <article key={title} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                        <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-full ${tone === "rose" ? "bg-rose-50 text-rose-600" : tone === "orange" ? "bg-orange-50 text-orange-600" : tone === "blue" ? "bg-blue-50 text-blue-600" : "bg-slate-50 text-slate-500"}`}>
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <h3 className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">{title}</h3>
+                        <strong className={`mt-1 block text-xl font-black ${tone === "rose" ? "text-rose-700" : tone === "orange" ? "text-orange-700" : "text-gray-950"}`}>{value}</strong>
+                        <p className="m-0 mt-1 text-[11px] leading-snug text-gray-500">{helper}</p>
+                      </article>
+                    ))}
+                  </section>
+
+                  <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h2 className="m-0 text-sm font-black text-gray-900">Delivery charge consistency</h2>
+                        <p className="m-0 mt-0.5 text-xs text-gray-500">{selectedFinancePeriodLabel} · delivered orders with saved logistics fees</p>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1">
+                          {(["Confirmed areas", "Needs cleaner address"] as const).map((view) => (
+                            <button
+                              key={view}
+                              className={`!min-h-0 rounded-md px-3 py-2 text-xs font-black transition-colors ${deliveryFeeAuditView === view ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-800"}`}
+                              onClick={() => setDeliveryFeeAuditView(view)}
+                            >
+                              {view}
+                            </button>
+                          ))}
+                        </div>
+                        <label className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus-within:ring-2 focus-within:ring-[#1F8FE0] sm:min-w-[240px]">
+                          <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                          <input className="min-w-0 flex-1 bg-transparent text-xs outline-none" value={deliveryFeeAuditSearch} onChange={(event) => setDeliveryFeeAuditSearch(event.target.value)} placeholder="Search agent, area, order..." />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 p-4">
+                      {filteredDeliveryFeeRows.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-12 text-center">
+                          <Truck className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+                          <p className="m-0 text-sm font-black text-gray-800">
+                            {deliveryFeeAuditView === "Confirmed areas" ? "No confirmed area-fee mismatch found." : "No weak city/state mismatch found."}
+                          </p>
+                          <p className="mx-auto mt-1 max-w-lg text-xs leading-relaxed text-gray-500">
+                            {deliveryFeeAuditView === "Confirmed areas"
+                              ? "That means this period has no repeated address-area phrase where the same agent charged different delivery fees."
+                              : "Weak matches only appear when the address does not give enough area detail. Cleaner customer addresses make this audit much sharper."}
+                          </p>
+                        </div>
+                      ) : (
+                        filteredDeliveryFeeRows.map((row) => {
+                          const rowTone = row.severity === "High" ? "rose" : row.confidence === "Confirmed area" ? "orange" : "slate";
+                          const orderedEvidence = [...row.orders].sort((a, b) => b.fee - a.fee || a.date.localeCompare(b.date));
+                          return (
+                            <article key={row.key} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${rowTone === "rose" ? "border-rose-200" : rowTone === "orange" ? "border-orange-200" : "border-slate-200"}`}>
+                              <div className={`flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between ${rowTone === "rose" ? "bg-rose-50/70" : rowTone === "orange" ? "bg-orange-50/70" : "bg-slate-50"}`}>
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${rowTone === "rose" ? "bg-rose-100 text-rose-700" : rowTone === "orange" ? "bg-orange-100 text-orange-700" : "bg-slate-200 text-slate-700"}`}>
+                                      {row.severity === "High" ? "High mismatch" : row.severity}
+                                    </span>
+                                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${row.confidence === "Confirmed area" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                                      {row.confidence}
+                                    </span>
+                                  </div>
+                                  <h3 className="m-0 mt-2 text-lg font-black text-gray-950">{row.areaLabel}</h3>
+                                  <p className="m-0 text-sm font-semibold text-gray-600">{row.agentName} · {row.boundaryLabel}</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-right sm:min-w-[300px]">
+                                  <div className="rounded-xl bg-white/80 p-3">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Normal fee</p>
+                                    <strong className="text-sm font-black text-gray-900">{formatProductMoney(row.commonFee, row.currency)}</strong>
+                                  </div>
+                                  <div className="rounded-xl bg-white/80 p-3">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Spread</p>
+                                    <strong className={`text-sm font-black ${row.spread > 0 ? "text-rose-700" : "text-gray-900"}`}>{formatProductMoney(row.spread, row.currency)}</strong>
+                                  </div>
+                                  <div className="rounded-xl bg-white/80 p-3">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Range</p>
+                                    <strong className="text-sm font-black text-gray-900">{formatProductMoney(row.minFee, row.currency)} - {formatProductMoney(row.maxFee, row.currency)}</strong>
+                                  </div>
+                                  <div className="rounded-xl bg-white/80 p-3">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Possible leak</p>
+                                    <strong className="text-sm font-black text-orange-700">{formatProductMoney(row.possibleOvercharge, row.currency)}</strong>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="grid gap-4 p-4 lg:grid-cols-[260px_1fr]">
+                                <div className="space-y-3">
+                                  <div>
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Fees found</p>
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      {row.distinctFees.map((fee) => (
+                                        <span key={fee} className={`rounded-full px-2.5 py-1 text-xs font-black ${fee === row.commonFee ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                          {formatProductMoney(fee, row.currency)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs leading-relaxed text-blue-900">
+                                    <strong className="block">How to use this</strong>
+                                    Ask the agent why the same area carried different charges. If the address is weak, correct the customer area first before treating it as overcharge.
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Evidence orders · {row.orders.length}</p>
+                                  {orderedEvidence.slice(0, 10).map((order) => (
+                                    <button
+                                      key={order.id}
+                                      type="button"
+                                      onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}
+                                      className="!min-h-0 flex w-full flex-col gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-left transition-colors hover:border-[#1F8FE0] hover:bg-blue-50/40 sm:flex-row sm:items-center sm:justify-between"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="font-black text-[#1F8FE0]">#{order.id}</span>
+                                          <span className="font-bold text-gray-900">{order.customer}</span>
+                                          {order.date && <span className="text-[11px] font-semibold text-gray-400">{displayDateFromKey(order.date)}</span>}
+                                        </div>
+                                        <p className="m-0 mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500">{order.address}</p>
+                                      </div>
+                                      <div className="flex shrink-0 items-center justify-between gap-2 sm:flex-col sm:items-end">
+                                        <span className={`text-base font-black ${order.fee === row.commonFee ? "text-emerald-700" : "text-rose-700"}`}>{formatProductMoney(order.fee, row.currency)}</span>
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400"><Eye className="h-3 w-3" /> Details</span>
+                                      </div>
+                                    </button>
+                                  ))}
+                                  {orderedEvidence.length > 10 && (
+                                    <p className="m-0 text-xs font-semibold text-gray-400">+ {orderedEvidence.length - 10} more orders in this area group.</p>
+                                  )}
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+                  </section>
                 </div>
               )}
 
