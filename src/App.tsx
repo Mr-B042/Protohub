@@ -748,6 +748,11 @@ type TrackedOrder = {
   assignedByUserId?: string;
   assignedByNameSnapshot?: string;
   agentId?: string;
+  agentLocationId?: string | null;
+  agentLocationNameSnapshot?: string | null;
+  agentLocationStateSnapshot?: string | null;
+  agentLocationCitySnapshot?: string | null;
+  agentCoverageStateSnapshot?: string | null;
   stockDeducted?: boolean;
   logisticsCost?: number;
   amountRemitted?: number;
@@ -4631,6 +4636,11 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     remittanceVarianceReason: value?.remittanceVarianceReason ?? value?.remittance_variance_reason ?? null,
     remittanceVarianceReviewedAt: value?.remittanceVarianceReviewedAt ?? value?.remittance_variance_reviewed_at ?? null,
     remittanceEditOpen: value?.remittanceEditOpen ?? value?.remittance_edit_open ?? false,
+    agentLocationId: value?.agentLocationId ?? value?.agent_location_id ?? null,
+    agentLocationNameSnapshot: value?.agentLocationNameSnapshot ?? value?.agent_location_name_snapshot ?? null,
+    agentLocationStateSnapshot: value?.agentLocationStateSnapshot ?? value?.agent_location_state_snapshot ?? null,
+    agentLocationCitySnapshot: value?.agentLocationCitySnapshot ?? value?.agent_location_city_snapshot ?? null,
+    agentCoverageStateSnapshot: value?.agentCoverageStateSnapshot ?? value?.agent_coverage_state_snapshot ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
@@ -12300,6 +12310,66 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? `${group.locationName} (${group.locationState})`
         : group.locationName
   );
+  const agentBalanceHubScope = (group: AgentWeeklyBalanceGroup) => {
+    const cleanHubToken = (value?: string | null) =>
+      (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const textMentionsHub = (...parts: Array<string | null | undefined>) => {
+      const haystack = cleanHubToken(parts.filter(Boolean).join(" "));
+      if (!haystack) return false;
+      return [group.locationName, group.locationState, group.locationCity]
+        .map(cleanHubToken)
+        .filter(Boolean)
+        .some((token) => haystack.includes(token));
+    };
+    const stateMatchesHub = (state?: string | null) => {
+      const wanted = cleanHubToken(group.locationState);
+      return Boolean(wanted && cleanHubToken(state) === wanted);
+    };
+    const cityMatchesHub = (city?: string | null) => {
+      const wanted = cleanHubToken(group.locationCity);
+      if (!wanted) return true;
+      const actual = cleanHubToken(city);
+      return Boolean(actual && actual === wanted);
+    };
+    const orderMatchesHub = (order: TrackedOrder) => {
+      if (order.agentId !== group.agentId) return false;
+      const locationId = order.agentLocationId ?? (order as any).agent_location_id ?? null;
+      if (locationId) return locationId === group.locationId;
+
+      // Older orders may not have agent_location_id. Fall back to the
+      // assignment snapshots first, then customer state/city, so a single-hub
+      // copy never pulls every state handled by a multi-state agent.
+      const state =
+        order.agentLocationStateSnapshot ??
+        order.agentCoverageStateSnapshot ??
+        (order as any).agent_location_state_snapshot ??
+        (order as any).agent_coverage_state_snapshot ??
+        order.state;
+      const city =
+        order.agentLocationCitySnapshot ??
+        (order as any).agent_location_city_snapshot ??
+        order.city;
+      return stateMatchesHub(state) && cityMatchesHub(city);
+    };
+    const movementTouchesHub = (movement: StockMovement) => {
+      if (movement.agentId !== group.agentId) return false;
+      if (movement.fromAgentLocationId || movement.toAgentLocationId) {
+        return movement.fromAgentLocationId === group.locationId || movement.toAgentLocationId === group.locationId;
+      }
+      return textMentionsHub(movement.fromLocation, movement.toLocation, movement.note);
+    };
+    const waybillIncomingTouchesHub = (waybill: WaybillRecord) => {
+      if (waybill.toAgentId !== group.agentId) return false;
+      if (waybill.toAgentLocationId) return waybill.toAgentLocationId === group.locationId;
+      return textMentionsHub(waybill.receivingLocationName, waybill.receivingState, waybill.note);
+    };
+    const waybillOutgoingTouchesHub = (waybill: WaybillRecord) => {
+      if (waybill.fromAgentId !== group.agentId) return false;
+      if (waybill.fromAgentLocationId) return waybill.fromAgentLocationId === group.locationId;
+      return textMentionsHub(waybill.sendingLocationName, waybill.sendingState, waybill.note);
+    };
+    return { orderMatchesHub, movementTouchesHub, waybillIncomingTouchesHub, waybillOutgoingTouchesHub };
+  };
   const weekendStockAdjustmentForRow = (row: Pick<AgentWeeklyBalanceRow, "returnedThisWeek" | "transferredOutThisWeek" | "restoredThisWeek" | "writtenOffThisWeek">) => (
     row.restoredThisWeek
     - row.returnedThisWeek
@@ -12366,10 +12436,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         month: "long",
         year: "numeric"
       });
+    const hubLabel = agentBalanceHubLabel(group);
+    const { orderMatchesHub, movementTouchesHub, waybillIncomingTouchesHub, waybillOutgoingTouchesHub } = agentBalanceHubScope(group);
 
     // ── Filter delivered orders within the week for this agent ──
     const deliveredOrders = trackedOrders.filter((order) => {
-      if (order.agentId !== group.agentId) return false;
+      if (!orderMatchesHub(order)) return false;
       if ((order.status ?? "") !== "Delivered") return false;
       const deliveredKey = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
       if (!deliveredKey) return false;
@@ -12475,7 +12547,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     };
     stockMovements.forEach((movement) => {
-      if (movement.agentId !== group.agentId) return;
+      if (!movementTouchesHub(movement)) return;
       // Skip movements already counted via orders/waybills loops.
       if (movement.type === "Order Fulfilled") return;
       if (movement.type === "Waybill In" || movement.type === "Waybill Out") return;
@@ -12520,7 +12592,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (qty <= 0) return;
 
       // Incoming — only count once it's actually received at the agent's hub
-      if (waybill.toAgentId === group.agentId && waybill.dateReceived) {
+      if (waybillIncomingTouchesHub(waybill) && waybill.dateReceived) {
         const day = normalizeDateKey(waybill.dateReceived);
         if (day && day >= weekStart && day <= weekEnd) {
           const sourceLabel = waybill.sendingLocationName
@@ -12538,7 +12610,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       // Outgoing — count on dateSent so the agent's stock reflects the
       // moment the units left their hub.
-      if (waybill.fromAgentId === group.agentId && waybill.dateSent) {
+      if (waybillOutgoingTouchesHub(waybill) && waybill.dateSent) {
         const day = normalizeDateKey(waybill.dateSent);
         if (day && day >= weekStart && day <= weekEnd) {
           const destLabel = waybill.receivingLocationName
@@ -12574,6 +12646,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     // ── Headline ────────────────────────────────────────────────
     lines.push(`Our Stock Inventory Breakdown`);
+    lines.push(`${group.agentName} — ${hubLabel}`);
     lines.push(`from ${fmtFull(weekStart)} to ${fmtFull(weekEnd)}`);
     lines.push("");
 
@@ -12587,7 +12660,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     lines.push("");
 
-    lines.push(`A Detailed Stock Delivered Movement`);
+    lines.push(`A Detailed Stock Movement for ${hubLabel}`);
     lines.push("");
 
     // ── Per-product timeline + summary ──
@@ -12781,7 +12854,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const copyAgentBalanceSummary = async (group: AgentWeeklyBalanceGroup) => {
     try {
       await navigator.clipboard.writeText(formatAgentBalanceWeekMessage(group));
-      showToast(`Weekly balance copied for ${group.agentName}.`);
+      showToast(`Weekly balance copied for ${group.agentName} · ${agentBalanceHubLabel(group)}.`);
     } catch {
       showToast("Copy failed. Please retry.");
     }
@@ -12838,6 +12911,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const weekStart = agentBalanceWindowStart;
     const weekEnd = agentBalanceWindowEnd;
     const out: WeekendMovementRow[] = [];
+    const { orderMatchesHub, movementTouchesHub, waybillIncomingTouchesHub, waybillOutgoingTouchesHub } = agentBalanceHubScope(group);
     const skuFor = (productId: string | undefined, fallbackName: string) => {
       if (productId) {
         const p = products.find((prod) => prod.id === productId);
@@ -12857,7 +12931,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // 1. Customer deliveries (main + add-ons + free gifts)
     trackedOrders
       .filter((order) => {
-        if (order.agentId !== group.agentId) return false;
+        if (!orderMatchesHub(order)) return false;
         if ((order.status ?? "") !== "Delivered") return false;
         const dk = order.deliveredDate ? normalizeDateKey(order.deliveredDate) : "";
         return dk && dk >= weekStart && dk <= weekEnd;
@@ -12933,7 +13007,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (qty <= 0) return;
       const productName = nameFor(waybill.productId, waybill.productName);
       const productSku = skuFor(waybill.productId, waybill.productName);
-      if (waybill.toAgentId === group.agentId && waybill.dateReceived) {
+      if (waybillIncomingTouchesHub(waybill) && waybill.dateReceived) {
         const day = normalizeDateKey(waybill.dateReceived);
         if (day && day >= weekStart && day <= weekEnd) {
           out.push({
@@ -12944,7 +13018,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           });
         }
       }
-      if (waybill.fromAgentId === group.agentId && waybill.dateSent) {
+      if (waybillOutgoingTouchesHub(waybill) && waybill.dateSent) {
         const day = normalizeDateKey(waybill.dateSent);
         if (day && day >= weekStart && day <= weekEnd) {
           out.push({
@@ -12959,7 +13033,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     // 3. Manual stock movements (Correction / Return / Stock Added / etc.)
     stockMovements.forEach((movement) => {
-      if (movement.agentId !== group.agentId) return;
+      if (!movementTouchesHub(movement)) return;
       if (movement.type === "Order Fulfilled") return;
       if (movement.type === "Waybill In" || movement.type === "Waybill Out") return;
       const dateRaw = movement.date ?? movement.createdAt ?? "";
