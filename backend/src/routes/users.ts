@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
+import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -10,16 +11,23 @@ router.use(requireAuth);
 // ── GET /api/users ───────────────────────────────────────
 // Returns all users in the caller's org.
 router.get("/", async (req, res) => {
-  const { data, error } = await supabase
+  let query = supabase
     .from("users")
-    .select("id, name, email, phone, role, active, round_robin_excluded, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
+    .select("id, name, email, phone, role, active, round_robin_excluded, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
+
+  if (req.user!.role === "Marketer") {
+    query = query.eq("id", req.user!.id);
+  }
+
+  const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   try {
     const assignedAgentIdsByUser = await loadAssignedAgentIdsByUser(req.user!.orgId, (data ?? []).map((row) => row.id));
     res.json((data ?? []).map((row) => ({
       ...row,
+      marketing_attribution_tags: sanitizeMarketingAttributionTags(row.marketing_attribution_tags),
       assigned_agent_ids: assignedAgentIdsByUser.get(row.id) ?? []
     })));
   } catch (assignmentError: any) {

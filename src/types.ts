@@ -26,7 +26,7 @@ export type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" 
 export type FinanceTab = "Financial Overview" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
 export type ExpenseType = "Ad Spend" | "Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 export type ExpenseFilter = "All Types" | ExpenseType;
-export type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
+export type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
 export type UserStatus = "All Status" | "Active" | "Inactive";
 export type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 export type EmbedTab = "Create Order Form" | "Generate";
@@ -91,7 +91,7 @@ export type SystemNotification = { id: string; type: "low_stock" | "remittance_o
 export type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 export type CreateOrderContext = "admin" | "rep";
 export type DateRange = { start: string; end: string };
-export type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
+export type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
 export type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -115,6 +115,7 @@ export type ManagedUser = {
   created: string;
   lastSeenAt?: string;
   permissions?: UserPermission[];
+  marketingAttributionTags?: string[];
   agentBalanceScopeMode?: "all" | "states" | "agents" | "assigned_agents";
   agentBalanceStateScope?: string[];
   agentBalanceAgentIds?: string[];

@@ -279,7 +279,7 @@ export const authApi = {
       creatives: Record<string, string>;
     }>("/api/auth/ad-tracking-labels"),
 
-  invite: (body: { name: string; email: string; phone?: string; password: string; role: string }) =>
+  invite: (body: { name: string; email: string; phone?: string; password: string; role: string; marketingAttributionTags?: string[] }) =>
     post<{ message: string }>("/api/auth/invite", body),
 
   resetPassword: (email: string) =>

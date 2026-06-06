@@ -17,6 +17,7 @@ import {
 } from "../lib/mailer.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { sendNewOrderSms, sendOrderStatusSms } from "../lib/sms.js";
+import { applyOrderMarketingScope } from "../lib/marketing-attribution.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -318,8 +319,10 @@ router.get("/", async (req, res) => {
     .order(sortColumn, { ascending: false })
     .range(from, to);
 
-  // Sales Reps only see their own orders
-  if (req.user!.role === "Sales Rep") {
+  // Sales Reps see assigned orders; Marketers see only attributed traffic.
+  if (req.user!.role === "Marketer") {
+    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags);
+  } else if (req.user!.role === "Sales Rep") {
     query = query.eq("assigned_rep_id", req.user!.id);
   } else if (repId) {
     query = query.eq("assigned_rep_id", repId as string);

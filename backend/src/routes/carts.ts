@@ -5,6 +5,7 @@ import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
+import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,8 +17,10 @@ router.get("/", async (req, res) => {
     .select("*")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false });
-  // Sales Reps only see carts assigned to them
-  if (req.user!.role === "Sales Rep") {
+  // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
+  if (req.user!.role === "Marketer") {
+    query = applyCartMarketingScope(query, req.user!.marketingAttributionTags);
+  } else if (req.user!.role === "Sales Rep") {
     query = query.eq("assigned_rep_id", req.user!.id);
   }
   const { data, error } = await query;

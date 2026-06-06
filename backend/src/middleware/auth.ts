@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { supabase } from "../lib/supabase.js";
+import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 
 // Validates the Bearer token from the Authorization header.
 // Attaches the user profile to req.user for downstream handlers.
@@ -22,7 +23,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   // Fetch the user's profile from our users table
   const { data: profile, error: profileError } = await supabase
     .from("users")
-    .select("id, org_id, role, email, name, active")
+    .select("id, org_id, role, email, name, active, marketing_attribution_tags")
     .eq("id", user.id)
     .single();
 
@@ -41,7 +42,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     orgId: profile.org_id,
     role: profile.role,
     email: profile.email,
-    name: profile.name
+    name: profile.name,
+    marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
   };
 
   next();

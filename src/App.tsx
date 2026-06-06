@@ -197,7 +197,7 @@ type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Financ
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate";
@@ -410,7 +410,7 @@ type SmsInboundMessage = {
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Viewer";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -428,6 +428,7 @@ type ManagedUser = {
   created: string;
   lastSeenAt?: string;
   permissions?: UserPermission[];
+  marketingAttributionTags?: string[];
   // Owner-granted page-level overrides on top of the role's defaults.
   extraPages?: ActivePage[];
   agentBalanceScopeMode?: "all" | "states" | "agents" | "assigned_agents";
@@ -450,6 +451,22 @@ const sanitizeActivePageList = (pages: readonly (ActivePage | string)[] | undefi
         .filter((page): page is ActivePage => typeof page === "string" && page.trim().length > 0)
     )
   );
+
+const sanitizeMarketingAttributionTags = (value: unknown): string[] => {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,;\n]/)
+      : [];
+  return Array.from(
+    new Set(
+      source
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean)
+        .map((item) => item.slice(0, 80))
+    )
+  ).slice(0, 40);
+};
 
 const isWeekendStockSummaryPage = (page: ActivePage | string | undefined | null) =>
   page === WEEKEND_STOCK_SUMMARY_PAGE;
@@ -1458,8 +1475,8 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 };
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Clearing & Shipping", "Waybill", "Airtime & Data", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate"];
@@ -1522,6 +1539,7 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Manager":           ["create_orders", "edit_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary", "manage_inventory", "manage_products", "view_finance", "view_reports"],
   "Sales Rep":         ["create_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary"],
   "Inventory Manager": ["view_weekend_stock_summary", "manage_inventory", "manage_products", "view_reports"],
+  "Marketer":          ["view_reports"],
   "Viewer":            ["view_finance", "view_reports"],
 };
 
@@ -1566,6 +1584,9 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Inventory Manager": [
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
+  "Marketer": [
+    "Marketing", "Notifications", "Settings"
+  ],
   "Viewer": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
   ]
@@ -1577,6 +1598,7 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Manager":           "Dashboard",
   "Sales Rep":         "Sales Rep Workspace",
   "Inventory Manager": "Inventory",
+  "Marketer":          "Marketing",
   "Viewer":            "Dashboard"
 };
 
@@ -4700,6 +4722,7 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
       (user.role ?? "Viewer") as EditableUserRole,
       Array.isArray(user.permissions) ? user.permissions : undefined
     ),
+    marketingAttributionTags: sanitizeMarketingAttributionTags(user.marketingAttributionTags ?? user.marketing_attribution_tags),
     extraPages: sanitizeActivePageList(Array.isArray(user.extraPages) ? user.extraPages : undefined),
     agentBalanceScopeMode:
       user.agentBalanceScopeMode === "states"
@@ -6866,6 +6889,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [userPhone, setUserPhone] = useState("");
   const [userPassword, setUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<EditableUserRole>("Sales Rep");
+  const [userMarketingTagDraft, setUserMarketingTagDraft] = useState("");
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -8360,6 +8384,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const managerUserCount = users.filter((user) => user.role === "Manager").length;
   const salesUserCount = users.filter((user) => user.role === "Sales Rep").length;
   const inventoryUserCount = users.filter((user) => user.role === "Inventory Manager").length;
+  const marketerUserCount = users.filter((user) => user.role === "Marketer").length;
   const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
@@ -10301,6 +10326,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setupNeedsBuyerId: !hiddenBuyer && ["fb", "ig", "tt", "an", "ms", "th"].includes(sourceKey)
     };
   };
+  const marketerScopeTags = currentRole === "Marketer"
+    ? sanitizeMarketingAttributionTags(currentManagedUser?.marketingAttributionTags ?? realManagedUser?.marketingAttributionTags ?? [])
+    : [];
+  const marketerScopeVariants = Array.from(
+    new Set(
+      marketerScopeTags.flatMap((tag) => {
+        const lower = tag.toLowerCase();
+        const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+        const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+        return [lower, hyphen, underscore].filter(Boolean);
+      })
+    )
+  );
+  const marketingOrderMatchesMarketerTags = (order: TrackedOrder) => {
+    if (currentRole !== "Marketer") return true;
+    if (marketerScopeVariants.length === 0) return false;
+    const context = order.formContext ?? {};
+    const values = [
+      order.utmSource,
+      order.utmCampaign,
+      order.utmMedium,
+      order.utmContent,
+      order.utmTerm,
+      ...["media_buyer", "mediaBuyer", "media_buyer_id", "mediaBuyerId", "buyer", "buyer_id", "buyerId"].map((key) => context[key])
+    ]
+      .map((value) => String(value ?? "").toLowerCase())
+      .filter(Boolean);
+    return marketerScopeVariants.some((tag) => values.some((value) => value.includes(tag)));
+  };
   const marketingCampaignForOrder = (order: TrackedOrder) => {
     const hiddenCampaign = marketingContextText(order, ["campaignId", "campaign_id"]);
     const raw = order.utmCampaign?.trim() || hiddenCampaign || "Unlabelled";
@@ -10310,7 +10364,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       label: campaignCardLabelFor(raw) || marketingPrettyLabel(raw)
     };
   };
-  const marketingFilterBaseOrders = trackedCampaignOrders;
+  const marketingIsPersonalWorkspace = currentRole === "Marketer";
+  const marketingFilterBaseOrders = marketingIsPersonalWorkspace
+    ? trackedCampaignOrders.filter((order) => marketingOrderMatchesMarketerTags(order))
+    : trackedCampaignOrders;
   const marketingAvailableSourceOptions = (() => {
     const options = new Map<string, { key: string; label: string; count: number }>();
     const addOption = (key: string, label: string) => {
@@ -10481,6 +10538,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const marketingOrders = marketingFilteredOrders;
   const marketingDeliveredRows = marketingOrders.filter((order) => (order.status ?? "New") === "Delivered");
   const marketingDeliveredRevenue = marketingDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+  const marketingDeliveryRate = marketingOrders.length > 0 ? Math.round((marketingDeliveredRows.length / marketingOrders.length) * 100) : 0;
   const marketingContribution = marketingMetricForOrders(marketingOrders).contribution;
   const marketingNetAfterMatchedAds = marketingContribution - marketingMatchedAdSpend;
   const marketingSetupRiskCount = marketingRowsByBuyer.filter((row) => row.setupNeedsBuyerId).length;
@@ -17288,11 +17346,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // Manager is included so Sales Teams / Sales Reps pages they're allowed
       // to see actually hydrate with data instead of rendering empty tables.
       const isAdmin = role === "Owner" || role === "Admin" || role === "Manager";
+      const isMarketer = role === "Marketer";
       const fastBootDashboard = activePage === "Dashboard";
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
       const ifAdmin = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
         isAdmin ? p() : Promise.resolve(skipped as Skipped);
+      const ifNotMarketer = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
+        isMarketer ? Promise.resolve(skipped as Skipped) : p();
 
       const hydrateProducts = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -17423,6 +17484,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               (u.role ?? "Viewer") as EditableUserRole,
               Array.isArray(u.permissions) ? u.permissions : undefined
             ),
+            marketingAttributionTags: sanitizeMarketingAttributionTags(u.marketingAttributionTags ?? u.marketing_attribution_tags),
             extraPages: sanitizeActivePageList(Array.isArray(u.extraPages ?? u.extra_pages) ? (u.extraPages ?? u.extra_pages) : undefined),
             agentBalanceScopeMode: (() => {
               const rawScopeMode = u.agentBalanceScopeMode ?? u.agent_balance_scope_mode;
@@ -17521,9 +17583,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         if (fastBootDashboard) {
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
-            productsApi.list(),
+            ifNotMarketer(() => productsApi.list()),
             ordersApi.list({ limit: "5000" }),
-            expensesApi.list(),
+            ifNotMarketer(() => expensesApi.list()),
             notificationsApi.list(),
             cartsApi.list()
           ]);
@@ -17553,10 +17615,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           }
 
           void Promise.allSettled([
-            agentsApi.list(),
-            stockApi.movements({ limit: "500" }),
-            waybillsApi.list(),
-            stockApi.countSessions(),
+            ifNotMarketer(() => agentsApi.list()),
+            ifNotMarketer(() => stockApi.movements({ limit: "500" })),
+            ifNotMarketer(() => waybillsApi.list()),
+            ifNotMarketer(() => stockApi.countSessions()),
             teamApi.list(),
             ifAdmin(() => salesTeamsApi.list()),
             ifAdmin(() => payStructuresApi.list()),
@@ -17603,14 +17665,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiPayrollRuns,
           apiPenalties
         ] = await Promise.allSettled([
-          productsApi.list(),
+          ifNotMarketer(() => productsApi.list()),
           ordersApi.list({ limit: "5000" }),
-          agentsApi.list(),
-          stockApi.movements({ limit: "500" }),
-          expensesApi.list(),
-          waybillsApi.list(),
+          ifNotMarketer(() => agentsApi.list()),
+          ifNotMarketer(() => stockApi.movements({ limit: "500" })),
+          ifNotMarketer(() => expensesApi.list()),
+          ifNotMarketer(() => waybillsApi.list()),
           notificationsApi.list(),
-          stockApi.countSessions(),
+          ifNotMarketer(() => stockApi.countSessions()),
           teamApi.list(),
           cartsApi.list(),
           ifAdmin(() => salesTeamsApi.list()),
@@ -17815,12 +17877,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let cancelled = false;
     let productsReloadTimer: number | null = null;
     const currentUser = auth.getUser();
+    const realtimeIsMarketer = currentUser?.role === "Marketer";
+    const realtimeMarketerVariants = realtimeIsMarketer
+      ? Array.from(new Set(
+          sanitizeMarketingAttributionTags((currentUser as any)?.marketingAttributionTags ?? [])
+            .flatMap((tag) => {
+              const lower = tag.toLowerCase();
+              const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+              const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+              return [lower, hyphen, underscore].filter(Boolean);
+            })
+        ))
+      : [];
+    const realtimeMarketingMatch = (values: unknown[]) => {
+      if (!realtimeIsMarketer) return true;
+      if (realtimeMarketerVariants.length === 0) return false;
+      const textValues = values.map((value) => String(value ?? "").toLowerCase()).filter(Boolean);
+      return realtimeMarketerVariants.some((tag) => textValues.some((value) => value.includes(tag)));
+    };
+    const realtimeOrderMatchesMarketer = (order: TrackedOrder) => {
+      const context = order.formContext ?? {};
+      return realtimeMarketingMatch([
+        order.utmSource,
+        order.utmCampaign,
+        order.utmMedium,
+        order.utmContent,
+        order.utmTerm,
+        ...["media_buyer", "mediaBuyer", "media_buyer_id", "mediaBuyerId", "buyer", "buyer_id", "buyerId"].map((key) => context[key])
+      ]);
+    };
+    const realtimeCartMatchesMarketer = (cart: AbandonedCartRecord) => {
+      const payload = cart.capturePayload ?? {};
+      return realtimeMarketingMatch([
+        cart.source,
+        ...["utm_source", "utm_campaign", "utm_medium", "utm_content", "utm_term", "media_buyer", "mediaBuyer", "media_buyer_id", "mediaBuyerId", "buyer", "buyer_id", "buyerId"].map((key) => payload[key])
+      ]);
+    };
     const syncRealtimeAuth = () => {
       const token = auth.getAccessToken();
       if (!token || !realtimeClient) return Promise.resolve();
       return realtimeClient.realtime.setAuth(token).catch(() => undefined);
     };
     const queueProductsReload = () => {
+      if (realtimeIsMarketer) return;
       if (productsReloadTimer) return;
       productsReloadTimer = window.setTimeout(() => {
         productsReloadTimer = null;
@@ -17833,6 +17932,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     let agentsReloadTimer: number | null = null;
     const queueAgentsReload = () => {
+      if (realtimeIsMarketer) return;
       if (agentsReloadTimer) return;
       agentsReloadTimer = window.setTimeout(() => {
         agentsReloadTimer = null;
@@ -17856,6 +17956,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     let stockMovementsReloadTimer: number | null = null;
     const queueStockMovementsReload = () => {
+      if (realtimeIsMarketer) return;
       if (stockMovementsReloadTimer) return;
       stockMovementsReloadTimer = window.setTimeout(() => {
         stockMovementsReloadTimer = null;
@@ -17890,6 +17991,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     let expensesReloadTimer: number | null = null;
     const queueExpensesReload = () => {
+      if (realtimeIsMarketer) return;
       if (expensesReloadTimer) return;
       expensesReloadTimer = window.setTimeout(() => {
         expensesReloadTimer = null;
@@ -17908,6 +18010,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     let waybillsReloadTimer: number | null = null;
     const queueWaybillsReload = () => {
+      if (realtimeIsMarketer) return;
       if (waybillsReloadTimer) return;
       waybillsReloadTimer = window.setTimeout(() => {
         waybillsReloadTimer = null;
@@ -17936,6 +18039,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextOrder = normalizeTrackedOrder(row);
+      if (realtimeIsMarketer && !realtimeOrderMatchesMarketer(nextOrder)) {
+        setTrackedOrders((prev) => prev.filter((order) => order.id !== nextOrder.id));
+        return;
+      }
       setTrackedOrders((prev) => {
         const index = prev.findIndex((order) => order.id === nextOrder.id);
         if (index === -1) return [nextOrder, ...prev];
@@ -17976,6 +18083,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextCart = normalizeRealtimeCart(row);
+      if (realtimeIsMarketer && !realtimeCartMatchesMarketer(nextCart)) {
+        setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== nextCart.id));
+        return;
+      }
       setAbandonedCarts((prev) => {
         const index = prev.findIndex((cart) => cart.id === nextCart.id);
         if (index === -1) return [nextCart, ...prev];
@@ -24402,6 +24513,7 @@ ${waybillLineItems(w).length > 1
     setUserPhone("");
     setUserPassword("");
     setNewUserRole("Sales Rep");
+    setUserMarketingTagDraft("");
     setNewUserActive(true);
     setModal("addUser");
   };
@@ -24413,6 +24525,7 @@ ${waybillLineItems(w).length > 1
     setUserPhone(user.phone ?? "");
     setUserPassword("");
     setNewUserRole(user.role);
+    setUserMarketingTagDraft((user.marketingAttributionTags ?? []).join(", "));
     setNewUserActive(user.active);
     setModal("editUser");
   };
@@ -24814,6 +24927,11 @@ ${waybillLineItems(w).length > 1
       showToast("Sales reps need a valid phone number so customers can reach them from SMS updates.");
       return;
     }
+    const marketingTags = sanitizeMarketingAttributionTags(userMarketingTagDraft);
+    if (newUserRole === "Marketer" && marketingTags.length === 0) {
+      showToast("Add at least one marketing attribution tag for this marketer.");
+      return;
+    }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail.trim())) {
       showToast("Please enter a valid email address.");
@@ -24846,7 +24964,8 @@ ${waybillLineItems(w).length > 1
         role: newUserRole,
         active: newUserActive,
         created: nowIso(),
-        permissions: defaultPermissions
+        permissions: defaultPermissions,
+        marketingAttributionTags: marketingTags
       }
     ]);
     setUserPhone("");
@@ -24854,7 +24973,7 @@ ${waybillLineItems(w).length > 1
     setShowPasswordFields({});
     closeModal();
     showToast(`User "${userFullName.trim()}" created.`);
-    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), password: userPassword.trim(), role: newUserRole })
+    authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), password: userPassword.trim(), role: newUserRole, marketingAttributionTags: marketingTags })
       .then(() => {
         usersApi.list().then((all: any[]) => {
           const saved = all.find((u: any) => u.email?.toLowerCase() === userEmail.trim().toLowerCase());
@@ -24864,7 +24983,8 @@ ${waybillLineItems(w).length > 1
               id: saved.id,
               phone: saved.phone ?? u.phone,
               lastSeenAt: saved.lastSeenAt ?? saved.last_seen_at ?? u.lastSeenAt,
-              permissions: defaultPermissions
+              permissions: defaultPermissions,
+              marketingAttributionTags: sanitizeMarketingAttributionTags(saved.marketingAttributionTags ?? saved.marketing_attribution_tags ?? marketingTags)
             } : u));
             teamApi.update(saved.id, { permissions: defaultPermissions }).catch(() => undefined);
           }
@@ -24888,6 +25008,11 @@ ${waybillLineItems(w).length > 1
     const userPhoneDigits = userPhone.replace(/\D/g, "");
     if (newUserRole === "Sales Rep" && userPhoneDigits.length < 7) {
       showToast("Sales reps need a valid phone number so customers can reach them from SMS updates.");
+      return;
+    }
+    const marketingTags = sanitizeMarketingAttributionTags(userMarketingTagDraft);
+    if (newUserRole === "Marketer" && marketingTags.length === 0) {
+      showToast("Add at least one marketing attribution tag for this marketer.");
       return;
     }
 
@@ -24920,7 +25045,7 @@ ${waybillLineItems(w).length > 1
     setUsers((value) =>
       value.map((user) =>
         user.id === selectedUser.id
-          ? { ...user, name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive }
+          ? { ...user, name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive, marketingAttributionTags: marketingTags }
           : user
       )
     );
@@ -24928,7 +25053,7 @@ ${waybillLineItems(w).length > 1
     setShowPasswordFields({});
     closeModal();
     showToast(`User "${userFullName.trim()}" updated.`);
-    teamApi.update(_uuId, { name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive }).catch((err: any) => {
+    teamApi.update(_uuId, { name: userFullName.trim(), email: userEmail.trim(), phone: userPhone.trim(), role: newUserRole, active: newUserActive, marketingAttributionTags: marketingTags }).catch((err: any) => {
       setUsers(prevUsers);
       showToast(`Failed to update user: ${err.message}`);
     });
@@ -28003,6 +28128,7 @@ ${waybillLineItems(w).length > 1
     setUserPassword("");
     setShowPasswordFields({});
     setUserFullName("");
+    setUserMarketingTagDraft("");
     setUserEmail("");
     setSalesRepName("");
     setSalesRepEmail("");
@@ -39116,20 +39242,36 @@ ${waybillLineItems(w).length > 1
                 <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                   <div className="max-w-3xl">
                     <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-sky-100">
-                      <TrendingUp className="h-3.5 w-3.5" /> Marketing Performance Center
+                      <TrendingUp className="h-3.5 w-3.5" /> {marketingIsPersonalWorkspace ? "Your Marketing Workspace" : "Marketing Performance Center"}
                     </span>
-                    <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Know which media buyer is actually making money.</h1>
+                    <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">{marketingIsPersonalWorkspace ? "See what your ads are bringing in." : "Know which media buyer is actually making money."}</h1>
                     <p className="mt-2 text-sm font-medium leading-6 text-sky-100/85 sm:text-base">
-                      Compare buyers, campaigns, spend discipline, delivery quality, and delivered profit from the same UTM attribution already captured by your order forms.
+                      {marketingIsPersonalWorkspace
+                        ? "Track your own attributed orders, delivery quality, revenue, and the campaign proof behind your traffic."
+                        : "Compare buyers, campaigns, spend discipline, delivery quality, and delivered profit from the same UTM attribution already captured by your order forms."}
                     </p>
+                    {marketingIsPersonalWorkspace && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {marketerScopeTags.length > 0 ? marketerScopeTags.map((tag) => (
+                          <span key={tag} className="rounded-full border border-cyan-200/40 bg-cyan-200/15 px-3 py-1 text-xs font-black text-cyan-50">{tag}</span>
+                        )) : (
+                          <span className="rounded-full border border-rose-200/50 bg-rose-400/20 px-3 py-1 text-xs font-black text-rose-50">No attribution tags assigned yet</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:w-[560px]">
-                    {[
+                    {(marketingIsPersonalWorkspace ? [
+                      { label: "Tracked orders", value: String(marketingOrders.length) },
+                      { label: "Delivered", value: String(marketingDeliveredRows.length) },
+                      { label: "Delivery rate", value: `${marketingDeliveryRate}%` },
+                      { label: "Revenue", value: formatMoney(marketingDeliveredRevenue), tone: "text-emerald-200" }
+                    ] : [
                       { label: "Tracked orders", value: String(marketingOrders.length) },
                       { label: "Delivered", value: String(marketingDeliveredRows.length) },
                       { label: "Matched spend", value: formatMoney(marketingMatchedAdSpend) },
                       { label: "Net after ads", value: formatMoney(marketingNetAfterMatchedAds), tone: marketingNetAfterMatchedAds >= 0 ? "text-emerald-200" : "text-rose-200" }
-                    ].map((item) => (
+                    ]).map((item) => (
                       <div key={item.label} className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur">
                         <div className="text-[10px] font-black uppercase tracking-[0.16em] text-sky-100/70">{item.label}</div>
                         <div className={`mt-1 text-lg font-black ${item.tone ?? "text-white"}`}>{item.value}</div>
@@ -39154,7 +39296,7 @@ ${waybillLineItems(w).length > 1
                       </button>
                       {showCampaignDateRange && renderDateRangeCalendar("marketing-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                     </div>
-                    {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                    {!marketingIsPersonalWorkspace && renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
                     <select
                       className="!min-h-0 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] sm:w-auto dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                       aria-label="Marketing source"
@@ -39183,14 +39325,21 @@ ${waybillLineItems(w).length > 1
               {dataLoading ? <TableSkeleton cols={6} rows={4} /> : (
                 <div className="space-y-6">
                   <section className="grid grid-cols-2 gap-3 xl:grid-cols-6" aria-label="Marketing summary">
-                    {[
+                    {(marketingIsPersonalWorkspace ? [
+                      { label: "Tracked orders", value: String(marketingOrders.length), helper: "from your buyer tags", icon: TrendingUp, tone: "blue" },
+                      { label: "Delivered", value: String(marketingDeliveredRows.length), helper: "successful orders", icon: BadgeCheck, tone: "emerald" },
+                      { label: "Delivery rate", value: `${marketingDeliveryRate}%`, helper: "delivered / tracked", icon: ShieldCheck, tone: marketingDeliveryRate >= 50 ? "emerald" : "amber" },
+                      { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
+                      { label: "Open orders", value: String(marketingOrders.length - marketingDeliveredRows.length), helper: "pending, failed, or cancelled", icon: Clock, tone: "amber" },
+                      { label: "Campaigns", value: String(marketingRowsByCampaign.length), helper: "matched campaign rows", icon: Users, tone: "purple" }
+                    ] : [
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
                       { label: "Direct contribution", value: formatMoney(marketingContribution), helper: "revenue - COGS - logistics", icon: BadgeCheck, tone: "blue" },
                       { label: "Ad spend logged", value: formatMoney(marketingTotalAdSpend), helper: "Ad Spend expenses in period", icon: Banknote, tone: "amber" },
                       { label: "Unmatched spend", value: formatMoney(marketingUnmatchedAdSpend), helper: "needs buyer/campaign in description", icon: AlertTriangle, tone: marketingUnmatchedAdSpend > 0 ? "rose" : "slate" },
                       { label: "Buyers compared", value: String(marketingRowsByBuyer.length), helper: "grouped by media buyer tag", icon: Users, tone: "purple" },
                       { label: "Tracking risk", value: String(marketingSetupRiskCount), helper: "source is platform, not buyer", icon: ShieldCheck, tone: marketingSetupRiskCount > 0 ? "rose" : "emerald" }
-                    ].map((metric) => {
+                    ]).map((metric) => {
                       const Icon = metric.icon;
                       const toneClass = metric.tone === "emerald" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"
                         : metric.tone === "blue" ? "bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300"
@@ -39214,12 +39363,14 @@ ${waybillLineItems(w).length > 1
                       <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div>
-                            <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">Media Buyer Leaderboard</h2>
-                            <p className="text-sm text-gray-500 dark:text-slate-400">Ranked by delivered contribution after matched ad spend.</p>
+                            <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">{marketingIsPersonalWorkspace ? "Your Marketing Scorecard" : "Media Buyer Leaderboard"}</h2>
+                            <p className="text-sm text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Your attributed orders, delivery outcomes, and delivered value." : "Ranked by delivered contribution after matched ad spend."}</p>
                           </div>
-                          <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 hover:bg-sky-100 sm:w-auto dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200" onClick={() => { setActivePage("Ad Tracking"); setAdTrackingTab("Campaign Orders"); }}>
-                            <ExternalLink className="h-4 w-4" /> Open Ad Tracking
-                          </button>
+                          {!marketingIsPersonalWorkspace && (
+                            <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 hover:bg-sky-100 sm:w-auto dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200" onClick={() => { setActivePage("Ad Tracking"); setAdTrackingTab("Campaign Orders"); }}>
+                              <ExternalLink className="h-4 w-4" /> Open Ad Tracking
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="divide-y divide-gray-100 dark:divide-slate-800/80">
@@ -39234,18 +39385,27 @@ ${waybillLineItems(w).length > 1
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white dark:bg-slate-100 dark:text-slate-950">#{index + 1}</span>
                                     <h3 className="m-0 truncate text-xl font-black text-gray-900 dark:text-slate-100">{row.label}</h3>
-                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${row.quality === "Profitable" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : row.quality === "Losing money" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"}`}>{row.quality}</span>
+                                    {!marketingIsPersonalWorkspace && <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${row.quality === "Profitable" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : row.quality === "Losing money" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"}`}>{row.quality}</span>}
                                     {row.setupNeedsBuyerId && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">Needs buyer tag</span>}
                                   </div>
                                   <p className="m-0 mt-1 text-xs font-semibold text-gray-400">{row.orders} orders · {row.campaignCount} campaign{row.campaignCount === 1 ? "" : "s"} · {row.delivered} delivered · {row.failed} failed/cancelled · {row.pending} pending</p>
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5 lg:min-w-[620px]">
-                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivery</p><strong className="text-gray-900 dark:text-slate-100">{row.deliveryRate}%</strong></div>
-                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Revenue</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</strong></div>
-                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Spend</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</strong></div>
-                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">ROAS / CPA</p><strong className="text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"} · {row.cpa ? formatMoney(row.cpa) : "—"}</strong></div>
-                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Net after ads</p><strong className={rowTone}>{formatMoney(row.netAfterAds)}</strong></div>
-                                </div>
+                                {marketingIsPersonalWorkspace ? (
+                                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:min-w-[560px]">
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivery</p><strong className="text-gray-900 dark:text-slate-100">{row.deliveryRate}%</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Revenue</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivered</p><strong className="text-gray-900 dark:text-slate-100">{row.delivered}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Open / failed</p><strong className="text-gray-900 dark:text-slate-100">{row.pending} · {row.failed}</strong></div>
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5 lg:min-w-[620px]">
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivery</p><strong className="text-gray-900 dark:text-slate-100">{row.deliveryRate}%</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Revenue</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Spend</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">ROAS / CPA</p><strong className="text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"} · {row.cpa ? formatMoney(row.cpa) : "—"}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Net after ads</p><strong className={rowTone}>{formatMoney(row.netAfterAds)}</strong></div>
+                                  </div>
+                                )}
                               </div>
                             </article>
                           );
@@ -39272,32 +39432,43 @@ ${waybillLineItems(w).length > 1
 
                   <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
                     <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
-                      <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">Campaign Profit Drilldown</h2>
-                      <p className="text-sm text-gray-500 dark:text-slate-400">Buyer + campaign view for comparing multiple buyers on one product.</p>
+                      <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">{marketingIsPersonalWorkspace ? "Campaign Delivery Drilldown" : "Campaign Profit Drilldown"}</h2>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Campaign view for the orders attributed to your buyer tags." : "Buyer + campaign view for comparing multiple buyers on one product."}</p>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[1040px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50/80 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
-                            {["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"].map((heading) => (
+                            {(marketingIsPersonalWorkspace ? ["Buyer", "Campaign", "Orders", "Delivered", "Pending", "Failed", "Delivery", "Revenue"] : ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"]).map((heading) => (
                               <th key={heading} className="px-5 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-slate-400">{heading}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                           {marketingRowsByCampaign.length === 0 ? (
-                            <tr><td colSpan={9} className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No campaign rows yet.</td></tr>
+                            <tr><td colSpan={marketingIsPersonalWorkspace ? 8 : 9} className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No campaign rows yet.</td></tr>
                           ) : marketingRowsByCampaign.slice(0, 30).map((row) => (
                             <tr key={row.key} className="hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
                               <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.buyerLabel}</td>
                               <td className="px-5 py-4"><div className="font-bold text-gray-900 dark:text-slate-100">{row.campaignLabel}</div><div className="text-xs text-gray-400">{row.campaignRaw}</div></td>
                               <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.orders}</td>
                               <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.delivered}</td>
-                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.deliveryRate}%</td>
-                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</td>
-                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</td>
-                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"}</td>
-                              <td className={`px-5 py-4 font-black ${row.netAfterAds >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(row.netAfterAds)}</td>
+                              {marketingIsPersonalWorkspace ? (
+                                <>
+                                  <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.pending}</td>
+                                  <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.failed}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.deliveryRate}%</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</td>
+                                </>
+                              ) : (
+                                <>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.deliveryRate}%</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"}</td>
+                                  <td className={`px-5 py-4 font-black ${row.netAfterAds >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(row.netAfterAds)}</td>
+                                </>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -39305,8 +39476,8 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </section>
 
-                  <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-                    <article className="rounded-2xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-500/30 dark:bg-rose-500/10">
+                  <section className={`grid grid-cols-1 gap-4 ${marketingIsPersonalWorkspace ? "" : "xl:grid-cols-[0.8fr_1.2fr]"}`}>
+                    {!marketingIsPersonalWorkspace && <article className="rounded-2xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-500/30 dark:bg-rose-500/10">
                       <h2 className="m-0 flex items-center gap-2 text-base font-black text-rose-900 dark:text-rose-200"><AlertTriangle className="h-5 w-5" /> Spend not matched to a buyer/campaign</h2>
                       <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">{formatMoney(marketingUnmatchedAdSpend)} is logged as Ad Spend in this period but does not clearly mention a buyer or campaign tag.</p>
                       <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
@@ -39323,7 +39494,7 @@ ${waybillLineItems(w).length > 1
                         ))}
                         {marketingUnmatchedAdSpend === 0 && <p className="m-0 text-sm font-semibold text-rose-800/70 dark:text-rose-100/70">All ad spend rows matched cleanly.</p>}
                       </div>
-                    </article>
+                    </article>}
 
                     <article className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
                       <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
@@ -40602,6 +40773,7 @@ ${waybillLineItems(w).length > 1
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block" /> Admins ({percentText(adminUserCount, users.length)})</span>
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> Managers ({percentText(managerUserCount, users.length)})</span>
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Inv. Mgr ({percentText(inventoryUserCount, users.length)})</span>
+                      <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-cyan-400 inline-block" /> Marketers ({percentText(marketerUserCount, users.length)})</span>
                       <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-gray-400 inline-block" /> Viewers ({percentText(viewerUserCount, users.length)})</span>
                     </div>
                   </div>
@@ -50379,6 +50551,8 @@ ${waybillLineItems(w).length > 1
               const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
               const phoneTaken = !!phoneDigits && users.some((u) => u.phone?.replace(/\D/g, "") === phoneDigits);
               const phoneRequired = newUserRole === "Sales Rep";
+              const marketingTags = sanitizeMarketingAttributionTags(userMarketingTagDraft);
+              const marketingTagsRequired = newUserRole === "Marketer";
               const pwd = userPassword;
               const pwdLen = pwd.length;
               const pwdTooShort = pwdLen > 0 && pwdLen < 6;
@@ -50397,6 +50571,7 @@ ${waybillLineItems(w).length > 1
                 && !phoneTaken
                 && !phoneShort
                 && (!phoneRequired || phoneDigits.length >= 7)
+                && (!marketingTagsRequired || marketingTags.length > 0)
                 && !pwdMissing
                 && !pwdTooShort;
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
@@ -50404,6 +50579,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
+                "Marketer": "Sees only their attributed marketing orders, delivery outcomes, and campaign performance.",
                 "Viewer": "Read-only — can see dashboards but not change anything."
               };
               return (
@@ -50475,6 +50651,22 @@ ${waybillLineItems(w).length > 1
                     <p className="text-[11px] text-gray-500">{roleHelper[newUserRole] ?? "Default permissions apply for this role."}</p>
                     <p className="text-[11px] text-gray-400">Fine-tune permissions per user in <strong className="font-semibold text-gray-600">User Management</strong> after creation.</p>
                   </section>
+
+                  {newUserRole === "Marketer" && (
+                    <section className="space-y-3 rounded-2xl border border-cyan-100 bg-cyan-50/70 p-4">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-800">Marketing attribution tags</h4>
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold text-gray-700">Buyer tags <span className="text-red-500">*</span></span>
+                        <textarea
+                          value={userMarketingTagDraft}
+                          onChange={(e) => setUserMarketingTagDraft(e.target.value)}
+                          className={`min-h-[88px] rounded-lg border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 ${marketingTags.length === 0 ? "border-red-200 focus:ring-red-100" : "border-cyan-200 focus:ring-cyan-100"}`}
+                          placeholder="chelsea, chelsea_ads, june_combo"
+                        />
+                      </label>
+                      <p className="m-0 text-[11px] font-medium text-cyan-900/75">Orders/carts match these values in hidden fields or UTM fields, e.g. <code className="rounded bg-white px-1">media_buyer=chelsea</code>. No tags means no order access.</p>
+                    </section>
+                  )}
 
                   {/* Credentials */}
                   <section className="space-y-3">
@@ -50553,6 +50745,9 @@ ${waybillLineItems(w).length > 1
               const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
               const phoneTaken = !!phoneDigits && users.some((u) => u.id !== selectedUser.id && u.phone?.replace(/\D/g, "") === phoneDigits);
               const phoneRequired = newUserRole === "Sales Rep";
+              const marketingTags = sanitizeMarketingAttributionTags(userMarketingTagDraft);
+              const selectedMarketingTags = sanitizeMarketingAttributionTags(selectedUser.marketingAttributionTags ?? []);
+              const marketingTagsRequired = newUserRole === "Marketer";
               const pwd = userPassword;
               const pwdLen = pwd.length;
               const pwdTooShort = pwdLen > 0 && pwdLen < 6;
@@ -50568,6 +50763,7 @@ ${waybillLineItems(w).length > 1
                 || userPhone.trim() !== (selectedUser.phone ?? "")
                 || newUserRole !== selectedUser.role
                 || newUserActive !== selectedUser.active
+                || marketingTags.join("|") !== selectedMarketingTags.join("|")
                 || pwdLen > 0;
               const canSave = !!userFullName.trim()
                 && !!userEmail.trim()
@@ -50576,6 +50772,7 @@ ${waybillLineItems(w).length > 1
                 && !phoneTaken
                 && !phoneShort
                 && (!phoneRequired || phoneDigits.length >= 7)
+                && (!marketingTagsRequired || marketingTags.length > 0)
                 && !pwdTooShort
                 && dirty;
               const initial = (selectedUser.name || "?").charAt(0).toUpperCase();
@@ -50585,6 +50782,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
+                "Marketer": "Sees only their attributed marketing orders, delivery outcomes, and campaign performance.",
                 "Viewer": "Read-only — can see dashboards but not change anything."
               };
               return (
@@ -50665,6 +50863,22 @@ ${waybillLineItems(w).length > 1
                     <p className="text-[11px] text-gray-500">{roleHelper[newUserRole] ?? "Default permissions apply for this role."}</p>
                     {isOwner && <p className="text-[11px] text-amber-700">The Owner role can't be changed from here.</p>}
                   </section>
+
+                  {newUserRole === "Marketer" && (
+                    <section className="space-y-3 rounded-2xl border border-cyan-100 bg-cyan-50/70 p-4">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-800">Marketing attribution tags</h4>
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold text-gray-700">Buyer tags <span className="text-red-500">*</span></span>
+                        <textarea
+                          value={userMarketingTagDraft}
+                          onChange={(e) => setUserMarketingTagDraft(e.target.value)}
+                          className={`min-h-[88px] rounded-lg border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 ${marketingTags.length === 0 ? "border-red-200 focus:ring-red-100" : "border-cyan-200 focus:ring-cyan-100"}`}
+                          placeholder="chelsea, chelsea_ads, june_combo"
+                        />
+                      </label>
+                      <p className="m-0 text-[11px] font-medium text-cyan-900/75">Use the same values from the marketer's tracked links. Example: <code className="rounded bg-white px-1">media_buyer=chelsea</code>.</p>
+                    </section>
+                  )}
 
                   {/* Password */}
                   <section className="space-y-3">

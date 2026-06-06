@@ -7,6 +7,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
+import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 
 const router = Router();
 
@@ -116,7 +117,8 @@ const sanitizeSmartStockRules = (value: unknown) => {
 const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) => ({
   ...row,
   permissions: sanitizeStoredPermissionList(row.permissions),
-  extra_pages: sanitizeStoredPageList(row.extra_pages)
+  extra_pages: sanitizeStoredPageList(row.extra_pages),
+  marketing_attribution_tags: sanitizeMarketingAttributionTags(row.marketing_attribution_tags)
 });
 
 const touchUserPresence = async (userId: string) => {
@@ -238,7 +240,7 @@ router.post("/login", async (req, res) => {
   // Fetch profile to return role etc.
   const { data: profile } = await supabase
     .from("users")
-    .select("id, org_id, name, role, active")
+    .select("id, org_id, name, role, active, marketing_attribution_tags")
     .eq("id", data.user.id)
     .single();
 
@@ -264,7 +266,8 @@ router.post("/login", async (req, res) => {
       orgId: profile.org_id,
       name: profile.name,
       role: profile.role,
-      email: data.user.email
+      email: data.user.email,
+      marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
     }
   });
 });
@@ -524,11 +527,17 @@ router.post("/bump-cache-version", requireAuth, async (req, res) => {
 
 // ── GET /api/auth/team ────────────────────────────────────
 router.get("/team", requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  let query = supabase
     .from("users")
-    .select("id, name, email, phone, role, active, created_at, round_robin_position, round_robin_excluded, last_seen_at, permissions, extra_pages, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids")
+    .select("id, name, email, phone, role, active, created_at, round_robin_position, round_robin_excluded, last_seen_at, permissions, extra_pages, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
     .eq("org_id", req.user!.orgId)
     .order("created_at");
+
+  if (req.user!.role === "Marketer") {
+    query = query.eq("id", req.user!.id);
+  }
+
+  const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   try {
     const assignedAgentIdsByUser = await loadAssignedAgentIdsByUser(req.user!.orgId, (data ?? []).map((row) => row.id));
@@ -549,7 +558,7 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   }
   // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
   // Allow-list the DB column names and accept either casing on input.
-  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"] as const;
+  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"] as const;
   const VALID_AGENT_BALANCE_SCOPE_MODES = ["all", "states", "agents", "assigned_agents"] as const;
   if (req.body.role !== undefined && !VALID_ROLES.includes(req.body.role)) {
     res.status(400).json({ error: { role: [`Invalid role. Must be one of: ${VALID_ROLES.join(", ")}.`] } });
@@ -570,6 +579,11 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     res.status(400).json({ error: { agentBalanceAgentIds: ["Agent scope must be an array of agent IDs."] } });
     return;
   }
+  const incomingMarketingTags = req.body.marketingAttributionTags ?? req.body.marketing_attribution_tags;
+  if (incomingMarketingTags !== undefined && !Array.isArray(incomingMarketingTags) && typeof incomingMarketingTags !== "string") {
+    res.status(400).json({ error: { marketingAttributionTags: ["Marketing tags must be a comma-separated string or an array of tags."] } });
+    return;
+  }
   const allowed: Record<string, string> = {
     name: "name",
     role: "role",
@@ -585,6 +599,8 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     agent_balance_state_scope: "agent_balance_state_scope",
     agentBalanceAgentIds: "agent_balance_agent_ids",
     agent_balance_agent_ids: "agent_balance_agent_ids",
+    marketingAttributionTags: "marketing_attribution_tags",
+    marketing_attribution_tags: "marketing_attribution_tags",
     roundRobinPosition: "round_robin_position",
     round_robin_position: "round_robin_position",
     roundRobinExcluded: "round_robin_excluded",
@@ -599,6 +615,9 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   }
   if (updates.extra_pages !== undefined) {
     updates.extra_pages = sanitizeStoredPageList(updates.extra_pages);
+  }
+  if (updates.marketing_attribution_tags !== undefined) {
+    updates.marketing_attribution_tags = sanitizeMarketingAttributionTags(updates.marketing_attribution_tags);
   }
   const { data, error } = await supabase
     .from("users")
@@ -759,7 +778,9 @@ router.post("/invite", requireAuth, async (req, res) => {
     email: z.string().email().max(254),
     phone: z.string().trim().max(40).optional(),
     password: z.string().min(8).max(200),
-    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Viewer"])
+    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"]),
+    marketingAttributionTags: z.union([z.array(z.string()), z.string()]).optional(),
+    marketing_attribution_tags: z.union([z.array(z.string()), z.string()]).optional()
   });
 
   const parsed = Schema.safeParse(req.body);
@@ -768,6 +789,7 @@ router.post("/invite", requireAuth, async (req, res) => {
     return;
   }
   const { name, email, phone, password, role } = parsed.data;
+  const marketingAttributionTags = sanitizeMarketingAttributionTags(parsed.data.marketingAttributionTags ?? parsed.data.marketing_attribution_tags);
 
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
@@ -787,7 +809,8 @@ router.post("/invite", requireAuth, async (req, res) => {
       name,
       email,
       phone: phone?.trim() || null,
-      role
+      role,
+      marketing_attribution_tags: marketingAttributionTags
     });
   if (profileError) {
     // Rollback the auth user so the email can be reused on retry.
