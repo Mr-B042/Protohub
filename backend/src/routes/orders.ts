@@ -390,7 +390,7 @@ const OrderSchema = z.object({
   timelineNotes:  z.array(TimelineNoteSchema).max(200).optional()
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = OrderSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -718,7 +718,7 @@ const StatusSchema = z.object({
   agentLocationId: z.string().uuid().optional().nullable()
 });
 
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -926,7 +926,7 @@ router.patch("/:id/status", async (req, res) => {
 
   await logRemittanceDelta({
     orgId: req.user!.orgId,
-    orderId: req.params.id,
+    orderId: String(req.params.id),
     previousAmountRemitted: existing.amount_remitted,
     nextAmountRemitted: (data as any).amount_remitted,
     userId: req.user!.id,
@@ -951,11 +951,11 @@ router.patch("/:id/status", async (req, res) => {
   });
 
   if (["Delivered", "Cancelled", "Failed"].includes(status)) {
-    await cancelActiveFollowUpTasksForOrder(req.user!.orgId, req.params.id, `Order moved to ${status}.`).catch(() => undefined);
+    await cancelActiveFollowUpTasksForOrder(req.user!.orgId, String(req.params.id), `Order moved to ${status}.`).catch(() => undefined);
   } else {
     await syncOrderFollowUpTask({
       orgId: req.user!.orgId,
-      orderId: req.params.id,
+      orderId: String(req.params.id),
       assignedRepId: data.assigned_rep_id ?? null,
       status: data.status ?? status,
       scheduledDate: scheduledDate !== undefined ? scheduledDate : data.scheduled_date ?? null,
@@ -1505,7 +1505,7 @@ router.post("/open-remittance", requireRole("Owner"), async (req, res) => {
   res.json({ opened: (data ?? []).length });
 });
 
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
@@ -1897,7 +1897,7 @@ router.patch("/:id", async (req, res) => {
 
   await logRemittanceDelta({
     orgId: req.user!.orgId,
-    orderId: req.params.id,
+    orderId: String(req.params.id),
     previousAmountRemitted: current.amount_remitted,
     nextAmountRemitted: (data as any).amount_remitted,
     userId: req.user!.id,
@@ -1919,7 +1919,7 @@ router.patch("/:id", async (req, res) => {
   });
   await syncOrderFollowUpTask({
     orgId: req.user!.orgId,
-    orderId: req.params.id,
+    orderId: String(req.params.id),
     assignedRepId: data.assigned_rep_id ?? null,
     status: data.status ?? null,
     scheduledDate: updates.scheduled_date !== undefined ? updates.scheduled_date as string | null : data.scheduled_date ?? null,
@@ -2056,7 +2056,7 @@ const ContactAttemptSchema = z.object({
   nextActionNote: z.string().trim().max(1000).optional().nullable()
 });
 
-router.post("/:id/contact-attempts", async (req, res) => {
+router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = ContactAttemptSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -2080,7 +2080,7 @@ router.post("/:id/contact-attempts", async (req, res) => {
   try {
     const attempt = await recordContactAttemptAndNextAction({
       orgId: req.user!.orgId,
-      orderId: req.params.id,
+      orderId: String(req.params.id),
       repId: req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
       actorName: req.user!.name,
       channel: parsed.data.channel,

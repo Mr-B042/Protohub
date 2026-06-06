@@ -1585,7 +1585,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
   ],
   "Marketer": [
-    "Marketing", "Notifications", "Settings"
+    "Orders", "Marketing", "Embed Form", "Notifications", "Settings"
   ],
   "Viewer": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
@@ -6955,7 +6955,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager")
       ? null
       : (currentManagedUser?.id ?? authUser?.id ?? null);
-  const canMutate = currentRole !== "Viewer";
+  const canMutate = currentRole !== "Viewer" && currentRole !== "Marketer";
+  const canUseAdminOrderActions = currentRole !== "Sales Rep" && currentRole !== "Marketer";
+  const canContactCustomers = currentRole !== "Marketer";
 
   useEffect(() => {
     if (settingsPanel === "email" && !canManageMessagingSettings) {
@@ -6994,6 +6996,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showDeliveryQuestion, setShowDeliveryQuestion] = useState(false);
   const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [showCommitmentNotice, setShowCommitmentNotice] = useState(false);
+  useEffect(() => {
+    if (currentRole === "Marketer" && embedTab !== "Generate") {
+      setEmbedTab("Generate");
+    }
+  }, [currentRole, embedTab]);
   // ── Embed Form parity (Ordello) ─────────────────────────
   const [addressRequired, setAddressRequired] = useState(true);
   const [cityRequired, setCityRequired] = useState(true);
@@ -9162,6 +9169,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const catalogProducts = products.filter((product) => !isComboLibraryProduct(product));
   const comboLibraryProducts = products.filter((product) => isComboLibraryProduct(product));
   const readyEmbedProducts = catalogProducts.filter((product) => product.active && !isTemporaryProductId(product.id) && persistedActiveProductPackages(product).length > 0);
+  const isMarketerEmbedMode = currentRole === "Marketer";
+  const marketerEmbedTags = isMarketerEmbedMode
+    ? sanitizeMarketingAttributionTags(currentManagedUser?.marketingAttributionTags ?? realManagedUser?.marketingAttributionTags ?? [])
+    : [];
+  const primaryMarketerEmbedTag = marketerEmbedTags[0] ?? "";
+  const visibleEmbedTabs = isMarketerEmbedMode ? (["Generate"] as EmbedTab[]) : embedTabs;
   const generatedProduct = products.find((product) => product.id === generatedProductId) ?? readyEmbedProducts[0];
   const previewProduct = generatedProduct ?? readyEmbedProducts[0];
   const previewPackages = previewProduct ? persistedActiveProductPackages(previewProduct) : [];
@@ -9478,6 +9491,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       product: product.id,
       currency: currencyOverride ?? productEmbedCurrency(product)
     });
+    if (isMarketerEmbedMode && primaryMarketerEmbedTag) {
+      const marketerId = currentManagedUser?.id ?? authUser?.id ?? "";
+      params.set("media_buyer", primaryMarketerEmbedTag);
+      params.set("buyer", primaryMarketerEmbedTag);
+      if (marketerId) params.set("media_buyer_id", marketerId);
+      params.set("utm_content", slugify(primaryMarketerEmbedTag));
+    }
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
@@ -17583,7 +17603,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         if (fastBootDashboard) {
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
-            ifNotMarketer(() => productsApi.list()),
+            productsApi.list(),
             ordersApi.list({ limit: "5000" }),
             ifNotMarketer(() => expensesApi.list()),
             notificationsApi.list(),
@@ -17665,7 +17685,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiPayrollRuns,
           apiPenalties
         ] = await Promise.allSettled([
-          ifNotMarketer(() => productsApi.list()),
+          productsApi.list(),
           ordersApi.list({ limit: "5000" }),
           ifNotMarketer(() => agentsApi.list()),
           ifNotMarketer(() => stockApi.movements({ limit: "500" })),
@@ -17919,7 +17939,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return realtimeClient.realtime.setAuth(token).catch(() => undefined);
     };
     const queueProductsReload = () => {
-      if (realtimeIsMarketer) return;
       if (productsReloadTimer) return;
       productsReloadTimer = window.setTimeout(() => {
         productsReloadTimer = null;
@@ -21164,6 +21183,10 @@ ${waybillLineItems(w).length > 1
       showToast("At least one package is still syncing. Wait a moment before sharing this order form.");
       return;
     }
+    if (isMarketerEmbedMode && !primaryMarketerEmbedTag) {
+      showToast("Ask the Owner to assign your marketer tag before sharing links.");
+      return;
+    }
     if (isEmbedSyncing(product.id)) {
       return;
     }
@@ -21174,7 +21197,7 @@ ${waybillLineItems(w).length > 1
       setGeneratedProductId(product.id);
       setGeneratedEmbedProductIds((value) => (value.includes(product.id) ? value : [...value, product.id]));
       setEmbedCodeTabsByProduct((value) => ({ ...value, [product.id]: "Direct Link" }));
-      showToast(`${product.name} embed URL generated.`);
+      showToast(isMarketerEmbedMode ? `${product.name} personal tracked link generated.` : `${product.name} embed URL generated.`);
     } catch (error: any) {
       showToast(error?.message ?? "This product is still syncing to the public order form. Please try again in a moment.");
     } finally {
@@ -30174,19 +30197,21 @@ ${waybillLineItems(w).length > 1
                           )}
 
                           <div className="relative mt-4 grid grid-cols-2 gap-3">
+                            {canContactCustomers && (
+                              <button
+                                className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#25D366] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(37,211,102,0.28)] transition-all hover:-translate-y-0.5 hover:bg-[#1ebe57]"
+                                onClick={() => openWhatsAppForOrder(order)}
+                              >
+                                <WhatsAppIcon className="w-4 h-4" /> WhatsApp
+                              </button>
+                            )}
                             <button
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#25D366] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(37,211,102,0.28)] transition-all hover:-translate-y-0.5 hover:bg-[#1ebe57]"
-                              onClick={() => openWhatsAppForOrder(order)}
-                            >
-                              <WhatsAppIcon className="w-4 h-4" /> WhatsApp
-                            </button>
-                            <button
-                              className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#1F8FE0] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)] transition-all hover:-translate-y-0.5 hover:bg-blue-700"
+                              className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#1F8FE0] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)] transition-all hover:-translate-y-0.5 hover:bg-blue-700 ${canContactCustomers ? "" : "col-span-2"}`}
                               onClick={() => openScopedOrderDetail(order)}
                             >
                               <Eye className="w-4 h-4" /> Details
                             </button>
-                            {!isTerminal && currentRole !== "Sales Rep" && (
+                            {!isTerminal && canUseAdminOrderActions && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-sm font-black transition-all hover:-translate-y-0.5 ${orderSecondaryButtonClass}`}
                                 onClick={() => openAdminOrderEditRoute(order.id)}
@@ -30194,7 +30219,7 @@ ${waybillLineItems(w).length > 1
                                 <Pencil className="w-4 h-4" /> Edit
                               </button>
                             )}
-                            {currentRole !== "Sales Rep" && (
+                            {canUseAdminOrderActions && (
                               <button
                                 className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-sm font-black transition-all hover:-translate-y-0.5 ${orderDangerButtonClass} ${isTerminal ? "col-span-2" : ""}`}
                                 onClick={() => openAdminOrderDeleteRoute(order.id)}
@@ -30214,7 +30239,7 @@ ${waybillLineItems(w).length > 1
                   <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
-                        {currentRole !== "Sales Rep" && (
+                        {canUseAdminOrderActions && (
                           <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
                             <input
                               type="checkbox"
@@ -30246,7 +30271,7 @@ ${waybillLineItems(w).length > 1
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={currentRole === "Sales Rep" ? 8 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
+                        <tr><td colSpan={canUseAdminOrderActions ? 9 : 8} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const sourceMeta = orderDisplaySourceFor(order);
@@ -30257,7 +30282,7 @@ ${waybillLineItems(w).length > 1
                           const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
-                              {currentRole !== "Sales Rep" && (
+                              {canUseAdminOrderActions && (
                                 <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
                                   <input
                                     type="checkbox"
@@ -30321,20 +30346,22 @@ ${waybillLineItems(w).length > 1
                               <td className={`px-4 py-3.5 text-sm whitespace-nowrap ${orderMutedTextClass}`}>{formatOrderCreatedAt(order)}</td>
                               <td className="px-4 py-3.5">
                                 <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md bg-[#25D366] text-white hover:bg-[#1ebe57] transition-colors"
-                                    title="Open WhatsApp"
-                                    onClick={() => openWhatsAppForOrder(order)}
-                                  >
-                                    <WhatsAppIcon className="w-4 h-4" />
-                                  </button>
+                                  {canContactCustomers && (
+                                    <button
+                                      className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md bg-[#25D366] text-white hover:bg-[#1ebe57] transition-colors"
+                                      title="Open WhatsApp"
+                                      onClick={() => openWhatsAppForOrder(order)}
+                                    >
+                                      <WhatsAppIcon className="w-4 h-4" />
+                                    </button>
+                                  )}
                                   <button
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
                                     onClick={() => openScopedOrderDetail(order)}
                                   >
                                     <Eye className="w-3.5 h-3.5" /> Details
                                   </button>
-                                  {!isTerminal && currentRole !== "Sales Rep" && (
+                                  {!isTerminal && canUseAdminOrderActions && (
                                     <button
                                       className={`!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md transition-colors ${orderGhostButtonClass}`}
                                       title="Edit"
@@ -30343,7 +30370,7 @@ ${waybillLineItems(w).length > 1
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                   )}
-                                  {currentRole !== "Sales Rep" && (
+                                  {canUseAdminOrderActions && (
                                     <button
                                       className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-red-500/10 transition-colors"
                                       title="Delete"
@@ -41173,11 +41200,11 @@ ${waybillLineItems(w).length > 1
               </div>
               <header className="flex flex-col gap-1">
                 <h1 className="text-2xl font-bold text-[#1F8FE0]">Embed Form Generator</h1>
-                <p className="text-sm font-medium text-gray-500">Customize and embed your order form on any website</p>
+                <p className="text-sm font-medium text-gray-500">{isMarketerEmbedMode ? "Generate your own tracked order links. Orders from these links attach to your marketer account automatically." : "Customize and embed your order form on any website"}</p>
               </header>
 
               <nav className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-fit overflow-x-auto no-scrollbar max-w-full" role="tablist" aria-label="Embed form sections">
-                {embedTabs.map((tab) => (
+                {visibleEmbedTabs.map((tab) => (
                   <button
                     key={tab}
                     role="tab"
@@ -41195,6 +41222,20 @@ ${waybillLineItems(w).length > 1
                   </button>
                 ))}
               </nav>
+
+              {isMarketerEmbedMode && (
+                <section className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-950">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="m-0 font-black">Your links are automatically tracked</p>
+                      <p className="m-0 mt-1 text-cyan-800">Copy any link below. You do not need to add tracking parameters manually; the form will stamp your buyer tag into every order and abandoned cart.</p>
+                    </div>
+                    <span className="inline-flex w-fit items-center rounded-full bg-white px-3 py-1 text-xs font-black text-cyan-700 shadow-sm">
+                      {primaryMarketerEmbedTag ? `Tag: ${primaryMarketerEmbedTag}` : "No tag assigned yet"}
+                    </span>
+                  </div>
+                </section>
+              )}
 
               {embedTab === "Create Order Form" ? (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-5">
@@ -41768,16 +41809,22 @@ ${waybillLineItems(w).length > 1
                 <div className="space-y-4">
                   <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-900">
                     <Info className="w-4 h-4 mt-0.5 text-blue-500 shrink-0" />
-                    <p><strong className="text-blue-700">How it works:</strong> Only products with active packages can have embed forms. Create packages for your products in the{" "}
-                      <button className="underline font-semibold hover:text-blue-700" onClick={() => { setActivePage("Inventory"); setInventoryView("dashboard"); }}>Inventory</button> section first.</p>
+                    {isMarketerEmbedMode ? (
+                      <p><strong className="text-blue-700">How it works:</strong> Pick a product, generate your personal link, then use that link in ads or landing pages. Orders and abandoned carts from the link are tied to your marketer tag automatically.</p>
+                    ) : (
+                      <p><strong className="text-blue-700">How it works:</strong> Only products with active packages can have embed forms. Create packages for your products in the{" "}
+                        <button className="underline font-semibold hover:text-blue-700" onClick={() => { setActivePage("Inventory"); setInventoryView("dashboard"); }}>Inventory</button> section first.</p>
+                    )}
                   </div>
 
                   {readyEmbedProducts.length === 0 ? (
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center py-16 gap-4">
                       <span className="text-gray-300"><EmptyProductsIcon /></span>
                       <h2 className="text-base font-bold text-gray-700">No Products Found</h2>
-                      <p className="text-sm text-gray-400">Create products and packages in the inventory section first</p>
-                      <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => { setActivePage("Inventory"); setInventoryView("dashboard"); }}>Go to Inventory</button>
+                      <p className="text-sm text-gray-400">{isMarketerEmbedMode ? "Ask the Owner to activate product packages for sharing." : "Create products and packages in the inventory section first"}</p>
+                      {!isMarketerEmbedMode && (
+                        <button className="px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => { setActivePage("Inventory"); setInventoryView("dashboard"); }}>Go to Inventory</button>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -41809,7 +41856,9 @@ ${waybillLineItems(w).length > 1
                               </div>
                               <div className="flex flex-wrap items-center gap-2 shrink-0">
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-xs font-semibold"><PackageCheck className="w-3 h-3" /> {packages.length} {packages.length === 1 ? "package" : "packages"}</span>
-                                <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openPackagesView(product)}>Manage Packages</button>
+                                {!isMarketerEmbedMode && (
+                                  <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors" onClick={() => openPackagesView(product)}>Manage Packages</button>
+                                )}
                               </div>
                             </div>
 
@@ -41817,11 +41866,13 @@ ${waybillLineItems(w).length > 1
                             <div className="px-5 py-5 space-y-4">
                               {!productGenerated ? (
                                 <>
-                                  <label className="flex flex-col gap-1">
-                                    <span className="text-sm font-semibold text-gray-700">Redirect URL <span className="font-normal text-gray-400">(Optional)</span></span>
-                                    <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
-                                    <span className="text-xs text-gray-400">Optional URL to redirect the user to after a successful order.</span>
-                                  </label>
+                                  {!isMarketerEmbedMode && (
+                                    <label className="flex flex-col gap-1">
+                                      <span className="text-sm font-semibold text-gray-700">Redirect URL <span className="font-normal text-gray-400">(Optional)</span></span>
+                                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
+                                      <span className="text-xs text-gray-400">Optional URL to redirect the user to after a successful order.</span>
+                                    </label>
+                                  )}
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Select Currency</span>
                                     <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full" value={selectedCurrencyCode} onChange={(e) => setEmbedCurrencyByProduct((v) => ({ ...v, [product.id]: e.target.value as ProductCurrencyCode }))}>
@@ -50579,7 +50630,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
-                "Marketer": "Sees only their attributed marketing orders, delivery outcomes, and campaign performance.",
+                "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only — can see dashboards but not change anything."
               };
               return (
@@ -50782,7 +50833,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
-                "Marketer": "Sees only their attributed marketing orders, delivery outcomes, and campaign performance.",
+                "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only — can see dashboards but not change anything."
               };
               return (

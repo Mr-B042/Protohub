@@ -21,6 +21,43 @@ const packageMediaImageSchema = z.union([
   z.literal("")
 ]).optional();
 
+const productForMarketer = (product: any) => ({
+  id: product.id,
+  name: product.name,
+  description: product.description ?? "",
+  sku: "",
+  active: product.active !== false,
+  reorder_point: 0,
+  warehouse_stock: 0,
+  agent_stock: 0,
+  units_sold: 0,
+  package_description: product.package_description ?? "",
+  available_states: product.available_states ?? [],
+  catalog_type: product.catalog_type ?? "standard",
+  form_custom_text: product.form_custom_text ?? "",
+  created_at: product.created_at,
+  pricings: [],
+  packages: (Array.isArray(product.packages) ? product.packages : [])
+    .filter((pkg: any) => pkg?.active !== false)
+    .map((pkg: any) => ({
+      id: pkg.id,
+      name: pkg.name,
+      description: pkg.description ?? "",
+      quantity: Number(pkg.quantity ?? 1),
+      price: Number(pkg.price ?? 0),
+      currency: pkg.currency ?? "NGN",
+      display_order: Number(pkg.display_order ?? 0),
+      active: pkg.active !== false,
+      state_filter_mode: pkg.state_filter_mode ?? "all",
+      state_restrictions: Array.isArray(pkg.state_restrictions) ? pkg.state_restrictions : [],
+      requires_state_stock: pkg.requires_state_stock === true,
+      featured_combo_card: pkg.featured_combo_card === true,
+      unit_singular: pkg.unit_singular ?? "",
+      unit_plural: pkg.unit_plural ?? "",
+      attribution_product_id: pkg.attribution_product_id ?? null
+    }))
+});
+
 // ── GET /api/products ─────────────────────────────────────
 router.get("/", async (req, res) => {
   const { data, error } = await supabase
@@ -34,7 +71,7 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false });
 
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  res.json(req.user!.role === "Marketer" ? (data ?? []).map(productForMarketer) : data);
 });
 
 // ── POST /api/products ────────────────────────────────────
@@ -152,6 +189,10 @@ const withoutPackageOfferSyncColumns = (payload: Record<string, unknown>) => {
 // ── GET /api/products/:id/pricings ────────────────────────
 router.get("/:id/pricings", async (req, res) => {
   if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
+  if (req.user!.role === "Marketer") {
+    res.json([]);
+    return;
+  }
   const { data, error } = await supabase
     .from("product_pricings")
     .select("*")
@@ -213,12 +254,17 @@ router.post("/:id/pricings",
 
 // ── GET /api/products/:id/packages ───────────────────────
 router.get("/:id/packages", async (req, res) => {
+  if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
   const { data, error } = await supabase
     .from("product_packages")
     .select("*")
     .eq("product_id", req.params.id)
     .order("display_order");
   if (error) { res.status(500).json({ error: error.message }); return; }
+  if (req.user!.role === "Marketer") {
+    res.json((data ?? []).filter((pkg: any) => pkg?.active !== false).map((pkg: any) => productForMarketer({ packages: [pkg] }).packages[0]));
+    return;
+  }
   res.json(data);
 });
 
