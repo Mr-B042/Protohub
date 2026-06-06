@@ -39578,17 +39578,21 @@ ${waybillLineItems(w).length > 1
 
                     <aside className="space-y-4">
                       <article className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-                        <h2 className="m-0 flex items-center gap-2 text-base font-black"><Info className="h-5 w-5" /> Tracking rules that make this accurate</h2>
+                        <h2 className="m-0 flex items-center gap-2 text-base font-black"><Info className="h-5 w-5" /> How tracking works now</h2>
                         <div className="mt-3 space-y-3 text-sm font-semibold leading-6">
-                          <p className="m-0">Use a unique buyer tag in links: <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">media_buyer=chelsea</code>.</p>
-                          <p className="m-0">Keep platform separate: <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">utm_source=facebook</code>, campaign in <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">utm_campaign</code>.</p>
-                          <p className="m-0">When logging Ad Spend, put the buyer/campaign name in the description so spend can match cleanly.</p>
+                          <p className="m-0">Do not hand-write tracking tags. Give each marketer their generated product link from Embed Form.</p>
+                          <p className="m-0">If one product has many landing pages, paste each landing page URL there and the app saves a separate tracked link automatically.</p>
+                          <p className="m-0">When logging Ad Spend, choose the marketer/campaign if available, or include the same landing page/campaign name in the note.</p>
                         </div>
                       </article>
                       <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#081119]">
-                        <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-100">Recommended link format</h2>
-                        <pre className="mt-3 whitespace-pre-wrap break-all rounded-2xl bg-slate-950 p-4 text-xs font-semibold leading-5 text-sky-100">?media_buyer=chelsea&utm_source=facebook&utm_campaign=edge_brusher_june&utm_content=video_01</pre>
-                        <p className="m-0 mt-3 text-sm font-medium text-gray-500 dark:text-slate-400">If two buyers run the same product, this separates them even when both use Facebook.</p>
+                        <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-100">Simple rule</h2>
+                        <div className="mt-3 rounded-2xl bg-slate-950 p-4 text-sm font-bold leading-6 text-sky-100">
+                          Generated link used → orders are tracked to that marketer.
+                          <br />
+                          Landing page URL added → orders are also tracked to that page.
+                        </div>
+                        <p className="m-0 mt-3 text-sm font-medium text-gray-500 dark:text-slate-400">This keeps Facebook buyer A, Facebook buyer B, and different landing pages separate without manual URL work.</p>
                       </article>
                     </aside>
                   </section>
