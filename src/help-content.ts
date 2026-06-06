@@ -718,7 +718,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   "Marketing": {
     title: "Marketing — Help",
     intro:
-      "Compare media buyers and campaigns by delivered profit, not just raw orders. This page uses UTM attribution, hidden buyer fields, delivered order outcomes, product costs, delivery fees, bonuses, and logged ad spend.",
+      "Compare media buyers and campaigns by delivered profit, not just raw orders. This page uses UTM attribution, hidden buyer fields, delivered order outcomes, product costs, delivery fees, and logged ad spend.",
     sections: [
       {
         heading: "What this page answers",

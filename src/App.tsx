@@ -10382,8 +10382,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const failed = orders.filter((order) => ["Failed", "Cancelled"].includes(order.status ?? "New"));
     const deliveredRevenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logistics = delivered.reduce((sum, order) => sum + orderLogisticsCost(order), 0);
-    const bonus = recognizedBonusTotalForRows(delivered);
+    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const bonus = 0;
     return {
       orders: orders.length,
       delivered: delivered.length,
@@ -39185,7 +39185,7 @@ ${waybillLineItems(w).length > 1
                   <section className="grid grid-cols-2 gap-3 xl:grid-cols-6" aria-label="Marketing summary">
                     {[
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
-                      { label: "Direct contribution", value: formatMoney(marketingContribution), helper: "revenue - COGS - logistics - bonus", icon: BadgeCheck, tone: "blue" },
+                      { label: "Direct contribution", value: formatMoney(marketingContribution), helper: "revenue - COGS - logistics", icon: BadgeCheck, tone: "blue" },
                       { label: "Ad spend logged", value: formatMoney(marketingTotalAdSpend), helper: "Ad Spend expenses in period", icon: Banknote, tone: "amber" },
                       { label: "Unmatched spend", value: formatMoney(marketingUnmatchedAdSpend), helper: "needs buyer/campaign in description", icon: AlertTriangle, tone: marketingUnmatchedAdSpend > 0 ? "rose" : "slate" },
                       { label: "Buyers compared", value: String(marketingRowsByBuyer.length), helper: "grouped by media buyer tag", icon: Users, tone: "purple" },
