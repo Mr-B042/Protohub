@@ -41845,6 +41845,8 @@ ${waybillLineItems(w).length > 1
                         const selectedCodeTab = productEmbedCodeTab(product.id);
                         const selectedCurrencyCode = productEmbedCurrency(product);
                         const redirectUrl = productEmbedRedirect(product);
+                        const marketerLinkReady = !isMarketerEmbedMode || Boolean(primaryMarketerEmbedTag);
+                        const directUrlValue = marketerLinkReady ? embedUrl : "Owner must assign your marketer tag first";
                         return (
                           <article key={product.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                             {/* Card header */}
@@ -41864,8 +41866,28 @@ ${waybillLineItems(w).length > 1
 
                             {/* Card body */}
                             <div className="px-5 py-5 space-y-4">
-                              {!productGenerated ? (
+                              {(!productGenerated || isMarketerEmbedMode) ? (
                                 <>
+                                  {isMarketerEmbedMode && (
+                                    <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-4 space-y-3">
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">Your tracked ad link</p>
+                                          <p className="m-0 mt-1 text-xs font-medium text-cyan-900/75">Use this link in ads, landing pages, bio links, or WhatsApp. Orders from it are tagged to you automatically.</p>
+                                        </div>
+                                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${marketerLinkReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                                          {marketerLinkReady ? "Auto-tracked" : "Needs tag"}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                        <input readOnly className="min-w-0 flex-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm font-mono text-slate-700 shadow-sm focus:outline-none" value={directUrlValue} aria-label={`${product.name} marketer direct tracked URL`} />
+                                        <div className="grid grid-cols-2 gap-2 sm:flex">
+                                          <button className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-700 shadow-sm transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={!marketerLinkReady} title="Copy tracked link" onClick={() => copyText(embedUrl, `${product.name} tracked marketer link`)}><Copy className="h-4 w-4" /> Copy</button>
+                                          <button className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-700 shadow-sm transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={!marketerLinkReady} title="Open tracked form" onClick={() => { window.open(buildEmbedUrl(product, selectedCurrencyCode, undefined, true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="h-4 w-4" /> Open</button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                   {!isMarketerEmbedMode && (
                                     <label className="flex flex-col gap-1">
                                       <span className="text-sm font-semibold text-gray-700">Redirect URL <span className="font-normal text-gray-400">(Optional)</span></span>
@@ -41879,7 +41901,7 @@ ${waybillLineItems(w).length > 1
                                       {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                     </select>
                                   </label>
-                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}>{productSyncing ? "Verifying..." : "Generate Embed URL"}</button>
+                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}>{productSyncing ? "Verifying..." : isMarketerEmbedMode ? "Verify tracked link" : "Generate Embed URL"}</button>
                                 </>
                               ) : (
                                 <>
