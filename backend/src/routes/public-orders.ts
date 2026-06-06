@@ -337,6 +337,24 @@ const notifyAfterSubmitUpsellAccepted = async (
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
   error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|form_context|assigned_by_user_id|assigned_by_name_snapshot|review_hold|review_reason/i.test(error?.message ?? "");
 
+const PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS = [
+  "confirmation_checked",
+  "preferred_delivery",
+  "referrer",
+  "embed_label",
+  "form_context",
+  "assigned_by_user_id",
+  "assigned_by_name_snapshot",
+  "review_hold",
+  "review_reason"
+] as const;
+
+const missingPublicOrderOptionalColumn = (error: { message?: string } | null | undefined, payload: Record<string, unknown>) =>
+  PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS.find((column) =>
+    Object.prototype.hasOwnProperty.call(payload, column)
+    && new RegExp(`\\b${column}\\b`, "i").test(error?.message ?? "")
+  );
+
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -767,18 +785,27 @@ router.post("/", submitRateLimit, async (req, res) => {
   delete legacyInsert.review_hold;
   delete legacyInsert.review_reason;
 
-  let { data: order, error: orderErr } = await supabase
-    .from("orders")
-    .insert(baseInsert)
-    .select()
-    .single();
-
-  if (orderErr && isMissingPublicOrderOptionalColumnsError(orderErr)) {
-    ({ data: order, error: orderErr } = await supabase
+  let order: any = null;
+  let orderErr: any = null;
+  let insertPayload = { ...baseInsert };
+  for (let attempt = 0; attempt <= PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS.length; attempt += 1) {
+    const result = await supabase
       .from("orders")
-      .insert(legacyInsert)
+      .insert(insertPayload)
       .select()
-      .single());
+      .single();
+    order = result.data;
+    orderErr = result.error;
+    if (!orderErr || !isMissingPublicOrderOptionalColumnsError(orderErr)) break;
+    const missingColumn = missingPublicOrderOptionalColumn(orderErr, insertPayload);
+    if (!missingColumn) {
+      insertPayload = { ...legacyInsert };
+      continue;
+    }
+    const nextPayload = { ...insertPayload };
+    delete nextPayload[missingColumn];
+    if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
+    insertPayload = nextPayload;
   }
 
   if (orderErr) {

@@ -57,10 +57,17 @@ const applyMarketingScope = (
   }
 
   const filters = variants.flatMap((tag) => {
-    const safe = tag.replace(/[%_.,()"\\]/g, "");
+    // Keep common generated-link separators (`_` and `-`) intact, but avoid
+    // broad contains matches. A marketer tag `chelsea` should match
+    // `chelsea-main-page`, not `not_chelsea` or `chelsea2`.
+    const safe = tag.replace(/[%.,()"\\]/g, "").trim();
     if (!safe) return [];
-    const scalarFilters = scalarFields.map((field) => `${field}.ilike.%${safe}%`);
-    const jsonFilters = MARKETING_JSON_KEYS.map((key) => `${jsonColumn}->>${key}.ilike.%${safe}%`);
+    const scalarFilters = scalarFields.flatMap((field) => [
+      `${field}.ilike.${safe}`,
+      `${field}.ilike.${safe}-%`,
+      `${field}.ilike.${safe}_%`
+    ]);
+    const jsonFilters = MARKETING_JSON_KEYS.map((key) => `${jsonColumn}->>${key}.ilike.${safe}`);
     return [...scalarFilters, ...jsonFilters];
   });
 
