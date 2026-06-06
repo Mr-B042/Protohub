@@ -9606,24 +9606,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const tag = primaryMarketerEmbedTag.trim();
     if (!tag) { showToast("Ask the Owner to assign your marketer tag before creating landing-page links."); return; }
     const draft = marketingVariantDraftFor(product.id);
-    const label = draft.label.trim() || (() => {
-      const url = draft.landingPageUrl.trim();
-      if (!url) return "";
+    const landingPageUrl = draft.landingPageUrl.trim();
+    const normalizedLandingPageUrl = landingPageUrl && /^https?:\/\//i.test(landingPageUrl) ? landingPageUrl : landingPageUrl ? `https://${landingPageUrl}` : "";
+    const label = (() => {
+      if (!normalizedLandingPageUrl) return "";
       try {
-        const parsed = new URL(url);
+        const parsed = new URL(normalizedLandingPageUrl);
         return parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/[-_/]+/g, " ").trim() || parsed.hostname.replace(/^www\./, "");
       } catch {
         return "";
       }
     })();
-    if (!label) { showToast("Name this landing page link first, e.g. Main Page or Combo Page."); return; }
+    if (!label) { showToast("Paste a valid landing page URL, e.g. https://yourwebsite.com/offer."); return; }
     setMarketingVariantSavingProductIds((prev) => [...prev, product.id]);
     try {
       const saved = await marketingLinkVariantsApi.create({
         productId: product.id,
         marketerTag: tag,
         label,
-        landingPageUrl: draft.landingPageUrl.trim(),
+        landingPageUrl: normalizedLandingPageUrl,
         utmSource: draft.utmSource.trim() || "Facebook",
         utmMedium: "paid_social",
         utmCampaign: draft.utmCampaign.trim() || "landing-pages"
@@ -42009,14 +42010,9 @@ ${waybillLineItems(w).length > 1
                                   {isMarketerEmbedMode && (
                                     <>
                                       <label className="flex flex-col gap-1">
-                                        <span className="text-sm font-semibold text-gray-700">Landing Page Name <span className="font-normal text-gray-400">(Optional)</span></span>
-                                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.label} onChange={(e) => setMarketingVariantDraft(product.id, { label: e.target.value })} placeholder="Main Page, Combo Page, TikTok Page..." />
-                                        <span className="text-xs text-gray-400">Use a different name when you want a separate tracked link for each landing page.</span>
-                                      </label>
-                                      <label className="flex flex-col gap-1">
                                         <span className="text-sm font-semibold text-gray-700">Landing Page URL <span className="font-normal text-gray-400">(Optional)</span></span>
                                         <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
-                                        <span className="text-xs text-gray-400">For your record only. Leave name and URL empty to generate your main marketer link.</span>
+                                        <span className="text-xs text-gray-400">Paste a landing page to save a separate tracked link. Leave empty to generate your main marketer link.</span>
                                       </label>
                                     </>
                                   )}
@@ -42034,7 +42030,7 @@ ${waybillLineItems(w).length > 1
                                     </select>
                                   </label>
                                   <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing || productMarketingVariantSaving} onClick={() => {
-                                    if (isMarketerEmbedMode && (productMarketingDraft.label.trim() || productMarketingDraft.landingPageUrl.trim())) {
+                                    if (isMarketerEmbedMode && productMarketingDraft.landingPageUrl.trim()) {
                                       void createMarketingVariant(product);
                                       return;
                                     }
