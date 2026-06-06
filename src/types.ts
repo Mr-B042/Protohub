@@ -9,7 +9,7 @@ export type ActivePage =
   | "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries"
   | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents"
   | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting"
-  | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form"
+  | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form"
   | "Notifications" | "Settings";
 
 export type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";

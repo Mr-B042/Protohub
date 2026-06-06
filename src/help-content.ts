@@ -715,6 +715,41 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
     ],
   },
 
+  "Marketing": {
+    title: "Marketing — Help",
+    intro:
+      "Compare media buyers and campaigns by delivered profit, not just raw orders. This page uses UTM attribution, hidden buyer fields, delivered order outcomes, product costs, delivery fees, bonuses, and logged ad spend.",
+    sections: [
+      {
+        heading: "What this page answers",
+        points: [
+          "Which media buyer brought the most delivered revenue and profit after ad spend.",
+          "Which campaigns are profitable, breaking even, or wasting money.",
+          "Which buyer has high order volume but poor delivery quality.",
+          "Which Ad Spend rows are not tagged well enough to match to a buyer or campaign.",
+        ],
+      },
+      {
+        heading: "Best link setup",
+        points: [
+          "Use media_buyer for the person or agency running ads, for example media_buyer=chelsea.",
+          "Use utm_source for the platform, for example utm_source=facebook or utm_source=tiktok.",
+          "Use utm_campaign for the product/campaign push, and utm_content for the exact creative/video/copy.",
+          "If two people run ads for one product, give each person a different media_buyer value so they do not get mixed together.",
+        ],
+      },
+      {
+        heading: "Spend rules",
+        points: [
+          "Log spend as an Ad Spend expense in the same period.",
+          "Put the buyer or campaign name in the expense description so Protohub can match it.",
+          "Unmatched spend is shown separately, because guessing would make the profit report lie.",
+          "Judge buyers by delivered net after ads, delivery rate, CPA, and ROAS together.",
+        ],
+      },
+    ],
+  },
+
   "User Management": {
     title: "User Management — Help",
     intro:

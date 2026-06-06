@@ -836,6 +836,10 @@ const PUBLIC_FORM_CLICK_PARAM_KEYS = [
   "ad_id",
   "adset_id",
   "campaign_id",
+  "media_buyer",
+  "media_buyer_id",
+  "buyer",
+  "buyer_id",
   "placement",
   "utm_id"
 ] as const;

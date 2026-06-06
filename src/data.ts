@@ -48,6 +48,7 @@ export const navItems = [
   { label: "Expenses", icon: CreditCard },
   { label: "Finance & Accounting", icon: WalletCards },
   { label: "Ad Tracking", icon: Megaphone },
+  { label: "Marketing", icon: TrendingUp },
   { label: "User Management", icon: Users },
   { label: "Round-Robin", icon: Repeat2 },
   { label: "Embed Form", icon: Code2 },

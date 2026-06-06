@@ -177,7 +177,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
@@ -1548,13 +1548,13 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
+    "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Admin": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Round-Robin", "Embed Form", "Notifications", "Settings"
+    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings"
   ],
   "Manager": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
@@ -10271,6 +10271,219 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     return next;
   })();
+  const marketingContextText = (order: TrackedOrder, keys: string[]) => {
+    const context = order.formContext ?? {};
+    for (const key of keys) {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      const value = context[key] ?? context[camelKey];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+  };
+  const marketingPrettyLabel = (value: string) =>
+    value
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || "Unlabelled";
+  const marketingBuyerForOrder = (order: TrackedOrder) => {
+    const hiddenBuyer = marketingContextText(order, ["mediaBuyer", "mediaBuyerId", "buyer", "buyerId", "media_buyer", "media_buyer_id", "buyer_id"]);
+    const sourceKey = normalizeAdTrackingSource(order.utmSource);
+    const raw = hiddenBuyer || order.utmSource || order.utmMedium || "Unattributed";
+    const key = slugify(hiddenBuyer || sourceKey || raw) || "unattributed";
+    const label = hiddenBuyer ? marketingPrettyLabel(hiddenBuyer) : sourceKey ? adTrackingSourceLabel(sourceKey) : marketingPrettyLabel(raw);
+    return {
+      key,
+      label,
+      raw,
+      hasHiddenBuyer: Boolean(hiddenBuyer),
+      setupNeedsBuyerId: !hiddenBuyer && ["fb", "ig", "tt", "an", "ms", "th"].includes(sourceKey)
+    };
+  };
+  const marketingCampaignForOrder = (order: TrackedOrder) => {
+    const hiddenCampaign = marketingContextText(order, ["campaignId", "campaign_id"]);
+    const raw = order.utmCampaign?.trim() || hiddenCampaign || "Unlabelled";
+    return {
+      key: slugify(raw) || "unlabelled",
+      raw,
+      label: campaignCardLabelFor(raw) || marketingPrettyLabel(raw)
+    };
+  };
+  const marketingFilterBaseOrders = trackedCampaignOrders;
+  const marketingAvailableSourceOptions = (() => {
+    const options = new Map<string, { key: string; label: string; count: number }>();
+    const addOption = (key: string, label: string) => {
+      if (!key) return;
+      const existing = options.get(key);
+      options.set(key, { key, label, count: (existing?.count ?? 0) + 1 });
+    };
+    for (const order of marketingFilterBaseOrders) {
+      const buyer = marketingBuyerForOrder(order);
+      addOption(buyer.key, `${buyer.hasHiddenBuyer ? "Buyer" : "Source"} · ${buyer.label}`);
+      const sourceKey = normalizeAdTrackingSource(order.utmSource);
+      if (sourceKey && sourceKey !== buyer.key) {
+        addOption(sourceKey, `Source · ${adTrackingSourceLabel(sourceKey)}`);
+      }
+    }
+    if (adTrackingSourceFilter !== "all" && !options.has(adTrackingSourceFilter)) {
+      options.set(adTrackingSourceFilter, {
+        key: adTrackingSourceFilter,
+        label: adTrackingSourceLabel(adTrackingSourceFilter),
+        count: 0
+      });
+    }
+    return Array.from(options.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  })();
+  const marketingFilteredOrders = marketingFilterBaseOrders.filter((order) => {
+    const buyer = marketingBuyerForOrder(order);
+    const campaign = marketingCampaignForOrder(order);
+    const sourceKey = normalizeAdTrackingSource(order.utmSource);
+    const matchesBuyerSource =
+      adTrackingSourceFilter === "all"
+      || buyer.key === adTrackingSourceFilter
+      || sourceKey === adTrackingSourceFilter;
+    if (!matchesBuyerSource) return false;
+    return matchesAdTrackingSearch(
+      order.id,
+      order.customer,
+      order.phone,
+      order.productName,
+      order.status,
+      order.utmCampaign,
+      order.utmSource,
+      order.utmMedium,
+      order.utmContent,
+      buyer.key,
+      buyer.label,
+      buyer.raw,
+      campaign.key,
+      campaign.label,
+      campaign.raw,
+      sourceKey ? adTrackingSourceLabel(sourceKey) : ""
+    );
+  });
+  const marketingExpenseSearchText = (expense: ExpenseRecord) =>
+    slugify(`${expense.description} ${expense.productName} ${(expense as any).note ?? ""}`);
+  const marketingExpenseMatchesTokens = (expense: ExpenseRecord, tokens: string[]) => {
+    const text = marketingExpenseSearchText(expense);
+    return tokens
+      .map((token) => slugify(token))
+      .filter((token) => token.length >= 2)
+      .some((token) => text.includes(token));
+  };
+  const marketingAdSpendExpenses = expenses.filter((expense) =>
+    expense.type === "Ad Spend"
+    && isInPeriod(expense.date, campaignPeriod, campaignDateRange)
+    && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
+  );
+  const marketingMetricForOrders = (orders: TrackedOrder[]) => {
+    const delivered = orders.filter((order) => (order.status ?? "New") === "Delivered");
+    const failed = orders.filter((order) => ["Failed", "Cancelled"].includes(order.status ?? "New"));
+    const deliveredRevenue = delivered.reduce((sum, order) => sum + order.amount, 0);
+    const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
+    const logistics = delivered.reduce((sum, order) => sum + orderLogisticsCost(order), 0);
+    const bonus = recognizedBonusTotalForRows(delivered);
+    return {
+      orders: orders.length,
+      delivered: delivered.length,
+      failed: failed.length,
+      pending: Math.max(0, orders.length - delivered.length - failed.length),
+      deliveredRevenue,
+      cogs,
+      logistics,
+      bonus,
+      contribution: deliveredRevenue - cogs - logistics - bonus,
+      deliveryRate: orders.length > 0 ? Math.round((delivered.length / orders.length) * 100) : 0
+    };
+  };
+  const marketingRowsByBuyer = Object.values(
+    marketingFilteredOrders.reduce<Record<string, {
+      key: string;
+      label: string;
+      raw: string;
+      hasHiddenBuyer: boolean;
+      setupNeedsBuyerId: boolean;
+      orders: TrackedOrder[];
+    }>>((acc, order) => {
+      const buyer = marketingBuyerForOrder(order);
+      const bucket = acc[buyer.key] ?? { ...buyer, orders: [] };
+      bucket.orders.push(order);
+      bucket.setupNeedsBuyerId = bucket.setupNeedsBuyerId || buyer.setupNeedsBuyerId;
+      acc[buyer.key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => {
+    const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.key, row.label, row.raw]));
+    const adSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const metrics = marketingMetricForOrders(row.orders);
+    const netAfterAds = metrics.contribution - adSpend;
+    return {
+      ...row,
+      ...metrics,
+      adSpend,
+      spendExpenseIds: spendExpenses.map((expense) => expense.id),
+      roas: adSpend > 0 ? metrics.deliveredRevenue / adSpend : null,
+      cpa: metrics.delivered > 0 ? adSpend / metrics.delivered : null,
+      netAfterAds,
+      campaignCount: new Set(row.orders.map((order) => marketingCampaignForOrder(order).key)).size,
+      quality: netAfterAds > 0 && metrics.deliveryRate >= 50 ? "Profitable" : adSpend > 0 && metrics.delivered === 0 ? "No delivered proof" : netAfterAds < 0 ? "Losing money" : "Needs spend tagging"
+    };
+  }).sort((a, b) => b.netAfterAds - a.netAfterAds || b.deliveredRevenue - a.deliveredRevenue || b.orders - a.orders);
+  const marketingRowsByCampaign = Object.values(
+    marketingFilteredOrders.reduce<Record<string, {
+      key: string;
+      buyerKey: string;
+      buyerLabel: string;
+      campaignKey: string;
+      campaignLabel: string;
+      campaignRaw: string;
+      orders: TrackedOrder[];
+    }>>((acc, order) => {
+      const buyer = marketingBuyerForOrder(order);
+      const campaign = marketingCampaignForOrder(order);
+      const key = `${buyer.key}::${campaign.key}`;
+      const bucket = acc[key] ?? {
+        key,
+        buyerKey: buyer.key,
+        buyerLabel: buyer.label,
+        campaignKey: campaign.key,
+        campaignLabel: campaign.label,
+        campaignRaw: campaign.raw,
+        orders: []
+      };
+      bucket.orders.push(order);
+      acc[key] = bucket;
+      return acc;
+    }, {})
+  ).map((row) => {
+    const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.buyerKey, row.buyerLabel, row.campaignKey, row.campaignLabel, row.campaignRaw]));
+    const adSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const metrics = marketingMetricForOrders(row.orders);
+    const netAfterAds = metrics.contribution - adSpend;
+    return {
+      ...row,
+      ...metrics,
+      adSpend,
+      spendExpenseIds: spendExpenses.map((expense) => expense.id),
+      roas: adSpend > 0 ? metrics.deliveredRevenue / adSpend : null,
+      cpa: metrics.delivered > 0 ? adSpend / metrics.delivered : null,
+      netAfterAds
+    };
+  }).sort((a, b) => b.netAfterAds - a.netAfterAds || b.deliveredRevenue - a.deliveredRevenue || b.orders - a.orders);
+  const marketingMatchedSpendIds = new Set([
+    ...marketingRowsByBuyer.flatMap((row) => row.spendExpenseIds),
+    ...marketingRowsByCampaign.flatMap((row) => row.spendExpenseIds)
+  ]);
+  const marketingTotalAdSpend = marketingAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const marketingMatchedAdSpend = marketingAdSpendExpenses.filter((expense) => marketingMatchedSpendIds.has(expense.id)).reduce((sum, expense) => sum + expense.amount, 0);
+  const marketingUnmatchedAdSpend = Math.max(0, marketingTotalAdSpend - marketingMatchedAdSpend);
+  const marketingOrders = marketingFilteredOrders;
+  const marketingDeliveredRows = marketingOrders.filter((order) => (order.status ?? "New") === "Delivered");
+  const marketingDeliveredRevenue = marketingDeliveredRows.reduce((sum, order) => sum + order.amount, 0);
+  const marketingContribution = marketingMetricForOrders(marketingOrders).contribution;
+  const marketingNetAfterMatchedAds = marketingContribution - marketingMatchedAdSpend;
+  const marketingSetupRiskCount = marketingRowsByBuyer.filter((row) => row.setupNeedsBuyerId).length;
   useEffect(() => {
     if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
       setAdTrackingCartJourneyLoading(false);
@@ -16458,6 +16671,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "finance-and-accounting": "Finance & Accounting",
       "utm-tracking": "Ad Tracking",
       "ad-tracking": "Ad Tracking",
+      marketing: "Marketing",
       users: "User Management",
       "user-management": "User Management",
       "round-robin": "Round-Robin",
@@ -19536,6 +19750,7 @@ ${waybillLineItems(w).length > 1
       Expenses: "#/dashboard/admin/expenses",
       "Finance & Accounting": "#/dashboard/admin/reports",
       "Ad Tracking": "#/dashboard/admin/utm-tracking",
+      Marketing: "#/dashboard/admin/marketing",
       "User Management": "#/dashboard/admin/users",
       "Round-Robin": "#/dashboard/admin/round-robin",
       "Embed Form": "#/dashboard/admin/embed",
@@ -19572,7 +19787,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
+    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
@@ -38892,6 +39107,252 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
               </div>
+            </div>
+          ) : activePage === "Marketing" ? (
+            <div className="space-y-6">
+              <header className="relative overflow-hidden rounded-3xl border border-sky-100 bg-gradient-to-br from-slate-950 via-[#0b2740] to-[#123f66] p-5 text-white shadow-xl shadow-sky-900/10 sm:p-7">
+                <div className="absolute -right-20 -top-24 h-56 w-56 rounded-full bg-sky-400/20 blur-3xl" />
+                <div className="absolute bottom-0 left-1/3 h-24 w-64 rounded-full bg-emerald-300/10 blur-2xl" />
+                <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="max-w-3xl">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-sky-100">
+                      <TrendingUp className="h-3.5 w-3.5" /> Marketing Performance Center
+                    </span>
+                    <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Know which media buyer is actually making money.</h1>
+                    <p className="mt-2 text-sm font-medium leading-6 text-sky-100/85 sm:text-base">
+                      Compare buyers, campaigns, spend discipline, delivery quality, and delivered profit from the same UTM attribution already captured by your order forms.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:w-[560px]">
+                    {[
+                      { label: "Tracked orders", value: String(marketingOrders.length) },
+                      { label: "Delivered", value: String(marketingDeliveredRows.length) },
+                      { label: "Matched spend", value: formatMoney(marketingMatchedAdSpend) },
+                      { label: "Net after ads", value: formatMoney(marketingNetAfterMatchedAds), tone: marketingNetAfterMatchedAds >= 0 ? "text-emerald-200" : "text-rose-200" }
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-sky-100/70">{item.label}</div>
+                        <div className={`mt-1 text-lg font-black ${item.tone ?? "text-white"}`}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </header>
+
+              <DataErrorBanner />
+              <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="grid grid-cols-4 gap-1 rounded-xl bg-gray-100 p-1 sm:inline-flex dark:bg-slate-900/70">
+                    {periods.map((item) => (
+                      <button key={item} className={`!min-h-0 rounded-lg px-2 py-2 text-center text-xs font-bold leading-tight transition-colors sm:px-3 sm:py-1.5 sm:text-sm ${campaignPeriod === item ? "bg-white text-gray-900 shadow-sm dark:bg-slate-800 dark:text-white" : "text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white"}`} onClick={() => handleCampaignPeriodChange(item)}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
+                    <div className="relative w-full sm:w-auto">
+                      <button className="!min-h-0 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setShowCampaignDateRange((value) => !value)}>
+                        <CalendarDays className="h-4 w-4" /> {campaignPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                      </button>
+                      {showCampaignDateRange && renderDateRangeCalendar("marketing-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
+                    </div>
+                    {renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                    <select
+                      className="!min-h-0 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] sm:w-auto dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                      aria-label="Marketing source"
+                      value={adTrackingSourceFilter}
+                      onChange={(event) => setAdTrackingSourceFilter(event.target.value)}
+                    >
+                      <option value="all">All buyer/source tags</option>
+                      {marketingAvailableSourceOptions.map((source) => (
+                        <option key={source.key} value={source.key}>{source.label} ({source.count})</option>
+                      ))}
+                    </select>
+                    <label className="relative w-full sm:min-w-[260px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input
+                        value={adTrackingSearch}
+                        onChange={(event) => setAdTrackingSearch(event.target.value)}
+                        placeholder="Search buyer, campaign, product..."
+                        className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                    </label>
+                  </div>
+                </div>
+                {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange, campaignPeriod, campaignDateRange)}
+              </div>
+
+              {dataLoading ? <TableSkeleton cols={6} rows={4} /> : (
+                <div className="space-y-6">
+                  <section className="grid grid-cols-2 gap-3 xl:grid-cols-6" aria-label="Marketing summary">
+                    {[
+                      { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
+                      { label: "Direct contribution", value: formatMoney(marketingContribution), helper: "revenue - COGS - logistics - bonus", icon: BadgeCheck, tone: "blue" },
+                      { label: "Ad spend logged", value: formatMoney(marketingTotalAdSpend), helper: "Ad Spend expenses in period", icon: Banknote, tone: "amber" },
+                      { label: "Unmatched spend", value: formatMoney(marketingUnmatchedAdSpend), helper: "needs buyer/campaign in description", icon: AlertTriangle, tone: marketingUnmatchedAdSpend > 0 ? "rose" : "slate" },
+                      { label: "Buyers compared", value: String(marketingRowsByBuyer.length), helper: "grouped by media buyer tag", icon: Users, tone: "purple" },
+                      { label: "Tracking risk", value: String(marketingSetupRiskCount), helper: "source is platform, not buyer", icon: ShieldCheck, tone: marketingSetupRiskCount > 0 ? "rose" : "emerald" }
+                    ].map((metric) => {
+                      const Icon = metric.icon;
+                      const toneClass = metric.tone === "emerald" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"
+                        : metric.tone === "blue" ? "bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300"
+                          : metric.tone === "amber" ? "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"
+                            : metric.tone === "rose" ? "bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300"
+                              : metric.tone === "purple" ? "bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300"
+                                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+                      return (
+                        <article key={metric.label} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                          <span className={`mb-3 flex h-10 w-10 items-center justify-center rounded-2xl ${toneClass}`}><Icon className="h-5 w-5" /></span>
+                          <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">{metric.label}</p>
+                          <strong className="mt-1 block text-xl font-black text-gray-900 dark:text-slate-100">{metric.value}</strong>
+                          <p className="m-0 mt-1 text-[11px] font-semibold text-gray-400">{metric.helper}</p>
+                        </article>
+                      );
+                    })}
+                  </section>
+
+                  <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+                    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                      <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">Media Buyer Leaderboard</h2>
+                            <p className="text-sm text-gray-500 dark:text-slate-400">Ranked by delivered contribution after matched ad spend.</p>
+                          </div>
+                          <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 hover:bg-sky-100 sm:w-auto dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200" onClick={() => { setActivePage("Ad Tracking"); setAdTrackingTab("Campaign Orders"); }}>
+                            <ExternalLink className="h-4 w-4" /> Open Ad Tracking
+                          </button>
+                        </div>
+                      </div>
+                      <div className="divide-y divide-gray-100 dark:divide-slate-800/80">
+                        {marketingRowsByBuyer.length === 0 ? (
+                          <div className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No attributed marketing orders matched this period yet.</div>
+                        ) : marketingRowsByBuyer.map((row, index) => {
+                          const rowTone = row.netAfterAds > 0 ? "text-emerald-700 dark:text-emerald-300" : row.netAfterAds < 0 ? "text-rose-700 dark:text-rose-300" : "text-gray-700 dark:text-slate-300";
+                          return (
+                            <article key={row.key} className="p-4 sm:p-5">
+                              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white dark:bg-slate-100 dark:text-slate-950">#{index + 1}</span>
+                                    <h3 className="m-0 truncate text-xl font-black text-gray-900 dark:text-slate-100">{row.label}</h3>
+                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${row.quality === "Profitable" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : row.quality === "Losing money" ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"}`}>{row.quality}</span>
+                                    {row.setupNeedsBuyerId && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">Needs buyer tag</span>}
+                                  </div>
+                                  <p className="m-0 mt-1 text-xs font-semibold text-gray-400">{row.orders} orders · {row.campaignCount} campaign{row.campaignCount === 1 ? "" : "s"} · {row.delivered} delivered · {row.failed} failed/cancelled · {row.pending} pending</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5 lg:min-w-[620px]">
+                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivery</p><strong className="text-gray-900 dark:text-slate-100">{row.deliveryRate}%</strong></div>
+                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Revenue</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</strong></div>
+                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Spend</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</strong></div>
+                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">ROAS / CPA</p><strong className="text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"} · {row.cpa ? formatMoney(row.cpa) : "—"}</strong></div>
+                                  <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Net after ads</p><strong className={rowTone}>{formatMoney(row.netAfterAds)}</strong></div>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <aside className="space-y-4">
+                      <article className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                        <h2 className="m-0 flex items-center gap-2 text-base font-black"><Info className="h-5 w-5" /> Tracking rules that make this accurate</h2>
+                        <div className="mt-3 space-y-3 text-sm font-semibold leading-6">
+                          <p className="m-0">Use a unique buyer tag in links: <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">media_buyer=chelsea</code>.</p>
+                          <p className="m-0">Keep platform separate: <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">utm_source=facebook</code>, campaign in <code className="rounded bg-white/70 px-1.5 py-0.5 dark:bg-slate-950/40">utm_campaign</code>.</p>
+                          <p className="m-0">When logging Ad Spend, put the buyer/campaign name in the description so spend can match cleanly.</p>
+                        </div>
+                      </article>
+                      <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                        <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-100">Recommended link format</h2>
+                        <pre className="mt-3 whitespace-pre-wrap break-all rounded-2xl bg-slate-950 p-4 text-xs font-semibold leading-5 text-sky-100">?media_buyer=chelsea&utm_source=facebook&utm_campaign=edge_brusher_june&utm_content=video_01</pre>
+                        <p className="m-0 mt-3 text-sm font-medium text-gray-500 dark:text-slate-400">If two buyers run the same product, this separates them even when both use Facebook.</p>
+                      </article>
+                    </aside>
+                  </section>
+
+                  <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                    <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                      <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">Campaign Profit Drilldown</h2>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">Buyer + campaign view for comparing multiple buyers on one product.</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[1040px] text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50/80 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
+                            {["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"].map((heading) => (
+                              <th key={heading} className="px-5 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-slate-400">{heading}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
+                          {marketingRowsByCampaign.length === 0 ? (
+                            <tr><td colSpan={9} className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No campaign rows yet.</td></tr>
+                          ) : marketingRowsByCampaign.slice(0, 30).map((row) => (
+                            <tr key={row.key} className="hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
+                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.buyerLabel}</td>
+                              <td className="px-5 py-4"><div className="font-bold text-gray-900 dark:text-slate-100">{row.campaignLabel}</div><div className="text-xs text-gray-400">{row.campaignRaw}</div></td>
+                              <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.orders}</td>
+                              <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.delivered}</td>
+                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.deliveryRate}%</td>
+                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</td>
+                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</td>
+                              <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"}</td>
+                              <td className={`px-5 py-4 font-black ${row.netAfterAds >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(row.netAfterAds)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+
+                  <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+                    <article className="rounded-2xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-500/30 dark:bg-rose-500/10">
+                      <h2 className="m-0 flex items-center gap-2 text-base font-black text-rose-900 dark:text-rose-200"><AlertTriangle className="h-5 w-5" /> Spend not matched to a buyer/campaign</h2>
+                      <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">{formatMoney(marketingUnmatchedAdSpend)} is logged as Ad Spend in this period but does not clearly mention a buyer or campaign tag.</p>
+                      <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
+                        {marketingAdSpendExpenses.filter((expense) => !marketingMatchedSpendIds.has(expense.id)).slice(0, 12).map((expense) => (
+                          <div key={expense.id} className="rounded-xl border border-rose-200 bg-white/70 p-3 text-sm dark:border-rose-500/20 dark:bg-slate-950/20">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate font-black text-gray-900 dark:text-slate-100">{expense.productName}</div>
+                                <div className="mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{displayDateFromKey(expense.date)} · {expense.description}</div>
+                              </div>
+                              <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(expense.amount)}</strong>
+                            </div>
+                          </div>
+                        ))}
+                        {marketingUnmatchedAdSpend === 0 && <p className="m-0 text-sm font-semibold text-rose-800/70 dark:text-rose-100/70">All ad spend rows matched cleanly.</p>}
+                      </div>
+                    </article>
+
+                    <article className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                      <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                        <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">Order Proof</h2>
+                        <p className="text-sm text-gray-500 dark:text-slate-400">Sample attributed orders behind the leaderboard.</p>
+                      </div>
+                      <div className="divide-y divide-gray-100 dark:divide-slate-800/80">
+                        {marketingOrders.slice(0, 10).map((order) => {
+                          const buyer = marketingBuyerForOrder(order);
+                          const campaign = marketingCampaignForOrder(order);
+                          return (
+                            <div key={order.id} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="font-black text-gray-900 dark:text-slate-100">#{order.id} · {order.customer}</div>
+                                <div className="truncate text-xs font-semibold text-gray-400">{buyer.label} · {campaign.label} · {order.productName} · {formatOrderCreatedAt(order)}</div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${statusBadgeClasses(order.status ?? "New")}`}>{order.status ?? "New"}</span>
+                                <strong className="text-sm text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</strong>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {marketingOrders.length === 0 && <div className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No proof orders in this period.</div>}
+                      </div>
+                    </article>
+                  </section>
+                </div>
+              )}
             </div>
           ) : activePage === "Ad Tracking" ? (
             <div className="space-y-6">
