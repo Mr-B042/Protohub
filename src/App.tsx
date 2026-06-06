@@ -109,7 +109,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
+  embedSettingsApi, marketingLinkVariantsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -439,6 +439,23 @@ type ManagedUser = {
   // Paused from round-robin auto-assignment only — independent of `active`
   // (login/visibility). Excluded reps can still log in + be assigned manually.
   roundRobinExcluded?: boolean;
+};
+
+type MarketingLinkVariant = {
+  id: string;
+  productId: string;
+  marketerUserId?: string | null;
+  marketerTag: string;
+  label: string;
+  landingPageUrl?: string | null;
+  utmSource: string;
+  utmMedium?: string;
+  utmCampaign: string;
+  utmContent: string;
+  utmTerm?: string | null;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 const WEEKEND_STOCK_SUMMARY_PAGE = "Weekend Stock Summary" as const;
@@ -7733,6 +7750,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedCurrencyByProduct, setEmbedCurrencyByProduct] = useState<Record<string, ProductCurrencyCode>>({});
   const [embedRedirectUrls, setEmbedRedirectUrls] = useState<Record<string, string>>({});
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
+  const [marketingLinkVariants, setMarketingLinkVariants] = useState<MarketingLinkVariant[]>([]);
+  const [marketingVariantDrafts, setMarketingVariantDrafts] = useState<Record<string, { label: string; landingPageUrl: string; utmSource: string; utmCampaign: string }>>({});
+  const [marketingVariantSavingProductIds, setMarketingVariantSavingProductIds] = useState<string[]>([]);
   const [trackedOrders, setTrackedOrders] = useState<TrackedOrder[]>([]);
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
   const [orderFormName, setOrderFormName] = useState("");
@@ -9481,7 +9501,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     product: Product | undefined = generatedProduct,
     currencyOverride?: ProductCurrencyCode,
     redirectOverride?: string,
-    previewMode = false
+    previewMode = false,
+    variant?: MarketingLinkVariant | null
   ) => {
     if (!product) {
       return "";
@@ -9491,12 +9512,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       product: product.id,
       currency: currencyOverride ?? productEmbedCurrency(product)
     });
-    if (isMarketerEmbedMode && primaryMarketerEmbedTag) {
+    const variantTag = variant?.marketerTag?.trim() || primaryMarketerEmbedTag;
+    if (isMarketerEmbedMode && variantTag) {
       const marketerId = currentManagedUser?.id ?? authUser?.id ?? "";
-      params.set("media_buyer", primaryMarketerEmbedTag);
-      params.set("buyer", primaryMarketerEmbedTag);
+      params.set("media_buyer", variantTag);
+      params.set("buyer", variantTag);
       if (marketerId) params.set("media_buyer_id", marketerId);
-      params.set("utm_content", slugify(primaryMarketerEmbedTag));
+      params.set("utm_content", variant?.utmContent || slugify(variantTag));
+    }
+    if (variant) {
+      params.set("utm_source", variant.utmSource || "Facebook");
+      params.set("utm_medium", variant.utmMedium || "paid_social");
+      params.set("utm_campaign", variant.utmCampaign || "embed");
+      params.set("utm_content", variant.utmContent || slugify(`${variantTag}-${variant.label}`));
+      if (variant.utmTerm) params.set("utm_term", variant.utmTerm);
+      params.set("landing_page", variant.label);
+      if (variant.landingPageUrl) params.set("landing_page_url", variant.landingPageUrl);
     }
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
@@ -9545,6 +9576,81 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   })();
 </script>`;
+  };
+  const marketingVariantsForProduct = (productId: string) =>
+    marketingLinkVariants
+      .filter((variant) => variant.productId === productId && variant.active !== false)
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  const marketingVariantDraftFor = (productId: string) =>
+    marketingVariantDrafts[productId] ?? { label: "", landingPageUrl: "", utmSource: "Facebook", utmCampaign: "landing-pages" };
+  const setMarketingVariantDraft = (productId: string, patch: Partial<{ label: string; landingPageUrl: string; utmSource: string; utmCampaign: string }>) =>
+    setMarketingVariantDrafts((prev) => ({ ...prev, [productId]: { ...marketingVariantDraftFor(productId), ...patch } }));
+  const isMarketingVariantSaving = (productId: string) => marketingVariantSavingProductIds.includes(productId);
+  const normalizeMarketingVariantRow = (row: any): MarketingLinkVariant => ({
+    id: row.id,
+    productId: row.productId ?? row.product_id,
+    marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? null,
+    marketerTag: row.marketerTag ?? row.marketer_tag ?? "",
+    label: row.label ?? "",
+    landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
+    utmSource: row.utmSource ?? row.utm_source ?? "Facebook",
+    utmMedium: row.utmMedium ?? row.utm_medium ?? "paid_social",
+    utmCampaign: row.utmCampaign ?? row.utm_campaign ?? "embed",
+    utmContent: row.utmContent ?? row.utm_content ?? "",
+    utmTerm: row.utmTerm ?? row.utm_term ?? "",
+    active: (row.active ?? true) !== false,
+    createdAt: row.createdAt ?? row.created_at ?? "",
+    updatedAt: row.updatedAt ?? row.updated_at ?? ""
+  });
+  const createMarketingVariant = async (product: Product) => {
+    const tag = primaryMarketerEmbedTag.trim();
+    if (!tag) { showToast("Ask the Owner to assign your marketer tag before creating landing-page links."); return; }
+    const draft = marketingVariantDraftFor(product.id);
+    const label = draft.label.trim() || (() => {
+      const url = draft.landingPageUrl.trim();
+      if (!url) return "";
+      try {
+        const parsed = new URL(url);
+        return parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/[-_/]+/g, " ").trim() || parsed.hostname.replace(/^www\./, "");
+      } catch {
+        return "";
+      }
+    })();
+    if (!label) { showToast("Name this landing page link first, e.g. Main Page or Combo Page."); return; }
+    setMarketingVariantSavingProductIds((prev) => [...prev, product.id]);
+    try {
+      const saved = await marketingLinkVariantsApi.create({
+        productId: product.id,
+        marketerTag: tag,
+        label,
+        landingPageUrl: draft.landingPageUrl.trim(),
+        utmSource: draft.utmSource.trim() || "Facebook",
+        utmMedium: "paid_social",
+        utmCampaign: draft.utmCampaign.trim() || "landing-pages"
+      });
+      const normalized = normalizeMarketingVariantRow(saved);
+      setMarketingLinkVariants((prev) => [normalized, ...prev.filter((row) => row.id !== normalized.id)]);
+      setGeneratedProductId(product.id);
+      setGeneratedEmbedProductIds((prev) => prev.includes(product.id) ? prev : [...prev, product.id]);
+      setMarketingVariantDrafts((prev) => ({ ...prev, [product.id]: { label: "", landingPageUrl: "", utmSource: draft.utmSource || "Facebook", utmCampaign: draft.utmCampaign || "landing-pages" } }));
+      showToast("Landing-page link saved.");
+    } catch (err: any) {
+      showToast(`Could not save link: ${err?.message ?? err}`);
+    } finally {
+      setMarketingVariantSavingProductIds((prev) => prev.filter((id) => id !== product.id));
+    }
+  };
+  const deleteMarketingVariant = async (variant: MarketingLinkVariant) => {
+    if (!window.confirm(`Delete "${variant.label}" tracked link? Existing orders stay attributed, but this saved shortcut will disappear.`)) return;
+    const snapshot = marketingLinkVariants;
+    setMarketingLinkVariants((prev) => prev.filter((row) => row.id !== variant.id));
+    try {
+      await marketingLinkVariantsApi.delete(variant.id);
+      showToast("Landing-page link deleted.");
+    } catch (err: any) {
+      setMarketingLinkVariants(snapshot);
+      showToast(`Could not delete link: ${err?.message ?? err}`);
+    }
   };
   const remapProductKeyedRecord = <T,>(value: Record<string, T>, tempId: string, savedId: string) => {
     if (tempId === savedId || !Object.prototype.hasOwnProperty.call(value, tempId)) {
@@ -17367,6 +17473,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // to see actually hydrate with data instead of rendering empty tables.
       const isAdmin = role === "Owner" || role === "Admin" || role === "Manager";
       const isMarketer = role === "Marketer";
+      const canLoadMarketingLinks = isAdmin || isMarketer;
       const fastBootDashboard = activePage === "Dashboard";
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
@@ -17374,6 +17481,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         isAdmin ? p() : Promise.resolve(skipped as Skipped);
       const ifNotMarketer = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
         isMarketer ? Promise.resolve(skipped as Skipped) : p();
+      const ifMarketingLinks = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
+        canLoadMarketingLinks ? p() : Promise.resolve(skipped as Skipped);
 
       const hydrateProducts = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -17600,6 +17709,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       };
+      const hydrateMarketingLinkVariants = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setMarketingLinkVariants((result.value as any[]).map((row: any) => ({
+            id: row.id,
+            productId: row.productId ?? row.product_id,
+            marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? null,
+            marketerTag: row.marketerTag ?? row.marketer_tag ?? "",
+            label: row.label ?? "",
+            landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
+            utmSource: row.utmSource ?? row.utm_source ?? "Facebook",
+            utmMedium: row.utmMedium ?? row.utm_medium ?? "paid_social",
+            utmCampaign: row.utmCampaign ?? row.utm_campaign ?? "embed",
+            utmContent: row.utmContent ?? row.utm_content ?? "",
+            utmTerm: row.utmTerm ?? row.utm_term ?? "",
+            active: (row.active ?? true) !== false,
+            createdAt: row.createdAt ?? row.created_at ?? "",
+            updatedAt: row.updatedAt ?? row.updated_at ?? ""
+          })));
+        }
+      };
       try {
         if (fastBootDashboard) {
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
@@ -17643,7 +17772,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ifAdmin(() => salesTeamsApi.list()),
             ifAdmin(() => payStructuresApi.list()),
             ifAdmin(() => payrollApi.list()),
-            ifAdmin(() => penaltiesApi.list())
+            ifAdmin(() => penaltiesApi.list()),
+            ifMarketingLinks(() => marketingLinkVariantsApi.list())
           ]).then(([
             apiAgents,
             apiMovements,
@@ -17653,7 +17783,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             apiSalesTeams,
             apiPayStructures,
             apiPayrollRuns,
-            apiPenalties
+            apiPenalties,
+            apiMarketingLinkVariants
           ]) => {
             if (cancelled) return;
             hydrateAgents(apiAgents);
@@ -17665,6 +17796,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             hydratePayStructures(apiPayStructures);
             hydratePayrollRuns(apiPayrollRuns);
             hydratePenalties(apiPenalties);
+            hydrateMarketingLinkVariants(apiMarketingLinkVariants);
           }).catch(() => { /* background hydrate failures should not block dashboard */ });
           return;
         }
@@ -17683,7 +17815,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiSalesTeams,
           apiPayStructures,
           apiPayrollRuns,
-          apiPenalties
+          apiPenalties,
+          apiMarketingLinkVariants
         ] = await Promise.allSettled([
           productsApi.list(),
           ordersApi.list({ limit: "5000" }),
@@ -17698,12 +17831,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ifAdmin(() => salesTeamsApi.list()),
           ifAdmin(() => payStructuresApi.list()),
           ifAdmin(() => payrollApi.list()),
-          ifAdmin(() => penaltiesApi.list())
+          ifAdmin(() => penaltiesApi.list()),
+          ifMarketingLinks(() => marketingLinkVariantsApi.list())
         ]);
 
         if (cancelled) return;
 
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties];
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties, apiMarketingLinkVariants];
         if (allResults.every((r) => r.status === "rejected")) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
           scheduleReconnect();
@@ -17726,6 +17860,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         hydratePayStructures(apiPayStructures);
         hydratePayrollRuns(apiPayrollRuns);
         hydratePenalties(apiPenalties);
+        hydrateMarketingLinkVariants(apiMarketingLinkVariants);
       } catch (_) {
         if (!cancelled) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
@@ -41847,6 +41982,9 @@ ${waybillLineItems(w).length > 1
                         const redirectUrl = productEmbedRedirect(product);
                         const marketerLinkReady = !isMarketerEmbedMode || Boolean(primaryMarketerEmbedTag);
                         const directUrlValue = marketerLinkReady ? embedUrl : "Owner must assign your marketer tag first";
+                        const productMarketingVariants = marketingVariantsForProduct(product.id);
+                        const productMarketingDraft = marketingVariantDraftFor(product.id);
+                        const productMarketingVariantSaving = isMarketingVariantSaving(product.id);
                         return (
                           <article key={product.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                             {/* Card header */}
@@ -41869,24 +42007,18 @@ ${waybillLineItems(w).length > 1
                               {(!productGenerated || isMarketerEmbedMode) ? (
                                 <>
                                   {isMarketerEmbedMode && (
-                                    <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-4 space-y-3">
-                                      <div className="flex flex-wrap items-start justify-between gap-2">
-                                        <div>
-                                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-700">Your tracked ad link</p>
-                                          <p className="m-0 mt-1 text-xs font-medium text-cyan-900/75">Use this link in ads, landing pages, bio links, or WhatsApp. Orders from it are tagged to you automatically.</p>
-                                        </div>
-                                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${marketerLinkReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                                          {marketerLinkReady ? "Auto-tracked" : "Needs tag"}
-                                        </span>
-                                      </div>
-                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                        <input readOnly className="min-w-0 flex-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm font-mono text-slate-700 shadow-sm focus:outline-none" value={directUrlValue} aria-label={`${product.name} marketer direct tracked URL`} />
-                                        <div className="grid grid-cols-2 gap-2 sm:flex">
-                                          <button className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-700 shadow-sm transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={!marketerLinkReady} title="Copy tracked link" onClick={() => copyText(embedUrl, `${product.name} tracked marketer link`)}><Copy className="h-4 w-4" /> Copy</button>
-                                          <button className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-700 shadow-sm transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={!marketerLinkReady} title="Open tracked form" onClick={() => { window.open(buildEmbedUrl(product, selectedCurrencyCode, undefined, true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="h-4 w-4" /> Open</button>
-                                        </div>
-                                      </div>
-                                    </div>
+                                    <>
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-sm font-semibold text-gray-700">Landing Page Name <span className="font-normal text-gray-400">(Optional)</span></span>
+                                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.label} onChange={(e) => setMarketingVariantDraft(product.id, { label: e.target.value })} placeholder="Main Page, Combo Page, TikTok Page..." />
+                                        <span className="text-xs text-gray-400">Use a different name when you want a separate tracked link for each landing page.</span>
+                                      </label>
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-sm font-semibold text-gray-700">Landing Page URL <span className="font-normal text-gray-400">(Optional)</span></span>
+                                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
+                                        <span className="text-xs text-gray-400">For your record only. Leave name and URL empty to generate your main marketer link.</span>
+                                      </label>
+                                    </>
                                   )}
                                   {!isMarketerEmbedMode && (
                                     <label className="flex flex-col gap-1">
@@ -41901,7 +42033,45 @@ ${waybillLineItems(w).length > 1
                                       {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                     </select>
                                   </label>
-                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}>{productSyncing ? "Verifying..." : isMarketerEmbedMode ? "Verify tracked link" : "Generate Embed URL"}</button>
+                                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing || productMarketingVariantSaving} onClick={() => {
+                                    if (isMarketerEmbedMode && (productMarketingDraft.label.trim() || productMarketingDraft.landingPageUrl.trim())) {
+                                      void createMarketingVariant(product);
+                                      return;
+                                    }
+                                    void generateEmbedUrl(product);
+                                  }}>{productSyncing || productMarketingVariantSaving ? "Generating..." : "Generate Embed URL"}</button>
+                                  {isMarketerEmbedMode && productGenerated && (
+                                    <div className="space-y-2">
+                                      <p className="text-sm text-gray-500">Generated direct link</p>
+                                      <div className="flex items-center gap-2">
+                                        <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={directUrlValue} aria-label={`${product.name} generated marketer direct URL`} />
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} tracked marketer link`)}><Copy className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Open form" onClick={() => { window.open(buildEmbedUrl(product, selectedCurrencyCode, undefined, true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {isMarketerEmbedMode && productMarketingVariants.length > 0 && (
+                                    <div className="space-y-2 pt-1 border-t border-gray-100">
+                                      <p className="text-sm font-semibold text-gray-700">Saved landing page links</p>
+                                      {productMarketingVariants.map((variant) => {
+                                        const variantUrl = buildEmbedUrl(product, selectedCurrencyCode, undefined, false, variant);
+                                        const variantPreviewUrl = buildEmbedUrl(product, selectedCurrencyCode, undefined, true, variant);
+                                        return (
+                                          <div key={variant.id} className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 sm:flex-row sm:items-center">
+                                            <div className="min-w-0 flex-1">
+                                              <p className="m-0 text-sm font-bold text-gray-800">{variant.label}</p>
+                                              <input readOnly className="mt-1 w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-mono text-gray-500" value={variantUrl} aria-label={`${product.name} ${variant.label} tracked URL`} />
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-1.5 sm:flex">
+                                              <button className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => copyText(variantUrl, `${product.name} ${variant.label} tracked link`)}>Copy</button>
+                                              <button className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => window.open(variantPreviewUrl, "_blank", "noopener,noreferrer")}>Open</button>
+                                              <button className="!min-h-0 rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-500 hover:bg-rose-50" onClick={() => { void deleteMarketingVariant(variant); }}>Delete</button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                 </>
                               ) : (
                                 <>

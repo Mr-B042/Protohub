@@ -537,6 +537,16 @@ export const embedSettingsApi = {
   }
 };
 
+// ── Marketing Link Variants ──────────────────────────────
+export const marketingLinkVariantsApi = {
+  list: (params?: { productId?: string }) => {
+    const qs = params?.productId ? `?${new URLSearchParams({ productId: params.productId }).toString()}` : "";
+    return get<any[]>(`/api/marketing-link-variants${qs}`);
+  },
+  create: (body: unknown) => post<any>("/api/marketing-link-variants", body),
+  delete: (id: string) => del<void>(`/api/marketing-link-variants/${encodeURIComponent(id)}`)
+};
+
 export const emailSettingsApi = {
   get:  async ()            => normalizeEmailSettingsResponse(await get<any>("/api/email-settings")),
   save: async (body: any) => normalizeEmailSettingsResponse(await request<any>("PUT", "/api/email-settings", {

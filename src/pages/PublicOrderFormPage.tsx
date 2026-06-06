@@ -840,6 +840,8 @@ const PUBLIC_FORM_CLICK_PARAM_KEYS = [
   "media_buyer_id",
   "buyer",
   "buyer_id",
+  "landing_page",
+  "landing_page_url",
   "placement",
   "utm_id"
 ] as const;
