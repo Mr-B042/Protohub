@@ -42962,7 +42962,7 @@ ${waybillLineItems(w).length > 1
 
                             {/* Card body */}
                             <div className="px-5 py-5 space-y-4">
-                              {(!productGenerated || isMarketerEmbedMode) ? (
+                              {!productGenerated ? (
                                 <>
                                   {isMarketerEmbedMode && (
                                     <>
@@ -42993,16 +42993,6 @@ ${waybillLineItems(w).length > 1
                                     }
                                     void generateEmbedUrl(product);
                                   }}>{productSyncing || productMarketingVariantSaving ? "Generating..." : "Generate Embed URL"}</button>
-                                  {isMarketerEmbedMode && productGenerated && (
-                                    <div className="space-y-2">
-                                      <p className="text-sm text-gray-500">Generated direct link</p>
-                                      <div className="flex items-center gap-2">
-                                        <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={directUrlValue} aria-label={`${product.name} generated marketer direct URL`} />
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} tracked marketer link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Open form" onClick={() => { window.open(buildEmbedUrl(product, selectedCurrencyCode, undefined, true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
-                                      </div>
-                                    </div>
-                                  )}
                                   {isMarketerEmbedMode && productMarketingVariants.length > 0 && (
                                     <div className="space-y-2 pt-1 border-t border-gray-100">
                                       <p className="text-sm font-semibold text-gray-700">Saved landing page links</p>
@@ -43037,11 +43027,11 @@ ${waybillLineItems(w).length > 1
 
                                   {selectedCodeTab === "Direct Link" ? (
                                     <div className="space-y-2">
-                                      <p className="text-sm text-gray-500">Share this direct link to your order form</p>
+                                      <p className="text-sm text-gray-500">{isMarketerEmbedMode ? "Share this personal tracked link in your ad or landing page" : "Share this direct link to your order form"}</p>
                                       <div className="flex items-center gap-2">
-                                        <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={embedUrl} aria-label={`${product.name} direct embed URL`} />
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Copy direct link" onClick={() => copyText(embedUrl, `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
-                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Open form" onClick={() => { window.open(buildEmbedUrl(product, productEmbedCurrency(product), productEmbedRedirect(product), true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
+                                        <input readOnly className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 font-mono focus:outline-none" value={directUrlValue} aria-label={`${product.name} direct embed URL`} />
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Copy direct link" onClick={() => copyText(embedUrl, isMarketerEmbedMode ? `${product.name} tracked marketer link` : `${product.name} direct link`)}><Copy className="w-4 h-4" /></button>
+                                        <button className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-50" disabled={!marketerLinkReady} title="Open form" onClick={() => { window.open(buildEmbedUrl(product, productEmbedCurrency(product), productEmbedRedirect(product), true), "_blank", "noopener,noreferrer"); }}><ExternalLink className="w-4 h-4" /></button>
                                       </div>
                                     </div>
                                   ) : (
@@ -43076,6 +43066,40 @@ ${waybillLineItems(w).length > 1
                                     </label>
                                     <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
+                                  {isMarketerEmbedMode && (
+                                    <div className="space-y-3 pt-3 border-t border-gray-100">
+                                      <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-sm font-semibold text-gray-800">Need a separate landing-page link?</span>
+                                          <input className="border border-blue-100 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
+                                          <span className="text-xs text-blue-800/70">Paste a landing page URL, then generate. Orders will still attach to your marketer account and this page.</span>
+                                        </label>
+                                        <button className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productMarketingVariantSaving || !productMarketingDraft.landingPageUrl.trim()} onClick={() => { void createMarketingVariant(product); }}>{productMarketingVariantSaving ? "Saving..." : "Generate landing-page link"}</button>
+                                      </div>
+                                      {productMarketingVariants.length > 0 && (
+                                        <div className="space-y-2">
+                                          <p className="text-sm font-semibold text-gray-700">Saved landing page links</p>
+                                          {productMarketingVariants.map((variant) => {
+                                            const variantUrl = buildEmbedUrl(product, selectedCurrencyCode, undefined, false, variant);
+                                            const variantPreviewUrl = buildEmbedUrl(product, selectedCurrencyCode, undefined, true, variant);
+                                            return (
+                                              <div key={variant.id} className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 sm:flex-row sm:items-center">
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="m-0 text-sm font-bold text-gray-800">{variant.label}</p>
+                                                  <input readOnly className="mt-1 w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-mono text-gray-500" value={variantUrl} aria-label={`${product.name} ${variant.label} tracked URL`} />
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-1.5 sm:flex">
+                                                  <button className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => copyText(variantUrl, `${product.name} ${variant.label} tracked link`)}>Copy</button>
+                                                  <button className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => window.open(variantPreviewUrl, "_blank", "noopener,noreferrer")}>Open</button>
+                                                  <button className="!min-h-0 rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-500 hover:bg-rose-50" onClick={() => { void deleteMarketingVariant(variant); }}>Delete</button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </>
                               )}
                             </div>
