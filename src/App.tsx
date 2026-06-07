@@ -5016,11 +5016,19 @@ const ORDER_DETAILS_POLL_MS = 10_000;
 const WEEKEND_STOCK_SUMMARY_POLL_MS = 15_000;
 
 // ── OrderAssignmentScope ────────────────────
-type OrderAssignmentScope = "All assignments" | "Assigned by me";
+type OrderAssignmentScope = "All assignments" | "Assigned by me" | `rep:${string}`;
+
+// ── orderAssignmentRepId ────────────────────
+const orderAssignmentRepId = (scope: OrderAssignmentScope) =>
+  scope.startsWith("rep:") ? scope.slice(4) : null;
 
 // ── orderAssignmentScopeLabel ────────────────────
-const orderAssignmentScopeLabel = (scope: OrderAssignmentScope) =>
-  scope === "Assigned by me" ? "My orders" : "All assignments";
+const orderAssignmentScopeLabel = (scope: OrderAssignmentScope, repName?: string) =>
+  scope === "Assigned by me"
+    ? "My orders"
+    : orderAssignmentRepId(scope)
+      ? `${repName || "Selected sales rep"} orders`
+      : "All assignments";
 
 // ── STATE_STOCK_LOW_THRESHOLD ────────────────────
 const STATE_STOCK_LOW_THRESHOLD = 5;
@@ -6088,7 +6096,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const [orderAssignmentScope, setOrderAssignmentScope] = useState<OrderAssignmentScope>(() =>
     readPref<OrderAssignmentScope>("protohub.orders.assignmentScope", "All assignments", (raw) =>
-      raw === "All assignments" || raw === "Assigned by me" ? raw : null
+      raw === "All assignments" || raw === "Assigned by me" || raw.startsWith("rep:") ? raw as OrderAssignmentScope : null
     )
   );
   const [orderSource, setOrderSource] = useState<OrderSource>(() =>
@@ -9720,6 +9728,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Manual assignment uses `assignableUsers` (active-only) so paused reps can
   // still be hand-assigned.
   const activeSalesRepUsers = salesRepUsers.filter((user) => user.active && !user.roundRobinExcluded);
+  const assignedOrderRepIds = new Set(
+    trackedOrders
+      .map((order) => order.assignedRepId)
+      .filter((id): id is string => Boolean(id))
+  );
+  const orderAssignmentRepOptions = salesRepUsers
+    .filter((user) => user.active || assignedOrderRepIds.has(user.id))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const selectedOrderAssignmentRepId = orderAssignmentRepId(orderAssignmentScope);
+  const selectedOrderAssignmentRepName = selectedOrderAssignmentRepId
+    ? users.find((user) => user.id === selectedOrderAssignmentRepId)?.name
+    : undefined;
+  const orderAssignmentScopeDisplay = orderAssignmentScopeLabel(orderAssignmentScope, selectedOrderAssignmentRepName);
   useEffect(() => {
     if (!selectedCartId) {
       return;
@@ -11219,10 +11241,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
-  const matchesOrderAssignmentScope = (order: TrackedOrder) =>
-    !canFilterOrdersByAssigner
-    || orderAssignmentScope === "All assignments"
-    || (Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId);
+  const matchesOrderAssignmentScope = (order: TrackedOrder) => {
+    if (!canFilterOrdersByAssigner || orderAssignmentScope === "All assignments") return true;
+    if (orderAssignmentScope === "Assigned by me") {
+      return Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId;
+    }
+    const repId = orderAssignmentRepId(orderAssignmentScope);
+    return Boolean(repId) && order.assignedRepId === repId;
+  };
   const dashboardExpenseMatchesProductFilter = (expense: ExpenseRecord) =>
     dashboardProductIds.size === 0 || !expense.productId || matchesProductFilter(expense.productId, expense.productName, dashboardProductIds);
   const dashboardOrders = trackedOrders
@@ -19886,7 +19912,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Currency", selectedCurrency.label],
       ["Search", orderSearch || "All"],
       ["Status", orderStatus],
-      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScopeLabel(orderAssignmentScope) : "All assignments"],
+      ["Assignment scope", canFilterOrdersByAssigner ? orderAssignmentScopeDisplay : "All assignments"],
       ["Source", orderSource],
       ["Location", orderLocation],
       ["Product Filter", orderProductIds.size === 0 ? "All Products" : products.filter(p => orderProductIds.has(p.id)).map(p => p.name).join(", ")],
@@ -30411,6 +30437,16 @@ ${waybillLineItems(w).length > 1
                     >
                       <option value="All assignments">All assignments</option>
                       <option value="Assigned by me">My orders</option>
+                      {selectedOrderAssignmentRepId && !orderAssignmentRepOptions.some((user) => user.id === selectedOrderAssignmentRepId) && (
+                        <option value={orderAssignmentScope}>{orderAssignmentScopeDisplay}</option>
+                      )}
+                      {orderAssignmentRepOptions.length > 0 && (
+                        <optgroup label="Sales reps">
+                          {orderAssignmentRepOptions.map((user) => (
+                            <option key={user.id} value={`rep:${user.id}`}>{user.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   )}
                   {/* Product multi-select filter */}
