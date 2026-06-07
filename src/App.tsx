@@ -11387,16 +11387,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
-  const orderAssignmentActorName = (currentManagedUser?.name ?? authUser?.name ?? "").trim().toLowerCase();
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
   const matchesOrderAssignmentScope = (order: TrackedOrder) => {
     if (!canFilterOrdersByAssigner || orderAssignmentScope === "All assignments") return true;
     if (orderAssignmentScope === "Assigned by me") {
-      const assignedByName = (order.assignedByNameSnapshot ?? "").trim().toLowerCase();
-      return (
-        Boolean(orderAssignmentActorId && order.assignedByUserId === orderAssignmentActorId)
-        || Boolean(!order.assignedByUserId && assignedByName && assignedByName === orderAssignmentActorName)
-      );
+      return Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId;
     }
     const repId = orderAssignmentRepId(orderAssignmentScope);
     return Boolean(repId) && order.assignedRepId === repId;
