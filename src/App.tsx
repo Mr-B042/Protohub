@@ -29073,44 +29073,113 @@ ${waybillLineItems(w).length > 1
               </div>
             ) : null;
             const slotStatus = freeDeliverySlotsEnabled && freeDeliverySlotStatus?.enabled ? freeDeliverySlotStatus : null;
-            const slotResetLabel = slotStatus?.nextResetAt
-              ? new Date(slotStatus.nextResetAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" })
-              : "";
             const freeDeliverySlotBanner = slotStatus ? (() => {
               const limit = Math.max(1, Number(slotStatus.limit ?? 15));
               const claimed = Math.max(0, Number(slotStatus.claimed ?? 0));
               const remaining = Math.max(0, Number(slotStatus.remaining ?? Math.max(0, limit - claimed)));
               const full = slotStatus.full === true || remaining <= 0;
+              const claimedPercent = Math.min(100, Math.max(0, Math.round((Math.min(claimed, limit) / limit) * 100)));
+              const remainingLabel = remaining === 1 ? "1 slot left" : `${remaining} slots left`;
+              const urgencyHeadline = remaining <= 1
+                ? "Last free-delivery slot left"
+                : remaining <= 3
+                  ? `Only ${remaining} free-delivery slots left`
+                  : "Free-delivery slots are moving fast";
               return (
-                <div
-                  style={{
-                    padding: "12px 14px",
-                    background: full ? "#fff7ed" : "#ecfdf5",
-                    border: `1px solid ${full ? "#fed7aa" : "#a7f3d0"}`,
-                    borderRadius: 14,
-                    color: full ? "#9a3412" : "#047857",
-                    marginBottom: 12,
-                    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)"
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>{full ? "🚚" : "⚡"}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <p style={{ margin: 0, fontSize: 14, fontWeight: 900, lineHeight: 1.35 }}>
-                        {full
-                          ? (Number(slotStatus.resetIntervalMinutes ?? 1440) >= 1440
-                              ? "Today’s free-delivery slots are full."
-                              : "This free-delivery round is full.")
-                          : `Free delivery: ${claimed} of ${limit} slots claimed.`}
-                      </p>
-                      <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.45, color: full ? "#9a3412" : "#065f46" }}>
-                        {full
-                          ? `You can still place your order for normal delivery.${slotResetLabel ? ` New free-delivery slots reopen at ${slotResetLabel}.` : ""}`
-                          : `Complete your order now to reserve ${remaining === 1 ? "the last free-delivery slot" : `one of the remaining ${remaining} free-delivery slots`}.${slotResetLabel ? ` Resets at ${slotResetLabel}.` : ""}`}
-                      </p>
+                <>
+                  <style>{`
+                    @keyframes publicSlotUrgencyPulse {
+                      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.24); }
+                      50% { transform: scale(1.04); box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+                    }
+                    @keyframes publicSlotProgressSweep {
+                      0% { transform: translateX(-120%); opacity: 0; }
+                      28% { opacity: 0.8; }
+                      100% { transform: translateX(160%); opacity: 0; }
+                    }
+                    @keyframes publicSlotIconSpark {
+                      0%, 100% { transform: rotate(-8deg) scale(1); }
+                      42% { transform: rotate(7deg) scale(1.12); }
+                    }
+                  `}</style>
+                  <div
+                    style={{
+                      position: "relative",
+                      overflow: "hidden",
+                      padding: "16px 18px",
+                      background: full
+                        ? "linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%)"
+                        : "linear-gradient(135deg, #fff7ed 0%, #ecfdf5 56%, #eff6ff 100%)",
+                      border: `1px solid ${full ? "#fdba74" : "#fb923c"}`,
+                      borderRadius: 18,
+                      color: full ? "#9a3412" : "#064e3b",
+                      marginBottom: 12,
+                      boxShadow: full
+                        ? "0 14px 34px rgba(154, 52, 18, 0.10)"
+                        : "0 18px 42px rgba(249, 115, 22, 0.16), 0 8px 22px rgba(16, 185, 129, 0.10)",
+                      animation: full ? undefined : "publicSlotUrgencyPulse 2.6s ease-in-out infinite"
+                    }}
+                  >
+                    {!full && (
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          background: "radial-gradient(circle at 18% 0%, rgba(251, 146, 60, 0.18), transparent 38%)",
+                          pointerEvents: "none"
+                        }}
+                      />
+                    )}
+                    <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 36,
+                          height: 36,
+                          borderRadius: 14,
+                          background: full ? "#ffedd5" : "#fed7aa",
+                          fontSize: 21,
+                          lineHeight: 1,
+                          boxShadow: full ? "none" : "0 10px 22px rgba(249, 115, 22, 0.22)",
+                          animation: full ? undefined : "publicSlotIconSpark 1.7s ease-in-out infinite"
+                        }}
+                      >
+                        {full ? "🚚" : "🔥"}
+                      </span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                          <p style={{ margin: 0, fontSize: 17, fontWeight: 950, lineHeight: 1.18, color: full ? "#9a3412" : "#7c2d12" }}>
+                            {full
+                              ? (Number(slotStatus.resetIntervalMinutes ?? 1440) >= 1440 ? "Today’s free-delivery slots are full." : "This free-delivery round is full.")
+                              : urgencyHeadline}
+                          </p>
+                          {!full && (
+                            <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "5px 10px", background: "#f97316", color: "#fff7ed", fontSize: 12, fontWeight: 950, letterSpacing: "0.02em", boxShadow: "0 8px 18px rgba(249, 115, 22, 0.28)" }}>
+                              {remainingLabel}
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: full ? "#9a3412" : "#065f46", fontWeight: 800 }}>
+                          {full
+                            ? "You can still place your order for normal delivery."
+                            : `${claimed} of ${limit} claimed already. Finish the form now to hold your free-delivery spot before it disappears.`}
+                        </p>
+                        {!full && (
+                          <div style={{ marginTop: 10 }}>
+                            <div style={{ position: "relative", height: 9, overflow: "hidden", borderRadius: 999, background: "rgba(15, 23, 42, 0.10)" }}>
+                              <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${claimedPercent}%`, minWidth: claimedPercent > 0 ? 18 : 0, borderRadius: 999, background: "linear-gradient(90deg, #f59e0b, #f97316, #ef4444)" }} />
+                              <div aria-hidden="true" style={{ position: "absolute", top: 0, bottom: 0, width: "45%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.72), transparent)", animation: "publicSlotProgressSweep 1.9s ease-in-out infinite" }} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                </>
               );
             })() : null;
             // Success / thank-you screen — replaces the form after submit.
