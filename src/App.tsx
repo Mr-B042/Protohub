@@ -9742,6 +9742,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? users.find((user) => user.id === selectedOrderAssignmentRepId)?.name
     : undefined;
   const orderAssignmentScopeDisplay = orderAssignmentScopeLabel(orderAssignmentScope, selectedOrderAssignmentRepName);
+  const repSignatureFor = (seed?: string | null) => {
+    const signatures = [
+      {
+        card: "border-sky-200/80 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.24),transparent_34%),linear-gradient(135deg,rgba(239,246,255,0.96),rgba(236,253,245,0.92))] dark:border-sky-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_36%),linear-gradient(135deg,rgba(11,31,48,0.94),rgba(9,43,38,0.78))]",
+        avatar: "from-sky-500 via-cyan-400 to-emerald-400 text-white ring-sky-100 dark:ring-sky-400/25",
+        role: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-200",
+        accent: "bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400",
+        glow: "bg-sky-300/25 dark:bg-sky-400/12"
+      },
+      {
+        card: "border-violet-200/80 bg-[radial-gradient(circle_at_top_right,rgba(168,85,247,0.22),transparent_34%),linear-gradient(135deg,rgba(245,243,255,0.96),rgba(253,244,255,0.92))] dark:border-violet-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(168,85,247,0.18),transparent_36%),linear-gradient(135deg,rgba(31,19,55,0.94),rgba(43,20,50,0.78))]",
+        avatar: "from-violet-500 via-fuchsia-500 to-pink-400 text-white ring-violet-100 dark:ring-violet-400/25",
+        role: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/25 dark:bg-violet-500/10 dark:text-violet-200",
+        accent: "bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-400",
+        glow: "bg-violet-300/25 dark:bg-violet-400/12"
+      },
+      {
+        card: "border-amber-200/80 bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.23),transparent_34%),linear-gradient(135deg,rgba(255,251,235,0.97),rgba(255,247,237,0.94))] dark:border-amber-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.16),transparent_36%),linear-gradient(135deg,rgba(50,34,9,0.92),rgba(47,24,12,0.78))]",
+        avatar: "from-amber-500 via-orange-500 to-rose-400 text-white ring-amber-100 dark:ring-amber-400/25",
+        role: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200",
+        accent: "bg-gradient-to-r from-amber-500 via-orange-500 to-rose-400",
+        glow: "bg-amber-300/25 dark:bg-amber-400/12"
+      },
+      {
+        card: "border-teal-200/80 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.23),transparent_34%),linear-gradient(135deg,rgba(240,253,250,0.97),rgba(236,254,255,0.92))] dark:border-teal-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.16),transparent_36%),linear-gradient(135deg,rgba(10,43,40,0.94),rgba(8,39,48,0.78))]",
+        avatar: "from-teal-500 via-emerald-500 to-lime-400 text-white ring-teal-100 dark:ring-teal-400/25",
+        role: "border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/25 dark:bg-teal-500/10 dark:text-teal-200",
+        accent: "bg-gradient-to-r from-teal-500 via-emerald-500 to-lime-400",
+        glow: "bg-teal-300/25 dark:bg-teal-400/12"
+      },
+      {
+        card: "border-rose-200/80 bg-[radial-gradient(circle_at_top_right,rgba(244,63,94,0.2),transparent_34%),linear-gradient(135deg,rgba(255,241,242,0.96),rgba(255,247,237,0.92))] dark:border-rose-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(244,63,94,0.15),transparent_36%),linear-gradient(135deg,rgba(54,18,31,0.94),rgba(49,26,16,0.78))]",
+        avatar: "from-rose-500 via-red-500 to-orange-400 text-white ring-rose-100 dark:ring-rose-400/25",
+        role: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-200",
+        accent: "bg-gradient-to-r from-rose-500 via-red-500 to-orange-400",
+        glow: "bg-rose-300/25 dark:bg-rose-400/12"
+      },
+      {
+        card: "border-indigo-200/80 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.22),transparent_34%),linear-gradient(135deg,rgba(238,242,255,0.96),rgba(239,246,255,0.92))] dark:border-indigo-400/25 dark:bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.16),transparent_36%),linear-gradient(135deg,rgba(24,28,61,0.94),rgba(13,35,58,0.78))]",
+        avatar: "from-indigo-500 via-blue-500 to-sky-400 text-white ring-indigo-100 dark:ring-indigo-400/25",
+        role: "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-200",
+        accent: "bg-gradient-to-r from-indigo-500 via-blue-500 to-sky-400",
+        glow: "bg-indigo-300/25 dark:bg-indigo-400/12"
+      }
+    ];
+    if (!seed) return signatures[0];
+    const hash = Array.from(seed).reduce((sum, char) => ((sum * 31) + char.charCodeAt(0)) >>> 0, 0);
+    return signatures[hash % signatures.length];
+  };
   const orderAssignmentMetaFor = (order: TrackedOrder) => {
     const assignee = order.assignedRepId ? users.find((user) => user.id === order.assignedRepId) : undefined;
     const assignedByName =
@@ -9759,15 +9808,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const renderOrderAssigneeBadge = (order: TrackedOrder, variant: "mobile" | "table" = "table") => {
     const meta = orderAssignmentMetaFor(order);
+    const signature = repSignatureFor(order.assignedRepId ?? meta.name);
     const avatarTone = meta.isAssigned
       ? meta.isMissingProfile
         ? "from-amber-500 to-orange-500 text-white ring-amber-200 dark:ring-amber-500/30"
-        : "from-sky-500 via-cyan-400 to-emerald-400 text-white ring-sky-100 dark:ring-sky-400/20"
+        : signature.avatar
       : "from-slate-200 to-slate-100 text-slate-500 ring-slate-200 dark:from-slate-700 dark:to-slate-800 dark:text-slate-300 dark:ring-slate-700";
     const roleTone = meta.isAssigned
       ? meta.isMissingProfile
         ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
-        : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200"
+        : signature.role
       : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400";
     const assignedByLine = meta.assignedByName
       ? `By ${meta.assignedByName}`
@@ -9779,10 +9829,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return (
         <section className={`relative mt-4 overflow-hidden rounded-[24px] border px-4 py-3 shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
           meta.isAssigned
-            ? "border-sky-100 bg-[linear-gradient(135deg,rgba(239,246,255,0.95),rgba(236,253,245,0.9))] dark:border-sky-400/20 dark:bg-[linear-gradient(135deg,rgba(14,36,54,0.92),rgba(12,38,31,0.72))]"
+            ? meta.isMissingProfile
+              ? "border-amber-200 bg-amber-50/90 dark:border-amber-500/25 dark:bg-amber-500/10"
+              : signature.card
             : "border-amber-100 bg-amber-50/80 dark:border-amber-500/25 dark:bg-amber-500/10"
         }`}>
-          <div className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-sky-300/25 blur-2xl dark:bg-sky-400/10" />
+          <div className={`pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full blur-2xl ${meta.isAssigned && !meta.isMissingProfile ? signature.glow : "bg-amber-300/25 dark:bg-amber-400/10"}`} />
+          {meta.isAssigned && !meta.isMissingProfile ? <div className={`pointer-events-none absolute inset-x-0 top-0 h-1 ${signature.accent}`} /> : null}
           <div className="relative flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-sm font-black ring-4 ${avatarTone}`}>
@@ -9803,7 +9856,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     return (
-      <div className="group/assignee inline-flex min-w-[190px] max-w-[260px] items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-2.5 py-2 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md dark:border-slate-700/80 dark:bg-white/[0.04] dark:hover:border-sky-400/30">
+      <div className={`group/assignee relative inline-flex min-w-[190px] max-w-[260px] items-center gap-2 overflow-hidden rounded-2xl border px-2.5 py-2 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
+        meta.isAssigned && !meta.isMissingProfile
+          ? signature.card
+          : "border-gray-200 bg-white/80 dark:border-slate-700/80 dark:bg-white/[0.04]"
+      }`}>
+        {meta.isAssigned && !meta.isMissingProfile ? <span className={`absolute inset-y-0 left-0 w-1 ${signature.accent}`} /> : null}
         <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-black ring-2 ${avatarTone}`}>
           {meta.initials}
         </span>
