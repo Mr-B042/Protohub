@@ -27920,14 +27920,14 @@ ${waybillLineItems(w).length > 1
             <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Call rep summary">
               {([
                 // Revenue card removed — sales reps shouldn't see org-wide revenue.
-                // They see their own pipeline + their own commission ("Est. Earnings").
+                // They see their own pipeline + their own salary estimate.
                 { title: "Total Orders",     value: String(repOrders.length),                helper: "All assigned statuses",   icon: ShoppingCart, tone: "orange" },
                 { title: "Pending (New)",    value: String(repPendingCount),                 helper: "Not yet acted on",        icon: Clock,        tone: "cyan" },
                 { title: "Confirmed",        value: String(repConfirmedCount),               helper: `${repConfirmedRate}% of total`, icon: BadgeCheck, tone: "green" },
                 { title: "Delivered",        value: String(repDeliveredOrders.length),       helper: "in this period",          icon: PackageCheck, tone: "green" },
                 { title: "Conversion %",     value: `${repConversionRate}%`,                 helper: "Delivered / total",       icon: TrendingUp,   tone: "blue" },
                 { title: "Avg Response",     value: repAvgResponse,                          helper: "Created to first action", icon: Zap,          tone: "cyan" },
-                { title: "Est. Earnings",    value: formatMoney(repPayForUser(selectedRepUser)), helper: "Your commission",     icon: Banknote,     tone: "green" }
+                { title: "Estimated Salary", value: formatMoney(repPayForUser(selectedRepUser)), helper: "Salary estimate",     icon: Banknote,     tone: "green" }
               // Owner / Admin previewing the workspace can still see org revenue
               // (useful for management); reps themselves never see this card.
               ] as { title: string; value: string; helper: string; icon: any; tone: string }[])

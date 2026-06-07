@@ -6861,7 +6861,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 { title: "Delivered Month", value: String(repDeliveredThisMonth), helper: "Target tracking", icon: PackageCheck, tone: "green" },
                 { title: "Conversion %", value: `${repConversionRate}%`, helper: "Delivered / total", icon: TrendingUp, tone: "blue" },
                 { title: "Avg Response", value: repAvgResponse, helper: "Created to first action", icon: Zap, tone: "cyan" },
-                { title: "Est. Earnings", value: formatMoney(repPayForUser(selectedRepUser)), helper: "Payroll rate based", icon: Banknote, tone: "green" }
+                { title: "Estimated Salary", value: formatMoney(repPayForUser(selectedRepUser)), helper: "Salary estimate", icon: Banknote, tone: "green" }
               ].map((card) => {
                 const Icon = card.icon;
                 return (
