@@ -9871,23 +9871,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }`}>
           <div className={`pointer-events-none absolute inset-y-4 left-0 w-1.5 rounded-r-full ${meta.isAssigned && !meta.isMissingProfile ? signature.rail : "bg-amber-500"}`} />
           <div className={`pointer-events-none absolute left-4 right-4 bottom-0 h-px bg-gradient-to-r ${meta.isAssigned && !meta.isMissingProfile ? signature.line : "from-amber-500/60 via-orange-400/45 to-transparent"}`} />
-          <div className="relative flex items-center justify-between gap-3 pl-2">
-            <div className="flex min-w-0 items-center gap-3">
+          <div className="relative flex items-start justify-between gap-3 pl-2">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
               <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] border text-sm font-black shadow-[0_10px_24px_rgba(15,23,42,0.10)] ${avatarTone}`}>
                 {meta.initials}
               </span>
               <div className="min-w-0">
                 <p className={`m-0 text-[10px] font-black uppercase tracking-[0.18em] ${orderFaintTextClass}`}>Assigned to</p>
-                <p className={`m-0 mt-0.5 truncate text-[16px] font-black ${orderTitleTextClass}`}>{meta.name}</p>
-                <p className={`m-0 mt-1 flex min-w-0 items-center gap-1.5 text-[11px] font-bold ${orderMutedTextClass}`}>
+                <p className={`m-0 mt-0.5 whitespace-normal break-words text-[16px] font-black leading-5 ${orderTitleTextClass}`}>{meta.name}</p>
+                <p className={`m-0 mt-1 flex min-w-0 flex-wrap items-center gap-1.5 whitespace-normal text-[11px] font-bold leading-4 ${orderMutedTextClass}`}>
                   <span>{meta.isAssigned ? "Assigned" : "Unassigned"}</span>
                   <span className={orderFaintTextClass}>·</span>
-                  <span className="truncate">{assignedByLine}</span>
+                  <span className="break-words">{assignedByLine}</span>
                   <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.08em] ${roleTone}`}>{assignmentMethod}</span>
                 </p>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2 pt-0.5">
               <span className={`inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-black ${orderMutedTextClass} dark:border-slate-700 dark:bg-white/5`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${meta.isAssigned && !meta.isMissingProfile ? signature.dot : "bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]"}`} />
                 {loadLabel}
@@ -9900,17 +9900,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     return (
-      <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className="group/assignee relative inline-flex min-w-[260px] max-w-[330px] items-center gap-2.5 overflow-hidden rounded-[18px] border border-slate-200/90 bg-white/92 px-3 py-2.5 text-left shadow-[0_10px_26px_rgba(15,23,42,0.07)] transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_40px_rgba(15,23,42,0.12)] focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 dark:border-slate-700/90 dark:bg-white/[0.045] dark:hover:border-sky-400/25">
+      <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className="group/assignee relative inline-flex min-w-[340px] max-w-[460px] items-start gap-2.5 overflow-hidden whitespace-normal rounded-[18px] border border-slate-200/90 bg-white/92 px-3 py-2.5 text-left shadow-[0_10px_26px_rgba(15,23,42,0.07)] transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_40px_rgba(15,23,42,0.12)] focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 dark:border-slate-700/90 dark:bg-white/[0.045] dark:hover:border-sky-400/25">
         <span className={`absolute inset-y-2 left-0 w-1 rounded-r-full ${meta.isAssigned && !meta.isMissingProfile ? signature.rail : "bg-amber-500"}`} />
         <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border text-xs font-black shadow-sm ${avatarTone}`}>
           {meta.initials}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className={`truncate text-[13px] font-black leading-4 ${meta.isAssigned ? orderTitleTextClass : "text-amber-700 dark:text-amber-200"}`}>{meta.name}</span>
+        <span className="min-w-0 flex-1 whitespace-normal">
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className={`whitespace-normal break-words text-[13px] font-black leading-4 ${meta.isAssigned ? orderTitleTextClass : "text-amber-700 dark:text-amber-200"}`}>{meta.name}</span>
             <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.08em] ${roleTone}`}>{assignmentMethod}</span>
           </span>
-          <span className={`mt-0.5 block truncate text-[10px] font-bold uppercase tracking-[0.12em] ${orderFaintTextClass}`}>
+          <span className={`mt-1 block whitespace-normal break-words text-[10px] font-bold uppercase tracking-[0.12em] leading-4 ${orderFaintTextClass}`}>
             {meta.isAssigned ? "Assigned" : "Unassigned"} · {assignedByLine}
           </span>
         </span>
