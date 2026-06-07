@@ -5025,7 +5025,7 @@ const orderAssignmentRepId = (scope: OrderAssignmentScope) =>
 // ── orderAssignmentScopeLabel ────────────────────
 const orderAssignmentScopeLabel = (scope: OrderAssignmentScope, repName?: string) =>
   scope === "Assigned by me"
-    ? "My orders"
+    ? "Assigned by me"
     : orderAssignmentRepId(scope)
       ? `${repName || "Selected sales rep"} orders`
       : "All assignments";
@@ -11387,11 +11387,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
+  const orderAssignmentActorName = (currentManagedUser?.name ?? authUser?.name ?? "").trim().toLowerCase();
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
   const matchesOrderAssignmentScope = (order: TrackedOrder) => {
     if (!canFilterOrdersByAssigner || orderAssignmentScope === "All assignments") return true;
     if (orderAssignmentScope === "Assigned by me") {
-      return Boolean(orderAssignmentActorId) && order.assignedRepId === orderAssignmentActorId;
+      const assignedByName = (order.assignedByNameSnapshot ?? "").trim().toLowerCase();
+      return (
+        Boolean(orderAssignmentActorId && order.assignedByUserId === orderAssignmentActorId)
+        || Boolean(!order.assignedByUserId && assignedByName && assignedByName === orderAssignmentActorName)
+      );
     }
     const repId = orderAssignmentRepId(orderAssignmentScope);
     return Boolean(repId) && order.assignedRepId === repId;
@@ -30525,7 +30530,7 @@ ${waybillLineItems(w).length > 1
                   </span>
                   {canFilterOrdersByAssigner && orderAssignmentScope === "Assigned by me" && (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-xs font-semibold text-amber-700">
-                      <UserPlus className="w-3 h-3" /> My orders
+                      <UserPlus className="w-3 h-3" /> Assigned by me
                     </span>
                   )}
                 </div>
@@ -30679,7 +30684,7 @@ ${waybillLineItems(w).length > 1
                       onChange={(e) => setOrderAssignmentScope(e.target.value as OrderAssignmentScope)}
                     >
                       <option value="All assignments">All assignments</option>
-                      <option value="Assigned by me">My orders</option>
+                      <option value="Assigned by me">Assigned by me</option>
                       {selectedOrderAssignmentRepId && !orderAssignmentRepOptions.some((user) => user.id === selectedOrderAssignmentRepId) && (
                         <option value={orderAssignmentScope}>{orderAssignmentScopeDisplay}</option>
                       )}
