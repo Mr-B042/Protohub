@@ -9742,6 +9742,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? users.find((user) => user.id === selectedOrderAssignmentRepId)?.name
     : undefined;
   const orderAssignmentScopeDisplay = orderAssignmentScopeLabel(orderAssignmentScope, selectedOrderAssignmentRepName);
+  const orderAssignmentMetaFor = (order: TrackedOrder) => {
+    const assignee = order.assignedRepId ? users.find((user) => user.id === order.assignedRepId) : undefined;
+    const assignedByName =
+      order.assignedByNameSnapshot
+      ?? (order.assignedByUserId ? users.find((user) => user.id === order.assignedByUserId)?.name : undefined);
+    return {
+      name: assignee?.name ?? (order.assignedRepId ? "Unknown user" : "Unassigned"),
+      role: assignee?.role ?? (order.assignedRepId ? "Missing profile" : "No owner"),
+      initials: assignee ? userInitials(assignee.name) : order.assignedRepId ? "?" : "—",
+      active: assignee?.active ?? false,
+      assignedByName,
+      isAssigned: Boolean(order.assignedRepId),
+      isMissingProfile: Boolean(order.assignedRepId && !assignee)
+    };
+  };
+  const renderOrderAssigneeBadge = (order: TrackedOrder, variant: "mobile" | "table" = "table") => {
+    const meta = orderAssignmentMetaFor(order);
+    const avatarTone = meta.isAssigned
+      ? meta.isMissingProfile
+        ? "from-amber-500 to-orange-500 text-white ring-amber-200 dark:ring-amber-500/30"
+        : "from-sky-500 via-cyan-400 to-emerald-400 text-white ring-sky-100 dark:ring-sky-400/20"
+      : "from-slate-200 to-slate-100 text-slate-500 ring-slate-200 dark:from-slate-700 dark:to-slate-800 dark:text-slate-300 dark:ring-slate-700";
+    const roleTone = meta.isAssigned
+      ? meta.isMissingProfile
+        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
+        : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200"
+      : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400";
+    const assignedByLine = meta.assignedByName
+      ? `By ${meta.assignedByName}`
+      : meta.isAssigned
+        ? "Assigned"
+        : "Awaiting assignment";
+
+    if (variant === "mobile") {
+      return (
+        <section className={`relative mt-4 overflow-hidden rounded-[24px] border px-4 py-3 shadow-[0_16px_36px_rgba(15,23,42,0.08)] ${
+          meta.isAssigned
+            ? "border-sky-100 bg-[linear-gradient(135deg,rgba(239,246,255,0.95),rgba(236,253,245,0.9))] dark:border-sky-400/20 dark:bg-[linear-gradient(135deg,rgba(14,36,54,0.92),rgba(12,38,31,0.72))]"
+            : "border-amber-100 bg-amber-50/80 dark:border-amber-500/25 dark:bg-amber-500/10"
+        }`}>
+          <div className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-sky-300/25 blur-2xl dark:bg-sky-400/10" />
+          <div className="relative flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-sm font-black ring-4 ${avatarTone}`}>
+                {meta.initials}
+              </span>
+              <div className="min-w-0">
+                <p className={`m-0 text-[10px] font-black uppercase tracking-[0.18em] ${orderFaintTextClass}`}>Assigned to</p>
+                <p className={`m-0 mt-0.5 truncate text-[15px] font-black ${orderTitleTextClass}`}>{meta.name}</p>
+                <p className={`m-0 mt-0.5 truncate text-[11px] font-bold ${orderMutedTextClass}`}>{assignedByLine}</p>
+              </div>
+            </div>
+            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${roleTone}`}>
+              {meta.role}
+            </span>
+          </div>
+        </section>
+      );
+    }
+
+    return (
+      <div className="group/assignee inline-flex min-w-[190px] max-w-[260px] items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-2.5 py-2 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md dark:border-slate-700/80 dark:bg-white/[0.04] dark:hover:border-sky-400/30">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-black ring-2 ${avatarTone}`}>
+          {meta.initials}
+        </span>
+        <span className="min-w-0">
+          <span className={`block truncate text-[13px] font-black leading-4 ${meta.isAssigned ? orderTitleTextClass : "text-amber-700 dark:text-amber-200"}`}>{meta.name}</span>
+          <span className={`mt-0.5 block truncate text-[10px] font-bold uppercase tracking-[0.12em] ${orderFaintTextClass}`}>{meta.role} · {assignedByLine}</span>
+        </span>
+      </div>
+    );
+  };
   useEffect(() => {
     if (!selectedCartId) {
       return;
@@ -30582,6 +30654,8 @@ ${waybillLineItems(w).length > 1
                             </section>
                           )}
 
+                          {renderOrderAssigneeBadge(order, "mobile")}
+
                           <div className="relative mt-4 grid grid-cols-1 gap-2">
                             <div className="grid grid-cols-2 gap-2">
                               <span className={`inline-flex min-w-0 items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold shadow-sm dark:border-slate-700/80 dark:bg-white/5 ${orderMutedTextClass}`}>
@@ -30682,6 +30756,7 @@ ${waybillLineItems(w).length > 1
                         )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Assigned To</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Status</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Response</th>
@@ -30692,7 +30767,7 @@ ${waybillLineItems(w).length > 1
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={canUseAdminOrderActions ? 9 : 8} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
+                        <tr><td colSpan={canUseAdminOrderActions ? 10 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const sourceMeta = orderDisplaySourceFor(order);
@@ -30721,6 +30796,7 @@ ${waybillLineItems(w).length > 1
                               )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
+                              <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
                               <td className="px-4 py-3.5">
                                 <span className="inline-flex" title={sourceMeta.label}>
                                   <OrderSourceLogo
