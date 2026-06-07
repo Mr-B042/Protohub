@@ -22827,6 +22827,53 @@ ${waybillLineItems(w).length > 1
     });
   };
 
+  const viewSelectedAssigneeOrders = () => {
+    if (!selectedOrder?.assignedRepId) {
+      showToast("This order is not assigned yet.");
+      return;
+    }
+    const repName = users.find((user) => user.id === selectedOrder.assignedRepId)?.name ?? "selected rep";
+    setOrderAssignmentScope(`rep:${selectedOrder.assignedRepId}`);
+    setOrderStatus("All Orders");
+    setActivePage(activeOrderWorkspacePage);
+    syncHashRoute(adminOrderWorkspaceHash(""));
+    closeModal();
+    showToast(`Showing orders assigned to ${repName}.`);
+  };
+
+  const removeSelectedOrderAssignment = () => {
+    if (!selectedOrder?.assignedRepId) {
+      showToast("This order is already unassigned.");
+      return;
+    }
+    if (!window.confirm(`Remove the assigned owner from order ${selectedOrder.id}?`)) {
+      return;
+    }
+    const orderSnapshot = selectedOrder;
+    const nextResponse = "Assignment removed";
+    const nextNotes = [
+      { id: makeNoteId(), text: `Assignment removed from ${users.find((user) => user.id === selectedOrder.assignedRepId)?.name ?? "current owner"}.`, by: ownerName, date: new Date().toISOString() },
+      ...orderNotesFor(selectedOrder)
+    ];
+    setTrackedOrders((value) =>
+      value.map((order) =>
+        order.id === selectedOrder.id
+          ? { ...order, assignedRepId: undefined, response: nextResponse, notes: nextNotes }
+          : order
+      )
+    );
+    closeModal();
+    showToast(`${selectedOrder.id} is now unassigned.`);
+    ordersApi.update(selectedOrder.id, {
+      assigned_rep_id: null,
+      response: nextResponse,
+      timeline_notes: nextNotes
+    }).catch((err: any) => {
+      setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
+      showToast(`Failed to remove assignment from ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
   const addOrderNote = () => {
     if (!selectedOrder || !orderNoteDraft.trim()) {
       showToast("Add a note before saving.");
@@ -48561,9 +48608,66 @@ ${waybillLineItems(w).length > 1
 	              </div>
 	            )}
 
-	            {modal === "reassignOrder" && selectedOrder && (
-	              <div className="modal-form">{assignableUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active users available to assign.</p> : <><label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label><label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} /></label></>}<div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{assignableUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}</div></div>
-	            )}
+	            {modal === "reassignOrder" && selectedOrder && (() => {
+                const assignee = selectedOrder.assignedRepId ? users.find((user) => user.id === selectedOrder.assignedRepId) : undefined;
+                const assigneeName = assignee?.name ?? (selectedOrder.assignedRepId ? "Missing user profile" : "No owner assigned");
+                const assigneeInitials = assignee ? userInitials(assignee.name) : selectedOrder.assignedRepId ? "?" : "+";
+                const signature = repSignatureFor(selectedOrder.assignedRepId ?? assigneeName);
+                const activeCount = selectedOrder.assignedRepId ? activeOrderCountByRep[selectedOrder.assignedRepId] ?? 0 : 0;
+                return (
+	              <div className="modal-form">
+                  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(31,143,224,0.12),transparent_34%),linear-gradient(135deg,#ffffff,#f8fbff)] p-4 shadow-[0_18px_45px_rgba(15,23,42,0.10)] dark:border-slate-700/80 dark:bg-[linear-gradient(135deg,#101a24,#0b1520)]">
+                    <div className="flex items-start gap-3">
+                      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-sm font-black shadow-sm ${selectedOrder.assignedRepId ? signature.avatar : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                        {assigneeInitials}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Current owner</p>
+                        <p className="m-0 mt-0.5 whitespace-normal break-words text-base font-black text-slate-950 dark:text-slate-100">{assigneeName}</p>
+                        <p className="m-0 mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          Order #{selectedOrder.id} · {selectedOrder.customer || "Unnamed customer"}
+                        </p>
+                      </div>
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-black text-slate-600 dark:border-slate-700 dark:bg-white/5 dark:text-slate-300">
+                        <span className={`h-1.5 w-1.5 rounded-full ${selectedOrder.assignedRepId ? signature.dot : "bg-amber-500"}`} />
+                        {selectedOrder.assignedRepId ? `${activeCount} active` : "Unassigned"}
+                      </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:border-[#1F8FE0]/40 hover:bg-blue-50 hover:text-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-white/5 dark:text-slate-200"
+                        disabled={!selectedOrder.assignedRepId}
+                        onClick={viewSelectedAssigneeOrders}
+                      >
+                        <Filter className="h-4 w-4" /> View rep orders
+                      </button>
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-sm font-bold text-red-600 shadow-sm transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
+                        disabled={!selectedOrder.assignedRepId}
+                        onClick={removeSelectedOrderAssignment}
+                      >
+                        <Trash2 className="h-4 w-4" /> Remove owner
+                      </button>
+                    </div>
+                  </section>
+
+                  {assignableUsers.length === 0 ? (
+                    <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active users available to assign.</p>
+                  ) : (
+                    <>
+                      <label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
+                      <label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} placeholder="Why are we moving this order?" /></label>
+                    </>
+                  )}
+                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
+                    {assignableUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={reassignSelectedOrder}>Reassign</button>}
+                  </div>
+	              </div>
+                );
+              })()}
 
 	            {modal === "sendToAgent" && selectedOrder && (() => {
 	              const orderProductId = selectedOrder.productId;
