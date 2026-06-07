@@ -2,6 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { supabase } from "../lib/supabase.js";
 import { packageAvailabilityForState } from "../lib/package-availability.js";
+import { readSettings } from "./embed-settings.js";
 
 const router = Router();
 
@@ -214,6 +215,19 @@ const lagosDayStartUtcIso = (date: Date) => {
   return new Date(Date.UTC(year, month, day) - LAGOS_OFFSET_MS).toISOString();
 };
 
+const currentLagosResetWindow = (date: Date, intervalMinutes: number) => {
+  const safeIntervalMinutes = Math.min(10080, Math.max(10, Math.floor(intervalMinutes || 1440)));
+  const intervalMs = safeIntervalMinutes * 60 * 1000;
+  const dayStartMs = new Date(lagosDayStartUtcIso(date)).getTime();
+  const elapsedMs = Math.max(0, date.getTime() - dayStartMs);
+  const windowStartMs = dayStartMs + Math.floor(elapsedMs / intervalMs) * intervalMs;
+  return {
+    resetIntervalMinutes: safeIntervalMinutes,
+    windowStartIso: new Date(windowStartMs).toISOString(),
+    nextResetAtIso: new Date(windowStartMs + intervalMs).toISOString()
+  };
+};
+
 const buildCompanionSocialProof = async (product: DbProduct) => {
   const companionProductIds = Array.from(
     new Set(
@@ -317,6 +331,72 @@ router.get("/:id/package-availability", readRateLimit, async (req, res) => {
   } catch (availabilityError: any) {
     res.status(500).json({ error: availabilityError?.message ?? "Could not check package availability." });
   }
+});
+
+router.get("/:id/free-delivery-slots", readRateLimit, async (req, res) => {
+  const { id } = req.params;
+  if (!id) { res.status(400).json({ error: "id required" }); return; }
+
+  const { data: product, error } = await supabase
+    .from("products")
+    .select("id, org_id, active")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!product || !product.active) {
+    res.status(404).json({ error: "Product not found." });
+    return;
+  }
+
+  const settings = await readSettings(product.org_id);
+  if (!settings.free_delivery_slots_enabled) {
+    res.json({ enabled: false });
+    return;
+  }
+
+  const limit = Math.min(500, Math.max(1, Math.floor(Number(settings.free_delivery_slot_limit ?? 15))));
+  const manualClaimed = Math.min(limit, Math.max(0, Math.floor(Number(settings.free_delivery_slot_manual_claimed ?? 0))));
+  const window = currentLagosResetWindow(new Date(), Number(settings.free_delivery_reset_interval_minutes ?? 1440));
+
+  const { data: packageRows, error: packageError } = await supabase
+    .from("product_packages")
+    .select("id")
+    .eq("product_id", product.id);
+  if (packageError) { res.status(500).json({ error: packageError.message }); return; }
+
+  const packageIds = (packageRows ?? []).map((row) => row.id).filter(Boolean);
+  let query = supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", product.org_id)
+    .gte("created_at", window.windowStartIso)
+    .not("status", "eq", "Cancelled");
+
+  if (packageIds.length > 0) {
+    query = query.in("package_id", packageIds);
+  } else {
+    query = query.eq("product_id", product.id);
+  }
+
+  const { count, error: countError } = await query;
+  if (countError) { res.status(500).json({ error: countError.message }); return; }
+
+  const liveClaimed = Math.max(0, count ?? 0);
+  const claimed = Math.min(limit, manualClaimed + liveClaimed);
+  const remaining = Math.max(0, limit - claimed);
+  res.json({
+    enabled: true,
+    limit,
+    claimed,
+    manualClaimed,
+    liveClaimed,
+    remaining,
+    full: remaining <= 0,
+    windowStart: window.windowStartIso,
+    nextResetAt: window.nextResetAtIso,
+    resetIntervalMinutes: window.resetIntervalMinutes
+  });
 });
 
 // ── GET /api/public/products/:id ──────────────────────────

@@ -7053,9 +7053,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [deliveryRangeMaxDays, setDeliveryRangeMaxDays] = useState(7);
   const DEFAULT_CONFIRMATION_TEXT = "I hereby confirm that I am financially prepared and available to receive this product within the next 1 to 3 days";
   const DEFAULT_COMMITMENT_TEXT   = "Please note that orders outside Lagos and Abuja attract a commitment fee of ₦1500 before dispatch";
+  const FREE_DELIVERY_RESET_OPTIONS = [
+    { value: 10, label: "Every 10 minutes" },
+    { value: 20, label: "Every 20 minutes" },
+    { value: 30, label: "Every 30 minutes" },
+    { value: 60, label: "Every 1 hour" },
+    { value: 180, label: "Every 3 hours" },
+    { value: 360, label: "Every 6 hours" },
+    { value: 720, label: "Every 12 hours" },
+    { value: 1440, label: "Daily" }
+  ];
   const [confirmationText, setConfirmationText] = useState(DEFAULT_CONFIRMATION_TEXT);
   const [commitmentText, setCommitmentText]     = useState(DEFAULT_COMMITMENT_TEXT);
   const [allowDisagree, setAllowDisagree]       = useState(true);
+  const [freeDeliverySlotsEnabled, setFreeDeliverySlotsEnabled] = useState(false);
+  const [freeDeliverySlotLimit, setFreeDeliverySlotLimit] = useState("15");
+  const [freeDeliverySlotManualClaimed, setFreeDeliverySlotManualClaimed] = useState("0");
+  const [freeDeliveryResetIntervalMinutes, setFreeDeliveryResetIntervalMinutes] = useState(1440);
+  const [freeDeliverySlotStatus, setFreeDeliverySlotStatus] = useState<{
+    enabled: boolean;
+    limit?: number;
+    claimed?: number;
+    manualClaimed?: number;
+    liveClaimed?: number;
+    remaining?: number;
+    full?: boolean;
+    windowStart?: string;
+    nextResetAt?: string;
+    resetIntervalMinutes?: number;
+  } | null>(null);
   const [embedSettingsSaving, setEmbedSettingsSaving] = useState(false);
 
   // Cache-version auto-purge: compare org's cacheVersion to localStorage.
@@ -7309,6 +7335,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (typeof s.allowDisagree       === "boolean") setAllowDisagree(s.allowDisagree);
       if (typeof s.formOrderSummaryEnabled === "boolean") setFormOrderSummaryEnabled(s.formOrderSummaryEnabled);
       if (typeof s.formOrderSummaryTitle   === "string")  setFormOrderSummaryTitle(s.formOrderSummaryTitle);
+      if (typeof s.freeDeliverySlotsEnabled === "boolean") setFreeDeliverySlotsEnabled(s.freeDeliverySlotsEnabled);
+      if (typeof s.freeDeliverySlotLimit === "number") setFreeDeliverySlotLimit(String(s.freeDeliverySlotLimit));
+      if (typeof s.freeDeliverySlotManualClaimed === "number") setFreeDeliverySlotManualClaimed(String(s.freeDeliverySlotManualClaimed));
+      if (typeof s.freeDeliveryResetIntervalMinutes === "number") setFreeDeliveryResetIntervalMinutes(s.freeDeliveryResetIntervalMinutes);
     }).catch(() => { /* defaults stay */ });
   }, []);
 
@@ -7731,6 +7761,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const normalizedCommitmentText = commitmentText.trim() || DEFAULT_COMMITMENT_TEXT;
       const normalizedRangeMinDays = Math.max(0, Number.isFinite(deliveryRangeMinDays) ? deliveryRangeMinDays : 0);
       const normalizedRangeMaxDays = Math.max(normalizedRangeMinDays, Number.isFinite(deliveryRangeMaxDays) ? deliveryRangeMaxDays : normalizedRangeMinDays);
+      const normalizedSlotLimit = Math.min(500, Math.max(1, Math.floor(Number(freeDeliverySlotLimit) || 15)));
+      const normalizedManualClaimed = Math.min(normalizedSlotLimit, Math.max(0, Math.floor(Number(freeDeliverySlotManualClaimed) || 0)));
+      const normalizedResetInterval = Math.min(10080, Math.max(10, Math.floor(Number(freeDeliveryResetIntervalMinutes) || 1440)));
       await embedSettingsApi.patch({
         state_field_mode:             embedStateField === "Dropdown" ? "dropdown" : "freetext",
         public_form_mode:             publicFormMode,
@@ -7754,13 +7787,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         commitment_text:              normalizedCommitmentText,
         allow_disagree:               allowDisagree,
         form_order_summary_enabled:   formOrderSummaryEnabled,
-        form_order_summary_title:     normalizedSummaryTitle
+        form_order_summary_title:     normalizedSummaryTitle,
+        free_delivery_slots_enabled:  freeDeliverySlotsEnabled,
+        free_delivery_slot_limit:     normalizedSlotLimit,
+        free_delivery_slot_manual_claimed: normalizedManualClaimed,
+        free_delivery_reset_interval_minutes: normalizedResetInterval
       });
       setFormOrderSummaryTitle(normalizedSummaryTitle);
       setConfirmationText(normalizedConfirmationText);
       setCommitmentText(normalizedCommitmentText);
       setDeliveryRangeMinDays(normalizedRangeMinDays);
       setDeliveryRangeMaxDays(normalizedRangeMaxDays);
+      setFreeDeliverySlotLimit(String(normalizedSlotLimit));
+      setFreeDeliverySlotManualClaimed(String(normalizedManualClaimed));
+      setFreeDeliveryResetIntervalMinutes(normalizedResetInterval);
       showToast("Embed form settings saved.");
     } catch (e: any) {
       showToast(`Failed to save: ${e?.message ?? "unknown error"}`);
@@ -17867,6 +17907,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (typeof s.showCommitment      === "boolean") setShowCommitmentNotice(s.showCommitment);
           if (typeof s.commitmentText      === "string")  setCommitmentText(s.commitmentText);
           if (typeof s.allowDisagree       === "boolean") setAllowDisagree(s.allowDisagree);
+          if (typeof s.freeDeliverySlotsEnabled === "boolean") setFreeDeliverySlotsEnabled(s.freeDeliverySlotsEnabled);
+          if (typeof s.freeDeliverySlotLimit === "number") setFreeDeliverySlotLimit(String(s.freeDeliverySlotLimit));
+          if (typeof s.freeDeliverySlotManualClaimed === "number") setFreeDeliverySlotManualClaimed(String(s.freeDeliverySlotManualClaimed));
+          if (typeof s.freeDeliveryResetIntervalMinutes === "number") setFreeDeliveryResetIntervalMinutes(s.freeDeliveryResetIntervalMinutes);
         }).catch(() => { /* defaults stay */ });
       }
     }).catch(() => {
@@ -17877,6 +17921,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     return () => { cancelled = true; };
   }, [publicEmbedParams, publicProductId]);
+
+  useEffect(() => {
+    if (!publicEmbedParams || !publicProductId || !freeDeliverySlotsEnabled) {
+      setFreeDeliverySlotStatus(null);
+      return;
+    }
+    let cancelled = false;
+    productsApi.publicFreeDeliverySlots(publicProductId)
+      .then((status) => {
+        if (!cancelled) setFreeDeliverySlotStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setFreeDeliverySlotStatus(null);
+      });
+    return () => { cancelled = true; };
+  }, [publicEmbedParams, publicProductId, freeDeliverySlotsEnabled, publicOrderSubmitted?.orderId]);
 
   // ── API data loader ───────────────────────────────────────
   // On mount, if the user is authenticated, fetch live data from the API
@@ -29012,6 +29072,47 @@ ${waybillLineItems(w).length > 1
                 </div>
               </div>
             ) : null;
+            const slotStatus = freeDeliverySlotsEnabled && freeDeliverySlotStatus?.enabled ? freeDeliverySlotStatus : null;
+            const slotResetLabel = slotStatus?.nextResetAt
+              ? new Date(slotStatus.nextResetAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" })
+              : "";
+            const freeDeliverySlotBanner = slotStatus ? (() => {
+              const limit = Math.max(1, Number(slotStatus.limit ?? 15));
+              const claimed = Math.max(0, Number(slotStatus.claimed ?? 0));
+              const remaining = Math.max(0, Number(slotStatus.remaining ?? Math.max(0, limit - claimed)));
+              const full = slotStatus.full === true || remaining <= 0;
+              return (
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    background: full ? "#fff7ed" : "#ecfdf5",
+                    border: `1px solid ${full ? "#fed7aa" : "#a7f3d0"}`,
+                    borderRadius: 14,
+                    color: full ? "#9a3412" : "#047857",
+                    marginBottom: 12,
+                    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>{full ? "🚚" : "⚡"}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: 14, fontWeight: 900, lineHeight: 1.35 }}>
+                        {full
+                          ? (Number(slotStatus.resetIntervalMinutes ?? 1440) >= 1440
+                              ? "Today’s free-delivery slots are full."
+                              : "This free-delivery round is full.")
+                          : `Free delivery: ${claimed} of ${limit} slots claimed.`}
+                      </p>
+                      <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.45, color: full ? "#9a3412" : "#065f46" }}>
+                        {full
+                          ? `You can still place your order for normal delivery.${slotResetLabel ? ` New free-delivery slots reopen at ${slotResetLabel}.` : ""}`
+                          : `Complete your order now to reserve ${remaining === 1 ? "the last free-delivery slot" : `one of the remaining ${remaining} free-delivery slots`}.${slotResetLabel ? ` Resets at ${slotResetLabel}.` : ""}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : null;
             // Success / thank-you screen — replaces the form after submit.
             if (publicOrderSubmitted) {
               return (
@@ -29046,6 +29147,7 @@ ${waybillLineItems(w).length > 1
                   {publicProduct.formCustomText?.trim() && (
                     <div style={{ padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 12, fontSize: 13, color: "#075985", whiteSpace: "pre-line", marginBottom: 12 }}>{publicProduct.formCustomText}</div>
                   )}
+                  {freeDeliverySlotBanner}
                   <div className="public-form-clean-grid">
                     {/* Honeypot — hidden from real users, irresistible to bots.
                         autocomplete="off" + aria-hidden + tabIndex=-1 + visually
@@ -42206,6 +42308,69 @@ ${waybillLineItems(w).length > 1
                       <textarea className="admin-tone-textarea w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} onBlur={(e) => { const val = e.target.value; const pid = previewProduct.id; if (isTemporaryProductId(pid)) { showToast("This product is still syncing. Try again in a moment."); return; } productsApi.update(pid, { form_custom_text: val }).catch((err: any) => showToast(`Failed to save marketing message: ${err.message}`)); }} />
                     </div>
                   )}
+
+                  <div className="border border-emerald-200 rounded-xl overflow-hidden bg-emerald-50/30">
+                    <div className="flex items-start gap-4 px-4 py-3.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800">Free-delivery slots urgency</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Shows a real slot counter on the public order form. It counts submitted orders for that product in the current reset window, then resets automatically.</p>
+                      </div>
+                      <button type="button" role="switch" aria-checked={freeDeliverySlotsEnabled} className={`relative mt-0.5 w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 ${freeDeliverySlotsEnabled ? "bg-emerald-600" : "bg-gray-200"}`} onClick={() => setFreeDeliverySlotsEnabled((v) => !v)}>
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${freeDeliverySlotsEnabled ? "left-5" : "left-0.5"}`} />
+                      </button>
+                    </div>
+                    {freeDeliverySlotsEnabled && (
+                      <div className="px-4 py-3 border-t border-emerald-100 bg-white/80 grid gap-3 sm:grid-cols-3">
+                        <label className="block">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Total slots</span>
+                          <input
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                            value={freeDeliverySlotLimit}
+                            onChange={(event) => setFreeDeliverySlotLimit(event.target.value.replace(/[^\d]/g, ""))}
+                            inputMode="numeric"
+                            placeholder="15"
+                          />
+                          <span className="block text-[11px] text-gray-500 mt-1">Example: 15 means each reset window has 15 free-delivery slots.</span>
+                        </label>
+                        <label className="block">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Already claimed</span>
+                          <input
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                            value={freeDeliverySlotManualClaimed}
+                            onChange={(event) => setFreeDeliverySlotManualClaimed(event.target.value.replace(/[^\d]/g, ""))}
+                            inputMode="numeric"
+                            placeholder="3"
+                          />
+                          <span className="block text-[11px] text-gray-500 mt-1">This is the starting claimed number customers see after every reset. Real orders add on top.</span>
+                        </label>
+                        <label className="block">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Auto reset</span>
+                          <select
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                            value={freeDeliveryResetIntervalMinutes}
+                            onChange={(event) => setFreeDeliveryResetIntervalMinutes(Number(event.target.value))}
+                          >
+                            {FREE_DELIVERY_RESET_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                          <span className="block text-[11px] text-gray-500 mt-1">When slots finish, the form switches to normal-delivery wording until the next reset.</span>
+                        </label>
+                        <div className="sm:col-span-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                          {(() => {
+                            const previewLimit = Math.max(1, Number(freeDeliverySlotLimit) || 15);
+                            const previewClaimed = Math.min(previewLimit, Math.max(0, Number(freeDeliverySlotManualClaimed) || 0));
+                            const previewRemaining = Math.max(0, previewLimit - previewClaimed);
+                            return (
+                              <>
+                                <strong>Customer sees:</strong> Free delivery: {previewClaimed} of {previewLimit} slots claimed. Complete your order now to reserve {previewRemaining === 1 ? "the last free-delivery slot" : `one of the remaining ${previewRemaining} free-delivery slots`}.
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   <div className="pt-3 mt-2 border-t-2 border-gray-100">
                     <h3 className="text-base font-bold text-gray-900 m-0 mb-1">Form fields & validation</h3>

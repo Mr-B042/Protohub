@@ -28,7 +28,11 @@ const DEFAULTS = {
   commitment_text:              "Please note that orders outside Lagos and Abuja attract a commitment fee of ₦1500 before dispatch",
   allow_disagree:               true,
   form_order_summary_enabled:   true,
-  form_order_summary_title:     "Your Order Summary"
+  form_order_summary_title:     "Your Order Summary",
+  free_delivery_slots_enabled:  false,
+  free_delivery_slot_limit:     15,
+  free_delivery_slot_manual_claimed: 0,
+  free_delivery_reset_interval_minutes: 1440
 };
 
 // Reads either the org row or returns defaults — used by both auth + public GET.
@@ -75,7 +79,11 @@ const SettingsSchema = z.object({
   commitment_text:              z.string().max(500).optional(),
   allow_disagree:               z.boolean().optional(),
   form_order_summary_enabled:   z.boolean().optional(),
-  form_order_summary_title:     z.string().max(120).optional()
+  form_order_summary_title:     z.string().max(120).optional(),
+  free_delivery_slots_enabled:  z.boolean().optional(),
+  free_delivery_slot_limit:     z.number().int().min(1).max(500).optional(),
+  free_delivery_slot_manual_claimed: z.number().int().min(0).max(500).optional(),
+  free_delivery_reset_interval_minutes: z.number().int().min(10).max(10080).optional()
 });
 
 router.patch("/", requireRole("Owner", "Admin"), async (req, res) => {

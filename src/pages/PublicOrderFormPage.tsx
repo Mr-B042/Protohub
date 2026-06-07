@@ -137,6 +137,23 @@ type PublicEmbedSettings = {
   allowDisagree: boolean;
   formOrderSummaryEnabled: boolean;
   formOrderSummaryTitle: string;
+  freeDeliverySlotsEnabled?: boolean;
+  freeDeliverySlotLimit?: number;
+  freeDeliverySlotManualClaimed?: number;
+  freeDeliveryResetIntervalMinutes?: number;
+};
+
+type PublicFreeDeliverySlotStatus = {
+  enabled: boolean;
+  limit?: number;
+  claimed?: number;
+  manualClaimed?: number;
+  liveClaimed?: number;
+  remaining?: number;
+  full?: boolean;
+  windowStart?: string;
+  nextResetAt?: string;
+  resetIntervalMinutes?: number;
 };
 
 type CrossSellSelection = {
@@ -278,6 +295,10 @@ const DEFAULT_SETTINGS: PublicEmbedSettings = {
   allowDisagree: true,
   formOrderSummaryEnabled: true,
   formOrderSummaryTitle: "Your Order Summary",
+  freeDeliverySlotsEnabled: false,
+  freeDeliverySlotLimit: 15,
+  freeDeliverySlotManualClaimed: 0,
+  freeDeliveryResetIntervalMinutes: 1440,
 };
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -974,6 +995,7 @@ export default function PublicOrderFormPage() {
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [packageAvailabilityById, setPackageAvailabilityById] = useState<Record<string, PublicPackageAvailability>>({});
   const [packageAvailabilityLoading, setPackageAvailabilityLoading] = useState(false);
+  const [freeDeliverySlotStatus, setFreeDeliverySlotStatus] = useState<PublicFreeDeliverySlotStatus | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [packageCarouselIndexById, setPackageCarouselIndexById] = useState<Record<string, number>>({});
   const [isCompactUpsellViewport, setIsCompactUpsellViewport] = useState(() =>
@@ -1194,6 +1216,26 @@ export default function PublicOrderFormPage() {
       cancelled = true;
     };
   }, [normalizedSelectedState, packagesNeedAvailability, publicProductId]);
+
+  useEffect(() => {
+    if (!publicProductId || !settings.freeDeliverySlotsEnabled) {
+      setFreeDeliverySlotStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    productsApi.publicFreeDeliverySlots(publicProductId)
+      .then((status) => {
+        if (!cancelled) setFreeDeliverySlotStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setFreeDeliverySlotStatus(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicProductId, publicOrderSubmitted?.orderId, settings.freeDeliverySlotsEnabled]);
 
   const setFieldRef = (field: PublicOrderFieldKey) => (element: HTMLElement | null) => {
     fieldRefs.current[field] = element;
@@ -3247,6 +3289,44 @@ export default function PublicOrderFormPage() {
       </div>
     </div>
   ) : null;
+  const slotStatus = settings.freeDeliverySlotsEnabled && freeDeliverySlotStatus?.enabled ? freeDeliverySlotStatus : null;
+  const freeDeliverySlotBanner = slotStatus ? (() => {
+    const limit = Math.max(1, Number(slotStatus.limit ?? settings.freeDeliverySlotLimit ?? 15));
+    const claimed = Math.max(0, Number(slotStatus.claimed ?? 0));
+    const remaining = Math.max(0, Number(slotStatus.remaining ?? Math.max(0, limit - claimed)));
+    const full = slotStatus.full === true || remaining <= 0;
+    const isDailyOrLonger = Number(slotStatus.resetIntervalMinutes ?? settings.freeDeliveryResetIntervalMinutes ?? 1440) >= 1440;
+
+    return (
+      <div
+        style={{
+          padding: isCompactUpsellViewport ? "13px 14px" : "12px 14px",
+          background: full ? "#fff7ed" : "#ecfdf5",
+          border: `1px solid ${full ? "#fed7aa" : "#a7f3d0"}`,
+          borderRadius: 14,
+          color: full ? "#9a3412" : "#047857",
+          marginBottom: 12,
+          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>{full ? "🚚" : "⚡"}</span>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: isCompactUpsellViewport ? 15 : 14, fontWeight: 900, lineHeight: 1.35 }}>
+              {full
+                ? (isDailyOrLonger ? "Today’s free-delivery slots are full." : "This free-delivery round is full.")
+                : `Free delivery: ${claimed} of ${limit} slots claimed.`}
+            </p>
+            <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.45, color: full ? "#9a3412" : "#065f46" }}>
+              {full
+                ? "You can still place your order for normal delivery."
+                : `Complete your order now to reserve ${remaining === 1 ? "the last free-delivery slot" : `one of the remaining ${remaining} free-delivery slots`}.`}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
   const additionalItemValidationPreview = buildSubmitValidationErrors();
   const additionalItemMissingCount = PUBLIC_ORDER_VALIDATION_ORDER.filter((field) => additionalItemValidationPreview[field]).length;
   const lastAdditionalItemStillSelected = Boolean(
@@ -3494,6 +3574,7 @@ export default function PublicOrderFormPage() {
                   {publicProduct.formCustomText}
                 </div>
               )}
+              {freeDeliverySlotBanner}
 
               {guidedCheckout && (
                 <div

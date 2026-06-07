@@ -336,6 +336,27 @@ export const productsApi = {
       }>;
     }>(await res.json());
   },
+  publicFreeDeliverySlots: async (id: string) => {
+    const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}/free-delivery-slots`, {
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, typeof payload?.error === "string" ? payload.error : res.statusText);
+    }
+    return snakeToCamel<{
+      enabled: boolean;
+      limit?: number;
+      claimed?: number;
+      manualClaimed?: number;
+      liveClaimed?: number;
+      remaining?: number;
+      full?: boolean;
+      windowStart?: string;
+      nextResetAt?: string;
+      resetIntervalMinutes?: number;
+    }>(await res.json());
+  },
   create: (body: unknown) => post<any>("/api/products", body),
   update: (id: string, body: unknown) => patch<any>(`/api/products/${id}`, body),
   delete: (id: string) => del<void>(`/api/products/${id}`),
