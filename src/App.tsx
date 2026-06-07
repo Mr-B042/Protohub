@@ -9819,32 +9819,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const renderOrderAssigneeBadge = (order: TrackedOrder, variant: "mobile" | "table" = "table") => {
     const meta = orderAssignmentMetaFor(order);
-    const signature = repSignatureFor(order.assignedRepId ?? meta.name);
     const avatarTone = meta.isAssigned
       ? meta.isMissingProfile
-        ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
-        : signature.avatar
-      : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300";
+        ? "from-amber-500 to-orange-500 text-white ring-amber-200 dark:ring-amber-500/30"
+        : "from-sky-500 via-cyan-400 to-emerald-400 text-white ring-sky-100 dark:ring-sky-400/20"
+      : "from-slate-200 to-slate-100 text-slate-500 ring-slate-200 dark:from-slate-700 dark:to-slate-800 dark:text-slate-300 dark:ring-slate-700";
     const roleTone = meta.isAssigned
       ? meta.isMissingProfile
         ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
-        : signature.role
+        : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200"
       : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400";
-    const assignedByLine = meta.assignedByRole === "Manager"
-      ? "By manager"
-      : meta.assignedByName
-        ? `By ${meta.assignedByName}`
-        : meta.isAssigned
-          ? "Round-robin"
-          : "No owner assigned";
-    const assignmentMethod = meta.assignedByRole === "Manager"
-      ? "Manager"
-      : meta.assignedByName
-        ? "Manual"
-        : meta.isAssigned
-          ? "Auto"
-          : "Assign";
-    const loadLabel = meta.isAssigned ? `${meta.activeOrders} active` : "No owner";
+    const assignedByLine = meta.assignedByName
+      ? `By ${meta.assignedByName}`
+      : meta.isAssigned
+        ? "Assigned"
+        : "Awaiting assignment";
     const canManageAssignee = canMutate && canUseAdminOrderActions;
     const handleAssigneeClick = () => {
       if (canManageAssignee) {
@@ -9863,63 +9852,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     if (variant === "mobile") {
       return (
-        <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className={`relative mt-4 w-full overflow-hidden rounded-[26px] border px-4 py-3.5 text-left shadow-[0_18px_45px_rgba(15,23,42,0.10)] backdrop-blur transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.14)] focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 ${
+        <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className={`relative mt-4 w-full overflow-hidden rounded-[24px] border px-4 py-3 text-left shadow-[0_16px_36px_rgba(15,23,42,0.08)] transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 ${
           meta.isAssigned
-            ? meta.isMissingProfile
-              ? "border-amber-200 bg-white/95 dark:border-amber-500/25 dark:bg-[#101a24]/95"
-              : "border-slate-200/90 bg-white/92 dark:border-slate-700/90 dark:bg-[#101a24]/92"
-            : "border-amber-200 bg-white/95 dark:border-amber-500/25 dark:bg-[#101a24]/95"
+            ? "border-sky-100 bg-[linear-gradient(135deg,rgba(239,246,255,0.95),rgba(236,253,245,0.9))] dark:border-sky-400/20 dark:bg-[linear-gradient(135deg,rgba(14,36,54,0.92),rgba(12,38,31,0.72))]"
+            : "border-amber-100 bg-amber-50/80 dark:border-amber-500/25 dark:bg-amber-500/10"
         }`}>
-          <div className={`pointer-events-none absolute inset-y-4 left-0 w-1.5 rounded-r-full ${meta.isAssigned && !meta.isMissingProfile ? signature.rail : "bg-amber-500"}`} />
-          <div className={`pointer-events-none absolute left-4 right-4 bottom-0 h-px bg-gradient-to-r ${meta.isAssigned && !meta.isMissingProfile ? signature.line : "from-amber-500/60 via-orange-400/45 to-transparent"}`} />
-          <div className="relative flex items-start justify-between gap-3 pl-2">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
-              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] border text-sm font-black shadow-[0_10px_24px_rgba(15,23,42,0.10)] ${avatarTone}`}>
+          <div className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-sky-300/25 blur-2xl dark:bg-sky-400/10" />
+          <div className="relative flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-sm font-black ring-4 ${avatarTone}`}>
                 {meta.initials}
               </span>
               <div className="min-w-0">
                 <p className={`m-0 text-[10px] font-black uppercase tracking-[0.18em] ${orderFaintTextClass}`}>Assigned to</p>
-                <p className={`m-0 mt-0.5 whitespace-normal break-words text-[16px] font-black leading-5 ${orderTitleTextClass}`}>{meta.name}</p>
-                <p className={`m-0 mt-1 flex min-w-0 flex-wrap items-center gap-1.5 whitespace-normal text-[11px] font-bold leading-4 ${orderMutedTextClass}`}>
-                  <span>{meta.isAssigned ? "Assigned" : "Unassigned"}</span>
-                  <span className={orderFaintTextClass}>·</span>
-                  <span className="break-words">{assignedByLine}</span>
-                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.08em] ${roleTone}`}>{assignmentMethod}</span>
-                </p>
+                <p className={`m-0 mt-0.5 truncate text-[15px] font-black ${orderTitleTextClass}`}>{meta.name}</p>
+                <p className={`m-0 mt-0.5 truncate text-[11px] font-bold ${orderMutedTextClass}`}>{assignedByLine}</p>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2 pt-0.5">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-black ${orderMutedTextClass} dark:border-slate-700 dark:bg-white/5`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${meta.isAssigned && !meta.isMissingProfile ? signature.dot : "bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]"}`} />
-                {loadLabel}
-              </span>
-              <ChevronDown className={`h-4 w-4 ${orderFaintTextClass}`} />
-            </div>
+            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${roleTone}`}>
+              {meta.role}
+            </span>
           </div>
         </button>
       );
     }
 
     return (
-      <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className="group/assignee relative inline-flex min-w-[340px] max-w-[460px] items-start gap-2.5 overflow-hidden whitespace-normal rounded-[18px] border border-slate-200/90 bg-white/92 px-3 py-2.5 text-left shadow-[0_10px_26px_rgba(15,23,42,0.07)] transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_40px_rgba(15,23,42,0.12)] focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 dark:border-slate-700/90 dark:bg-white/[0.045] dark:hover:border-sky-400/25">
-        <span className={`absolute inset-y-2 left-0 w-1 rounded-r-full ${meta.isAssigned && !meta.isMissingProfile ? signature.rail : "bg-amber-500"}`} />
-        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border text-xs font-black shadow-sm ${avatarTone}`}>
+      <button type="button" onClick={handleAssigneeClick} aria-label={assigneeActionLabel} title={assigneeActionLabel} className="group/assignee inline-flex min-w-[190px] max-w-[260px] items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-2.5 py-2 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 dark:border-slate-700/80 dark:bg-white/[0.04] dark:hover:border-sky-400/30">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-black ring-2 ${avatarTone}`}>
           {meta.initials}
         </span>
-        <span className="min-w-0 flex-1 whitespace-normal">
-          <span className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className={`whitespace-normal break-words text-[13px] font-black leading-4 ${meta.isAssigned ? orderTitleTextClass : "text-amber-700 dark:text-amber-200"}`}>{meta.name}</span>
-            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.08em] ${roleTone}`}>{assignmentMethod}</span>
-          </span>
-          <span className={`mt-1 block whitespace-normal break-words text-[10px] font-bold uppercase tracking-[0.12em] leading-4 ${orderFaintTextClass}`}>
-            {meta.isAssigned ? "Assigned" : "Unassigned"} · {assignedByLine}
-          </span>
+        <span className="min-w-0">
+          <span className={`block truncate text-[13px] font-black leading-4 ${meta.isAssigned ? orderTitleTextClass : "text-amber-700 dark:text-amber-200"}`}>{meta.name}</span>
+          <span className={`mt-0.5 block truncate text-[10px] font-bold uppercase tracking-[0.12em] ${orderFaintTextClass}`}>{meta.role} · {assignedByLine}</span>
         </span>
-        <span className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-2 py-1 text-[10px] font-black ${orderMutedTextClass} dark:border-slate-700 dark:bg-white/5`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${meta.isAssigned && !meta.isMissingProfile ? signature.dot : "bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]"}`} />
-          {loadLabel}
-        </span>
-        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform group-hover/assignee:translate-y-0.5 ${orderFaintTextClass}`} />
       </button>
     );
   };
