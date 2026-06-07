@@ -8282,6 +8282,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [callQueueIndex, setCallQueueIndex] = useState(0);
   const [callQueueSearch, setCallQueueSearch] = useState("");
   const [callQueueNote, setCallQueueNote] = useState("");
+  const [orderActionReturnTarget, setOrderActionReturnTarget] = useState<"list" | "details">("list");
   const [repConsoleTab, setRepConsoleTab] = useState<RepConsoleTab>("Dashboard");
   const [repConsoleRepId, setRepConsoleRepId] = useState("all");
   const [repOrderStatusTab, setRepOrderStatusTab] = useState<RepOrderStatusTab>("All Orders");
@@ -14830,7 +14831,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setStateAvailabilityProductId(product.id);
     setModal("stateAvailability");
   };
+  const orderActionReturnTargetFor = (orderId?: string): "list" | "details" => {
+    if (modal === "orderDetails") return "details";
+    if (!orderId) return "list";
+    const [, rawPath = ""] = hashRoute.split("#");
+    const [pathOnly = ""] = rawPath.split("?");
+    const parts = pathOnly.split("/").filter(Boolean);
+    const isOrderWorkspaceDetail =
+      parts[0] === "dashboard"
+      && (parts[1] === "admin" || parts[1] === "sales-rep")
+      && ["orders", "follow-up-queue", "closed-orders"].includes(parts[2] ?? "")
+      && parts[3] === orderId
+      && !parts[4];
+    return isOrderWorkspaceDetail ? "details" : "list";
+  };
   const openCrossSellModal = (order: TrackedOrder) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
     setSelectedOrderId(order.id);
     setCrossSellTargetOrderId(order.id);
     setCrossSellProductId("");
@@ -14844,6 +14860,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
   const openFreeGiftModal = (order: TrackedOrder) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
     setSelectedOrderId(order.id);
     setFreeGiftTargetOrderId(order.id);
     setFreeGiftProductId("");
@@ -14856,6 +14873,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
   const openManualBonusModal = (order: TrackedOrder) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
     setSelectedOrderId(order.id);
     setManualBonusTargetOrderId(order.id);
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
@@ -17205,10 +17223,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     if (repOrderAction === "status") {
+      setOrderActionReturnTarget("list");
       setModal("changeOrderStatus");
       return;
     }
     if (repOrderAction === "edit-customer") {
+      setOrderActionReturnTarget("list");
       setModal("editOrderCustomer");
       return;
     }
@@ -17217,10 +17237,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     if (repOrderAction === "add-cross-sell") {
+      setOrderActionReturnTarget("list");
       setModal("addCrossSell");
       return;
     }
     if (repOrderAction === "add-free-gift") {
+      setOrderActionReturnTarget("list");
       setModal("addFreeGift");
       return;
     }
@@ -17340,38 +17362,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setActivePage(adminOrderWorkspaceRoutePage);
       setSelectedOrderId(parts[3]);
       if (parts[4] === "edit") {
+        setOrderActionReturnTarget("list");
         setModal("editOrderItems");
         return;
       }
       if (parts[4] === "edit-customer") {
+        setOrderActionReturnTarget("list");
         setModal("editOrderCustomer");
         return;
       }
       if (parts[4] === "reassign") {
+        setOrderActionReturnTarget("list");
         setModal("reassignOrder");
         return;
       }
       if (parts[4] === "send-to-agent") {
+        setOrderActionReturnTarget("list");
         setModal("sendToAgent");
         return;
       }
       if (parts[4] === "delete") {
+        setOrderActionReturnTarget("list");
         setModal("deleteOrder");
         return;
       }
       if (parts[4] === "change-status") {
+        setOrderActionReturnTarget("list");
         setModal("changeOrderStatus");
         return;
       }
       if (parts[4] === "add-cross-sell") {
+        setOrderActionReturnTarget("list");
         setModal("addCrossSell");
         return;
       }
       if (parts[4] === "add-free-gift") {
+        setOrderActionReturnTarget("list");
         setModal("addFreeGift");
         return;
       }
       if (parts[4] === "manual-bonus") {
+        setOrderActionReturnTarget("list");
         setModal("manualBonus");
         return;
       }
@@ -22669,6 +22700,7 @@ ${waybillLineItems(w).length > 1
     if (!selectedOrder) {
       return;
     }
+    setOrderActionReturnTarget(orderActionReturnTargetFor(selectedOrder.id));
 
     setCreateOrderCustomer(selectedOrder.customer);
     setCreateOrderPhone(selectedOrder.phone);
@@ -23066,6 +23098,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const openRepStatusChangeModal = (order: TrackedOrder, presetStatus?: OrderStatusAction, options?: { callOutcome?: string; reason?: string }) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
     setSelectedOrderId(order.id);
     setStatusChangePreset(presetStatus ?? null);
     setStatusChangeReasonPreset(options?.reason ?? "");
@@ -23131,6 +23164,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const openRepEditOrderCustomer = (order: TrackedOrder) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
     setSelectedOrderId(order.id);
     setCreateOrderCustomer(order.customer);
     setCreateOrderPhone(order.phone);
@@ -25923,6 +25957,7 @@ ${waybillLineItems(w).length > 1
 
   const openAdminOrderEditRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
       setActivePage(activeRepOrderWorkspacePage);
       setSelectedOrderId(orderId);
@@ -25946,6 +25981,7 @@ ${waybillLineItems(w).length > 1
 
   const openAdminOrderEditCustomerRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
       setActivePage(activeRepOrderWorkspacePage);
     } else {
@@ -25973,6 +26009,7 @@ ${waybillLineItems(w).length > 1
 
   const openAdminOrderReassignRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setReassignRepId(order?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
@@ -25983,6 +26020,7 @@ ${waybillLineItems(w).length > 1
 
   const openAdminOrderSendToAgentRoute = (orderId: string) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     setActivePage(activeOrderWorkspacePage);
     setSelectedOrderId(orderId);
     setCreateOrderAgentId(order?.agentId ?? "");
@@ -25992,6 +26030,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const openAdminOrderDeleteRoute = (orderId: string) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
       setActivePage(activeRepOrderWorkspacePage);
       setSelectedOrderId(orderId);
@@ -26045,6 +26084,7 @@ ${waybillLineItems(w).length > 1
     options?: { callOutcome?: string; reason?: string }
   ) => {
     const order = trackedOrders.find((item) => item.id === orderId);
+    setOrderActionReturnTarget(orderActionReturnTargetFor(orderId));
     if (currentRole === "Sales Rep" && isOrderWorkspacePage(activePage)) {
       setActivePage(activeRepOrderWorkspacePage);
     } else {
@@ -28784,7 +28824,12 @@ ${waybillLineItems(w).length > 1
 
   const dismissModal = () => {
     const modalBeforeClose = modal;
+    const shouldReturnToOrderDetails = orderActionReturnTarget === "details";
+    const orderActionModalTypes: ModalType[] = ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"];
+    const isOrderActionModal = Boolean(modalBeforeClose && orderActionModalTypes.includes(modalBeforeClose));
+    let restoredOrderDetailsRoute = false;
     setModal(null);
+    setOrderActionReturnTarget("list");
     setCreateOrderContext("admin");
     setUserPassword("");
     setShowPasswordFields({});
@@ -28809,11 +28854,16 @@ ${waybillLineItems(w).length > 1
     if (modalBeforeClose === "createOrder" && isRepOrderWorkspaceHash(hashRoute) && hashRoute.endsWith("/new")) {
       syncHashRoute(repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
     }
-    if (modalBeforeClose && ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isAdminOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
+    if (isOrderActionModal && isAdminOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(shouldReturnToOrderDetails && selectedOrderId ? adminOrderWorkspaceHash(`/${selectedOrderId}`) : activeOrderWorkspaceBaseHash);
+      restoredOrderDetailsRoute = shouldReturnToOrderDetails;
     }
-    if (modalBeforeClose && ["editOrderItems", "deleteOrder", "changeOrderStatus", "editOrderCustomer", "addCrossSell", "addFreeGift", "manualBonus"].includes(modalBeforeClose) && isRepOrderWorkspaceHash(hashRoute)) {
-      syncHashRoute(selectedOrderId ? repOrderWorkspaceHash(`/${selectedOrderId}`, activeRepOrderWorkspacePage) : repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+    if (isOrderActionModal && isRepOrderWorkspaceHash(hashRoute)) {
+      syncHashRoute(shouldReturnToOrderDetails && selectedOrderId ? repOrderWorkspaceHash(`/${selectedOrderId}`, activeRepOrderWorkspacePage) : repOrderWorkspaceHash("", activeRepOrderWorkspacePage));
+      restoredOrderDetailsRoute = shouldReturnToOrderDetails;
+    }
+    if (isOrderActionModal && shouldReturnToOrderDetails && selectedOrderId && !restoredOrderDetailsRoute) {
+      setModal("orderDetails");
     }
     if (modalBeforeClose && ["cartDetails", "assignCart", "convertCart"].includes(modalBeforeClose) && hashRoute.startsWith("#/dashboard/admin/abandoned-carts/")) {
       syncHashRoute(modalBeforeClose === "cartDetails" ? "#/dashboard/admin/abandoned-carts" : (selectedCartId ? `#/dashboard/admin/abandoned-carts/${selectedCartId}` : "#/dashboard/admin/abandoned-carts"));
@@ -48604,7 +48654,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     )}
                   </div>
-	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => openOrderDetailPopup(selectedOrder.id)}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
 	            )}
 
