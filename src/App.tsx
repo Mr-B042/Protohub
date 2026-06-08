@@ -9345,6 +9345,51 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showPublicEmbedLoading, setShowPublicEmbedLoading] = useState(false);
   const publicReferrer = (typeof document !== "undefined" ? document.referrer : "") || "";
   const publicProduct = products.find((product) => product.id === publicProductId);
+  const publicEmbedLabel = useMemo(() => {
+    const explicitLabel = (
+      publicEmbedParams?.get("embed_label")
+      ?? publicEmbedParams?.get("embedLabel")
+      ?? publicEmbedParams?.get("landing_page")
+      ?? ""
+    ).trim();
+    return (explicitLabel || publicProduct?.name || "").slice(0, 120);
+  }, [publicEmbedParams, publicProduct?.name]);
+  const publicFormContext = useMemo(() => {
+    const context: Record<string, string> = {};
+    if (!publicEmbedParams) return context;
+
+    const allowedKeys = new Set([
+      "media_buyer", "media_buyer_id", "buyer", "buyer_id", "marketer_user_id",
+      "landing_page", "landing_page_url", "embed_label", "redirect_url",
+      "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+      "fbclid", "gclid", "gbraid", "wbraid", "ttclid", "msclkid",
+      "ad_id", "adset_id", "campaign_id", "placement", "utm_id"
+    ]);
+    publicEmbedParams.forEach((value, key) => {
+      if (allowedKeys.has(key) && value.trim()) {
+        context[key] = value.trim().slice(0, 2048);
+      }
+    });
+    ([
+      ["media_buyer", "mediaBuyer"],
+      ["media_buyer_id", "mediaBuyerId"],
+      ["buyer_id", "buyerId"],
+      ["marketer_user_id", "marketerUserId"],
+      ["ad_id", "adId"],
+      ["adset_id", "adsetId"],
+      ["campaign_id", "campaignId"],
+      ["utm_id", "utmId"]
+    ] as const).forEach(([sourceKey, aliasKey]) => {
+      if (context[sourceKey] && !context[aliasKey]) context[aliasKey] = context[sourceKey];
+    });
+    if (publicEmbedLabel) context.embedLabel = publicEmbedLabel;
+    const landingUrl = publicEmbedParams.get("landing_page_url")?.trim() || publicReferrer;
+    if (landingUrl) context.landingUrl = landingUrl.slice(0, 2048);
+    const landingPage = publicEmbedParams.get("landing_page")?.trim();
+    if (landingPage) context.landingPage = landingPage.slice(0, 2048);
+    if (publicRedirectUrl) context.redirectUrl = publicRedirectUrl;
+    return context;
+  }, [publicEmbedParams, publicEmbedLabel, publicRedirectUrl, publicReferrer]);
   const publicPackages = useMemo(() => publicProduct ? activeProductPackages(publicProduct) : [], [publicProduct]);
   const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
   useEffect(() => {
@@ -9644,6 +9689,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       params.set("landing_page", variant.label);
       if (variant.landingPageUrl) params.set("landing_page_url", variant.landingPageUrl);
     }
+    const embedLabel = (variant?.label?.trim() || product.name || "Order form").slice(0, 120);
+    params.set("embed_label", embedLabel);
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
@@ -19444,15 +19491,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       packageName: chosenPackage.name,
       amount: chosenPackage.price + capturedAddOnTotal,
       currency: chosenPackage.currency,
+      embedLabel: publicEmbedLabel || undefined,
       source: publicProduct ? orderSourceFromUtm(publicUtmSource) : "Website",
       status: abandonedDraftCartId ? "In progress" : "Open abandoned",
       assignedRepId: abandonedCarts.find((cart) => cart.id === abandonedDraftCartId)?.assignedRepId,
       lastActivity: nowIso(),
       createdAt: nowIso(),
       capturePayload: {
+        ...publicFormContext,
         packageId: chosenPackage.id,
         packageName: chosenPackage.name,
         packageQuantity: chosenPackage.quantity,
+        embedLabel: publicEmbedLabel || undefined,
+        formContext: Object.keys(publicFormContext).length ? publicFormContext : undefined,
         selectedCrossSellLines: capturedSelectedCrossSellLines
       }
     };
@@ -19489,6 +19540,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           amount:       cartPatch.amount,
           currency:     cartPatch.currency,
           source:       cartPatch.source,
+          embedLabel:   cartPatch.embedLabel,
           capturePayload: cartPatch.capturePayload ?? undefined
         }).catch(() => { /* swallow — local state already has it */ });
       }, 1500);
@@ -19506,6 +19558,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     products,
     publicProduct,
     publicPackages,
+    publicEmbedLabel,
+    publicFormContext,
     publicUtmSource,
     previewProduct
   ]);
@@ -24205,9 +24259,11 @@ ${waybillLineItems(w).length > 1
           utmMedium: publicUtmMedium || undefined,
           utmContent: publicUtmContent || undefined,
           utmTerm: publicUtmTerm || undefined,
+          embedLabel: publicEmbedLabel || undefined,
           referrer: publicReferrer || undefined,
           confirmationChecked: orderFormConfirmed,
           preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
+          formContext: Object.keys(publicFormContext).length ? publicFormContext : undefined,
           company: publicHoneypot
         });
         createdOrderId = saved.id;
@@ -44010,13 +44066,11 @@ ${waybillLineItems(w).length > 1
                                       </label>
                                     </>
                                   )}
-                                  {!isMarketerEmbedMode && (
-                                    <label className="flex flex-col gap-1">
-                                      <span className="text-sm font-semibold text-gray-700">Redirect URL <span className="font-normal text-gray-400">(Optional)</span></span>
-                                      <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
-                                      <span className="text-xs text-gray-400">Optional URL to redirect the user to after a successful order.</span>
-                                    </label>
-                                  )}
+                                  <label className="flex flex-col gap-1">
+                                    <span className="text-sm font-semibold text-gray-700">Thank-you page URL <span className="font-normal text-gray-400">(Optional)</span></span>
+                                    <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
+                                    <span className="text-xs text-gray-400">After a successful order, send the customer to this page. Leave empty to show the built-in success screen.</span>
+                                  </label>
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Select Currency</span>
                                     <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full" value={selectedCurrencyCode} onChange={(e) => setEmbedCurrencyByProduct((v) => ({ ...v, [product.id]: e.target.value as ProductCurrencyCode }))}>
@@ -44100,6 +44154,10 @@ ${waybillLineItems(w).length > 1
                                       <select className="border border-gray-200 rounded-md px-2 py-1 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200" value={selectedCurrencyCode} onChange={(e) => setEmbedCurrencyByProduct((v) => ({ ...v, [product.id]: e.target.value as ProductCurrencyCode }))}>
                                         {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                       </select>
+                                    </label>
+                                    <label className="flex min-w-[240px] flex-1 items-center gap-2 text-xs text-gray-500">
+                                      <span className="shrink-0 font-semibold text-gray-600">Thank-you URL:</span>
+                                      <input className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
                                     </label>
                                     <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
