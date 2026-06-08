@@ -10787,6 +10787,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (currentRole === "Marketer") return marketingOrderMatchesMarketerTags(order);
     return viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
   };
+  const isMarketerOrderView = currentRole === "Marketer";
+  const marketerLeadLabel = (order: TrackedOrder) => `Lead #${order.id}`;
+  const marketerOrderProductLabel = (order: TrackedOrder) =>
+    [order.productName, order.packageName].filter(Boolean).join(" · ") || "Tracked order";
   const marketingCampaignForOrder = (order: TrackedOrder) => {
     const hiddenCampaign = marketingContextText(order, ["campaignId", "campaign_id"]);
     const raw = order.utmCampaign?.trim() || hiddenCampaign || "Unlabelled";
@@ -12168,9 +12172,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
     const search = orderSearch.trim().toLowerCase();
     const scheduleMarker = orderScheduleMarkerForOrder(order);
+    const marketerSearchText = [
+      order.id,
+      order.productName,
+      order.packageName,
+      source,
+      location,
+      order.city,
+      order.state,
+      order.utmSource,
+      order.utmCampaign,
+      marketingCampaignForOrder(order).label
+    ].join(" ");
     const matchesSearch =
       !search ||
-      `${order.id} ${order.customer} ${order.phone} ${order.productName} ${order.packageName}`.toLowerCase().includes(search);
+      (isMarketerOrderView
+        ? marketerSearchText
+        : `${order.id} ${order.customer} ${order.phone} ${order.productName} ${order.packageName}`
+      ).toLowerCase().includes(search);
     const matchesStatus = orderStatus === "All Orders" || status === orderStatus;
     const matchesScheduleFilter =
       orderScheduleFilter === "All schedule marks"
@@ -12248,6 +12267,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ordersTotalPages = Math.max(1, Math.ceil(prioritizedOrderRows.length / ORDERS_PAGE_SIZE));
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
+  const showOrderAssignmentColumn = !isMarketerOrderView;
+  const orderTableColumnCount = (canUseAdminOrderActions ? 10 : 9) - (showOrderAssignmentColumn ? 0 : 1);
   // Product-filtered stats — drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
@@ -12359,12 +12380,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? "Follow-up Queue"
     : orderWorkspacePage === "Closed Orders"
       ? "Closed Orders"
-      : "Orders Management";
+      : isMarketerOrderView
+        ? "Marketing Orders"
+        : "Orders Management";
   const orderWorkspaceSubtitle = orderWorkspacePage === "Follow-up Queue"
     ? "Work the most urgent callbacks, promised deliveries, and pending customer actions."
     : orderWorkspacePage === "Closed Orders"
       ? "Review delivered, cancelled, and failed outcomes without active pipeline noise."
-      : "Track and manage all customer orders in real-time";
+      : isMarketerOrderView
+        ? "Track attributed orders from your generated links without customer-contact access."
+        : "Track and manage all customer orders in real-time";
   const orderWorkspaceTableEmpty = orderWorkspacePage === "Follow-up Queue"
     ? "No follow-up orders match this filter."
     : orderWorkspacePage === "Closed Orders"
@@ -12379,7 +12404,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ? "Orders still needing a call, callback, or rep action in the selected period."
     : orderWorkspacePage === "Closed Orders"
       ? "Terminal outcomes in the selected period, grouped by product."
-      : "All orders (any status) created in the selected period";
+      : isMarketerOrderView
+        ? "Attributed orders grouped by product in the selected period."
+        : "All orders (any status) created in the selected period";
   const OrderWorkspaceInsightIcon = orderWorkspaceInsight.icon;
   const linkedOrderBySourceCartId = useMemo(() => {
     const next = new Map<string, TrackedOrder>();
@@ -31213,9 +31240,11 @@ ${waybillLineItems(w).length > 1
                 </div>
                 {/* Desktop-only action buttons — on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
-                  <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportOrdersCsv}>
-                    <Download className="w-4 h-4" /> Export CSV
-                  </button>
+                  {!isMarketerOrderView && (
+                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors" onClick={exportOrdersCsv}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                  )}
                   {canMutate && (
                     <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={openAdminCreateOrderRoute}>
                       <Plus className="w-4 h-4" /> Create Order
@@ -31256,9 +31285,11 @@ ${waybillLineItems(w).length > 1
                         <Plus className="w-4 h-4" /> Create Order
                       </button>
                     )}
-                    <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportOrdersCsv}>
-                      <Download className="w-4 h-4" /> Export CSV
-                    </button>
+                    {!isMarketerOrderView && (
+                      <button className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold bg-[#1F8FE0] text-white rounded-lg hover:bg-blue-700 transition-colors" onClick={exportOrdersCsv}>
+                        <Download className="w-4 h-4" /> Export CSV
+                      </button>
+                    )}
                   </div>
                 </div>
                 {renderWeekNav(ordersNavStart, setOrdersNavStart, ordersNavSpan, setOrdersNavSpan, setOrdersPeriod, setOrdersDateRange, ordersPeriod, ordersDateRange)}
@@ -31328,7 +31359,38 @@ ${waybillLineItems(w).length > 1
                   )}
                 </section>
 
-                {orderWorkspacePage === "Orders" ? (
+                {orderWorkspacePage === "Orders" && isMarketerOrderView ? (
+                <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className="w-8 h-8 rounded-lg bg-sky-50 text-[#1F8FE0] flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
+                    <div>
+                      <h2 className="text-sm font-bold text-gray-900">Marketing Outcome</h2>
+                      <p className="text-xs text-gray-400">Read-only view of the orders your generated links brought in.</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Attributed orders</span>
+                      <strong className="text-xl font-bold text-gray-900">{pfOrders.length}</strong>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Delivered</span>
+                      <strong className="text-xl font-bold text-gray-900">{pfDelivered.length}</strong>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Delivery rate</span>
+                      <strong className="text-xl font-bold text-gray-900">{pfDeliveryRate}%</strong>
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Delivered value</span>
+                      <strong className="text-xl font-bold text-gray-900">{formatMoney(pfRevenue)}</strong>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs font-semibold leading-5 text-sky-900">
+                    You can monitor performance here. Customer contact, assignment, fulfillment, and order edits stay with the sales/admin team.
+                  </div>
+                </section>
+                ) : orderWorkspacePage === "Orders" ? (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
                     <span className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
@@ -31406,7 +31468,7 @@ ${waybillLineItems(w).length > 1
                       className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
                       value={orderSearch}
                       onChange={(e) => setOrderSearch(e.target.value)}
-                      placeholder="Order #, name, phone…"
+                      placeholder={isMarketerOrderView ? "Order #, product, campaign, city…" : "Order #, name, phone…"}
                     />
                   </label>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}>
@@ -31542,10 +31604,10 @@ ${waybillLineItems(w).length > 1
                                 Order #{order.id}
                               </span>
                               <h3 className={`mt-4 mb-0 text-[24px] font-black leading-7 tracking-[-0.04em] break-words ${orderTitleTextClass}`}>
-                                {order.customer || "Unnamed customer"}
+                                {isMarketerOrderView ? marketerLeadLabel(order) : order.customer || "Unnamed customer"}
                               </h3>
                               <p className={`mt-1 mb-0 text-[15px] font-semibold break-words ${orderMutedTextClass}`}>
-                                {order.phone || "No phone saved"}
+                                {isMarketerOrderView ? marketerOrderProductLabel(order) : order.phone || "No phone saved"}
                               </p>
                             </div>
                             <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -31561,7 +31623,7 @@ ${waybillLineItems(w).length > 1
                             </div>
                           </div>
 
-                          {callOutcome
+                          {!isMarketerOrderView && callOutcome
                             ? renderCustomerSignalBadge(callOutcome, status, {
                                 label: "Customer signal",
                                 className: "mt-4 w-full text-sm leading-6",
@@ -31575,7 +31637,7 @@ ${waybillLineItems(w).length > 1
                             </section>
                           )}
 
-                          {renderOrderAssigneeBadge(order, "mobile")}
+                          {!isMarketerOrderView && renderOrderAssigneeBadge(order, "mobile")}
 
                           <div className="relative mt-4 grid grid-cols-1 gap-2">
                             <div className="grid grid-cols-2 gap-2">
@@ -31625,7 +31687,7 @@ ${waybillLineItems(w).length > 1
                               className={`!min-h-0 inline-flex items-center justify-center gap-2 rounded-[22px] bg-[#1F8FE0] px-3 py-3 text-sm font-black text-white shadow-[0_16px_34px_rgba(31,143,224,0.28)] transition-all hover:-translate-y-0.5 hover:bg-blue-700 ${canContactCustomers ? "" : "col-span-2"}`}
                               onClick={() => openScopedOrderDetail(order)}
                             >
-                              <Eye className="w-4 h-4" /> Details
+                              <Eye className="w-4 h-4" /> {isMarketerOrderView ? "Summary" : "Details"}
                             </button>
                             {!isTerminal && canUseAdminOrderActions && (
                               <button
@@ -31676,8 +31738,10 @@ ${waybillLineItems(w).length > 1
                           </th>
                         )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Customer Name</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Assigned To</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>{isMarketerOrderView ? "Lead" : "Customer Name"}</th>
+                        {showOrderAssignmentColumn && (
+                          <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Assigned To</th>
+                        )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Status</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Response</th>
@@ -31688,7 +31752,7 @@ ${waybillLineItems(w).length > 1
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {filteredOrderRows.length === 0 ? (
-                        <tr><td colSpan={canUseAdminOrderActions ? 10 : 9} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
+                        <tr><td colSpan={orderTableColumnCount} className="px-4 py-12 text-center text-sm text-gray-400">{orderWorkspacePage === "Follow-up Queue" ? "No follow-up orders match this filter." : orderWorkspacePage === "Closed Orders" ? "No closed orders match this filter." : "No orders found"}</td></tr>
                       ) : (
                         pagedOrderRows.map((order) => {
                           const sourceMeta = orderDisplaySourceFor(order);
@@ -31716,8 +31780,10 @@ ${waybillLineItems(w).length > 1
                                 </td>
                               )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
-                              <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{order.customer}</td>
-                              <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
+                              <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
+                              {showOrderAssignmentColumn && (
+                                <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
+                              )}
                               <td className="px-4 py-3.5">
                                 <span className="inline-flex" title={sourceMeta.label}>
                                   <OrderSourceLogo
@@ -31777,7 +31843,7 @@ ${waybillLineItems(w).length > 1
                                     className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
                                     onClick={() => openScopedOrderDetail(order)}
                                   >
-                                    <Eye className="w-3.5 h-3.5" /> Details
+                                    <Eye className="w-3.5 h-3.5" /> {isMarketerOrderView ? "Summary" : "Details"}
                                   </button>
                                   {!isTerminal && canUseAdminOrderActions && (
                                     <button
@@ -48117,7 +48183,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "editPackage" && "Edit Package"}
 	                {modal === "deletePackage" && "Delete Package"}
 	                {modal === "createOrder" && "Create New Order"}
-	                {modal === "orderDetails" && selectedOrder && `Order Details - ${selectedOrder.id}`}
+	                {modal === "orderDetails" && selectedOrder && (isMarketerOrderView ? `Marketing Summary - ${selectedOrder.id}` : `Order Details - ${selectedOrder.id}`)}
 	                {modal === "orderWorkflow" && "Order Workflow"}
 	                {modal === "changeOrderStatus" && "Change Order Status"}
 	                {modal === "editOrderCustomer" && "Edit Order"}
@@ -48642,7 +48708,46 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
-	            {modal === "orderDetails" && selectedOrder && (
+	            {modal === "orderDetails" && selectedOrder && isMarketerOrderView && (() => {
+                const sourceMeta = orderDisplaySourceFor(selectedOrder);
+                const campaign = marketingCampaignForOrder(selectedOrder);
+                const location = selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "");
+                const status = selectedOrder.status ?? "New";
+                const orderValueLabel = selectedOrder.status === "Delivered" ? "Delivered value" : "Order value";
+                return (
+	              <div className="px-6 py-5 flex flex-col gap-5">
+                  <section className="rounded-3xl border border-sky-100 bg-[radial-gradient(circle_at_top_left,rgba(31,143,224,0.13),transparent_38%),linear-gradient(145deg,#ffffff_0%,#f8fbff_55%,#eef7ff_100%)] p-5 shadow-sm">
+                    <span className="inline-flex items-center rounded-full border border-sky-100 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-sky-700">
+                      Marketing-only view
+                    </span>
+                    <h3 className="mt-4 mb-1 text-2xl font-black tracking-[-0.04em] text-gray-950">{marketerLeadLabel(selectedOrder)}</h3>
+                    <p className="m-0 text-sm font-semibold text-gray-500">{marketerOrderProductLabel(selectedOrder)}</p>
+                  </section>
+
+                  <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {[
+                      ["Status", status],
+                      ["Source", sourceMeta.label],
+                      ["Campaign", campaign.label],
+                      ["Location", location || "Not captured"],
+                      ["Created", formatOrderCreatedAt(selectedOrder)],
+                      [orderValueLabel, formatProductMoney(selectedOrder.amount, selectedOrder.currency)]
+                    ].map(([label, value]) => (
+                      <article key={label} className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">{label}</p>
+                        <p className="mt-1 mb-0 text-sm font-bold text-gray-900 break-words">{value}</p>
+                      </article>
+                    ))}
+                  </section>
+
+                  <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900">
+                    Customer contact details, address, sales assignment, fulfillment notes, and order controls are hidden for marketing users. This page is for tracking ad outcome only.
+                  </section>
+                </div>
+                );
+              })()}
+
+	            {modal === "orderDetails" && selectedOrder && !isMarketerOrderView && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
 	                {selectedOrder.remittanceVarianceStatus && selectedOrder.remittanceVarianceStatus !== "approved" && (
 	                  <div className={`rounded-xl border px-4 py-3 ${selectedOrder.remittanceVarianceStatus === "pending" ? "border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10"}`}>
