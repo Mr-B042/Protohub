@@ -10987,6 +10987,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       netAfterAds
     };
   }).sort((a, b) => b.netAfterAds - a.netAfterAds || b.deliveredRevenue - a.deliveredRevenue || b.orders - a.orders);
+  const marketingCampaignTotals = marketingRowsByCampaign.reduce((totals, row) => ({
+    rows: totals.rows + 1,
+    orders: totals.orders + row.orders,
+    delivered: totals.delivered + row.delivered,
+    deliveredRevenue: totals.deliveredRevenue + row.deliveredRevenue,
+    adSpend: totals.adSpend + row.adSpend,
+    netAfterAds: totals.netAfterAds + row.netAfterAds
+  }), { rows: 0, orders: 0, delivered: 0, deliveredRevenue: 0, adSpend: 0, netAfterAds: 0 });
+  const marketingCampaignTotalDeliveryRate = marketingCampaignTotals.orders > 0
+    ? Math.round((marketingCampaignTotals.delivered / marketingCampaignTotals.orders) * 100)
+    : 0;
+  const marketingCampaignTotalRoas = marketingCampaignTotals.adSpend > 0
+    ? marketingCampaignTotals.deliveredRevenue / marketingCampaignTotals.adSpend
+    : null;
+  const marketingCampaignTotalCpo = marketingCampaignTotals.orders > 0 && marketingCampaignTotals.adSpend > 0
+    ? marketingCampaignTotals.adSpend / marketingCampaignTotals.orders
+    : null;
+  const marketingCampaignTotalCpa = marketingCampaignTotals.delivered > 0 && marketingCampaignTotals.adSpend > 0
+    ? marketingCampaignTotals.adSpend / marketingCampaignTotals.delivered
+    : null;
   const marketingMatchedSpendIds = new Set([
     ...marketingRowsByBuyer.flatMap((row) => row.spendExpenseIds),
     ...marketingRowsByCampaign.flatMap((row) => row.spendExpenseIds)
@@ -41018,6 +41038,36 @@ ${waybillLineItems(w).length > 1
                             </tr>
                           ))}
                         </tbody>
+                        {marketingRowsByCampaign.length > 0 && (
+                          <tfoot>
+                            <tr className="border-t-2 border-gray-200 bg-slate-50/90 text-left dark:border-slate-700 dark:bg-slate-900/80">
+                              <td className="px-5 py-4 text-[11px] font-black uppercase tracking-[0.16em] text-gray-500 dark:text-slate-400">Total</td>
+                              <td className="px-5 py-4">
+                                <div className="font-black text-gray-900 dark:text-slate-100">All campaigns</div>
+                                <div className="text-xs font-semibold text-gray-400">{marketingCampaignTotals.rows} row{marketingCampaignTotals.rows === 1 ? "" : "s"} in this filter</div>
+                              </td>
+                              <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotals.orders}</td>
+                              <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotals.delivered}</td>
+                              {marketingIsPersonalWorkspace ? (
+                                <>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotalDeliveryRate}%</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(marketingCampaignTotals.adSpend)}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotalCpo ? formatMoney(marketingCampaignTotalCpo) : "—"}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotalCpa ? formatMoney(marketingCampaignTotalCpa) : "—"}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(marketingCampaignTotals.deliveredRevenue)}</td>
+                                </>
+                              ) : (
+                                <>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotalDeliveryRate}%</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(marketingCampaignTotals.deliveredRevenue)}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(marketingCampaignTotals.adSpend)}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{marketingCampaignTotalRoas ? `${marketingCampaignTotalRoas.toFixed(2)}x` : "—"}</td>
+                                  <td className={`px-5 py-4 font-black ${marketingCampaignTotals.netAfterAds >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{formatMoney(marketingCampaignTotals.netAfterAds)}</td>
+                                </>
+                              )}
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                   </section>
