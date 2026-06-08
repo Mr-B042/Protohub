@@ -3856,31 +3856,43 @@ const cartJourneyAttributionFor = (journeyEvents: CartJourneyEvent[] = []): Aban
       next[key] = value.trim();
     }
   };
+  const readMeta = (metadata: Record<string, unknown>, ...keys: string[]) => {
+    for (const key of keys) {
+      const value = metadata[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return undefined;
+  };
   for (const event of [...journeyEvents].reverse()) {
     const metadata = event.metadata ?? {};
-    assign("utmSource", metadata.utmSource);
-    assign("utmCampaign", metadata.utmCampaign);
-    assign("utmMedium", metadata.utmMedium);
-    assign("utmContent", metadata.utmContent);
-    assign("utmTerm", metadata.utmTerm);
+    assign("utmSource", readMeta(metadata, "utmSource", "utm_source"));
+    assign("utmCampaign", readMeta(metadata, "utmCampaign", "utm_campaign", "campaignId", "campaign_id"));
+    assign("utmMedium", readMeta(metadata, "utmMedium", "utm_medium"));
+    assign("utmContent", readMeta(metadata, "creativeId", "creative_id", "adId", "ad_id", "utmContent", "utm_content"));
+    assign("utmTerm", readMeta(metadata, "utmTerm", "utm_term"));
     assign("referrer", metadata.referrer);
   }
   return next;
 };
 const cartAttributionFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []): AbandonedCartAttribution => {
   const payload = cartCapturePayloadFor(cart);
-  const read = (key: keyof AbandonedCartAttribution) => {
-    const value = payload?.[key];
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  const readAny = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return undefined;
   };
   const journeyAttribution = cartJourneyAttributionFor(journeyEvents);
   return {
-    utmSource: read("utmSource") ?? journeyAttribution.utmSource,
-    utmCampaign: read("utmCampaign") ?? journeyAttribution.utmCampaign,
-    utmMedium: read("utmMedium") ?? journeyAttribution.utmMedium,
-    utmContent: read("utmContent") ?? journeyAttribution.utmContent,
-    utmTerm: read("utmTerm") ?? journeyAttribution.utmTerm,
-    referrer: read("referrer") ?? journeyAttribution.referrer
+    utmSource: readAny("utmSource", "utm_source") ?? journeyAttribution.utmSource,
+    utmCampaign: readAny("utmCampaign", "utm_campaign", "campaignId", "campaign_id") ?? journeyAttribution.utmCampaign,
+    utmMedium: readAny("utmMedium", "utm_medium") ?? journeyAttribution.utmMedium,
+    utmContent: readAny("creativeId", "creative_id", "adId", "ad_id", "utmContent", "utm_content") ?? journeyAttribution.utmContent,
+    utmTerm: readAny("utmTerm", "utm_term") ?? journeyAttribution.utmTerm,
+    referrer: readAny("referrer") ?? journeyAttribution.referrer
   };
 };
 const cartHasAdAttribution = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
@@ -9363,7 +9375,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "landing_page", "landing_page_url", "embed_label", "redirect_url",
       "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
       "fbclid", "gclid", "gbraid", "wbraid", "ttclid", "msclkid",
-      "ad_id", "adset_id", "campaign_id", "placement", "utm_id"
+      "ad_id", "adset_id", "campaign_id", "creative_id", "placement", "utm_id"
     ]);
     publicEmbedParams.forEach((value, key) => {
       if (allowedKeys.has(key) && value.trim()) {
@@ -9378,6 +9390,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["ad_id", "adId"],
       ["adset_id", "adsetId"],
       ["campaign_id", "campaignId"],
+      ["creative_id", "creativeId"],
       ["utm_id", "utmId"]
     ] as const).forEach(([sourceKey, aliasKey]) => {
       if (context[sourceKey] && !context[aliasKey]) context[aliasKey] = context[sourceKey];
@@ -9678,13 +9691,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       params.set("media_buyer", variantTag);
       params.set("buyer", variantTag);
       if (marketerId) params.set("media_buyer_id", marketerId);
-      params.set("utm_content", variant?.utmContent || slugify(variantTag));
+      if (variant?.utmContent?.trim()) params.set("utm_content", variant.utmContent.trim());
     }
     if (variant) {
       params.set("utm_source", variant.utmSource || "Facebook");
       params.set("utm_medium", variant.utmMedium || "paid_social");
       params.set("utm_campaign", variant.utmCampaign || "embed");
-      params.set("utm_content", variant.utmContent || slugify(`${variantTag}-${variant.label}`));
+      if (variant.utmContent?.trim()) params.set("utm_content", variant.utmContent.trim());
       if (variant.utmTerm) params.set("utm_term", variant.utmTerm);
       params.set("landing_page", variant.label);
       if (variant.landingPageUrl) params.set("landing_page_url", variant.landingPageUrl);
@@ -9719,16 +9732,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     var iframe = document.getElementById("ordo-order-embed");
     if (!iframe) return;
 
-    // Forward UTM params from this page into the iframe so orders
-    // are correctly attributed to Facebook / TikTok / etc.
-    var utmKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"];
+    // Forward ad/UTM params from this page into the iframe so orders
+    // are correctly attributed to Facebook / TikTok / etc. Use set()
+    // instead of appending so the landing page's creative/ad id wins.
+    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid"];
     var pageParams = new URLSearchParams(window.location.search);
-    var extra = "";
-    utmKeys.forEach(function(k) {
+    var src = iframe.getAttribute("src") || iframe.src;
+    var hashIndex = src.indexOf("#");
+    var beforeHash = hashIndex >= 0 ? src.slice(0, hashIndex) : src;
+    var hash = hashIndex >= 0 ? src.slice(hashIndex) : "";
+    var queryIndex = hash.indexOf("?");
+    var hashPath = queryIndex >= 0 ? hash.slice(0, queryIndex) : hash;
+    var embedParams = new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
+    var changed = false;
+    trackingKeys.forEach(function(k) {
       var v = pageParams.get(k);
-      if (v) extra += "&" + k + "=" + encodeURIComponent(v);
+      if (v) {
+        embedParams.set(k, v);
+        changed = true;
+      }
     });
-    if (extra) iframe.src = iframe.src + extra;
+    if (changed) iframe.src = beforeHash + hashPath + "?" + embedParams.toString();
 
     // Auto-resize iframe to fit form content.
     window.addEventListener("message", function(e) {
@@ -10429,6 +10453,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // as the buyer tag so live orders do not disappear from Ad Tracking.
     return sourceKey ? "" : (order.utmContent?.trim() ?? "");
   };
+  const orderTrackingCreativeText = (order: TrackedOrder) => {
+    const raw = (
+      orderTrackingContextText(order, ["creativeId", "creative_id", "adId", "ad_id", "utmContent", "utm_content"])
+      || order.utmContent?.trim()
+      || ""
+    ).trim();
+    if (!raw) return "";
+    const buyerText = orderTrackingBuyerText(order) || orderFallbackBuyerText(order);
+    if (buyerText) {
+      const buyerVariants = new Set(trackingValueVariants(buyerText));
+      if (trackingValueVariants(raw).some((variant) => buyerVariants.has(variant))) return "";
+    }
+    return raw;
+  };
+  const cartTrackingBuyerText = (cart: AbandonedCartRecord) => {
+    const payload = cartCapturePayloadFor(cart) ?? {};
+    for (const key of ["mediaBuyer", "media_buyer", "mediaBuyerId", "media_buyer_id", "buyer", "buyer_id", "buyerId"]) {
+      const value = payload[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+  };
+  const cartTrackingCreativeText = (cart: AbandonedCartRecord, attribution: AbandonedCartAttribution) => {
+    const raw = (attribution.utmContent ?? "").trim();
+    if (!raw) return "";
+    const buyerText = cartTrackingBuyerText(cart);
+    if (buyerText) {
+      const buyerVariants = new Set(trackingValueVariants(buyerText));
+      if (trackingValueVariants(raw).some((variant) => buyerVariants.has(variant))) return "";
+    }
+    return raw;
+  };
+  const missingCreativeDisplay = "Needs ad ID";
   const orderHasTrackedAttribution = (order: TrackedOrder) => {
     const sourceKey = normalizeAdTrackingSource(order.utmSource);
     const campaign = order.utmCampaign?.trim().toLowerCase();
@@ -10446,6 +10504,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const values = [
       orderTrackingBuyerText(order),
       orderFallbackBuyerText(order),
+      orderTrackingCreativeText(order),
       order.utmCampaign,
       order.utmContent,
       order.utmMedium,
@@ -10504,7 +10563,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue);
   const creativeGroupedRows = Object.values(
     filteredCampaignOrders
-      .filter((order) => order.utmContent?.trim())
+      .filter((order) => orderTrackingCreativeText(order))
       .reduce<Record<string, {
         id: string;
         campaignId: string;
@@ -10512,7 +10571,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         deliveredCount: number;
         revenue: number;
       }>>((acc, order) => {
-        const key = order.utmContent!.trim();
+        const key = orderTrackingCreativeText(order);
         const bucket = acc[key] ?? {
           id: key,
           campaignId: order.utmCampaign?.trim() || "Unlabelled",
@@ -10564,7 +10623,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const filteredAdTrackingOrders = filteredCampaignOrders.filter((order) => {
     const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-    const creativeId = order.utmContent?.trim() || "";
+    const creativeId = orderTrackingCreativeText(order);
     const sourceKey = normalizeAdTrackingSource(order.utmSource);
     return matchesAdTrackingSearch(
       order.id,
@@ -10714,7 +10773,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }).sort((a, b) => b.cartCount - a.cartCount || b.value - a.value);
   const cartCreativeGroupedRows = Object.values(
     filteredCampaignBaseCarts
-      .filter(({ attribution }) => attribution.utmContent?.trim())
+      .filter(({ cart, attribution }) => cartTrackingCreativeText(cart, attribution))
       .reduce<Record<string, {
         id: string;
         campaignId: string;
@@ -10723,7 +10782,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         deliveredCount: number;
         value: number;
       }>>((acc, row) => {
-        const key = row.attribution.utmContent!.trim();
+        const key = cartTrackingCreativeText(row.cart, row.attribution);
         const bucket = acc[key] ?? {
           id: key,
           campaignId: row.attribution.utmCampaign?.trim() || "Unlabelled",
@@ -10774,7 +10833,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const filteredAdTrackingCarts = filteredCampaignBaseCarts.filter(({ cart, attribution, linkedOrder }) => {
     const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-    const creativeId = attribution.utmContent?.trim() || "";
+    const creativeId = cartTrackingCreativeText(cart, attribution);
     const sourceKey = normalizeAdTrackingSource(attribution.utmSource ?? cart.source);
     return matchesAdTrackingSearch(
       cart.id,
@@ -41834,7 +41893,7 @@ ${waybillLineItems(w).length > 1
                 {[
                   { title: "Tracked Orders", value: String(filteredAdTrackingOrders.length), helper: "with UTM attribution", icon: ShoppingBag, tone: "blue" },
                   { title: "Active Campaigns", value: String(filteredCampaignGroupedRows.filter((row) => row.id !== "Unlabelled").length), helper: "unique campaigns", icon: Zap, tone: "purple" },
-                  { title: "Unique Creatives", value: String(filteredCreativeGroupedRows.length), helper: "from UTM content", icon: Clapperboard, tone: "green" },
+                  { title: "Unique Creatives", value: String(filteredCreativeGroupedRows.length), helper: "from ad / creative IDs", icon: Clapperboard, tone: "green" },
                   { title: "Attributed Revenue", value: formatMoney(filteredAdTrackingOrders.filter((o) => (o.status ?? "New") === "Delivered").reduce((sum, o) => sum + o.amount, 0)), helper: "from delivered tracked orders", icon: CircleDollarSign, tone: "orange" }
                 ].map((metric) => {
                   const Icon = metric.icon;
@@ -42004,7 +42063,7 @@ ${waybillLineItems(w).length > 1
               <section className="space-y-4" aria-label="Creative groups">
                 <div>
                   <h2 className="text-sm font-bold text-gray-800">Ad Creatives</h2>
-                  <p className="text-xs text-gray-400">Grouped by `utm_content` from tracked orders in this period.</p>
+                  <p className="text-xs text-gray-400">Grouped by `ad_id`, `creative_id`, or a real `utm_content` value from tracked orders.</p>
                 </div>
                 {filteredCreativeGroupedRows.length === 0 ? (
                   <div className="bg-white rounded-xl border border-gray-200 px-5 py-10 text-center text-sm text-gray-400 italic">
@@ -42122,7 +42181,7 @@ ${waybillLineItems(w).length > 1
                           {pagedTrackedOrders.map((order) => {
                             const status = order.status ?? "New";
                             const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-                            const creativeId = order.utmContent?.trim() || "";
+                            const creativeId = orderTrackingCreativeText(order);
                             const campaignLabel = campaignCardLabelFor(campaignId);
                             const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                             const sourceKey = normalizeAdTrackingSource(order.utmSource);
@@ -42159,7 +42218,7 @@ ${waybillLineItems(w).length > 1
                                   </div>
                                   <div className="min-w-0">
                                     <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Creative</div>
-                                    <div className="truncate font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
+                                    <div className={`truncate font-medium ${creativeId ? "text-gray-900 dark:text-slate-100" : "text-amber-700 dark:text-amber-300"}`}>{creativeLabel || creativeId || missingCreativeDisplay}</div>
                                     {creativeLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
                                   </div>
                                 </div>
@@ -42201,7 +42260,7 @@ ${waybillLineItems(w).length > 1
                             pagedTrackedOrders.map((order) => {
                               const status = order.status ?? "New";
                               const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-                              const creativeId = order.utmContent?.trim() || "";
+                              const creativeId = orderTrackingCreativeText(order);
                               const campaignLabel = campaignCardLabelFor(campaignId);
                               const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                               const sourceKey = normalizeAdTrackingSource(order.utmSource);
@@ -42229,7 +42288,7 @@ ${waybillLineItems(w).length > 1
                                     {campaignLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
                                   </td>
                                   <td className="px-5 py-4">
-                                    <div className="font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
+                                    <div className={`font-medium ${creativeId ? "text-gray-900 dark:text-slate-100" : "text-amber-700 dark:text-amber-300"}`}>{creativeLabel || creativeId || missingCreativeDisplay}</div>
                                     {creativeLabel && <div className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
                                   </td>
                                   <td className="px-5 py-4 text-right font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</td>
@@ -42455,7 +42514,7 @@ ${waybillLineItems(w).length > 1
                       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="px-5 py-4 border-b border-gray-100">
                           <h2 className="text-sm font-bold text-gray-800">Creatives behind abandoned carts</h2>
-                          <p className="text-xs text-gray-400">Grouped by `utm_content` from abandoned carts in this period.</p>
+                          <p className="text-xs text-gray-400">Grouped by `ad_id`, `creative_id`, or a real `utm_content` value from abandoned carts.</p>
                         </div>
                         {filteredCartCreativeGroupedRows.length === 0 ? (
                           <div className="px-5 py-10 text-center text-sm text-gray-400 italic">
@@ -42510,7 +42569,7 @@ ${waybillLineItems(w).length > 1
                           <div className="sm:hidden divide-y divide-gray-100">
                             {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
                                 const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-                                const creativeId = attribution.utmContent?.trim() || "";
+                                const creativeId = cartTrackingCreativeText(cart, attribution);
                                 const campaignLabel = campaignCardLabelFor(campaignId);
                                 const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                                 const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
@@ -42553,7 +42612,7 @@ ${waybillLineItems(w).length > 1
                                       </div>
                                       <div>
                                         <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
-                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                        <div className={`font-semibold ${creativeId ? "text-gray-900" : "text-amber-700"}`}>{creativeLabel || creativeId || missingCreativeDisplay}</div>
                                         {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
                                       </div>
                                     </div>
@@ -42587,7 +42646,7 @@ ${waybillLineItems(w).length > 1
                               <tbody className="divide-y divide-gray-100">
                                 {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
                                   const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-                                  const creativeId = attribution.utmContent?.trim() || "";
+                                  const creativeId = cartTrackingCreativeText(cart, attribution);
                                   const campaignLabel = campaignCardLabelFor(campaignId);
                                   const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
                                   const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
@@ -42623,7 +42682,7 @@ ${waybillLineItems(w).length > 1
                                         {campaignLabel && campaignLabel !== campaignId && <div className="mt-0.5 text-xs text-gray-500">{campaignId}</div>}
                                       </td>
                                       <td className="px-5 py-4 min-w-[220px]">
-                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                        <div className={`font-semibold ${creativeId ? "text-gray-900" : "text-amber-700"}`}>{creativeLabel || creativeId || missingCreativeDisplay}</div>
                                         {creativeLabel && creativeLabel !== creativeId && <div className="mt-0.5 text-xs text-gray-500">{creativeId}</div>}
                                       </td>
                                       <td className="px-5 py-4 text-right font-bold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</td>
