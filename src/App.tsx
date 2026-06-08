@@ -10833,7 +10833,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     && isInPeriod(expense.date, campaignPeriod, campaignDateRange)
     && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
   );
-  const marketingLegacyAdSpendExpenses = marketingAdSpendExpenses.filter((expense) => !String(expense.id ?? "").startsWith("marketing-spend-"));
   const marketerTagVariants = (value: string | undefined | null) => {
     const lower = String(value ?? "").trim().toLowerCase();
     if (!lower) return [];
@@ -10912,16 +10911,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return acc;
     }, {})
   ).map((row) => {
+    const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.key, row.label, row.raw]));
     const spendRecords = marketingSpendRecordsForReporting.filter((record) => marketingSpendMatchesBuyer(record, row));
+    const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
     const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
-    const adSpend = ledgerSpend;
+    const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
     const metrics = marketingMetricForOrders(row.orders);
     const netAfterAds = metrics.contribution - adSpend;
     return {
       ...row,
       ...metrics,
       adSpend,
-      spendExpenseIds: [],
+      spendExpenseIds: spendExpenses.map((expense) => expense.id),
       spendRecordIds: spendRecords.map((record) => record.id),
       budgetGiven: spendRecords.reduce((sum, record) => sum + record.budgetGiven, 0),
       actualSpent: spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0),
@@ -10962,19 +10963,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return acc;
     }, {})
   ).map((row) => {
+    const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.buyerKey, row.buyerLabel, row.campaignKey, row.campaignLabel, row.campaignRaw]));
     const spendRecords = marketingSpendRecordsForReporting.filter((record) =>
       marketingSpendMatchesBuyer(record, { key: row.buyerKey, label: row.buyerLabel, raw: row.buyerLabel, hasHiddenBuyer: row.buyerHasHiddenBuyer })
       && marketingSpendMatchesCampaign(record, row)
     );
+    const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
     const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
-    const adSpend = ledgerSpend;
+    const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
     const metrics = marketingMetricForOrders(row.orders);
     const netAfterAds = metrics.contribution - adSpend;
     return {
       ...row,
       ...metrics,
       adSpend,
-      spendExpenseIds: [],
+      spendExpenseIds: spendExpenses.map((expense) => expense.id),
       spendRecordIds: spendRecords.map((record) => record.id),
       budgetGiven: spendRecords.reduce((sum, record) => sum + record.budgetGiven, 0),
       actualSpent: spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0),
@@ -11017,9 +11020,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .reduce((sum, record) => sum + marketingSpendAmount(record), 0);
   const marketingTotalLedgerBudget = marketingSpendRecordsForReporting.reduce((sum, record) => sum + record.budgetGiven, 0);
   const marketingTotalLedgerSpend = marketingSpendRecordsForReporting.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
-  const marketingTotalExpenseSpend = marketingLegacyAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const marketingTotalAdSpend = marketingTotalLedgerSpend;
-  const marketingMatchedAdSpend = marketingSpendRecordsForReporting.filter((record) => marketingMatchedSpendRecordIds.has(record.id)).reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+  const marketingTotalExpenseSpend = marketingAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const marketingTotalAdSpend = marketingUsesSpendLedger ? marketingTotalLedgerSpend : marketingTotalExpenseSpend;
+  const marketingMatchedAdSpend = marketingUsesSpendLedger
+    ? marketingSpendRecordsForReporting.filter((record) => marketingMatchedSpendRecordIds.has(record.id)).reduce((sum, record) => sum + marketingSpendAmount(record), 0)
+    : marketingAdSpendExpenses.filter((expense) => marketingMatchedSpendIds.has(expense.id)).reduce((sum, expense) => sum + expense.amount, 0);
   const marketingUnmatchedAdSpend = Math.max(0, marketingTotalAdSpend - marketingMatchedAdSpend);
   const marketingOrders = marketingFilteredOrders;
   const marketingDeliveredRows = marketingOrders.filter((order) => (order.status ?? "New") === "Delivered");
@@ -40848,8 +40853,8 @@ ${waybillLineItems(w).length > 1
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "delivered revenue / spend", icon: CircleDollarSign, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ] : [
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
-                      { label: "Budget given", value: formatMoney(marketingTotalLedgerBudget), helper: marketingUsesSpendLedger ? "matched money released" : "no matched spend recorded", icon: WalletCards, tone: "amber" },
-                      { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched actual/estimate" : "no matched spend recorded", icon: Banknote, tone: "amber" },
+                      { label: "Budget given", value: formatMoney(marketingUsesSpendLedger ? marketingTotalLedgerBudget : marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched money released" : "fallback: expenses", icon: WalletCards, tone: "amber" },
+                      { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched actual/estimate" : "Ad Spend expenses", icon: Banknote, tone: "amber" },
                       { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
                       { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "revenue / spend", icon: TrendingUp, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
@@ -41095,14 +41100,10 @@ ${waybillLineItems(w).length > 1
 
                   <section className={`grid grid-cols-1 gap-4 ${marketingIsPersonalWorkspace ? "" : "xl:grid-cols-[0.8fr_1.2fr]"}`}>
                     {!marketingIsPersonalWorkspace && <article className="rounded-2xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-500/30 dark:bg-rose-500/10">
-                      <h2 className="m-0 flex items-center gap-2 text-base font-black text-rose-900 dark:text-rose-200"><AlertTriangle className="h-5 w-5" /> Spend needing cleanup</h2>
-                      <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">
-                        {marketingUnmatchedAdSpend > 0 ? `${formatMoney(marketingUnmatchedAdSpend)} matched spend is not tied to tracked orders yet. ` : ""}
-                        {marketingTotalExpenseSpend > 0 ? `${formatMoney(marketingTotalExpenseSpend)} still sits in old Expenses and is not counted in Marketing CPO/ROAS until it is recorded/matched here.` : ""}
-                        {marketingUnmatchedAdSpend === 0 && marketingTotalExpenseSpend === 0 ? "All matched marketing spend is tied cleanly to tracked orders." : ""}
-                      </p>
+                      <h2 className="m-0 flex items-center gap-2 text-base font-black text-rose-900 dark:text-rose-200"><AlertTriangle className="h-5 w-5" /> Spend not matched to a buyer/campaign</h2>
+                      <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">{formatMoney(marketingUnmatchedAdSpend)} is logged in this period but did not clearly match tracked orders yet.</p>
                       <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
-                        {marketingUnmatchedSpendRecords.slice(0, 12).map((record) => (
+                        {marketingUsesSpendLedger ? marketingUnmatchedSpendRecords.slice(0, 12).map((record) => (
                           <div key={record.id} className="rounded-xl border border-rose-200 bg-white/70 p-3 text-sm dark:border-rose-500/20 dark:bg-slate-950/20">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -41112,20 +41113,18 @@ ${waybillLineItems(w).length > 1
                               <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(marketingSpendAmount(record))}</strong>
                             </div>
                           </div>
-                        ))}
-                        {marketingLegacyAdSpendExpenses.slice(0, 12).map((expense) => (
+                        )) : marketingAdSpendExpenses.filter((expense) => !marketingMatchedSpendIds.has(expense.id)).slice(0, 12).map((expense) => (
                           <div key={expense.id} className="rounded-xl border border-rose-200 bg-white/70 p-3 text-sm dark:border-rose-500/20 dark:bg-slate-950/20">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="truncate font-black text-gray-900 dark:text-slate-100">{expense.productName || "Legacy Ad Spend expense"}</div>
+                                <div className="truncate font-black text-gray-900 dark:text-slate-100">{expense.productName}</div>
                                 <div className="mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{displayDateFromKey(expense.date)} · {expense.description}</div>
-                                <div className="mt-1 text-[11px] font-black uppercase tracking-wide text-rose-500">Not counted until recorded in Marketing spend</div>
                               </div>
                               <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(expense.amount)}</strong>
                             </div>
                           </div>
                         ))}
-                        {marketingUnmatchedAdSpend === 0 && marketingTotalExpenseSpend === 0 && <p className="m-0 text-sm font-semibold text-rose-800/70 dark:text-rose-100/70">All ad spend rows matched cleanly.</p>}
+                        {marketingUnmatchedAdSpend === 0 && <p className="m-0 text-sm font-semibold text-rose-800/70 dark:text-rose-100/70">All ad spend rows matched cleanly.</p>}
                       </div>
                     </article>}
 
