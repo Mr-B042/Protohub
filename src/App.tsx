@@ -474,6 +474,11 @@ type MarketingSpendRecord = {
   currency: ProductCurrencyCode;
   notes?: string | null;
   proofUrl?: string | null;
+  entrySource?: "owner_admin" | "marketer";
+  reviewStatus?: "pending" | "matched" | "mismatch";
+  matchedBy?: string | null;
+  matchedAt?: string | null;
+  matchNote?: string | null;
   createdBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -10844,7 +10849,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       || marketerScopeVariants.some((tag) => marketerTagVariants(record.marketerTag).includes(tag));
     return matchesDate && matchesScope && matchesMarketer;
   });
-  const marketingUsesSpendLedger = marketingSpendRecordsInPeriod.length > 0;
+  const marketingSpendReviewStatus = (record: MarketingSpendRecord) => record.reviewStatus ?? "matched";
+  const marketingSpendIsTrusted = (record: MarketingSpendRecord) => marketingSpendReviewStatus(record) === "matched";
+  const marketingSpendRecordsForReporting = marketingSpendRecordsInPeriod.filter(marketingSpendIsTrusted);
+  const marketingPendingSpendRecords = marketingSpendRecordsInPeriod.filter((record) => marketingSpendReviewStatus(record) === "pending");
+  const marketingMismatchSpendRecords = marketingSpendRecordsInPeriod.filter((record) => marketingSpendReviewStatus(record) === "mismatch");
+  const marketingUsesSpendLedger = marketingSpendRecordsForReporting.length > 0;
   const marketingSpendMatchesBuyer = (record: MarketingSpendRecord, row: { key: string; label: string; raw: string }) => {
     const recordTags = marketerTagVariants(record.marketerTag);
     const rowTags = new Set([...marketerTagVariants(row.key), ...marketerTagVariants(row.label), ...marketerTagVariants(row.raw)]);
@@ -10895,7 +10905,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, {})
   ).map((row) => {
     const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.key, row.label, row.raw]));
-    const spendRecords = marketingSpendRecordsInPeriod.filter((record) => marketingSpendMatchesBuyer(record, row));
+    const spendRecords = marketingSpendRecordsForReporting.filter((record) => marketingSpendMatchesBuyer(record, row));
     const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
     const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
     const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
@@ -10945,7 +10955,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, {})
   ).map((row) => {
     const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.buyerKey, row.buyerLabel, row.campaignKey, row.campaignLabel, row.campaignRaw]));
-    const spendRecords = marketingSpendRecordsInPeriod.filter((record) =>
+    const spendRecords = marketingSpendRecordsForReporting.filter((record) =>
       marketingSpendMatchesBuyer(record, { key: row.buyerKey, label: row.buyerLabel, raw: row.buyerLabel })
       && marketingSpendMatchesCampaign(record, row)
     );
@@ -10987,14 +10997,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     || marketingSpendRecordMarketerName(a).localeCompare(marketingSpendRecordMarketerName(b))
   );
   const marketingUnmatchedSpendRecords = marketingUsesSpendLedger
-    ? marketingSpendRecordsInPeriod.filter((record) => !marketingMatchedSpendRecordIds.has(record.id))
+    ? marketingSpendRecordsForReporting.filter((record) => !marketingMatchedSpendRecordIds.has(record.id))
     : [];
-  const marketingTotalLedgerBudget = marketingSpendRecordsInPeriod.reduce((sum, record) => sum + record.budgetGiven, 0);
-  const marketingTotalLedgerSpend = marketingSpendRecordsInPeriod.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+  const marketingTotalPendingSpend = marketingPendingSpendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+  const marketingTotalMismatchSpend = marketingMismatchSpendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+  const marketingTotalLedgerBudget = marketingSpendRecordsForReporting.reduce((sum, record) => sum + record.budgetGiven, 0);
+  const marketingTotalLedgerSpend = marketingSpendRecordsForReporting.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
   const marketingTotalExpenseSpend = marketingAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
   const marketingTotalAdSpend = marketingUsesSpendLedger ? marketingTotalLedgerSpend : marketingTotalExpenseSpend;
   const marketingMatchedAdSpend = marketingUsesSpendLedger
-    ? marketingSpendRecordsInPeriod.filter((record) => marketingMatchedSpendRecordIds.has(record.id)).reduce((sum, record) => sum + marketingSpendAmount(record), 0)
+    ? marketingSpendRecordsForReporting.filter((record) => marketingMatchedSpendRecordIds.has(record.id)).reduce((sum, record) => sum + marketingSpendAmount(record), 0)
     : marketingAdSpendExpenses.filter((expense) => marketingMatchedSpendIds.has(expense.id)).reduce((sum, expense) => sum + expense.amount, 0);
   const marketingUnmatchedAdSpend = Math.max(0, marketingTotalAdSpend - marketingMatchedAdSpend);
   const marketingOrders = marketingFilteredOrders;
@@ -18374,6 +18386,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             currency: (row.currency ?? "NGN") as ProductCurrencyCode,
             notes: row.notes ?? "",
             proofUrl: row.proofUrl ?? row.proof_url ?? "",
+            entrySource: row.entrySource ?? row.entry_source ?? "owner_admin",
+            reviewStatus: row.reviewStatus ?? row.review_status ?? "matched",
+            matchedBy: row.matchedBy ?? row.matched_by ?? null,
+            matchedAt: row.matchedAt ?? row.matched_at ?? null,
+            matchNote: row.matchNote ?? row.match_note ?? null,
             createdBy: row.createdBy ?? row.created_by ?? null,
             createdAt: row.createdAt ?? row.created_at ?? "",
             updatedAt: row.updatedAt ?? row.updated_at ?? ""
@@ -19810,15 +19827,43 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setMarketingSpendActualSpent("");
     setMarketingSpendNotes("");
   };
+  const normalizeMarketingSpendRecord = (row: any, fallback: Partial<MarketingSpendRecord> = {}): MarketingSpendRecord => ({
+    id: row.id ?? fallback.id ?? "",
+    spendDate: row.spendDate ?? row.spend_date ?? fallback.spendDate ?? "",
+    marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? fallback.marketerUserId ?? null,
+    marketerTag: row.marketerTag ?? row.marketer_tag ?? fallback.marketerTag ?? "",
+    productId: (row.productId ?? row.product_id ?? fallback.productId) || null,
+    platform: row.platform ?? fallback.platform ?? "Facebook",
+    campaign: row.campaign ?? fallback.campaign ?? "",
+    landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? fallback.landingPageUrl ?? "",
+    budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? fallback.budgetGiven ?? 0),
+    actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : fallback.actualSpent ?? null,
+    currency: (row.currency ?? fallback.currency ?? "NGN") as ProductCurrencyCode,
+    notes: row.notes ?? fallback.notes ?? "",
+    proofUrl: row.proofUrl ?? row.proof_url ?? fallback.proofUrl ?? "",
+    entrySource: row.entrySource ?? row.entry_source ?? fallback.entrySource ?? "owner_admin",
+    reviewStatus: row.reviewStatus ?? row.review_status ?? fallback.reviewStatus ?? "matched",
+    matchedBy: row.matchedBy ?? row.matched_by ?? fallback.matchedBy ?? null,
+    matchedAt: row.matchedAt ?? row.matched_at ?? fallback.matchedAt ?? null,
+    matchNote: row.matchNote ?? row.match_note ?? fallback.matchNote ?? null,
+    createdBy: row.createdBy ?? row.created_by ?? fallback.createdBy ?? authUser?.id ?? null,
+    createdAt: row.createdAt ?? row.created_at ?? fallback.createdAt ?? "",
+    updatedAt: row.updatedAt ?? row.updated_at ?? fallback.updatedAt ?? ""
+  });
   const saveMarketingSpendRecord = async () => {
-    if (currentRole !== "Owner" && currentRole !== "Admin") {
-      showToast("Only Owner/Admin can record marketing budgets.");
+    const isMarketerSubmission = currentRole === "Marketer";
+    if (currentRole !== "Owner" && currentRole !== "Admin" && !isMarketerSubmission) {
+      showToast("Only marketers, Owner, or Admin can record marketing budgets.");
       return;
     }
     if (!marketingSpendDate) { showToast("Choose the spend date."); return; }
-    const selectedMarketer = marketingMarketerUsers.find((user) => user.id === marketingSpendMarketerId);
-    const selectedTag = marketingSpendTag.trim() || sanitizeMarketingAttributionTags(selectedMarketer?.marketingAttributionTags ?? [])[0] || "";
-    if (!selectedTag) { showToast("Choose a marketer or enter their tracking tag."); return; }
+    const selectedMarketer = isMarketerSubmission
+      ? (currentManagedUser as ManagedUser | undefined)
+      : marketingMarketerUsers.find((user) => user.id === marketingSpendMarketerId);
+    const selectedTag = isMarketerSubmission
+      ? (marketingSpendTag.trim() || marketerScopeTags[0] || "")
+      : (marketingSpendTag.trim() || sanitizeMarketingAttributionTags(selectedMarketer?.marketingAttributionTags ?? [])[0] || "");
+    if (!selectedTag) { showToast(isMarketerSubmission ? "Ask an admin to assign your marketer tracking tag first." : "Choose a marketer or enter their tracking tag."); return; }
     const budget = Number(marketingSpendBudgetGiven || 0);
     const actual = marketingSpendActualSpent.trim() ? Number(marketingSpendActualSpent) : undefined;
     if (!Number.isFinite(budget) || budget < 0 || (actual !== undefined && (!Number.isFinite(actual) || actual < 0))) {
@@ -19833,7 +19878,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try {
       const row = await marketingSpendApi.create({
         spendDate: marketingSpendDate,
-        marketerUserId: selectedMarketer?.id ?? null,
+        marketerUserId: isMarketerSubmission ? marketerScopeUserId : selectedMarketer?.id ?? null,
         marketerTag: selectedTag,
         productId: marketingSpendProductId || null,
         platform: marketingSpendPlatform,
@@ -19844,32 +19889,52 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         currency: "NGN",
         notes: marketingSpendNotes
       });
-      const normalized: MarketingSpendRecord = {
-        id: row.id,
-        spendDate: row.spendDate ?? row.spend_date ?? marketingSpendDate,
-        marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? selectedMarketer?.id ?? null,
-        marketerTag: row.marketerTag ?? row.marketer_tag ?? selectedTag,
-        productId: (row.productId ?? row.product_id ?? marketingSpendProductId) || null,
-        platform: row.platform ?? marketingSpendPlatform,
-        campaign: row.campaign ?? marketingSpendCampaign,
-        landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? marketingSpendLandingPage,
-        budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? budget),
-        actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : actual ?? null,
-        currency: (row.currency ?? "NGN") as ProductCurrencyCode,
-        notes: row.notes ?? marketingSpendNotes,
-        proofUrl: row.proofUrl ?? row.proof_url ?? "",
-        createdBy: row.createdBy ?? row.created_by ?? authUser?.id ?? null,
-        createdAt: row.createdAt ?? row.created_at ?? "",
-        updatedAt: row.updatedAt ?? row.updated_at ?? ""
-      };
+      const normalized = normalizeMarketingSpendRecord(row, {
+        spendDate: marketingSpendDate,
+        marketerUserId: isMarketerSubmission ? marketerScopeUserId : selectedMarketer?.id ?? null,
+        marketerTag: selectedTag,
+        productId: marketingSpendProductId || null,
+        platform: marketingSpendPlatform,
+        campaign: marketingSpendCampaign,
+        landingPageUrl: marketingSpendLandingPage,
+        budgetGiven: budget,
+        actualSpent: actual ?? null,
+        currency: "NGN",
+        notes: marketingSpendNotes,
+        entrySource: isMarketerSubmission ? "marketer" : "owner_admin",
+        reviewStatus: isMarketerSubmission ? "pending" : "matched"
+      });
       setMarketingSpendRecords((prev) => [normalized, ...prev.filter((item) => item.id !== normalized.id)]);
       resetMarketingSpendForm();
       setShowMarketingSpendForm(false);
-      showToast(`Marketing spend recorded for ${selectedMarketer?.name ?? selectedTag}.`);
+      showToast(isMarketerSubmission ? "Spend submitted for Owner/Admin matching." : `Marketing spend recorded for ${selectedMarketer?.name ?? selectedTag}.`);
     } catch (err: any) {
       showToast(`Could not save marketing spend: ${err?.message ?? err}`);
     } finally {
       setMarketingSpendSaving(false);
+    }
+  };
+  const reviewMarketingSpendRecord = async (record: MarketingSpendRecord, reviewStatus: "matched" | "mismatch") => {
+    if (currentRole !== "Owner" && currentRole !== "Admin") return;
+    const matchNote = window.prompt(
+      reviewStatus === "matched"
+        ? "Optional note for this matched marketer spend:"
+        : "Why does this not match the company record?"
+    );
+    if (matchNote === null) return;
+    try {
+      const row = await marketingSpendApi.update(record.id, { reviewStatus, matchNote });
+      const normalized = normalizeMarketingSpendRecord(row, {
+        ...record,
+        reviewStatus,
+        matchNote,
+        matchedBy: authUser?.id ?? null,
+        matchedAt: new Date().toISOString()
+      });
+      setMarketingSpendRecords((prev) => prev.map((item) => item.id === record.id ? normalized : item));
+      showToast(reviewStatus === "matched" ? "Spend matched and added to reporting." : "Spend flagged as mismatch.");
+    } catch (err: any) {
+      showToast(`Could not update spend review: ${err?.message ?? err}`);
     }
   };
 
@@ -40578,13 +40643,19 @@ ${waybillLineItems(w).length > 1
                         className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       />
                     </label>
-                    {(currentRole === "Owner" || currentRole === "Admin") && (
+                    {(currentRole === "Owner" || currentRole === "Admin" || marketingIsPersonalWorkspace) && (
                       <button
                         type="button"
                         className="!min-h-0 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800 sm:w-auto dark:bg-sky-500 dark:hover:bg-sky-400"
-                        onClick={() => setShowMarketingSpendForm((value) => !value)}
+                        onClick={() => {
+                          if (!showMarketingSpendForm && marketingIsPersonalWorkspace) {
+                            setMarketingSpendMarketerId(marketerScopeUserId ?? "");
+                            setMarketingSpendTag(marketerScopeTags[0] ?? "");
+                          }
+                          setShowMarketingSpendForm((value) => !value);
+                        }}
                       >
-                        <Banknote className="h-4 w-4" /> {showMarketingSpendForm ? "Close spend form" : "Record daily spend"}
+                        <Banknote className="h-4 w-4" /> {showMarketingSpendForm ? "Close spend form" : marketingIsPersonalWorkspace ? "Submit received budget" : "Record daily spend"}
                       </button>
                     )}
                   </div>
@@ -40592,40 +40663,49 @@ ${waybillLineItems(w).length > 1
                 {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange, campaignPeriod, campaignDateRange)}
               </div>
 
-              {showMarketingSpendForm && (currentRole === "Owner" || currentRole === "Admin") && (
+              {showMarketingSpendForm && (currentRole === "Owner" || currentRole === "Admin" || marketingIsPersonalWorkspace) && (
                 <section className="overflow-hidden rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-4 shadow-sm dark:border-amber-500/30 dark:from-amber-500/10 dark:via-[#081119] dark:to-sky-500/10">
                   <div className="flex flex-col gap-1">
-                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Daily ad money</p>
-                    <h2 className="m-0 text-xl font-black text-gray-950 dark:text-slate-100">Record budget given and what was actually spent</h2>
-                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">The dashboard will divide this spend by tracked orders from the marketer&apos;s generated links.</p>
+                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">{marketingIsPersonalWorkspace ? "Marketer spend claim" : "Daily ad money"}</p>
+                    <h2 className="m-0 text-xl font-black text-gray-950 dark:text-slate-100">{marketingIsPersonalWorkspace ? "Submit what you received and used" : "Record budget given and what was actually spent"}</h2>
+                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Owner/Admin will match this against the company record before it counts in final CPO and ROAS." : "The dashboard will divide matched spend by tracked orders from the marketer's generated links."}</p>
                   </div>
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       Date
                       <input type="date" value={marketingSpendDate} onChange={(event) => setMarketingSpendDate(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
-                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
-                      Marketer
-                      <select
-                        value={marketingSpendMarketerId}
-                        onChange={(event) => {
-                          const id = event.target.value;
-                          const marketer = marketingMarketerUsers.find((user) => user.id === id);
-                          setMarketingSpendMarketerId(id);
-                          setMarketingSpendTag(sanitizeMarketingAttributionTags(marketer?.marketingAttributionTags ?? [])[0] ?? "");
-                        }}
-                        className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                      >
-                        <option value="">Choose marketer</option>
-                        {marketingMarketerUsers.map((user) => (
-                          <option key={user.id} value={user.id}>{user.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
-                      Tracking tag
-                      <input value={marketingSpendTag} onChange={(event) => setMarketingSpendTag(event.target.value)} placeholder="media_buyer tag" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                    </label>
+                    {marketingIsPersonalWorkspace ? (
+                      <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                        Your tracking tag
+                        <input readOnly value={marketingSpendTag || marketerScopeTags[0] || "No tag assigned"} className="mt-1 h-11 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-bold text-amber-900 focus:outline-none dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" />
+                      </label>
+                    ) : (
+                      <>
+                        <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                          Marketer
+                          <select
+                            value={marketingSpendMarketerId}
+                            onChange={(event) => {
+                              const id = event.target.value;
+                              const marketer = marketingMarketerUsers.find((user) => user.id === id);
+                              setMarketingSpendMarketerId(id);
+                              setMarketingSpendTag(sanitizeMarketingAttributionTags(marketer?.marketingAttributionTags ?? [])[0] ?? "");
+                            }}
+                            className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          >
+                            <option value="">Choose marketer</option>
+                            {marketingMarketerUsers.map((user) => (
+                              <option key={user.id} value={user.id}>{user.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                          Tracking tag
+                          <input value={marketingSpendTag} onChange={(event) => setMarketingSpendTag(event.target.value)} placeholder="media_buyer tag" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                        </label>
+                      </>
+                    )}
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       Product
                       <select value={marketingSpendProductId} onChange={(event) => setMarketingSpendProductId(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
@@ -40634,11 +40714,11 @@ ${waybillLineItems(w).length > 1
                       </select>
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
-                      Budget given
+                      {marketingIsPersonalWorkspace ? "Amount received" : "Budget given"}
                       <input inputMode="decimal" value={marketingSpendBudgetGiven} onChange={(event) => setMarketingSpendBudgetGiven(event.target.value)} placeholder="30000" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
-                      Actual spent
+                      {marketingIsPersonalWorkspace ? "Amount used" : "Actual spent"}
                       <input inputMode="decimal" value={marketingSpendActualSpent} onChange={(event) => setMarketingSpendActualSpent(event.target.value)} placeholder="leave blank if unknown" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
@@ -40661,10 +40741,10 @@ ${waybillLineItems(w).length > 1
                     </label>
                   </div>
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">If actual spent is blank, reports use budget given and label it as estimated spend.</p>
+                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Pending submissions are visible immediately, but final reporting only counts them after Owner/Admin matches them." : "If actual spent is blank, reports use matched budget given and label it as estimated spend."}</p>
                     <div className="flex gap-2">
                       <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" onClick={() => { resetMarketingSpendForm(); setShowMarketingSpendForm(false); }}>Cancel</button>
-                      <button type="button" disabled={marketingSpendSaving} className="!min-h-0 rounded-xl bg-[#1F8FE0] px-5 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60" onClick={saveMarketingSpendRecord}>{marketingSpendSaving ? "Saving..." : "Save spend"}</button>
+                      <button type="button" disabled={marketingSpendSaving} className="!min-h-0 rounded-xl bg-[#1F8FE0] px-5 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60" onClick={saveMarketingSpendRecord}>{marketingSpendSaving ? "Saving..." : marketingIsPersonalWorkspace ? "Submit for match" : "Save spend"}</button>
                     </div>
                   </div>
                 </section>
@@ -40676,14 +40756,14 @@ ${waybillLineItems(w).length > 1
                     {(marketingIsPersonalWorkspace ? [
                       { label: "Tracked orders", value: String(marketingOrders.length), helper: "from your buyer tags", icon: TrendingUp, tone: "blue" },
                       { label: "Delivered", value: String(marketingDeliveredRows.length), helper: "successful orders", icon: BadgeCheck, tone: "emerald" },
-                      { label: "Ad spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "daily spend ledger" : "no ledger rows yet", icon: Banknote, tone: "amber" },
+                      { label: "Ad spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched spend only" : "no matched spend yet", icon: Banknote, tone: "amber" },
                       { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
                       { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered orders", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "delivered revenue / spend", icon: CircleDollarSign, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ] : [
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
-                      { label: "Budget given", value: formatMoney(marketingUsesSpendLedger ? marketingTotalLedgerBudget : marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "money released to marketers" : "fallback: expenses", icon: WalletCards, tone: "amber" },
-                      { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "actual or estimated" : "Ad Spend expenses", icon: Banknote, tone: "amber" },
+                      { label: "Budget given", value: formatMoney(marketingUsesSpendLedger ? marketingTotalLedgerBudget : marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched money released" : "fallback: expenses", icon: WalletCards, tone: "amber" },
+                      { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched actual/estimate" : "Ad Spend expenses", icon: Banknote, tone: "amber" },
                       { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
                       { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "revenue / spend", icon: TrendingUp, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
@@ -40770,13 +40850,13 @@ ${waybillLineItems(w).length > 1
                             <>
                               <p className="m-0">Use the product links generated for you in Embed Form. Do not edit the tracking part by hand.</p>
                               <p className="m-0">If you run one product on different landing pages, paste each page URL there to create one tracked link per page.</p>
-                              <p className="m-0">Orders from your links appear here so you can see which page, campaign, and product is actually bringing results.</p>
+                              <p className="m-0">Submit the ad money you received/used; Owner/Admin matches it before it counts in final spend results.</p>
                             </>
                           ) : (
                             <>
                               <p className="m-0">Do not hand-write tracking tags. Give each marketer their generated product link from Embed Form.</p>
                               <p className="m-0">If one product has many landing pages, paste each landing page URL there and the app saves a separate tracked link automatically.</p>
-                              <p className="m-0">When logging Ad Spend, choose the marketer/campaign if available, or include the same landing page/campaign name in the note.</p>
+                              <p className="m-0">Marketer-submitted spend stays pending until you match it against the company amount, then it counts in CPO/ROAS.</p>
                             </>
                           )}
                         </div>
@@ -40848,13 +40928,13 @@ ${waybillLineItems(w).length > 1
                           <p className="text-sm text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Budget rows recorded for your tracked links." : "Budget given to each marketer, matched automatically against orders from their generated links."}</p>
                         </div>
                         <span className="w-fit rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-                          {marketingSpendLedgerRows.length} row{marketingSpendLedgerRows.length === 1 ? "" : "s"} · {formatMoney(marketingTotalLedgerSpend)}
+                          {marketingSpendLedgerRows.length} row{marketingSpendLedgerRows.length === 1 ? "" : "s"} · matched {formatMoney(marketingTotalLedgerSpend)}{marketingPendingSpendRecords.length > 0 ? ` · pending ${formatMoney(marketingTotalPendingSpend)}` : ""}
                         </span>
                       </div>
                     </div>
                     {marketingSpendLedgerRows.length === 0 ? (
                       <div className="px-5 py-10 text-sm font-semibold text-gray-400">
-                        No daily spend has been recorded for this period yet. {marketingIsPersonalWorkspace ? "Ask an admin to record the ad money released to you." : "Use Record daily spend so CPO/ROAS can stop guessing from old expense notes."}
+                        No daily spend has been recorded for this period yet. {marketingIsPersonalWorkspace ? "Use Submit received budget when ad money is released to you." : "Use Record daily spend so CPO/ROAS can stop guessing from old expense notes."}
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
@@ -40872,12 +40952,18 @@ ${waybillLineItems(w).length > 1
                               const spend = marketingSpendAmount(record);
                               const cpo = matchedBuyer && matchedBuyer.orders > 0 ? spend / matchedBuyer.orders : null;
                               const isMatched = Boolean(matchedBuyer);
+                              const reviewStatus = marketingSpendReviewStatus(record);
+                              const reviewClass = reviewStatus === "matched"
+                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                                : reviewStatus === "mismatch"
+                                  ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+                                  : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300";
                               return (
                                 <tr key={record.id} className="hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{displayDateFromKey(record.spendDate)}</td>
                                   <td className="px-5 py-4">
                                     <div className="font-black text-gray-900 dark:text-slate-100">{marketingSpendRecordMarketerName(record)}</div>
-                                    <div className="text-xs font-semibold text-gray-400">{record.marketerTag}</div>
+                                    <div className="text-xs font-semibold text-gray-400">{record.marketerTag} · {record.entrySource === "marketer" ? "submitted by marketer" : "company record"}</div>
                                   </td>
                                   <td className="px-5 py-4">
                                     <div className="font-bold text-gray-900 dark:text-slate-100">{marketingSpendRecordProductName(record)}</div>
@@ -40887,9 +40973,23 @@ ${waybillLineItems(w).length > 1
                                   <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(spend)}{record.actualSpent == null && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-300">estimated</span>}</td>
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{cpo ? formatMoney(cpo) : "—"}</td>
                                   <td className="px-5 py-4">
-                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${isMatched ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"}`}>
-                                      {isMatched ? `${matchedBuyer?.orders ?? 0} orders matched` : "No orders matched"}
-                                    </span>
+                                    <div className="flex max-w-[260px] flex-col gap-2">
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <span className={`w-fit rounded-full px-2.5 py-1 text-[11px] font-black ${reviewClass}`}>
+                                          {reviewStatus === "pending" ? "Pending owner match" : reviewStatus === "mismatch" ? "Mismatch" : "Matched"}
+                                        </span>
+                                        <span className={`w-fit rounded-full px-2.5 py-1 text-[11px] font-black ${isMatched ? "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300" : "bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-300"}`}>
+                                          {isMatched ? `${matchedBuyer?.orders ?? 0} orders matched` : "No orders matched"}
+                                        </span>
+                                      </div>
+                                      {record.matchNote && <p className="m-0 text-xs font-semibold text-gray-400">{record.matchNote}</p>}
+                                      {(currentRole === "Owner" || currentRole === "Admin") && reviewStatus === "pending" && (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          <button type="button" className="!min-h-0 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-emerald-700" onClick={() => reviewMarketingSpendRecord(record, "matched")}>Mark matched</button>
+                                          <button type="button" className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-black text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:bg-slate-950 dark:text-rose-200" onClick={() => reviewMarketingSpendRecord(record, "mismatch")}>Mismatch</button>
+                                        </div>
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               );

@@ -8,8 +8,10 @@ const router = Router();
 router.use(requireAuth);
 
 const READ_ROLES = ["Owner", "Admin", "Manager", "Marketer"] as const;
-const WRITE_ROLES = ["Owner", "Admin"] as const;
+const CREATE_ROLES = ["Owner", "Admin", "Marketer"] as const;
+const ADMIN_WRITE_ROLES = ["Owner", "Admin"] as const;
 const CURRENCIES = ["NGN", "USD", "GBP"] as const;
+const REVIEW_STATUSES = ["pending", "matched", "mismatch"] as const;
 
 const clean = (value: unknown, max = 240) =>
   String(value ?? "").trim().replace(/\s+/g, " ").slice(0, max);
@@ -43,10 +45,16 @@ const SpendSchema = z.object({
   actualSpent: z.union([z.number(), z.string(), z.null()]).optional(),
   currency: z.enum(CURRENCIES).default("NGN"),
   notes: z.string().max(1000).optional(),
-  proofUrl: z.string().max(2048).optional().or(z.literal(""))
+  proofUrl: z.string().max(2048).optional().or(z.literal("")),
+  reviewStatus: z.enum(REVIEW_STATUSES).optional(),
+  matchNote: z.string().max(1000).optional()
 });
 
 const PatchSpendSchema = SpendSchema.partial();
+type SpendInput = z.infer<typeof SpendSchema>;
+type PatchSpendInput = z.infer<typeof PatchSpendSchema>;
+
+const isAdminWriter = (role: string | undefined) => role === "Owner" || role === "Admin";
 
 const marketerBelongsToOrg = async (userId: string, orgId: string) => {
   const { data, error } = await supabase
@@ -71,8 +79,18 @@ const productBelongsToOrg = async (productId: string, orgId: string) => {
   return Boolean(data);
 };
 
-const rowForWrite = async (body: z.infer<typeof SpendSchema>, req: any) => {
+const resolveMarketerForRequest = async (body: SpendInput | PatchSpendInput, req: any) => {
   const orgId = req.user!.orgId;
+  if (req.user!.role === "Marketer") {
+    const ownTags = sanitizeMarketingAttributionTags(req.user!.marketingAttributionTags);
+    const requestedTag = sanitizeMarketingAttributionTags(body.marketerTag ?? [])[0] ?? "";
+    const marketerTag = requestedTag && ownTags.includes(requestedTag) ? requestedTag : ownTags[0] || "";
+    if (!marketerTag) {
+      throw Object.assign(new Error("Your marketer account needs a tracking tag before you can submit ad spend."), { status: 400 });
+    }
+    return { marketerUserId: req.user!.id, marketerTag };
+  }
+
   let marketerTags: string[] = [];
   if (body.marketerUserId) {
     const marketer = await marketerBelongsToOrg(body.marketerUserId, orgId);
@@ -85,6 +103,12 @@ const rowForWrite = async (body: z.infer<typeof SpendSchema>, req: any) => {
   if (!marketerTag) {
     throw Object.assign(new Error("Choose a marketer tag or assign a tag to this marketer first."), { status: 400 });
   }
+  return { marketerUserId: body.marketerUserId ?? null, marketerTag };
+};
+
+const rowForWrite = async (body: SpendInput | PatchSpendInput, req: any, options?: { existing?: any; create?: boolean }) => {
+  const orgId = req.user!.orgId;
+  const { marketerUserId, marketerTag } = await resolveMarketerForRequest(body, req);
 
   if (body.productId && !await productBelongsToOrg(body.productId, orgId)) {
     throw Object.assign(new Error("Product not found in this workspace."), { status: 404 });
@@ -99,7 +123,7 @@ const rowForWrite = async (body: z.infer<typeof SpendSchema>, req: any) => {
   return {
     org_id: orgId,
     spend_date: body.spendDate,
-    marketer_user_id: body.marketerUserId ?? null,
+    marketer_user_id: marketerUserId,
     marketer_tag: marketerTag,
     product_id: body.productId || null,
     platform: clean(body.platform || "Facebook", 80) || "Facebook",
@@ -110,6 +134,17 @@ const rowForWrite = async (body: z.infer<typeof SpendSchema>, req: any) => {
     currency: body.currency ?? "NGN",
     notes: clean(body.notes, 1000) || null,
     proof_url: safeUrl(body.proofUrl),
+    entry_source: req.user!.role === "Marketer" ? "marketer" : (options?.existing?.entry_source ?? "owner_admin"),
+    review_status: req.user!.role === "Marketer"
+      ? (options?.existing?.review_status ?? "pending")
+      : (body.reviewStatus ?? options?.existing?.review_status ?? "matched"),
+    matched_by: req.user!.role === "Marketer"
+      ? (options?.existing?.matched_by ?? null)
+      : ((body.reviewStatus ?? options?.existing?.review_status ?? "matched") === "pending" ? null : req.user!.id),
+    matched_at: req.user!.role === "Marketer"
+      ? (options?.existing?.matched_at ?? null)
+      : ((body.reviewStatus ?? options?.existing?.review_status ?? "matched") === "pending" ? null : new Date().toISOString()),
+    match_note: req.user!.role === "Marketer" ? (options?.existing?.match_note ?? null) : (clean(body.matchNote, 1000) || null),
     created_by: req.user!.id,
     updated_at: new Date().toISOString()
   };
@@ -131,11 +166,8 @@ router.get("/", requireRole(...READ_ROLES), async (req, res) => {
 
   if (req.user!.role === "Marketer") {
     const tags = sanitizeMarketingAttributionTags(req.user!.marketingAttributionTags);
-    if (tags.length === 0) {
-      res.json([]);
-      return;
-    }
-    query = query.in("marketer_tag", tags);
+    if (tags.length === 0) query = query.eq("marketer_user_id", req.user!.id);
+    else query = query.or(`marketer_user_id.eq.${req.user!.id},marketer_tag.in.(${tags.map((tag) => `"${tag.replace(/"/g, '\\"')}"`).join(",")})`);
   }
 
   const { data, error } = await query;
@@ -143,11 +175,11 @@ router.get("/", requireRole(...READ_ROLES), async (req, res) => {
   res.json(data ?? []);
 });
 
-router.post("/", requireRole(...WRITE_ROLES), async (req, res) => {
+router.post("/", requireRole(...CREATE_ROLES), async (req, res) => {
   const parsed = SpendSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
-    const insert = await rowForWrite(parsed.data, req);
+    const insert = await rowForWrite(parsed.data, req, { create: true });
     const { data, error } = await supabase
       .from("marketing_spend_records")
       .insert(insert)
@@ -160,7 +192,7 @@ router.post("/", requireRole(...WRITE_ROLES), async (req, res) => {
   }
 });
 
-router.patch("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
+router.patch("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
   const id = String(req.params.id);
   const parsed = PatchSpendSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
@@ -173,6 +205,20 @@ router.patch("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
     .maybeSingle();
   if (existingError) { res.status(500).json({ error: existingError.message }); return; }
   if (!existing) { res.status(404).json({ error: "Marketing spend record not found." }); return; }
+  const adminWriter = isAdminWriter(req.user!.role);
+  if (!adminWriter) {
+    if (
+      req.user!.role !== "Marketer"
+      || existing.marketer_user_id !== req.user!.id
+      || existing.entry_source !== "marketer"
+      || existing.review_status !== "pending"
+      || parsed.data.reviewStatus
+      || parsed.data.matchNote
+    ) {
+      res.status(403).json({ error: "Only Owner/Admin can match or edit reviewed marketing spend." });
+      return;
+    }
+  }
 
   const merged = {
     spendDate: parsed.data.spendDate ?? existing.spend_date,
@@ -186,13 +232,22 @@ router.patch("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
     actualSpent: parsed.data.actualSpent ?? existing.actual_spent,
     currency: parsed.data.currency ?? existing.currency,
     notes: parsed.data.notes ?? existing.notes ?? undefined,
-    proofUrl: parsed.data.proofUrl ?? existing.proof_url ?? undefined
+    proofUrl: parsed.data.proofUrl ?? existing.proof_url ?? undefined,
+    reviewStatus: parsed.data.reviewStatus ?? existing.review_status,
+    matchNote: parsed.data.matchNote ?? existing.match_note ?? undefined
   };
 
   try {
-    const update = await rowForWrite(merged, req);
+    const update = await rowForWrite(merged, req, { existing });
     delete (update as any).org_id;
     delete (update as any).created_by;
+    if (!adminWriter) {
+      delete (update as any).entry_source;
+      delete (update as any).review_status;
+      delete (update as any).matched_by;
+      delete (update as any).matched_at;
+      delete (update as any).match_note;
+    }
     const { data, error } = await supabase
       .from("marketing_spend_records")
       .update(update)
@@ -207,12 +262,19 @@ router.patch("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
   }
 });
 
-router.delete("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
-  const { error } = await supabase
+router.delete("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
+  let query = supabase
     .from("marketing_spend_records")
     .delete()
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
+  if (!isAdminWriter(req.user!.role)) {
+    query = query
+      .eq("marketer_user_id", req.user!.id)
+      .eq("entry_source", "marketer")
+      .eq("review_status", "pending");
+  }
+  const { error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(204).send();
 });
