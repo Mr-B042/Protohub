@@ -34,6 +34,58 @@ const normalizeMoney = (value: unknown) => {
   return Number.isFinite(n) ? Math.max(0, Math.round((n + Number.EPSILON) * 100) / 100) : undefined;
 };
 
+const marketingExpenseId = (spendId: string) => `marketing-spend-${spendId}`;
+
+const syncMarketingSpendExpense = async (row: any, orgId: string) => {
+  const expenseId = marketingExpenseId(String(row.id));
+  if (row.review_status !== "matched") {
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", expenseId)
+      .eq("org_id", orgId);
+    if (error) throw error;
+    return;
+  }
+
+  const amount = normalizeMoney(row.actual_spent ?? row.budget_given) ?? 0;
+  if (amount <= 0) {
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", expenseId)
+      .eq("org_id", orgId);
+    if (error) throw error;
+    return;
+  }
+
+  const ownerLabel = row.spend_owner_type === "company" ? "Company ad account" : "Media buyer";
+  const tag = clean(row.marketer_tag, 80) || (row.spend_owner_type === "company" ? "company" : "media buyer");
+  const campaign = clean(row.campaign, 120);
+  const platform = clean(row.platform || "Facebook", 80);
+  const description = [
+    `${ownerLabel} ad spend`,
+    tag,
+    campaign,
+    platform
+  ].filter(Boolean).join(" — ");
+
+  const { error } = await supabase
+    .from("expenses")
+    .upsert({
+      id: expenseId,
+      org_id: orgId,
+      date: row.spend_date,
+      category: "Ad Spend",
+      description,
+      amount,
+      currency: row.currency ?? "NGN",
+      paid_by: tag,
+      product_id: row.product_id ?? null
+    }, { onConflict: "id" });
+  if (error) throw error;
+};
+
 const SpendSchema = z.object({
   spendDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   marketerUserId: z.string().uuid().nullable().optional(),
@@ -57,6 +109,8 @@ type SpendInput = z.infer<typeof SpendSchema>;
 type PatchSpendInput = z.infer<typeof PatchSpendSchema>;
 
 const isAdminWriter = (role: string | undefined) => role === "Owner" || role === "Admin";
+const hasOwn = (value: object, key: string) =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 const marketerBelongsToOrg = async (userId: string, orgId: string) => {
   const { data, error } = await supabase
@@ -195,6 +249,7 @@ router.post("/", requireRole(...CREATE_ROLES), async (req, res) => {
       .select()
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
+    await syncMarketingSpendExpense(data, req.user!.orgId);
     res.status(201).json(data);
   } catch (err: any) {
     res.status(err?.status ?? 500).json({ error: err?.message ?? "Could not save marketing spend." });
@@ -239,7 +294,7 @@ router.patch("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
     campaign: parsed.data.campaign ?? existing.campaign ?? undefined,
     landingPageUrl: parsed.data.landingPageUrl ?? existing.landing_page_url ?? undefined,
     budgetGiven: parsed.data.budgetGiven ?? existing.budget_given,
-    actualSpent: parsed.data.actualSpent ?? existing.actual_spent,
+    actualSpent: hasOwn(parsed.data, "actualSpent") ? parsed.data.actualSpent : existing.actual_spent,
     currency: parsed.data.currency ?? existing.currency,
     notes: parsed.data.notes ?? existing.notes ?? undefined,
     proofUrl: parsed.data.proofUrl ?? existing.proof_url ?? undefined,
@@ -266,6 +321,7 @@ router.patch("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
       .select()
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
+    await syncMarketingSpendExpense(data, req.user!.orgId);
     res.json(data);
   } catch (err: any) {
     res.status(err?.status ?? 500).json({ error: err?.message ?? "Could not update marketing spend." });
@@ -286,6 +342,11 @@ router.delete("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
   }
   const { error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
+  await supabase
+    .from("expenses")
+    .delete()
+    .eq("id", marketingExpenseId(String(req.params.id)))
+    .eq("org_id", req.user!.orgId);
   res.status(204).send();
 });
 

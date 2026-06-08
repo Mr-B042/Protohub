@@ -19960,9 +19960,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         matchedAt: new Date().toISOString()
       });
       setMarketingSpendRecords((prev) => prev.map((item) => item.id === record.id ? normalized : item));
+      expensesApi.list().then((rows: any[]) => setExpenses(rows.map((item) => normalizeExpenseRecord(item)))).catch(() => undefined);
       showToast(reviewStatus === "matched" ? "Spend matched and added to reporting." : "Spend flagged as mismatch.");
     } catch (err: any) {
       showToast(`Could not update spend review: ${err?.message ?? err}`);
+    }
+  };
+  const adjustMarketingSpendRecord = async (record: MarketingSpendRecord) => {
+    if (currentRole !== "Owner" && currentRole !== "Admin") return;
+    const budgetRaw = window.prompt("Correct budget/amount received:", String(record.budgetGiven ?? ""));
+    if (budgetRaw === null) return;
+    const actualRaw = window.prompt("Correct actual amount used/spent (leave blank to use budget as estimate):", record.actualSpent == null ? "" : String(record.actualSpent));
+    if (actualRaw === null) return;
+    const budgetGiven = Number(budgetRaw);
+    const actualSpent = actualRaw.trim() ? Number(actualRaw) : null;
+    if (!Number.isFinite(budgetGiven) || budgetGiven < 0 || (actualSpent !== null && (!Number.isFinite(actualSpent) || actualSpent < 0))) {
+      showToast("Budget and actual spent must be valid positive amounts.");
+      return;
+    }
+    if (budgetGiven <= 0 && (actualSpent ?? 0) <= 0) {
+      showToast("Enter budget given or actual spent.");
+      return;
+    }
+    const notes = window.prompt("Optional note for this adjustment:", record.notes ?? "");
+    if (notes === null) return;
+    try {
+      const row = await marketingSpendApi.update(record.id, {
+        budgetGiven,
+        actualSpent,
+        notes,
+        reviewStatus: marketingSpendReviewStatus(record),
+        matchNote: record.matchNote ?? undefined
+      });
+      const normalized = normalizeMarketingSpendRecord(row, {
+        ...record,
+        budgetGiven,
+        actualSpent,
+        notes
+      });
+      setMarketingSpendRecords((prev) => prev.map((item) => item.id === record.id ? normalized : item));
+      expensesApi.list().then((rows: any[]) => setExpenses(rows.map((item) => normalizeExpenseRecord(item)))).catch(() => undefined);
+      showToast("Marketing spend amount adjusted.");
+    } catch (err: any) {
+      showToast(`Could not adjust spend: ${err?.message ?? err}`);
     }
   };
 
@@ -41038,6 +41078,9 @@ ${waybillLineItems(w).length > 1
                                         </span>
                                       </div>
                                       {record.matchNote && <p className="m-0 text-xs font-semibold text-gray-400">{record.matchNote}</p>}
+                                      {(currentRole === "Owner" || currentRole === "Admin") && (
+                                        <button type="button" className="!min-h-0 w-fit rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-black text-sky-700 hover:bg-sky-50 dark:border-sky-500/30 dark:bg-slate-950 dark:text-sky-200" onClick={() => adjustMarketingSpendRecord(record)}>Adjust amount</button>
+                                      )}
                                       {(currentRole === "Owner" || currentRole === "Admin") && reviewStatus === "pending" && (
                                         <div className="flex flex-wrap gap-1.5">
                                           <button type="button" className="!min-h-0 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-emerald-700" onClick={() => reviewMarketingSpendRecord(record, "matched")}>Mark matched</button>
