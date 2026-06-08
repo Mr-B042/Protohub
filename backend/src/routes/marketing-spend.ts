@@ -12,6 +12,7 @@ const CREATE_ROLES = ["Owner", "Admin", "Marketer"] as const;
 const ADMIN_WRITE_ROLES = ["Owner", "Admin"] as const;
 const CURRENCIES = ["NGN", "USD", "GBP"] as const;
 const REVIEW_STATUSES = ["pending", "matched", "mismatch"] as const;
+const SPEND_OWNER_TYPES = ["media_buyer", "company"] as const;
 
 const clean = (value: unknown, max = 240) =>
   String(value ?? "").trim().replace(/\s+/g, " ").slice(0, max);
@@ -46,6 +47,7 @@ const SpendSchema = z.object({
   currency: z.enum(CURRENCIES).default("NGN"),
   notes: z.string().max(1000).optional(),
   proofUrl: z.string().max(2048).optional().or(z.literal("")),
+  spendOwnerType: z.enum(SPEND_OWNER_TYPES).optional(),
   reviewStatus: z.enum(REVIEW_STATUSES).optional(),
   matchNote: z.string().max(1000).optional()
 });
@@ -81,6 +83,7 @@ const productBelongsToOrg = async (productId: string, orgId: string) => {
 
 const resolveMarketerForRequest = async (body: SpendInput | PatchSpendInput, req: any) => {
   const orgId = req.user!.orgId;
+  const spendOwnerType = req.user!.role === "Marketer" ? "media_buyer" : (body.spendOwnerType ?? "media_buyer");
   if (req.user!.role === "Marketer") {
     const ownTags = sanitizeMarketingAttributionTags(req.user!.marketingAttributionTags);
     const requestedTag = sanitizeMarketingAttributionTags(body.marketerTag ?? [])[0] ?? "";
@@ -88,7 +91,12 @@ const resolveMarketerForRequest = async (body: SpendInput | PatchSpendInput, req
     if (!marketerTag) {
       throw Object.assign(new Error("Your marketer account needs a tracking tag before you can submit ad spend."), { status: 400 });
     }
-    return { marketerUserId: req.user!.id, marketerTag };
+    return { marketerUserId: req.user!.id, marketerTag, spendOwnerType };
+  }
+
+  if (spendOwnerType === "company") {
+    const companyTag = sanitizeMarketingAttributionTags(body.marketerTag ?? [])[0] || "company";
+    return { marketerUserId: null, marketerTag: companyTag, spendOwnerType };
   }
 
   let marketerTags: string[] = [];
@@ -103,12 +111,12 @@ const resolveMarketerForRequest = async (body: SpendInput | PatchSpendInput, req
   if (!marketerTag) {
     throw Object.assign(new Error("Choose a marketer tag or assign a tag to this marketer first."), { status: 400 });
   }
-  return { marketerUserId: body.marketerUserId ?? null, marketerTag };
+  return { marketerUserId: body.marketerUserId ?? null, marketerTag, spendOwnerType };
 };
 
 const rowForWrite = async (body: SpendInput | PatchSpendInput, req: any, options?: { existing?: any; create?: boolean }) => {
   const orgId = req.user!.orgId;
-  const { marketerUserId, marketerTag } = await resolveMarketerForRequest(body, req);
+  const { marketerUserId, marketerTag, spendOwnerType } = await resolveMarketerForRequest(body, req);
 
   if (body.productId && !await productBelongsToOrg(body.productId, orgId)) {
     throw Object.assign(new Error("Product not found in this workspace."), { status: 404 });
@@ -125,6 +133,7 @@ const rowForWrite = async (body: SpendInput | PatchSpendInput, req: any, options
     spend_date: body.spendDate,
     marketer_user_id: marketerUserId,
     marketer_tag: marketerTag,
+    spend_owner_type: spendOwnerType,
     product_id: body.productId || null,
     platform: clean(body.platform || "Facebook", 80) || "Facebook",
     campaign: clean(body.campaign, 140) || null,
@@ -224,6 +233,7 @@ router.patch("/:id", requireRole(...CREATE_ROLES), async (req, res) => {
     spendDate: parsed.data.spendDate ?? existing.spend_date,
     marketerUserId: parsed.data.marketerUserId ?? existing.marketer_user_id,
     marketerTag: parsed.data.marketerTag ?? existing.marketer_tag,
+    spendOwnerType: parsed.data.spendOwnerType ?? existing.spend_owner_type ?? "media_buyer",
     productId: parsed.data.productId ?? existing.product_id,
     platform: parsed.data.platform ?? existing.platform,
     campaign: parsed.data.campaign ?? existing.campaign ?? undefined,
