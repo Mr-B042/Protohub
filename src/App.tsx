@@ -10828,7 +10828,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter((token) => token.length >= 2)
       .some((token) => text.includes(token));
   };
-  const marketingAdSpendExpenses = expenses.filter((expense) =>
+  const marketingAdSpendExpenses = marketingIsPersonalWorkspace ? [] : expenses.filter((expense) =>
     expense.type === "Ad Spend"
     && isInPeriod(expense.date, campaignPeriod, campaignDateRange)
     && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
