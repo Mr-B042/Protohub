@@ -52,6 +52,7 @@ import penaltyRoutes       from "./routes/penalties.js";
 import pushRoutes          from "./routes/push.js";
 import userRoutes          from "./routes/users.js";
 import marketingLinkVariantRoutes from "./routes/marketing-link-variants.js";
+import marketingSpendRoutes from "./routes/marketing-spend.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -252,6 +253,7 @@ app.use("/api/penalties",       penaltyRoutes);
 app.use("/api/push",            pushRoutes);
 app.use("/api/users",           userRoutes);
 app.use("/api/marketing-link-variants", marketingLinkVariantRoutes);
+app.use("/api/marketing-spend", marketingSpendRoutes);
 
 // ── Global error handler ──────────────────────────────────
 app.use((err: Error & { status?: number; type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

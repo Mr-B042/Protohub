@@ -568,6 +568,22 @@ export const marketingLinkVariantsApi = {
   delete: (id: string) => del<void>(`/api/marketing-link-variants/${encodeURIComponent(id)}`)
 };
 
+// ── Marketing Spend Ledger ───────────────────────────────
+export const marketingSpendApi = {
+  list: (params?: { from?: string; to?: string; productId?: string; marketerUserId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.from) qs.set("from", params.from);
+    if (params?.to) qs.set("to", params.to);
+    if (params?.productId) qs.set("productId", params.productId);
+    if (params?.marketerUserId) qs.set("marketerUserId", params.marketerUserId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<any[]>(`/api/marketing-spend${suffix}`);
+  },
+  create: (body: unknown) => post<any>("/api/marketing-spend", body),
+  update: (id: string, body: unknown) => patch<any>(`/api/marketing-spend/${encodeURIComponent(id)}`, body),
+  delete: (id: string) => del<void>(`/api/marketing-spend/${encodeURIComponent(id)}`)
+};
+
 export const emailSettingsApi = {
   get:  async ()            => normalizeEmailSettingsResponse(await get<any>("/api/email-settings")),
   save: async (body: any) => normalizeEmailSettingsResponse(await request<any>("PUT", "/api/email-settings", {

@@ -49,6 +49,7 @@ import {
   Scale,
   Sparkles,
   ShieldCheck,
+  Target,
   Trash2,
   Calculator,
   Settings,
@@ -85,6 +86,7 @@ import {
   BarChart3,
   FileText,
   Wifi,
+  WalletCards,
   Smartphone,
   Laptop,
   Apple
@@ -109,7 +111,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -454,6 +456,25 @@ type MarketingLinkVariant = {
   utmContent: string;
   utmTerm?: string | null;
   active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type MarketingSpendRecord = {
+  id: string;
+  spendDate: string;
+  marketerUserId?: string | null;
+  marketerTag: string;
+  productId?: string | null;
+  platform: string;
+  campaign?: string | null;
+  landingPageUrl?: string | null;
+  budgetGiven: number;
+  actualSpent?: number | null;
+  currency: ProductCurrencyCode;
+  notes?: string | null;
+  proofUrl?: string | null;
+  createdBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -6538,6 +6559,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [expenseProduct, setExpenseProduct] = useState("General Expense");
   const [expenseDescription, setExpenseDescription] = useState("");
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [marketingSpendRecords, setMarketingSpendRecords] = useState<MarketingSpendRecord[]>([]);
+  const [showMarketingSpendForm, setShowMarketingSpendForm] = useState(false);
+  const [marketingSpendSaving, setMarketingSpendSaving] = useState(false);
+  const [marketingSpendDate, setMarketingSpendDate] = useState(() => todayKey());
+  const [marketingSpendMarketerId, setMarketingSpendMarketerId] = useState("");
+  const [marketingSpendTag, setMarketingSpendTag] = useState("");
+  const [marketingSpendProductId, setMarketingSpendProductId] = useState("");
+  const [marketingSpendPlatform, setMarketingSpendPlatform] = useState("Facebook");
+  const [marketingSpendCampaign, setMarketingSpendCampaign] = useState("");
+  const [marketingSpendLandingPage, setMarketingSpendLandingPage] = useState("");
+  const [marketingSpendBudgetGiven, setMarketingSpendBudgetGiven] = useState("");
+  const [marketingSpendActualSpent, setMarketingSpendActualSpent] = useState("");
+  const [marketingSpendNotes, setMarketingSpendNotes] = useState("");
   const [financePeriod, setFinancePeriod] = useState<Period>(() =>
     readPref<Period>("protohub.finance.period", "This Month", (raw) => raw as Period)
   );
@@ -10683,6 +10717,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const marketerScopeTags = currentRole === "Marketer"
     ? sanitizeMarketingAttributionTags(currentManagedUser?.marketingAttributionTags ?? realManagedUser?.marketingAttributionTags ?? [])
     : [];
+  const marketerScopeUserId = currentRole === "Marketer" ? (currentManagedUser?.id ?? authUser?.id ?? null) : null;
   const marketerScopeVariants = Array.from(
     new Set(
       marketerScopeTags.flatMap((tag) => {
@@ -10719,6 +10754,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   };
   const marketingIsPersonalWorkspace = currentRole === "Marketer";
+  const marketingMarketerUsers = users
+    .filter((user) => user.role === "Marketer")
+    .sort((a, b) => a.name.localeCompare(b.name));
   const marketingFilterBaseOrders = marketingIsPersonalWorkspace
     ? trackedCampaignOrders.filter((order) => marketingOrderMatchesMarketerTags(order))
     : trackedCampaignOrders;
@@ -10788,6 +10826,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     && isInPeriod(expense.date, campaignPeriod, campaignDateRange)
     && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
   );
+  const marketerTagVariants = (value: string | undefined | null) => {
+    const lower = String(value ?? "").trim().toLowerCase();
+    if (!lower) return [];
+    const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+    return Array.from(new Set([lower, hyphen, underscore, slugify(lower)].filter(Boolean)));
+  };
+  const marketingSpendAmount = (record: MarketingSpendRecord) =>
+    Number(record.actualSpent ?? record.budgetGiven ?? 0);
+  const marketingSpendRecordsInPeriod = marketingSpendRecords.filter((record) => {
+    const productName = products.find((product) => product.id === record.productId)?.name ?? "";
+    const matchesScope = matchesProductFilter(record.productId, productName, campaignProductIds);
+    const matchesDate = isInPeriod(record.spendDate, campaignPeriod, campaignDateRange);
+    const matchesMarketer = !marketingIsPersonalWorkspace
+      || (Boolean(marketerScopeUserId) && record.marketerUserId === marketerScopeUserId)
+      || marketerScopeVariants.some((tag) => marketerTagVariants(record.marketerTag).includes(tag));
+    return matchesDate && matchesScope && matchesMarketer;
+  });
+  const marketingUsesSpendLedger = marketingSpendRecordsInPeriod.length > 0;
+  const marketingSpendMatchesBuyer = (record: MarketingSpendRecord, row: { key: string; label: string; raw: string }) => {
+    const recordTags = marketerTagVariants(record.marketerTag);
+    const rowTags = new Set([...marketerTagVariants(row.key), ...marketerTagVariants(row.label), ...marketerTagVariants(row.raw)]);
+    return recordTags.some((tag) => rowTags.has(tag));
+  };
+  const marketingSpendMatchesCampaign = (record: MarketingSpendRecord, row: { campaignKey: string; campaignLabel: string; campaignRaw: string }) => {
+    const campaign = String(record.campaign ?? "").trim();
+    if (!campaign) return false;
+    const recordCampaignTags = marketerTagVariants(campaign);
+    const rowCampaignTags = new Set([...marketerTagVariants(row.campaignKey), ...marketerTagVariants(row.campaignLabel), ...marketerTagVariants(row.campaignRaw)]);
+    return recordCampaignTags.some((tag) => rowCampaignTags.has(tag));
+  };
   const marketingMetricForOrders = (orders: TrackedOrder[]) => {
     const delivered = orders.filter((order) => (order.status ?? "New") === "Delivered");
     const failed = orders.filter((order) => ["Failed", "Cancelled"].includes(order.status ?? "New"));
@@ -10826,7 +10895,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, {})
   ).map((row) => {
     const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.key, row.label, row.raw]));
-    const adSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const spendRecords = marketingSpendRecordsInPeriod.filter((record) => marketingSpendMatchesBuyer(record, row));
+    const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+    const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
     const metrics = marketingMetricForOrders(row.orders);
     const netAfterAds = metrics.contribution - adSpend;
     return {
@@ -10834,7 +10906,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...metrics,
       adSpend,
       spendExpenseIds: spendExpenses.map((expense) => expense.id),
+      spendRecordIds: spendRecords.map((record) => record.id),
+      budgetGiven: spendRecords.reduce((sum, record) => sum + record.budgetGiven, 0),
+      actualSpent: spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0),
       roas: adSpend > 0 ? metrics.deliveredRevenue / adSpend : null,
+      cpo: metrics.orders > 0 ? adSpend / metrics.orders : null,
       cpa: metrics.delivered > 0 ? adSpend / metrics.delivered : null,
       netAfterAds,
       campaignCount: new Set(row.orders.map((order) => marketingCampaignForOrder(order).key)).size,
@@ -10869,7 +10945,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }, {})
   ).map((row) => {
     const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.buyerKey, row.buyerLabel, row.campaignKey, row.campaignLabel, row.campaignRaw]));
-    const adSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const spendRecords = marketingSpendRecordsInPeriod.filter((record) =>
+      marketingSpendMatchesBuyer(record, { key: row.buyerKey, label: row.buyerLabel, raw: row.buyerLabel })
+      && marketingSpendMatchesCampaign(record, row)
+    );
+    const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+    const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
     const metrics = marketingMetricForOrders(row.orders);
     const netAfterAds = metrics.contribution - adSpend;
     return {
@@ -10877,7 +10959,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...metrics,
       adSpend,
       spendExpenseIds: spendExpenses.map((expense) => expense.id),
+      spendRecordIds: spendRecords.map((record) => record.id),
+      budgetGiven: spendRecords.reduce((sum, record) => sum + record.budgetGiven, 0),
+      actualSpent: spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0),
       roas: adSpend > 0 ? metrics.deliveredRevenue / adSpend : null,
+      cpo: metrics.orders > 0 ? adSpend / metrics.orders : null,
       cpa: metrics.delivered > 0 ? adSpend / metrics.delivered : null,
       netAfterAds
     };
@@ -10886,8 +10972,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ...marketingRowsByBuyer.flatMap((row) => row.spendExpenseIds),
     ...marketingRowsByCampaign.flatMap((row) => row.spendExpenseIds)
   ]);
-  const marketingTotalAdSpend = marketingAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const marketingMatchedAdSpend = marketingAdSpendExpenses.filter((expense) => marketingMatchedSpendIds.has(expense.id)).reduce((sum, expense) => sum + expense.amount, 0);
+  const marketingMatchedSpendRecordIds = new Set([
+    ...marketingRowsByBuyer.flatMap((row) => row.spendRecordIds),
+    ...marketingRowsByCampaign.flatMap((row) => row.spendRecordIds)
+  ]);
+  const marketingSpendRecordMarketerName = (record: MarketingSpendRecord) =>
+    users.find((user) => user.id === record.marketerUserId)?.name
+    ?? marketingMarketerUsers.find((user) => sanitizeMarketingAttributionTags(user.marketingAttributionTags ?? []).some((tag) => marketerTagVariants(tag).some((variant) => marketerTagVariants(record.marketerTag).includes(variant))))?.name
+    ?? record.marketerTag;
+  const marketingSpendRecordProductName = (record: MarketingSpendRecord) =>
+    products.find((product) => product.id === record.productId)?.name ?? "All products";
+  const marketingSpendLedgerRows = [...marketingSpendRecordsInPeriod].sort((a, b) =>
+    String(b.spendDate ?? "").localeCompare(String(a.spendDate ?? ""))
+    || marketingSpendRecordMarketerName(a).localeCompare(marketingSpendRecordMarketerName(b))
+  );
+  const marketingUnmatchedSpendRecords = marketingUsesSpendLedger
+    ? marketingSpendRecordsInPeriod.filter((record) => !marketingMatchedSpendRecordIds.has(record.id))
+    : [];
+  const marketingTotalLedgerBudget = marketingSpendRecordsInPeriod.reduce((sum, record) => sum + record.budgetGiven, 0);
+  const marketingTotalLedgerSpend = marketingSpendRecordsInPeriod.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+  const marketingTotalExpenseSpend = marketingAdSpendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const marketingTotalAdSpend = marketingUsesSpendLedger ? marketingTotalLedgerSpend : marketingTotalExpenseSpend;
+  const marketingMatchedAdSpend = marketingUsesSpendLedger
+    ? marketingSpendRecordsInPeriod.filter((record) => marketingMatchedSpendRecordIds.has(record.id)).reduce((sum, record) => sum + marketingSpendAmount(record), 0)
+    : marketingAdSpendExpenses.filter((expense) => marketingMatchedSpendIds.has(expense.id)).reduce((sum, expense) => sum + expense.amount, 0);
   const marketingUnmatchedAdSpend = Math.max(0, marketingTotalAdSpend - marketingMatchedAdSpend);
   const marketingOrders = marketingFilteredOrders;
   const marketingDeliveredRows = marketingOrders.filter((order) => (order.status ?? "New") === "Delivered");
@@ -10895,6 +11003,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const marketingDeliveryRate = marketingOrders.length > 0 ? Math.round((marketingDeliveredRows.length / marketingOrders.length) * 100) : 0;
   const marketingContribution = marketingMetricForOrders(marketingOrders).contribution;
   const marketingNetAfterMatchedAds = marketingContribution - marketingMatchedAdSpend;
+  const marketingCostPerOrder = marketingOrders.length > 0 && marketingTotalAdSpend > 0 ? marketingTotalAdSpend / marketingOrders.length : null;
+  const marketingCostPerDeliveredOrder = marketingDeliveredRows.length > 0 && marketingTotalAdSpend > 0 ? marketingTotalAdSpend / marketingDeliveredRows.length : null;
+  const marketingRoas = marketingTotalAdSpend > 0 ? marketingDeliveredRevenue / marketingTotalAdSpend : null;
   const marketingSetupRiskCount = marketingRowsByBuyer.filter((row) => row.setupNeedsBuyerId).length;
   useEffect(() => {
     if (activePage !== "Ad Tracking" || adTrackingTab !== "Abandoned Carts") {
@@ -17981,12 +18092,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // sales-teams, pay-structures, payroll, and penalties. Skipping them for
       // lower roles avoids 14-per-mount 403 noise + auth-audit pollution. Sales
       // Reps still get the rep-relevant endpoints (orders, carts, products...).
-      const role = auth.getUser()?.role;
+      const authRole = auth.getUser()?.role as EditableUserRole | undefined;
+      const role = authRole ?? currentRole;
+      const roleKnown = Boolean(authRole) || currentRole !== "Viewer";
       // Manager is included so Sales Teams / Sales Reps pages they're allowed
       // to see actually hydrate with data instead of rendering empty tables.
       const isAdmin = role === "Owner" || role === "Admin" || role === "Manager";
       const isMarketer = role === "Marketer";
-      const canLoadMarketingLinks = isAdmin || isMarketer;
+      const canLoadMarketingLinks = !roleKnown || isAdmin || isMarketer;
+      const canLoadMarketingSpend = !roleKnown || isAdmin || isMarketer;
       const fastBootDashboard = activePage === "Dashboard";
       const skipped = Symbol("skipped");
       type Skipped = typeof skipped;
@@ -17996,6 +18110,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         isMarketer ? Promise.resolve(skipped as Skipped) : p();
       const ifMarketingLinks = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
         canLoadMarketingLinks ? p() : Promise.resolve(skipped as Skipped);
+      const ifMarketingSpend = <T,>(p: () => Promise<T>): Promise<T | Skipped> =>
+        canLoadMarketingSpend ? p() : Promise.resolve(skipped as Skipped);
 
       const hydrateProducts = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
@@ -18242,6 +18358,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       };
+      const hydrateMarketingSpend = (result: PromiseSettledResult<any>) => {
+        if (result.status === "fulfilled" && Array.isArray(result.value)) {
+          setMarketingSpendRecords((result.value as any[]).map((row: any) => ({
+            id: row.id,
+            spendDate: row.spendDate ?? row.spend_date ?? "",
+            marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? null,
+            marketerTag: row.marketerTag ?? row.marketer_tag ?? "",
+            productId: row.productId ?? row.product_id ?? null,
+            platform: row.platform ?? "Facebook",
+            campaign: row.campaign ?? "",
+            landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
+            budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? 0),
+            actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : null,
+            currency: (row.currency ?? "NGN") as ProductCurrencyCode,
+            notes: row.notes ?? "",
+            proofUrl: row.proofUrl ?? row.proof_url ?? "",
+            createdBy: row.createdBy ?? row.created_by ?? null,
+            createdAt: row.createdAt ?? row.created_at ?? "",
+            updatedAt: row.updatedAt ?? row.updated_at ?? ""
+          })));
+        }
+      };
       try {
         if (fastBootDashboard) {
           const [apiProducts, apiOrders, apiExpenses, apiNotifications, apiCarts] = await Promise.allSettled([
@@ -18286,7 +18424,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ifAdmin(() => payStructuresApi.list()),
             ifAdmin(() => payrollApi.list()),
             ifAdmin(() => penaltiesApi.list()),
-            ifMarketingLinks(() => marketingLinkVariantsApi.list())
+            ifMarketingLinks(() => marketingLinkVariantsApi.list()),
+            ifMarketingSpend(() => marketingSpendApi.list())
           ]).then(([
             apiAgents,
             apiMovements,
@@ -18297,7 +18436,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             apiPayStructures,
             apiPayrollRuns,
             apiPenalties,
-            apiMarketingLinkVariants
+            apiMarketingLinkVariants,
+            apiMarketingSpend
           ]) => {
             if (cancelled) return;
             hydrateAgents(apiAgents);
@@ -18310,6 +18450,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             hydratePayrollRuns(apiPayrollRuns);
             hydratePenalties(apiPenalties);
             hydrateMarketingLinkVariants(apiMarketingLinkVariants);
+            hydrateMarketingSpend(apiMarketingSpend);
           }).catch(() => { /* background hydrate failures should not block dashboard */ });
           return;
         }
@@ -18329,7 +18470,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           apiPayStructures,
           apiPayrollRuns,
           apiPenalties,
-          apiMarketingLinkVariants
+          apiMarketingLinkVariants,
+          apiMarketingSpend
         ] = await Promise.allSettled([
           productsApi.list(),
           ordersApi.list({ limit: "5000" }),
@@ -18345,12 +18487,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           ifAdmin(() => payStructuresApi.list()),
           ifAdmin(() => payrollApi.list()),
           ifAdmin(() => penaltiesApi.list()),
-          ifMarketingLinks(() => marketingLinkVariantsApi.list())
+          ifMarketingLinks(() => marketingLinkVariantsApi.list()),
+          ifMarketingSpend(() => marketingSpendApi.list())
         ]);
 
         if (cancelled) return;
 
-        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties, apiMarketingLinkVariants];
+        const allResults = [apiProducts, apiOrders, apiAgents, apiMovements, apiExpenses, apiWaybills, apiNotifications, apiStockCounts, apiTeam, apiCarts, apiSalesTeams, apiPayStructures, apiPayrollRuns, apiPenalties, apiMarketingLinkVariants, apiMarketingSpend];
         if (allResults.every((r) => r.status === "rejected")) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
           scheduleReconnect();
@@ -18374,6 +18517,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         hydratePayrollRuns(apiPayrollRuns);
         hydratePenalties(apiPenalties);
         hydrateMarketingLinkVariants(apiMarketingLinkVariants);
+        hydrateMarketingSpend(apiMarketingSpend);
       } catch (_) {
         if (!cancelled) {
           setDataError("Live data is temporarily unavailable. Showing cached data while reconnecting.");
@@ -19653,6 +19797,80 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setCampaignPeriod("Custom");
     setShowCampaignDateRange(false);
     showToast(`Campaign date range set to ${campaignDateRange.start} – ${campaignDateRange.end}.`);
+  };
+  const resetMarketingSpendForm = () => {
+    setMarketingSpendDate(todayKey());
+    setMarketingSpendMarketerId("");
+    setMarketingSpendTag("");
+    setMarketingSpendProductId("");
+    setMarketingSpendPlatform("Facebook");
+    setMarketingSpendCampaign("");
+    setMarketingSpendLandingPage("");
+    setMarketingSpendBudgetGiven("");
+    setMarketingSpendActualSpent("");
+    setMarketingSpendNotes("");
+  };
+  const saveMarketingSpendRecord = async () => {
+    if (currentRole !== "Owner" && currentRole !== "Admin") {
+      showToast("Only Owner/Admin can record marketing budgets.");
+      return;
+    }
+    if (!marketingSpendDate) { showToast("Choose the spend date."); return; }
+    const selectedMarketer = marketingMarketerUsers.find((user) => user.id === marketingSpendMarketerId);
+    const selectedTag = marketingSpendTag.trim() || sanitizeMarketingAttributionTags(selectedMarketer?.marketingAttributionTags ?? [])[0] || "";
+    if (!selectedTag) { showToast("Choose a marketer or enter their tracking tag."); return; }
+    const budget = Number(marketingSpendBudgetGiven || 0);
+    const actual = marketingSpendActualSpent.trim() ? Number(marketingSpendActualSpent) : undefined;
+    if (!Number.isFinite(budget) || budget < 0 || (actual !== undefined && (!Number.isFinite(actual) || actual < 0))) {
+      showToast("Budget and actual spent must be valid positive amounts.");
+      return;
+    }
+    if (budget <= 0 && (actual ?? 0) <= 0) {
+      showToast("Enter budget given or actual spent.");
+      return;
+    }
+    setMarketingSpendSaving(true);
+    try {
+      const row = await marketingSpendApi.create({
+        spendDate: marketingSpendDate,
+        marketerUserId: selectedMarketer?.id ?? null,
+        marketerTag: selectedTag,
+        productId: marketingSpendProductId || null,
+        platform: marketingSpendPlatform,
+        campaign: marketingSpendCampaign,
+        landingPageUrl: marketingSpendLandingPage,
+        budgetGiven: budget,
+        actualSpent: actual ?? null,
+        currency: "NGN",
+        notes: marketingSpendNotes
+      });
+      const normalized: MarketingSpendRecord = {
+        id: row.id,
+        spendDate: row.spendDate ?? row.spend_date ?? marketingSpendDate,
+        marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? selectedMarketer?.id ?? null,
+        marketerTag: row.marketerTag ?? row.marketer_tag ?? selectedTag,
+        productId: (row.productId ?? row.product_id ?? marketingSpendProductId) || null,
+        platform: row.platform ?? marketingSpendPlatform,
+        campaign: row.campaign ?? marketingSpendCampaign,
+        landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? marketingSpendLandingPage,
+        budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? budget),
+        actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : actual ?? null,
+        currency: (row.currency ?? "NGN") as ProductCurrencyCode,
+        notes: row.notes ?? marketingSpendNotes,
+        proofUrl: row.proofUrl ?? row.proof_url ?? "",
+        createdBy: row.createdBy ?? row.created_by ?? authUser?.id ?? null,
+        createdAt: row.createdAt ?? row.created_at ?? "",
+        updatedAt: row.updatedAt ?? row.updated_at ?? ""
+      };
+      setMarketingSpendRecords((prev) => [normalized, ...prev.filter((item) => item.id !== normalized.id)]);
+      resetMarketingSpendForm();
+      setShowMarketingSpendForm(false);
+      showToast(`Marketing spend recorded for ${selectedMarketer?.name ?? selectedTag}.`);
+    } catch (err: any) {
+      showToast(`Could not save marketing spend: ${err?.message ?? err}`);
+    } finally {
+      setMarketingSpendSaving(false);
+    }
   };
 
   const handleCustomerPeriodChange = (nextPeriod: Period) => {
@@ -40308,11 +40526,11 @@ ${waybillLineItems(w).length > 1
                       { label: "Tracked orders", value: String(marketingOrders.length) },
                       { label: "Delivered", value: String(marketingDeliveredRows.length) },
                       { label: "Delivery rate", value: `${marketingDeliveryRate}%` },
-                      { label: "Revenue", value: formatMoney(marketingDeliveredRevenue), tone: "text-emerald-200" }
+                      { label: "Ad spend", value: formatMoney(marketingTotalAdSpend), tone: "text-amber-200" }
                     ] : [
                       { label: "Tracked orders", value: String(marketingOrders.length) },
                       { label: "Delivered", value: String(marketingDeliveredRows.length) },
-                      { label: "Matched spend", value: formatMoney(marketingMatchedAdSpend) },
+                      { label: "Ad spend", value: formatMoney(marketingTotalAdSpend) },
                       { label: "Net after ads", value: formatMoney(marketingNetAfterMatchedAds), tone: marketingNetAfterMatchedAds >= 0 ? "text-emerald-200" : "text-rose-200" }
                     ]).map((item) => (
                       <div key={item.label} className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur">
@@ -40360,10 +40578,97 @@ ${waybillLineItems(w).length > 1
                         className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       />
                     </label>
+                    {(currentRole === "Owner" || currentRole === "Admin") && (
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800 sm:w-auto dark:bg-sky-500 dark:hover:bg-sky-400"
+                        onClick={() => setShowMarketingSpendForm((value) => !value)}
+                      >
+                        <Banknote className="h-4 w-4" /> {showMarketingSpendForm ? "Close spend form" : "Record daily spend"}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {renderWeekNav(campaignNavStart, setCampaignNavStart, campaignNavSpan, setCampaignNavSpan, setCampaignPeriod, setCampaignDateRange, campaignPeriod, campaignDateRange)}
               </div>
+
+              {showMarketingSpendForm && (currentRole === "Owner" || currentRole === "Admin") && (
+                <section className="overflow-hidden rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-4 shadow-sm dark:border-amber-500/30 dark:from-amber-500/10 dark:via-[#081119] dark:to-sky-500/10">
+                  <div className="flex flex-col gap-1">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Daily ad money</p>
+                    <h2 className="m-0 text-xl font-black text-gray-950 dark:text-slate-100">Record budget given and what was actually spent</h2>
+                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">The dashboard will divide this spend by tracked orders from the marketer&apos;s generated links.</p>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Date
+                      <input type="date" value={marketingSpendDate} onChange={(event) => setMarketingSpendDate(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Marketer
+                      <select
+                        value={marketingSpendMarketerId}
+                        onChange={(event) => {
+                          const id = event.target.value;
+                          const marketer = marketingMarketerUsers.find((user) => user.id === id);
+                          setMarketingSpendMarketerId(id);
+                          setMarketingSpendTag(sanitizeMarketingAttributionTags(marketer?.marketingAttributionTags ?? [])[0] ?? "");
+                        }}
+                        className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      >
+                        <option value="">Choose marketer</option>
+                        {marketingMarketerUsers.map((user) => (
+                          <option key={user.id} value={user.id}>{user.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Tracking tag
+                      <input value={marketingSpendTag} onChange={(event) => setMarketingSpendTag(event.target.value)} placeholder="media_buyer tag" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Product
+                      <select value={marketingSpendProductId} onChange={(event) => setMarketingSpendProductId(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                        <option value="">All products / general</option>
+                        {catalogProducts.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Budget given
+                      <input inputMode="decimal" value={marketingSpendBudgetGiven} onChange={(event) => setMarketingSpendBudgetGiven(event.target.value)} placeholder="30000" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Actual spent
+                      <input inputMode="decimal" value={marketingSpendActualSpent} onChange={(event) => setMarketingSpendActualSpent(event.target.value)} placeholder="leave blank if unknown" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Platform
+                      <select value={marketingSpendPlatform} onChange={(event) => setMarketingSpendPlatform(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                        {["Facebook", "Instagram", "TikTok", "Google", "WhatsApp", "Other"].map((platform) => <option key={platform} value={platform}>{platform}</option>)}
+                      </select>
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-wider text-gray-500">
+                      Campaign
+                      <input value={marketingSpendCampaign} onChange={(event) => setMarketingSpendCampaign(event.target.value)} placeholder="campaign name if known" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="md:col-span-2 text-xs font-black uppercase tracking-wider text-gray-500">
+                      Landing page URL
+                      <input value={marketingSpendLandingPage} onChange={(event) => setMarketingSpendLandingPage(event.target.value)} placeholder="https://landing-page.com/offer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                    <label className="md:col-span-2 text-xs font-black uppercase tracking-wider text-gray-500">
+                      Note
+                      <input value={marketingSpendNotes} onChange={(event) => setMarketingSpendNotes(event.target.value)} placeholder="Example: morning budget for Facebook buyer" className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    </label>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="m-0 text-sm font-semibold text-gray-500 dark:text-slate-400">If actual spent is blank, reports use budget given and label it as estimated spend.</p>
+                    <div className="flex gap-2">
+                      <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" onClick={() => { resetMarketingSpendForm(); setShowMarketingSpendForm(false); }}>Cancel</button>
+                      <button type="button" disabled={marketingSpendSaving} className="!min-h-0 rounded-xl bg-[#1F8FE0] px-5 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60" onClick={saveMarketingSpendRecord}>{marketingSpendSaving ? "Saving..." : "Save spend"}</button>
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {dataLoading ? <TableSkeleton cols={6} rows={4} /> : (
                 <div className="space-y-6">
@@ -40371,17 +40676,17 @@ ${waybillLineItems(w).length > 1
                     {(marketingIsPersonalWorkspace ? [
                       { label: "Tracked orders", value: String(marketingOrders.length), helper: "from your buyer tags", icon: TrendingUp, tone: "blue" },
                       { label: "Delivered", value: String(marketingDeliveredRows.length), helper: "successful orders", icon: BadgeCheck, tone: "emerald" },
-                      { label: "Delivery rate", value: `${marketingDeliveryRate}%`, helper: "delivered / tracked", icon: ShieldCheck, tone: marketingDeliveryRate >= 50 ? "emerald" : "amber" },
-                      { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
-                      { label: "Open orders", value: String(marketingOrders.length - marketingDeliveredRows.length), helper: "pending, failed, or cancelled", icon: Clock, tone: "amber" },
-                      { label: "Campaigns", value: String(marketingRowsByCampaign.length), helper: "matched campaign rows", icon: Users, tone: "purple" }
+                      { label: "Ad spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "daily spend ledger" : "no ledger rows yet", icon: Banknote, tone: "amber" },
+                      { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
+                      { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered orders", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
+                      { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "delivered revenue / spend", icon: CircleDollarSign, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ] : [
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
-                      { label: "Direct contribution", value: formatMoney(marketingContribution), helper: "revenue - COGS - logistics", icon: BadgeCheck, tone: "blue" },
-                      { label: "Ad spend logged", value: formatMoney(marketingTotalAdSpend), helper: "Ad Spend expenses in period", icon: Banknote, tone: "amber" },
-                      { label: "Unmatched spend", value: formatMoney(marketingUnmatchedAdSpend), helper: "needs buyer/campaign in description", icon: AlertTriangle, tone: marketingUnmatchedAdSpend > 0 ? "rose" : "slate" },
-                      { label: "Buyers compared", value: String(marketingRowsByBuyer.length), helper: "grouped by media buyer tag", icon: Users, tone: "purple" },
-                      { label: "Tracking risk", value: String(marketingSetupRiskCount), helper: "source is platform, not buyer", icon: ShieldCheck, tone: marketingSetupRiskCount > 0 ? "rose" : "emerald" }
+                      { label: "Budget given", value: formatMoney(marketingUsesSpendLedger ? marketingTotalLedgerBudget : marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "money released to marketers" : "fallback: expenses", icon: WalletCards, tone: "amber" },
+                      { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "actual or estimated" : "Ad Spend expenses", icon: Banknote, tone: "amber" },
+                      { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
+                      { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
+                      { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "revenue / spend", icon: TrendingUp, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ]).map((metric) => {
                       const Icon = metric.icon;
                       const toneClass = metric.tone === "emerald" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"
@@ -40434,11 +40739,12 @@ ${waybillLineItems(w).length > 1
                                   <p className="m-0 mt-1 text-xs font-semibold text-gray-400">{row.orders} orders · {row.campaignCount} campaign{row.campaignCount === 1 ? "" : "s"} · {row.delivered} delivered · {row.failed} failed/cancelled · {row.pending} pending</p>
                                 </div>
                                 {marketingIsPersonalWorkspace ? (
-                                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:min-w-[560px]">
+                                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5 lg:min-w-[680px]">
                                     <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivery</p><strong className="text-gray-900 dark:text-slate-100">{row.deliveryRate}%</strong></div>
                                     <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Revenue</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</strong></div>
-                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Delivered</p><strong className="text-gray-900 dark:text-slate-100">{row.delivered}</strong></div>
-                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Open / failed</p><strong className="text-gray-900 dark:text-slate-100">{row.pending} · {row.failed}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Spend</p><strong className="text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Cost / order</p><strong className="text-gray-900 dark:text-slate-100">{row.cpo ? formatMoney(row.cpo) : "—"}</strong></div>
+                                    <div><p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">ROAS / delivered</p><strong className="text-gray-900 dark:text-slate-100">{row.roas ? `${row.roas.toFixed(2)}x` : "—"} · {row.delivered}</strong></div>
                                   </div>
                                 ) : (
                                   <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5 lg:min-w-[620px]">
@@ -40496,14 +40802,14 @@ ${waybillLineItems(w).length > 1
                       <table className="w-full min-w-[1040px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50/80 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
-                            {(marketingIsPersonalWorkspace ? ["Buyer", "Campaign", "Orders", "Delivered", "Pending", "Failed", "Delivery", "Revenue"] : ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"]).map((heading) => (
+                            {(marketingIsPersonalWorkspace ? ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Spend", "Cost/order", "Cost/delivered", "Revenue"] : ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"]).map((heading) => (
                               <th key={heading} className="px-5 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-slate-400">{heading}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                           {marketingRowsByCampaign.length === 0 ? (
-                            <tr><td colSpan={marketingIsPersonalWorkspace ? 8 : 9} className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No campaign rows yet.</td></tr>
+                            <tr><td colSpan={9} className="px-5 py-12 text-center text-sm font-semibold italic text-gray-400">No campaign rows yet.</td></tr>
                           ) : marketingRowsByCampaign.slice(0, 30).map((row) => (
                             <tr key={row.key} className="hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
                               <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.buyerLabel}</td>
@@ -40512,9 +40818,10 @@ ${waybillLineItems(w).length > 1
                               <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.delivered}</td>
                               {marketingIsPersonalWorkspace ? (
                                 <>
-                                  <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.pending}</td>
-                                  <td className="px-5 py-4 text-gray-700 dark:text-slate-300">{row.failed}</td>
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.deliveryRate}%</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.adSpend)}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.cpo ? formatMoney(row.cpo) : "—"}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{row.cpa ? formatMoney(row.cpa) : "—"}</td>
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(row.deliveredRevenue)}</td>
                                 </>
                               ) : (
@@ -40533,12 +40840,82 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </section>
 
+                  <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#081119]">
+                    <div className="border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <h2 className="text-lg font-black text-gray-900 dark:text-slate-100">{marketingIsPersonalWorkspace ? "Your Ad Money Ledger" : "Daily Spend Ledger"}</h2>
+                          <p className="text-sm text-gray-500 dark:text-slate-400">{marketingIsPersonalWorkspace ? "Budget rows recorded for your tracked links." : "Budget given to each marketer, matched automatically against orders from their generated links."}</p>
+                        </div>
+                        <span className="w-fit rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                          {marketingSpendLedgerRows.length} row{marketingSpendLedgerRows.length === 1 ? "" : "s"} · {formatMoney(marketingTotalLedgerSpend)}
+                        </span>
+                      </div>
+                    </div>
+                    {marketingSpendLedgerRows.length === 0 ? (
+                      <div className="px-5 py-10 text-sm font-semibold text-gray-400">
+                        No daily spend has been recorded for this period yet. {marketingIsPersonalWorkspace ? "Ask an admin to record the ad money released to you." : "Use Record daily spend so CPO/ROAS can stop guessing from old expense notes."}
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[980px] text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-200 bg-gray-50/80 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
+                              {["Date", "Marketer", "Product / campaign", "Budget given", "Actual used", "Cost/order", "Match"].map((heading) => (
+                                <th key={heading} className="px-5 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-slate-400">{heading}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
+                            {marketingSpendLedgerRows.slice(0, 40).map((record) => {
+                              const matchedBuyer = marketingRowsByBuyer.find((row) => row.spendRecordIds.includes(record.id));
+                              const spend = marketingSpendAmount(record);
+                              const cpo = matchedBuyer && matchedBuyer.orders > 0 ? spend / matchedBuyer.orders : null;
+                              const isMatched = Boolean(matchedBuyer);
+                              return (
+                                <tr key={record.id} className="hover:bg-gray-50/80 dark:hover:bg-slate-900/40">
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{displayDateFromKey(record.spendDate)}</td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-black text-gray-900 dark:text-slate-100">{marketingSpendRecordMarketerName(record)}</div>
+                                    <div className="text-xs font-semibold text-gray-400">{record.marketerTag}</div>
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-bold text-gray-900 dark:text-slate-100">{marketingSpendRecordProductName(record)}</div>
+                                    <div className="text-xs text-gray-400">{record.platform}{record.campaign ? ` · ${record.campaign}` : ""}{record.landingPageUrl ? " · landing page" : ""}</div>
+                                  </td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(record.budgetGiven)}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(spend)}{record.actualSpent == null && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-300">estimated</span>}</td>
+                                  <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{cpo ? formatMoney(cpo) : "—"}</td>
+                                  <td className="px-5 py-4">
+                                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${isMatched ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"}`}>
+                                      {isMatched ? `${matchedBuyer?.orders ?? 0} orders matched` : "No orders matched"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+
                   <section className={`grid grid-cols-1 gap-4 ${marketingIsPersonalWorkspace ? "" : "xl:grid-cols-[0.8fr_1.2fr]"}`}>
                     {!marketingIsPersonalWorkspace && <article className="rounded-2xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-500/30 dark:bg-rose-500/10">
                       <h2 className="m-0 flex items-center gap-2 text-base font-black text-rose-900 dark:text-rose-200"><AlertTriangle className="h-5 w-5" /> Spend not matched to a buyer/campaign</h2>
-                      <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">{formatMoney(marketingUnmatchedAdSpend)} is logged as Ad Spend in this period but does not clearly mention a buyer or campaign tag.</p>
+                      <p className="m-0 mt-2 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">{formatMoney(marketingUnmatchedAdSpend)} is logged in this period but did not clearly match tracked orders yet.</p>
                       <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
-                        {marketingAdSpendExpenses.filter((expense) => !marketingMatchedSpendIds.has(expense.id)).slice(0, 12).map((expense) => (
+                        {marketingUsesSpendLedger ? marketingUnmatchedSpendRecords.slice(0, 12).map((record) => (
+                          <div key={record.id} className="rounded-xl border border-rose-200 bg-white/70 p-3 text-sm dark:border-rose-500/20 dark:bg-slate-950/20">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate font-black text-gray-900 dark:text-slate-100">{marketingSpendRecordMarketerName(record)} · {marketingSpendRecordProductName(record)}</div>
+                                <div className="mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{displayDateFromKey(record.spendDate)} · {record.platform}{record.campaign ? ` · ${record.campaign}` : ""}</div>
+                              </div>
+                              <strong className="shrink-0 text-rose-700 dark:text-rose-200">{formatMoney(marketingSpendAmount(record))}</strong>
+                            </div>
+                          </div>
+                        )) : marketingAdSpendExpenses.filter((expense) => !marketingMatchedSpendIds.has(expense.id)).slice(0, 12).map((expense) => (
                           <div key={expense.id} className="rounded-xl border border-rose-200 bg-white/70 p-3 text-sm dark:border-rose-500/20 dark:bg-slate-950/20">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
