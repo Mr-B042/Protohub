@@ -48740,9 +48740,6 @@ ${waybillLineItems(w).length > 1
                     ))}
                   </section>
 
-                  <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900">
-                    Customer contact details, address, sales assignment, fulfillment notes, and order controls are hidden for marketing users. This page is for tracking ad outcome only.
-                  </section>
                 </div>
                 );
               })()}
