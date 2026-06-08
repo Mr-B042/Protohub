@@ -18,6 +18,15 @@ const MARKETING_JSON_KEYS = [
   "buyerId"
 ];
 
+const MARKETING_USER_ID_JSON_KEYS = [
+  "media_buyer_id",
+  "mediaBuyerId",
+  "marketer_user_id",
+  "marketerUserId",
+  "buyer_id",
+  "buyerId"
+];
+
 const unique = (values: string[]) => Array.from(new Set(values));
 
 export const sanitizeMarketingAttributionTags = (value: unknown): string[] => {
@@ -48,13 +57,13 @@ const applyMarketingScope = (
   query: any,
   tags: unknown,
   jsonColumn: "form_context" | "capture_payload",
-  scalarFields: string[]
+  scalarFields: string[],
+  userId?: string | null
 ) => {
   const variants = marketerScopeVariants(tags);
-  if (variants.length === 0) {
-    // Safe default: a Marketer without configured tags should see nothing.
-    return query.eq("id", "__marketer_without_attribution_tags__");
-  }
+  const directUserFilters = userId
+    ? MARKETING_USER_ID_JSON_KEYS.map((key) => `${jsonColumn}->>${key}.eq.${userId}`)
+    : [];
 
   const filters = variants.flatMap((tag) => {
     // Keep common generated-link separators (`_` and `-`) intact, but avoid
@@ -70,13 +79,17 @@ const applyMarketingScope = (
     const jsonFilters = MARKETING_JSON_KEYS.map((key) => `${jsonColumn}->>${key}.ilike.${safe}`);
     return [...scalarFilters, ...jsonFilters];
   });
+  filters.push(...directUserFilters);
 
-  if (filters.length === 0) return query.eq("id", "__marketer_without_valid_attribution_tags__");
+  if (filters.length === 0) {
+    // Safe default: a Marketer without configured tags/user-id attribution should see nothing.
+    return query.eq("id", "__marketer_without_valid_attribution__");
+  }
   return query.or(filters.join(","));
 };
 
-export const applyOrderMarketingScope = (query: any, tags: unknown) =>
-  applyMarketingScope(query, tags, "form_context", MARKETING_ORDER_SCOPE_FIELDS);
+export const applyOrderMarketingScope = (query: any, tags: unknown, userId?: string | null) =>
+  applyMarketingScope(query, tags, "form_context", MARKETING_ORDER_SCOPE_FIELDS, userId);
 
-export const applyCartMarketingScope = (query: any, tags: unknown) =>
-  applyMarketingScope(query, tags, "capture_payload", MARKETING_CART_SCOPE_FIELDS);
+export const applyCartMarketingScope = (query: any, tags: unknown, userId?: string | null) =>
+  applyMarketingScope(query, tags, "capture_payload", MARKETING_CART_SCOPE_FIELDS, userId);

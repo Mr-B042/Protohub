@@ -19,7 +19,7 @@ router.get("/", async (req, res) => {
     .order("created_at", { ascending: false });
   // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
   if (req.user!.role === "Marketer") {
-    query = applyCartMarketingScope(query, req.user!.marketingAttributionTags);
+    query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
   } else if (req.user!.role === "Sales Rep") {
     query = query.eq("assigned_rep_id", req.user!.id);
   }

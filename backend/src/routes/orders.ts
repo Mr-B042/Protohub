@@ -321,7 +321,7 @@ router.get("/", async (req, res) => {
 
   // Sales Reps see assigned orders; Marketers see only attributed traffic.
   if (req.user!.role === "Marketer") {
-    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags);
+    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
   } else if (req.user!.role === "Sales Rep") {
     query = query.eq("assigned_rep_id", req.user!.id);
   } else if (repId) {

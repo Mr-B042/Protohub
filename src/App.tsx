@@ -10765,8 +10765,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const marketingOrderMatchesMarketerTags = (order: TrackedOrder) => {
     if (currentRole !== "Marketer") return true;
-    if (marketerScopeVariants.length === 0) return false;
     const context = order.formContext ?? {};
+    const directIds = ["media_buyer_id", "mediaBuyerId", "marketer_user_id", "marketerUserId", "buyer_id", "buyerId"]
+      .map((key) => String(context[key] ?? "").trim())
+      .filter(Boolean);
+    if (marketerScopeUserId && directIds.includes(marketerScopeUserId)) return true;
+    if (marketerScopeVariants.length === 0) return false;
     const values = [
       order.utmSource,
       order.utmCampaign,
@@ -18903,6 +18907,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let productsReloadTimer: number | null = null;
     const currentUser = auth.getUser();
     const realtimeIsMarketer = currentUser?.role === "Marketer";
+    const realtimeMarketerUserId = realtimeIsMarketer ? currentUser?.id ?? "" : "";
     const realtimeMarketerVariants = realtimeIsMarketer
       ? Array.from(new Set(
           sanitizeMarketingAttributionTags((currentUser as any)?.marketingAttributionTags ?? [])
@@ -18922,6 +18927,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     const realtimeOrderMatchesMarketer = (order: TrackedOrder) => {
       const context = order.formContext ?? {};
+      const directIds = ["media_buyer_id", "mediaBuyerId", "marketer_user_id", "marketerUserId", "buyer_id", "buyerId"]
+        .map((key) => String(context[key] ?? "").trim())
+        .filter(Boolean);
+      if (realtimeMarketerUserId && directIds.includes(realtimeMarketerUserId)) return true;
       return realtimeMarketingMatch([
         order.utmSource,
         order.utmCampaign,
@@ -18933,6 +18942,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
     const realtimeCartMatchesMarketer = (cart: AbandonedCartRecord) => {
       const payload = cart.capturePayload ?? {};
+      const directIds = ["media_buyer_id", "mediaBuyerId", "marketer_user_id", "marketerUserId", "buyer_id", "buyerId"]
+        .map((key) => String(payload[key] ?? "").trim())
+        .filter(Boolean);
+      if (realtimeMarketerUserId && directIds.includes(realtimeMarketerUserId)) return true;
       return realtimeMarketingMatch([
         cart.source,
         ...["utm_source", "utm_campaign", "utm_medium", "utm_content", "utm_term", "media_buyer", "mediaBuyer", "media_buyer_id", "mediaBuyerId", "buyer", "buyer_id", "buyerId"].map((key) => payload[key])
