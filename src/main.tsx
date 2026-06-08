@@ -117,6 +117,27 @@ function Root() {
   }, [hash]);
 
   useEffect(() => {
+    if (typeof document === "undefined" || !hash.startsWith("#/order-form/embed")) return;
+
+    const root = document.documentElement;
+    const previousTheme = root.dataset.theme;
+    const hadDarkClass = root.classList.contains("dark");
+
+    // Public customer forms must stay visually independent from the admin
+    // dashboard theme; otherwise persisted dark mode makes embed text hard to read.
+    root.classList.remove("dark");
+    root.dataset.theme = "light";
+    root.classList.add("public-order-embed-active");
+
+    return () => {
+      root.classList.remove("public-order-embed-active");
+      root.classList.toggle("dark", hadDarkClass);
+      if (previousTheme) root.dataset.theme = previousTheme;
+      else delete root.dataset.theme;
+    };
+  }, [hash]);
+
+  useEffect(() => {
     const onWindowError = (event: ErrorEvent) => {
       if (scheduleStaleChunkRecovery(event.error ?? event.message)) {
         event.preventDefault?.();
