@@ -6579,6 +6579,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [marketingSpendBudgetGiven, setMarketingSpendBudgetGiven] = useState("");
   const [marketingSpendActualSpent, setMarketingSpendActualSpent] = useState("");
   const [marketingSpendNotes, setMarketingSpendNotes] = useState("");
+  const [marketingBuyerFilter, setMarketingBuyerFilter] = useState("all");
+  const [adjustingMarketingSpendId, setAdjustingMarketingSpendId] = useState<string | null>(null);
+  const [adjustMarketingSpendBudget, setAdjustMarketingSpendBudget] = useState("");
+  const [adjustMarketingSpendActual, setAdjustMarketingSpendActual] = useState("");
+  const [adjustMarketingSpendStatus, setAdjustMarketingSpendStatus] = useState<"pending" | "matched" | "mismatch">("matched");
+  const [adjustMarketingSpendNote, setAdjustMarketingSpendNote] = useState("");
+  const [adjustMarketingSpendSaving, setAdjustMarketingSpendSaving] = useState(false);
   const [financePeriod, setFinancePeriod] = useState<Period>(() =>
     readPref<Period>("protohub.finance.period", "This Month", (raw) => raw as Period)
   );
@@ -10742,19 +10749,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setupNeedsBuyerId: !hiddenBuyer && ["fb", "ig", "tt", "an", "ms", "th"].includes(sourceKey)
     };
   };
+  const marketerTagVariants = (value: string | undefined | null) => {
+    const lower = String(value ?? "").trim().toLowerCase();
+    if (!lower) return [];
+    const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+    return Array.from(new Set([lower, hyphen, underscore, slugify(lower)].filter(Boolean)));
+  };
   const marketerScopeTags = currentRole === "Marketer"
     ? sanitizeMarketingAttributionTags(currentManagedUser?.marketingAttributionTags ?? realManagedUser?.marketingAttributionTags ?? [])
     : [];
   const marketerScopeUserId = currentRole === "Marketer" ? (currentManagedUser?.id ?? authUser?.id ?? null) : null;
   const marketerScopeVariants = Array.from(
-    new Set(
-      marketerScopeTags.flatMap((tag) => {
-        const lower = tag.toLowerCase();
-        const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-        const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
-        return [lower, hyphen, underscore].filter(Boolean);
-      })
-    )
+    new Set(marketerScopeTags.flatMap(marketerTagVariants))
   );
   const marketingOrderMatchesMarketerTags = (order: TrackedOrder) => {
     if (currentRole !== "Marketer") return true;
@@ -10788,6 +10795,122 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const marketingFilterBaseOrders = marketingIsPersonalWorkspace
     ? trackedCampaignOrders.filter((order) => marketingOrderMatchesMarketerTags(order))
     : trackedCampaignOrders;
+  const marketingOrderTextValues = (order: TrackedOrder) => {
+    const context = order.formContext ?? {};
+    const buyer = marketingBuyerForOrder(order);
+    return [
+      buyer.key,
+      buyer.label,
+      buyer.raw,
+      order.utmSource,
+      order.utmCampaign,
+      order.utmMedium,
+      order.utmContent,
+      order.utmTerm,
+      ...[
+        "media_buyer",
+        "mediaBuyer",
+        "media_buyer_id",
+        "mediaBuyerId",
+        "buyer",
+        "buyer_id",
+        "buyerId",
+        "marketer_user_id",
+        "marketerUserId"
+      ].map((key) => context[key])
+    ]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .filter(Boolean);
+  };
+  const marketingValueMatchesVariants = (values: string[], variants: Set<string>) =>
+    values.some((value) => {
+      const valueVariants = marketerTagVariants(value);
+      return valueVariants.some((variant) => variants.has(variant))
+        || Array.from(variants).some((variant) => variant.length >= 2 && value.includes(variant));
+    });
+  const marketingUserTagVariants = (user: ManagedUser | undefined) =>
+    new Set(sanitizeMarketingAttributionTags(user?.marketingAttributionTags ?? []).flatMap(marketerTagVariants));
+  const marketingOrderMatchesMarketerUser = (order: TrackedOrder, user: ManagedUser) => {
+    const context = order.formContext ?? {};
+    const directIds = ["media_buyer_id", "mediaBuyerId", "marketer_user_id", "marketerUserId"]
+      .map((key) => String(context[key] ?? "").trim())
+      .filter(Boolean);
+    if (directIds.includes(user.id)) return true;
+    const variants = marketingUserTagVariants(user);
+    return variants.size > 0 && marketingValueMatchesVariants(marketingOrderTextValues(order), variants);
+  };
+  const marketingSpendRecordMatchesMarketerUser = (record: MarketingSpendRecord, user: ManagedUser) => {
+    if ((record.spendOwnerType ?? "media_buyer") !== "media_buyer") return false;
+    if (record.marketerUserId === user.id) return true;
+    const variants = marketingUserTagVariants(user);
+    return variants.size > 0 && marketingValueMatchesVariants(marketerTagVariants(record.marketerTag), variants);
+  };
+  const selectedMarketingBuyerUser = !marketingIsPersonalWorkspace && marketingBuyerFilter.startsWith("user:")
+    ? marketingMarketerUsers.find((user) => user.id === marketingBuyerFilter.slice(5))
+    : undefined;
+  const selectedMarketingBuyerTag = !marketingIsPersonalWorkspace && marketingBuyerFilter.startsWith("tag:")
+    ? marketingBuyerFilter.slice(4)
+    : "";
+  const selectedMarketingBuyerTagVariants = new Set(marketerTagVariants(selectedMarketingBuyerTag));
+  const marketingOrderMatchesBuyerFilter = (order: TrackedOrder) => {
+    if (marketingIsPersonalWorkspace || marketingBuyerFilter === "all") return true;
+    if (marketingBuyerFilter === "company") return !marketingBuyerForOrder(order).hasHiddenBuyer;
+    if (selectedMarketingBuyerUser) return marketingOrderMatchesMarketerUser(order, selectedMarketingBuyerUser);
+    if (selectedMarketingBuyerTagVariants.size > 0) {
+      return marketingValueMatchesVariants(marketingOrderTextValues(order), selectedMarketingBuyerTagVariants);
+    }
+    return true;
+  };
+  const marketingSpendRecordMatchesBuyerFilter = (record: MarketingSpendRecord) => {
+    if (marketingIsPersonalWorkspace || marketingBuyerFilter === "all") return true;
+    if (marketingBuyerFilter === "company") return (record.spendOwnerType ?? "media_buyer") === "company";
+    if (selectedMarketingBuyerUser) return marketingSpendRecordMatchesMarketerUser(record, selectedMarketingBuyerUser);
+    if (selectedMarketingBuyerTagVariants.size > 0) {
+      return marketingValueMatchesVariants(marketerTagVariants(record.marketerTag), selectedMarketingBuyerTagVariants);
+    }
+    return true;
+  };
+  const marketingMediaBuyerFilterOptions = (() => {
+    if (marketingIsPersonalWorkspace) return [];
+    const options: Array<{ value: string; label: string; count: number }> = [
+      { value: "all", label: "All media buyers", count: marketingFilterBaseOrders.length },
+      {
+        value: "company",
+        label: "Company ad account",
+        count: marketingFilterBaseOrders.filter((order) => !marketingBuyerForOrder(order).hasHiddenBuyer).length
+          + marketingSpendRecords.filter((record) => (record.spendOwnerType ?? "media_buyer") === "company").length
+      }
+    ];
+    for (const user of marketingMarketerUsers) {
+      options.push({
+        value: `user:${user.id}`,
+        label: user.name,
+        count: marketingFilterBaseOrders.filter((order) => marketingOrderMatchesMarketerUser(order, user)).length
+          + marketingSpendRecords.filter((record) => marketingSpendRecordMatchesMarketerUser(record, user)).length
+      });
+    }
+    const knownUserTags = new Set(marketingMarketerUsers.flatMap((user) => sanitizeMarketingAttributionTags(user.marketingAttributionTags ?? []).flatMap(marketerTagVariants)));
+    const orphanTags = new Set<string>();
+    for (const order of marketingFilterBaseOrders) {
+      const buyer = marketingBuyerForOrder(order);
+      if (buyer.hasHiddenBuyer && !marketerTagVariants(buyer.raw).some((tag) => knownUserTags.has(tag))) orphanTags.add(buyer.raw);
+    }
+    for (const record of marketingSpendRecords) {
+      if ((record.spendOwnerType ?? "media_buyer") === "media_buyer" && record.marketerTag && !marketerTagVariants(record.marketerTag).some((tag) => knownUserTags.has(tag))) {
+        orphanTags.add(record.marketerTag);
+      }
+    }
+    for (const tag of Array.from(orphanTags).sort((a, b) => a.localeCompare(b))) {
+      options.push({
+        value: `tag:${tag}`,
+        label: `Tag · ${marketingPrettyLabel(tag)}`,
+        count: marketingFilterBaseOrders.filter((order) => marketingValueMatchesVariants(marketingOrderTextValues(order), new Set(marketerTagVariants(tag)))).length
+          + marketingSpendRecords.filter((record) => marketingValueMatchesVariants(marketerTagVariants(record.marketerTag), new Set(marketerTagVariants(tag)))).length
+      });
+    }
+    return options;
+  })();
+  const marketingMediaBuyerBaseOrders = marketingFilterBaseOrders.filter((order) => marketingOrderMatchesBuyerFilter(order));
   const marketingAvailableSourceOptions = (() => {
     const options = new Map<string, { key: string; label: string; count: number }>();
     const addOption = (key: string, label: string) => {
@@ -10795,7 +10918,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const existing = options.get(key);
       options.set(key, { key, label, count: (existing?.count ?? 0) + 1 });
     };
-    for (const order of marketingFilterBaseOrders) {
+    for (const order of marketingMediaBuyerBaseOrders) {
       const buyer = marketingBuyerForOrder(order);
       addOption(buyer.key, `${buyer.hasHiddenBuyer ? "Buyer" : "Source"} · ${buyer.label}`);
       const sourceKey = normalizeAdTrackingSource(order.utmSource);
@@ -10812,7 +10935,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     return Array.from(options.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   })();
-  const marketingFilteredOrders = marketingFilterBaseOrders.filter((order) => {
+  const marketingFilteredOrders = marketingMediaBuyerBaseOrders.filter((order) => {
     const buyer = marketingBuyerForOrder(order);
     const campaign = marketingCampaignForOrder(order);
     const sourceKey = normalizeAdTrackingSource(order.utmSource);
@@ -10849,18 +10972,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter((token) => token.length >= 2)
       .some((token) => text.includes(token));
   };
+  const marketingBuyerExpenseTokens = selectedMarketingBuyerUser
+    ? [selectedMarketingBuyerUser.name, ...sanitizeMarketingAttributionTags(selectedMarketingBuyerUser.marketingAttributionTags ?? [])]
+    : selectedMarketingBuyerTag
+      ? [selectedMarketingBuyerTag]
+      : marketingBuyerFilter === "company"
+        ? ["company", "owner", "admin"]
+        : [];
   const marketingAdSpendExpenses = marketingIsPersonalWorkspace ? [] : expenses.filter((expense) =>
     expense.type === "Ad Spend"
     && isInPeriod(expense.date, campaignPeriod, campaignDateRange)
     && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
+    && (marketingBuyerFilter === "all" || marketingExpenseMatchesTokens(expense, marketingBuyerExpenseTokens))
   );
-  const marketerTagVariants = (value: string | undefined | null) => {
-    const lower = String(value ?? "").trim().toLowerCase();
-    if (!lower) return [];
-    const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
-    return Array.from(new Set([lower, hyphen, underscore, slugify(lower)].filter(Boolean)));
-  };
   const marketingSpendAmount = (record: MarketingSpendRecord) =>
     Number(record.actualSpent ?? record.budgetGiven ?? 0);
   const marketingSpendRecordsInPeriod = marketingSpendRecords.filter((record) => {
@@ -10872,7 +10996,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         (Boolean(marketerScopeUserId) && record.marketerUserId === marketerScopeUserId)
         || marketerScopeVariants.some((tag) => marketerTagVariants(record.marketerTag).includes(tag))
       ));
-    return matchesDate && matchesScope && matchesMarketer;
+    return matchesDate && matchesScope && matchesMarketer && marketingSpendRecordMatchesBuyerFilter(record);
   });
   const marketingSpendReviewStatus = (record: MarketingSpendRecord) => record.reviewStatus ?? "matched";
   const marketingSpendIsTrusted = (record: MarketingSpendRecord) => marketingSpendReviewStatus(record) === "matched";
@@ -20028,43 +20152,68 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`Could not update spend review: ${err?.message ?? err}`);
     }
   };
-  const adjustMarketingSpendRecord = async (record: MarketingSpendRecord) => {
+  const openAdjustMarketingSpendRecord = (record: MarketingSpendRecord) => {
     if (currentRole !== "Owner" && currentRole !== "Admin") return;
-    const budgetRaw = window.prompt("Correct budget/amount received:", String(record.budgetGiven ?? ""));
-    if (budgetRaw === null) return;
-    const actualRaw = window.prompt("Correct actual amount used/spent (leave blank to use budget as estimate):", record.actualSpent == null ? "" : String(record.actualSpent));
-    if (actualRaw === null) return;
-    const budgetGiven = Number(budgetRaw);
-    const actualSpent = actualRaw.trim() ? Number(actualRaw) : null;
+    setAdjustingMarketingSpendId(record.id);
+    setAdjustMarketingSpendBudget(String(record.budgetGiven ?? ""));
+    setAdjustMarketingSpendActual(record.actualSpent == null ? "" : String(record.actualSpent));
+    setAdjustMarketingSpendStatus(marketingSpendReviewStatus(record));
+    setAdjustMarketingSpendNote(record.matchNote || record.notes || "");
+  };
+  const closeAdjustMarketingSpendRecord = () => {
+    if (adjustMarketingSpendSaving) return;
+    setAdjustingMarketingSpendId(null);
+    setAdjustMarketingSpendBudget("");
+    setAdjustMarketingSpendActual("");
+    setAdjustMarketingSpendStatus("matched");
+    setAdjustMarketingSpendNote("");
+  };
+  const saveAdjustedMarketingSpendRecord = async () => {
+    if (currentRole !== "Owner" && currentRole !== "Admin") return;
+    const record = marketingSpendRecords.find((item) => item.id === adjustingMarketingSpendId);
+    if (!record) return;
+    const budgetGiven = Number(adjustMarketingSpendBudget || 0);
+    const actualSpent = adjustMarketingSpendActual.trim() ? Number(adjustMarketingSpendActual) : null;
     if (!Number.isFinite(budgetGiven) || budgetGiven < 0 || (actualSpent !== null && (!Number.isFinite(actualSpent) || actualSpent < 0))) {
-      showToast("Budget and actual spent must be valid positive amounts.");
+      showToast("Budget and actual used must be valid positive amounts.");
       return;
     }
     if (budgetGiven <= 0 && (actualSpent ?? 0) <= 0) {
-      showToast("Enter budget given or actual spent.");
+      showToast("Enter budget received or actual used.");
       return;
     }
-    const notes = window.prompt("Optional note for this adjustment:", record.notes ?? "");
-    if (notes === null) return;
+    setAdjustMarketingSpendSaving(true);
     try {
+      const note = adjustMarketingSpendNote.trim();
       const row = await marketingSpendApi.update(record.id, {
         budgetGiven,
         actualSpent,
-        notes,
-        reviewStatus: marketingSpendReviewStatus(record),
-        matchNote: record.matchNote ?? undefined
+        notes: note || record.notes || "",
+        reviewStatus: adjustMarketingSpendStatus,
+        matchNote: note || record.matchNote || undefined
       });
       const normalized = normalizeMarketingSpendRecord(row, {
         ...record,
         budgetGiven,
         actualSpent,
-        notes
+        notes: note || record.notes || "",
+        reviewStatus: adjustMarketingSpendStatus,
+        matchNote: note || record.matchNote || null,
+        matchedBy: adjustMarketingSpendStatus === "pending" ? null : authUser?.id ?? record.matchedBy ?? null,
+        matchedAt: adjustMarketingSpendStatus === "pending" ? null : new Date().toISOString()
       });
       setMarketingSpendRecords((prev) => prev.map((item) => item.id === record.id ? normalized : item));
       expensesApi.list().then((rows: any[]) => setExpenses(rows.map((item) => normalizeExpenseRecord(item)))).catch(() => undefined);
-      showToast("Marketing spend amount adjusted.");
+      setAdjustingMarketingSpendId(null);
+      setAdjustMarketingSpendBudget("");
+      setAdjustMarketingSpendActual("");
+      setAdjustMarketingSpendStatus("matched");
+      setAdjustMarketingSpendNote("");
+      showToast(adjustMarketingSpendStatus === "matched" ? "Spend adjusted and synced to Expenses." : "Marketing spend adjustment saved.");
     } catch (err: any) {
       showToast(`Could not adjust spend: ${err?.message ?? err}`);
+    } finally {
+      setAdjustMarketingSpendSaving(false);
     }
   };
 
@@ -40817,6 +40966,18 @@ ${waybillLineItems(w).length > 1
                       {showCampaignDateRange && renderDateRangeCalendar("marketing-date-range-panel", campaignDateRange, setCampaignDateRange, applyCampaignDateRange, () => setShowCampaignDateRange(false))}
                     </div>
                     {!marketingIsPersonalWorkspace && renderProductFilter(campaignProductIds, setCampaignProductIds, showCampaignProductFilter, setShowCampaignProductFilter)}
+                    {!marketingIsPersonalWorkspace && (
+                      <select
+                        className="!min-h-0 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] sm:w-auto dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        aria-label="Media buyer"
+                        value={marketingBuyerFilter}
+                        onChange={(event) => setMarketingBuyerFilter(event.target.value)}
+                      >
+                        {marketingMediaBuyerFilterOptions.map((buyer) => (
+                          <option key={buyer.value} value={buyer.value}>{buyer.label}{buyer.count > 0 ? ` (${buyer.count})` : ""}</option>
+                        ))}
+                      </select>
+                    )}
                     <select
                       className="!min-h-0 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] sm:w-auto dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                       aria-label="Marketing source"
@@ -41238,7 +41399,7 @@ ${waybillLineItems(w).length > 1
                                       </div>
                                       {record.matchNote && <p className="m-0 text-xs font-semibold text-gray-400">{record.matchNote}</p>}
                                       {(currentRole === "Owner" || currentRole === "Admin") && (
-                                        <button type="button" className="!min-h-0 w-fit rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-black text-sky-700 hover:bg-sky-50 dark:border-sky-500/30 dark:bg-slate-950 dark:text-sky-200" onClick={() => adjustMarketingSpendRecord(record)}>Adjust amount</button>
+	                                        <button type="button" className="!min-h-0 w-fit rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-black text-sky-700 hover:bg-sky-50 dark:border-sky-500/30 dark:bg-slate-950 dark:text-sky-200" onClick={() => openAdjustMarketingSpendRecord(record)}>Adjust amount</button>
                                       )}
                                       {(currentRole === "Owner" || currentRole === "Admin") && reviewStatus === "pending" && (
                                         <div className="flex flex-wrap gap-1.5">
@@ -47420,9 +47581,9 @@ ${waybillLineItems(w).length > 1
         </div>
       )}
 
-      {teamDeleteDialog && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
-          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="delete-team-dialog-title">
+	      {teamDeleteDialog && (
+	        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
+	          <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="delete-team-dialog-title">
             <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
               <div>
                 <h3 id="delete-team-dialog-title" className="text-lg font-semibold text-gray-900 dark:text-slate-100">Delete Team?</h3>
@@ -47463,12 +47624,124 @@ ${waybillLineItems(w).length > 1
               </button>
             </div>
           </section>
-        </div>
-      )}
+	        </div>
+	      )}
 
-      {showVarianceReview && currentRole === "Owner" && (() => {
-        const pending = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending");
-        return (
+	      {adjustingMarketingSpendId && (() => {
+	        const record = marketingSpendRecords.find((item) => item.id === adjustingMarketingSpendId);
+	        if (!record) return null;
+	        const budgetPreview = Number(adjustMarketingSpendBudget || 0);
+	        const actualPreview = adjustMarketingSpendActual.trim() ? Number(adjustMarketingSpendActual) : null;
+	        const reportingPreview = Number.isFinite(budgetPreview) && (actualPreview === null || Number.isFinite(actualPreview))
+	          ? (actualPreview ?? budgetPreview)
+	          : marketingSpendAmount(record);
+	        const statusCards = [
+	          { value: "matched" as const, label: "Matched", helper: "Counts in CPO/ROAS and syncs to Expenses.", cls: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200" },
+	          { value: "pending" as const, label: "Pending", helper: "Keep out of final results until checked.", cls: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200" },
+	          { value: "mismatch" as const, label: "Mismatch", helper: "Flag a difference between buyer and company record.", cls: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200" }
+	        ];
+	        return (
+	          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm dark:bg-[rgba(3,7,18,0.86)]" onClick={closeAdjustMarketingSpendRecord}>
+	            <section className="max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#07111b]" role="dialog" aria-modal="true" aria-labelledby="adjust-marketing-spend-title" onClick={(event) => event.stopPropagation()}>
+	              <div className="relative overflow-hidden border-b border-slate-100 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 px-5 py-5 text-white dark:border-slate-800">
+	                <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-sky-400/25 blur-3xl" />
+	                <div className="relative flex items-start justify-between gap-4">
+	                  <div>
+	                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.24em] text-sky-200">Marketing spend adjustment</p>
+	                    <h3 id="adjust-marketing-spend-title" className="m-0 mt-2 text-2xl font-black">Correct budget and actual used</h3>
+	                    <p className="m-0 mt-1 text-sm font-semibold text-slate-300">{marketingSpendRecordMarketerName(record)} · {displayDateFromKey(record.spendDate)} · {marketingSpendRecordProductName(record)}</p>
+	                  </div>
+	                  <button type="button" className="!min-h-0 rounded-xl border border-white/10 bg-white/10 p-2 text-white/80 hover:bg-white/15 hover:text-white" aria-label="Close adjustment modal" onClick={closeAdjustMarketingSpendRecord}>
+	                    <X className="h-5 w-5" />
+	                  </button>
+	                </div>
+	              </div>
+	              <div className="max-h-[calc(92vh-88px)] overflow-y-auto px-5 py-5">
+	                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+	                  <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+	                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Current budget</p>
+	                    <p className="m-0 mt-1 text-xl font-black text-slate-950 dark:text-slate-100">{formatMoney(record.budgetGiven)}</p>
+	                  </article>
+	                  <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+	                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Current actual</p>
+	                    <p className="m-0 mt-1 text-xl font-black text-slate-950 dark:text-slate-100">{formatMoney(marketingSpendAmount(record))}</p>
+	                  </article>
+	                  <article className="rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-500/30 dark:bg-sky-500/10">
+	                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">New reporting spend</p>
+	                    <p className="m-0 mt-1 text-xl font-black text-sky-900 dark:text-sky-100">{formatMoney(reportingPreview)}</p>
+	                  </article>
+	                </div>
+	                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+	                  <label className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+	                    Budget received
+	                    <input
+	                      type="number"
+	                      min="0"
+	                      inputMode="decimal"
+	                      value={adjustMarketingSpendBudget}
+	                      onChange={(event) => setAdjustMarketingSpendBudget(event.target.value)}
+	                      className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-black text-slate-950 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+	                    />
+	                  </label>
+	                  <label className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+	                    Actual used
+	                    <input
+	                      type="number"
+	                      min="0"
+	                      inputMode="decimal"
+	                      value={adjustMarketingSpendActual}
+	                      onChange={(event) => setAdjustMarketingSpendActual(event.target.value)}
+	                      placeholder="Leave blank to use budget"
+	                      className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-black text-slate-950 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+	                    />
+	                  </label>
+	                </div>
+	                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+	                  {statusCards.map((item) => {
+	                    const selected = adjustMarketingSpendStatus === item.value;
+	                    return (
+	                      <button
+	                        key={item.value}
+	                        type="button"
+	                        onClick={() => setAdjustMarketingSpendStatus(item.value)}
+	                        className={`!min-h-0 rounded-2xl border p-4 text-left transition ${selected ? item.cls : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"}`}
+	                      >
+	                        <span className="block text-sm font-black">{item.label}</span>
+	                        <span className="mt-1 block text-xs font-semibold opacity-75">{item.helper}</span>
+	                      </button>
+	                    );
+	                  })}
+	                </div>
+	                <label className="mt-5 block text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+	                  Adjustment note
+	                  <textarea
+	                    rows={3}
+	                    value={adjustMarketingSpendNote}
+	                    onChange={(event) => setAdjustMarketingSpendNote(event.target.value)}
+	                    placeholder="Example: Buyer reported ₦50,000 used; owner record matched."
+	                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+	                  />
+	                </label>
+	                <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
+	                  Matched records sync to Expenses as media-buyer ad spend and count in final CPO/ROAS. Pending or mismatch records stay visible here, but do not count in final spend results.
+	                </div>
+	              </div>
+	              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-end dark:border-slate-800">
+	                <button type="button" className="!min-h-0 rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900" onClick={closeAdjustMarketingSpendRecord}>
+	                  Cancel
+	                </button>
+	                <button type="button" disabled={adjustMarketingSpendSaving} className="!min-h-0 rounded-2xl bg-[#1F8FE0] px-6 py-3 text-sm font-black text-white shadow-lg shadow-sky-500/20 hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60" onClick={saveAdjustedMarketingSpendRecord}>
+	                  {adjustMarketingSpendSaving ? "Saving..." : "Save adjustment"}
+	                </button>
+	              </div>
+	            </section>
+	          </div>
+	        );
+	      })()}
+
+	      {showVarianceReview && currentRole === "Owner" && (() => {
+	        const pending = trackedOrders.filter((o) => o.remittanceVarianceStatus === "pending");
+	        return (
           <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4" onClick={() => setShowVarianceReview(false)}>
             <section className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
