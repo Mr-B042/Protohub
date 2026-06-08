@@ -19877,6 +19877,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     if (!marketingSpendDate) { showToast("Choose the spend date."); return; }
+    if (readyEmbedProducts.length === 0) {
+      showToast("No order-link-ready product yet. Activate a product package in Embed Form first.");
+      return;
+    }
+    if (!marketingSpendProductId || !readyEmbedProducts.some((product) => product.id === marketingSpendProductId)) {
+      showToast("Choose the product link this spend belongs to.");
+      return;
+    }
     const spendOwnerType = isMarketerSubmission ? "media_buyer" : marketingSpendOwnerType;
     const selectedMarketer = isMarketerSubmission
       ? (currentManagedUser as ManagedUser | undefined)
@@ -19906,7 +19914,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         spendOwnerType,
         marketerUserId: isMarketerSubmission ? marketerScopeUserId : spendOwnerType === "media_buyer" ? selectedMarketer?.id ?? null : null,
         marketerTag: selectedTag,
-        productId: marketingSpendProductId || null,
+        productId: marketingSpendProductId,
         platform: marketingSpendPlatform,
         campaign: marketingSpendCampaign,
         landingPageUrl: marketingSpendLandingPage,
@@ -19921,7 +19929,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         spendOwnerType,
         marketerUserId: isMarketerSubmission ? marketerScopeUserId : spendOwnerType === "media_buyer" ? selectedMarketer?.id ?? null : null,
         marketerTag: selectedTag,
-        productId: marketingSpendProductId || null,
+        productId: marketingSpendProductId,
         platform: marketingSpendPlatform,
         campaign: marketingSpendCampaign,
         landingPageUrl: marketingSpendLandingPage,
@@ -40800,9 +40808,12 @@ ${waybillLineItems(w).length > 1
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       Product
                       <select value={marketingSpendProductId} onChange={(event) => setMarketingSpendProductId(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                        <option value="">All products / general</option>
-                        {catalogProducts.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                        <option value="" disabled>{readyEmbedProducts.length === 0 ? "No order-link-ready products yet" : "Choose product with generated order link"}</option>
+                        {readyEmbedProducts.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
                       </select>
+                      <span className="mt-1 block text-[11px] font-semibold normal-case tracking-normal text-gray-400">
+                        Only products that are ready in Embed Form are shown here.
+                      </span>
                     </label>
                     <label className="text-xs font-black uppercase tracking-wider text-gray-500">
                       {marketingIsPersonalWorkspace ? "Amount received" : "Budget given"}
