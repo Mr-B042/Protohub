@@ -19913,7 +19913,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         budgetGiven: budget,
         actualSpent: actual ?? null,
         currency: "NGN",
-        notes: marketingSpendNotes
+        notes: marketingSpendNotes,
+        reviewStatus: isMarketerSubmission ? "pending" : "matched"
       });
       const normalized = normalizeMarketingSpendRecord(row, {
         spendDate: marketingSpendDate,
@@ -41016,7 +41017,7 @@ ${waybillLineItems(w).length > 1
                                     <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-gray-400">
                                       <span>{record.marketerTag}</span>
                                       <span>·</span>
-                                      <span>{(record.spendOwnerType ?? "media_buyer") === "company" ? "company ad account" : record.entrySource === "marketer" ? "submitted by media buyer" : "company record for media buyer"}</span>
+                                      <span>{(record.spendOwnerType ?? "media_buyer") === "company" ? "company ad account" : record.entrySource === "marketer" || reviewStatus === "pending" ? "submitted by media buyer" : "company record for media buyer"}</span>
                                     </div>
                                   </td>
                                   <td className="px-5 py-4">
