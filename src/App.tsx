@@ -10397,6 +10397,69 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     d.setDate(d.getDate() + i);
     return formatDateKey(d);
   });
+  const trackingPrettyLabel = (value: string) =>
+    value
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || "Unlabelled";
+  const trackingValueVariants = (value: string | undefined | null) => {
+    const lower = String(value ?? "").trim().toLowerCase();
+    if (!lower) return [];
+    const hyphen = lower.replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const underscore = lower.replace(/[^a-z0-9]+/g, "_").replace(/(^_|_$)/g, "");
+    return Array.from(new Set([lower, hyphen, underscore, slugify(lower)].filter(Boolean)));
+  };
+  const orderTrackingContextText = (order: TrackedOrder, keys: string[]) => {
+    const context = order.formContext ?? {};
+    for (const key of keys) {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      const value = context[key] ?? context[camelKey];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+  };
+  const orderTrackingBuyerText = (order: TrackedOrder) =>
+    orderTrackingContextText(order, ["mediaBuyer", "mediaBuyerId", "buyer", "buyerId", "media_buyer", "media_buyer_id", "buyer_id", "marketer_user_id", "marketerUserId"]);
+  const orderFallbackBuyerText = (order: TrackedOrder) => {
+    const sourceKey = normalizeAdTrackingSource(order.utmSource);
+    // Older marketer links saved the marketer slug in utm_content but did not
+    // persist formContext yet. If there is no real ad source, preserve that slug
+    // as the buyer tag so live orders do not disappear from Ad Tracking.
+    return sourceKey ? "" : (order.utmContent?.trim() ?? "");
+  };
+  const orderHasTrackedAttribution = (order: TrackedOrder) => {
+    const sourceKey = normalizeAdTrackingSource(order.utmSource);
+    const campaign = order.utmCampaign?.trim().toLowerCase();
+    return Boolean(
+      sourceKey
+      || orderTrackingBuyerText(order)
+      || orderFallbackBuyerText(order)
+      || (campaign && campaign !== "embed" && campaign !== "direct")
+    );
+  };
+  const orderMatchesAdTrackingSourceFilter = (order: TrackedOrder) => {
+    if (adTrackingSourceFilter === "all") return true;
+    if (normalizeAdTrackingSource(order.utmSource) === adTrackingSourceFilter) return true;
+    const filterVariants = new Set(trackingValueVariants(adTrackingSourceFilter));
+    const values = [
+      orderTrackingBuyerText(order),
+      orderFallbackBuyerText(order),
+      order.utmCampaign,
+      order.utmContent,
+      order.utmMedium,
+      order.embedLabel,
+      ...["media_buyer", "mediaBuyer", "media_buyer_id", "mediaBuyerId", "buyer", "buyer_id", "buyerId", "marketer_user_id", "marketerUserId"].map((key) => order.formContext?.[key])
+    ]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
+    return values.some((value) => {
+      const valueVariants = trackingValueVariants(value);
+      return valueVariants.some((variant) => filterVariants.has(variant))
+        || Array.from(filterVariants).some((variant) => variant.length >= 2 && value.toLowerCase().includes(variant));
+    });
+  };
   const matchesAdTrackingSourceFilter = (source?: string | null) =>
     adTrackingSourceFilter === "all" || normalizeAdTrackingSource(source) === adTrackingSourceFilter;
   const campaignBaseOrders = trackedOrders
@@ -10406,8 +10469,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter(o => !o.reviewHold)
     .filter(o => isInPeriod(orderCreatedKey(o), campaignPeriod, campaignDateRange))
     .filter(o => matchesProductFilter(o.productId, o.productName, campaignProductIds));
-  const trackedCampaignOrders = campaignBaseOrders.filter((order) => Boolean(normalizeAdTrackingSource(order.utmSource)));
-  const filteredCampaignOrders = trackedCampaignOrders.filter((order) => matchesAdTrackingSourceFilter(order.utmSource));
+  const trackedCampaignOrders = campaignBaseOrders.filter(orderHasTrackedAttribution);
+  const filteredCampaignOrders = trackedCampaignOrders.filter(orderMatchesAdTrackingSourceFilter);
   const campaignGroupedRows = Object.values(
     filteredCampaignOrders.reduce<Record<string, {
       id: string;
@@ -10563,7 +10626,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ...row,
     deliveryRate: row.orderCount > 0 ? Math.round((row.deliveredCount / row.orderCount) * 100) : 0
   })).sort((a, b) => b.orderCount - a.orderCount || b.revenue - a.revenue || adTrackingSourceSortIndex(a.key) - adTrackingSourceSortIndex(b.key));
-  const adTrackingOrderSourceOptions = adTrackingSourceBreakdown(trackedCampaignOrders.map((order) => order.utmSource));
+  const adTrackingOrderSourceOptions = (() => {
+    const options = new Map<string, { key: string; label: string; count: number }>();
+    const addOption = (key: string, label: string) => {
+      if (!key) return;
+      const existing = options.get(key);
+      options.set(key, { key, label, count: (existing?.count ?? 0) + 1 });
+    };
+    for (const order of trackedCampaignOrders) {
+      const sourceKey = normalizeAdTrackingSource(order.utmSource);
+      if (sourceKey) addOption(sourceKey, adTrackingSourceLabel(sourceKey));
+      const buyerText = orderTrackingBuyerText(order) || orderFallbackBuyerText(order);
+      const buyerKey = slugify(buyerText);
+      if (buyerKey && buyerKey !== sourceKey) {
+        addOption(buyerKey, `${orderTrackingBuyerText(order) ? "Buyer" : "Tag"} · ${trackingPrettyLabel(buyerText)}`);
+      }
+    }
+    if (adTrackingSourceFilter !== "all" && !options.has(adTrackingSourceFilter)) {
+      options.set(adTrackingSourceFilter, { key: adTrackingSourceFilter, label: trackingPrettyLabel(adTrackingSourceFilter), count: 0 });
+    }
+    return Array.from(options.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  })();
   const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
     // A held duplicate must not register as a cart's recovered conversion.
     if (order.reviewHold) return map;
@@ -10785,14 +10868,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const marketingBuyerForOrder = (order: TrackedOrder) => {
     const hiddenBuyer = marketingContextText(order, ["mediaBuyer", "mediaBuyerId", "buyer", "buyerId", "media_buyer", "media_buyer_id", "buyer_id"]);
     const sourceKey = normalizeAdTrackingSource(order.utmSource);
-    const raw = hiddenBuyer || order.utmSource || order.utmMedium || "Unattributed";
-    const key = slugify(hiddenBuyer || sourceKey || raw) || "unattributed";
-    const label = hiddenBuyer ? marketingPrettyLabel(hiddenBuyer) : sourceKey ? adTrackingSourceLabel(sourceKey) : marketingPrettyLabel(raw);
+    const fallbackBuyer = !sourceKey ? (order.utmContent?.trim() ?? "") : "";
+    const raw = hiddenBuyer || fallbackBuyer || order.utmSource || order.utmMedium || "Unattributed";
+    const key = slugify(hiddenBuyer || fallbackBuyer || sourceKey || raw) || "unattributed";
+    const label = hiddenBuyer || fallbackBuyer ? marketingPrettyLabel(hiddenBuyer || fallbackBuyer) : sourceKey ? adTrackingSourceLabel(sourceKey) : marketingPrettyLabel(raw);
     return {
       key,
       label,
       raw,
-      hasHiddenBuyer: Boolean(hiddenBuyer),
+      hasHiddenBuyer: Boolean(hiddenBuyer || fallbackBuyer),
       setupNeedsBuyerId: !hiddenBuyer && ["fb", "ig", "tt", "an", "ms", "th"].includes(sourceKey)
     };
   };
