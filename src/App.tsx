@@ -10464,6 +10464,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       sourceKey ? adTrackingSourceLabel(sourceKey) : ""
     );
   });
+  const adTrackingOrderTotals = filteredAdTrackingOrders.reduce((totals, order) => {
+    const status = order.status ?? "New";
+    return {
+      orders: totals.orders + 1,
+      delivered: totals.delivered + (status === "Delivered" ? 1 : 0),
+      amount: totals.amount + order.amount,
+      deliveredRevenue: totals.deliveredRevenue + (status === "Delivered" ? order.amount : 0)
+    };
+  }, { orders: 0, delivered: 0, amount: 0, deliveredRevenue: 0 });
+  const adTrackingOrderTotalDeliveryRate = adTrackingOrderTotals.orders > 0
+    ? Math.round((adTrackingOrderTotals.delivered / adTrackingOrderTotals.orders) * 100)
+    : 0;
   const adTrackingOrderSourceStats = Object.values(
     filteredAdTrackingOrders.reduce<Record<string, {
       key: string;
@@ -10644,6 +10656,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       linkedOrder?.id ?? ""
     );
   });
+  const adTrackingCartTotals = filteredAdTrackingCarts.reduce((totals, row) => ({
+    carts: totals.carts + 1,
+    recovered: totals.recovered + (row.linkedOrder ? 1 : 0),
+    delivered: totals.delivered + ((row.linkedOrder?.status ?? "New") === "Delivered" ? 1 : 0),
+    value: totals.value + row.cart.amount
+  }), { carts: 0, recovered: 0, delivered: 0, value: 0 });
+  const adTrackingCartTotalRecoveryRate = adTrackingCartTotals.carts > 0
+    ? Math.round((adTrackingCartTotals.recovered / adTrackingCartTotals.carts) * 100)
+    : 0;
   const adTrackingCartSourceStats = Object.values(
     filteredAdTrackingCarts.reduce<Record<string, {
       key: string;
@@ -11027,6 +11048,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     String(b.spendDate ?? "").localeCompare(String(a.spendDate ?? ""))
     || marketingSpendRecordMarketerName(a).localeCompare(marketingSpendRecordMarketerName(b))
   );
+  const marketingSpendLedgerTotals = marketingSpendLedgerRows.reduce((totals, record) => {
+    const reviewStatus = marketingSpendReviewStatus(record);
+    const matchedBuyer = marketingRowsByBuyer.find((row) => row.spendRecordIds.includes(record.id));
+    return {
+      rows: totals.rows + 1,
+      budgetGiven: totals.budgetGiven + record.budgetGiven,
+      actualSpent: totals.actualSpent + marketingSpendAmount(record),
+      matchedOrders: totals.matchedOrders + (matchedBuyer?.orders ?? 0),
+      matched: totals.matched + (reviewStatus === "matched" ? 1 : 0),
+      pending: totals.pending + (reviewStatus === "pending" ? 1 : 0),
+      mismatch: totals.mismatch + (reviewStatus === "mismatch" ? 1 : 0)
+    };
+  }, { rows: 0, budgetGiven: 0, actualSpent: 0, matchedOrders: 0, matched: 0, pending: 0, mismatch: 0 });
   const marketingUnmatchedSpendRecords = marketingUsesSpendLedger
     ? marketingSpendRecordsForReporting.filter((record) => !marketingMatchedSpendRecordIds.has(record.id))
     : [];
@@ -37874,38 +37908,49 @@ ${waybillLineItems(w).length > 1
                 const expTotalPages = Math.max(1, Math.ceil(filteredExpenses.length / EXP_PAGE_SIZE));
                 const expPageClamped = Math.min(expensePage, expTotalPages);
                 const pagedExpenses = filteredExpenses.slice((expPageClamped - 1) * EXP_PAGE_SIZE, expPageClamped * EXP_PAGE_SIZE);
+                const filteredExpenseTotal = filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+                const pagedExpenseTotal = pagedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
                 return (
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Expenses table">
                 <div className="sm:hidden divide-y divide-gray-100">
                   {pagedExpenses.length === 0 ? (
                     <div className="px-4 py-12 text-center text-gray-400 font-medium italic">No expenses found</div>
                   ) : (
-                    pagedExpenses.map((expense) => (
-                      <article key={expense.id} className="px-4 py-4 flex flex-col gap-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-bold text-gray-900">{expense.type}</div>
-                            <div className="text-xs text-gray-500">{displayDateFromKey(expense.date)}</div>
-                            {expense.createdAt && <div className="text-xs text-gray-400">{formatMoment(expense.createdAt)}</div>}
+                    <>
+                      {pagedExpenses.map((expense) => (
+                        <article key={expense.id} className="px-4 py-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-gray-900">{expense.type}</div>
+                              <div className="text-xs text-gray-500">{displayDateFromKey(expense.date)}</div>
+                              {expense.createdAt && <div className="text-xs text-gray-400">{formatMoment(expense.createdAt)}</div>}
+                            </div>
+                            <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}</span>
                           </div>
-                          <span className="text-base font-bold text-gray-900 whitespace-nowrap">{formatMoney(expense.amount)}</span>
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex flex-col gap-2 text-xs">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Product / Reference</span>
+                              <span className="text-gray-700">{expense.productName}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Description</span>
+                              <span className="text-gray-600">{expense.description || "No description"}</span>
+                            </div>
+                            {expense.waybillId && <span className="inline-flex items-center self-start px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}
+                          </div>
+                          <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>
+                            Details
+                          </button>
+                        </article>
+                      ))}
+                      <div className="bg-gray-50 px-4 py-4 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-bold text-gray-900">Filtered total</span>
+                          <strong className="text-gray-900">{formatMoney(filteredExpenseTotal)}</strong>
                         </div>
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 flex flex-col gap-2 text-xs">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Product / Reference</span>
-                            <span className="text-gray-700">{expense.productName}</span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-semibold uppercase tracking-wide text-gray-400">Description</span>
-                            <span className="text-gray-600">{expense.description || "No description"}</span>
-                          </div>
-                          {expense.waybillId && <span className="inline-flex items-center self-start px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600">from Waybill</span>}
-                        </div>
-                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openAdminExpenseDetail(expense.id)}>
-                          Details
-                        </button>
-                      </article>
-                    ))
+                        {expTotalPages > 1 && <p className="m-0 mt-1 text-xs font-semibold text-gray-400">This page: {formatMoney(pagedExpenseTotal)}</p>}
+                      </div>
+                    </>
                   )}
                 </div>
 
@@ -37939,10 +37984,22 @@ ${waybillLineItems(w).length > 1
                         ))
                       )}
                     </tbody>
+                    {filteredExpenses.length > 0 && (
+                      <tfoot>
+                        <tr className="border-t border-gray-200 bg-gray-50 font-bold">
+                          <td className="px-4 py-3 text-gray-900">Filtered total</td>
+                          <td className="px-4 py-3 text-gray-700">{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</td>
+                          <td className="px-4 py-3 text-gray-400">{expTotalPages > 1 ? `This page: ${formatMoney(pagedExpenseTotal)}` : "All rows shown"}</td>
+                          <td className="px-4 py-3 text-gray-900">{formatMoney(filteredExpenseTotal)}</td>
+                          <td className="px-4 py-3 text-gray-400">—</td>
+                          <td className="px-4 py-3 text-gray-400">—</td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                  <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"}</span>
+                  <span>{filteredExpenses.length} expense{filteredExpenses.length === 1 ? "" : "s"} · {formatMoney(filteredExpenseTotal)}</span>
                   {expTotalPages > 1 && (
                     <div className="flex items-center gap-1">
                       <button disabled={expPageClamped <= 1} className="px-2 py-1 rounded border border-gray-200 disabled:opacity-40" onClick={() => setExpensePage(expPageClamped - 1)}>&laquo; Prev</button>
@@ -39623,6 +39680,32 @@ ${waybillLineItems(w).length > 1
                               </article>
                             );
                           })}
+                          <div className="bg-gray-50 px-5 py-4 text-sm">
+                            <div className="font-bold text-gray-900">Filtered total</div>
+                            <div className="mt-3 grid grid-cols-2 gap-3">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Orders</span>
+                                <div className="text-gray-700">{deliveredOrders.length}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
+                                <div className="font-semibold text-gray-900">{formatMoney(deliveredOrders.reduce((sum, order) => sum + order.amount, 0))}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Logistics</span>
+                                <div className="text-gray-600">{formatMoney(deliveredOrders.reduce((sum, order) => sum + orderLogisticsCost(order), 0))}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">To Remit</span>
+                                <div className="font-semibold text-blue-700">{formatMoney(deliveredOrders.reduce((sum, order) => sum + orderAmountToRemit(order), 0))}</div>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Received</span>
+                                <div className="font-semibold text-green-700">{formatMoney(deliveredOrders.reduce((sum, order) => sum + orderAmountRemitted(order), 0))}</div>
+                              </div>
+                            </div>
+                            {osTotalPages > 1 && <p className="m-0 mt-3 text-xs font-semibold text-gray-400">This page received: {formatMoney(pagedOutstanding.reduce((sum, order) => sum + orderAmountRemitted(order), 0))}</p>}
+                          </div>
                         </div>
                       );
                     })()}
@@ -39681,6 +39764,21 @@ ${waybillLineItems(w).length > 1
                             });
                           })()}
                         </tbody>
+                        {financeRemittanceEditableOrders.length > 0 && (
+                          <tfoot>
+                            <tr className="border-t border-gray-200 bg-gray-50 font-bold">
+                              <td className="px-4 py-3 text-gray-900">Filtered total</td>
+                              <td className="px-4 py-3 text-gray-700">{financeRemittanceEditableOrders.length} order{financeRemittanceEditableOrders.length === 1 ? "" : "s"}</td>
+                              <td className="px-4 py-3 text-gray-400">All partners</td>
+                              <td className="px-4 py-3 text-gray-700">{formatMoney(financeRemittanceEditableOrders.reduce((sum, order) => sum + order.amount, 0))}</td>
+                              <td className="px-4 py-3 text-gray-600">{formatMoney(financeRemittanceEditableOrders.reduce((sum, order) => sum + orderLogisticsCost(order), 0))}</td>
+                              <td className="px-4 py-3 text-blue-700">{formatMoney(financeRemittanceEditableOrders.reduce((sum, order) => sum + orderAmountToRemit(order), 0))}</td>
+                              <td className="px-4 py-3 text-green-700">{formatMoney(financeRemittanceEditableOrders.reduce((sum, order) => sum + orderAmountRemitted(order), 0))}</td>
+                              <td className="px-4 py-3 text-gray-400">—</td>
+                              <td className="px-4 py-3 text-gray-400">—</td>
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                     {(() => {
@@ -41154,6 +41252,19 @@ ${waybillLineItems(w).length > 1
                               );
                             })}
                           </tbody>
+                          <tfoot>
+                            <tr className="border-t border-gray-200 bg-slate-50/90 font-black dark:border-slate-700 dark:bg-slate-900/70">
+                              <td className="px-5 py-4 text-gray-900 dark:text-slate-100">Period total</td>
+                              <td className="px-5 py-4 text-gray-700 dark:text-slate-200">{marketingSpendLedgerTotals.rows} row{marketingSpendLedgerTotals.rows === 1 ? "" : "s"}</td>
+                              <td className="px-5 py-4 text-xs font-semibold text-gray-500 dark:text-slate-400">{marketingSpendLedgerRows.length > 40 ? "First 40 shown above" : "All rows shown above"}</td>
+                              <td className="px-5 py-4 text-gray-900 dark:text-slate-100">{formatMoney(marketingSpendLedgerTotals.budgetGiven)}</td>
+                              <td className="px-5 py-4 text-gray-900 dark:text-slate-100">{formatMoney(marketingSpendLedgerTotals.actualSpent)}</td>
+                              <td className="px-5 py-4 text-gray-900 dark:text-slate-100">{marketingSpendLedgerTotals.matchedOrders > 0 && marketingSpendLedgerTotals.actualSpent > 0 ? formatMoney(marketingSpendLedgerTotals.actualSpent / marketingSpendLedgerTotals.matchedOrders) : "—"}</td>
+                              <td className="px-5 py-4 text-xs font-black text-gray-600 dark:text-slate-300">
+                                {marketingSpendLedgerTotals.matched} matched · {marketingSpendLedgerTotals.pending} pending · {marketingSpendLedgerTotals.mismatch} mismatch
+                              </td>
+                            </tr>
+                          </tfoot>
                         </table>
                       </div>
                     )}
@@ -41623,53 +41734,64 @@ ${waybillLineItems(w).length > 1
                           {adTrackingSearchNeedle ? "No tracked orders matched this search." : "No UTM-tracked orders in this period. Adjust your filters or check your UTM parameters."}
                         </div>
                       ) : (
-                        pagedTrackedOrders.map((order) => {
-                          const status = order.status ?? "New";
-                          const campaignId = order.utmCampaign?.trim() || "Unlabelled";
-                          const creativeId = order.utmContent?.trim() || "";
-                          const campaignLabel = campaignCardLabelFor(campaignId);
-                          const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-                          const sourceKey = normalizeAdTrackingSource(order.utmSource);
-                          const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : order.utmSource;
+                        <>
+                          {pagedTrackedOrders.map((order) => {
+                            const status = order.status ?? "New";
+                            const campaignId = order.utmCampaign?.trim() || "Unlabelled";
+                            const creativeId = order.utmContent?.trim() || "";
+                            const campaignLabel = campaignCardLabelFor(campaignId);
+                            const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                            const sourceKey = normalizeAdTrackingSource(order.utmSource);
+                            const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : order.utmSource;
 
-                          return (
-                            <article key={order.id} className="space-y-3 px-4 py-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="text-sm font-bold text-gray-500 dark:text-slate-400">{order.id}</div>
-                                  <div className="truncate text-base font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
-                                  <div className="truncate text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
+                            return (
+                              <article key={order.id} className="space-y-3 px-4 py-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-bold text-gray-500 dark:text-slate-400">{order.id}</div>
+                                    <div className="truncate text-base font-semibold text-gray-900 dark:text-slate-100">{order.customer}</div>
+                                    <div className="truncate text-xs text-gray-500 dark:text-slate-400">{order.productName}</div>
+                                  </div>
+                                  <div className="shrink-0 text-right">
+                                    <div className="text-base font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</div>
+                                    <div className="text-xs text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</div>
+                                  </div>
                                 </div>
-                                <div className="shrink-0 text-right">
-                                  <div className="text-base font-bold text-gray-900 dark:text-slate-100">{formatProductMoney(order.amount, order.currency)}</div>
-                                  <div className="text-xs text-gray-500 dark:text-slate-400">{formatOrderCreatedAt(order)}</div>
-                                </div>
-                              </div>
 
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
-                                  {status}
-                                </span>
-                                <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                  {sourceLabel}
-                                </span>
-                              </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-[11px] font-semibold tracking-[0.01em] whitespace-nowrap ${statusBadgeClasses(status)} dark:opacity-95`}>
+                                    {status}
+                                  </span>
+                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                    {sourceLabel}
+                                  </span>
+                                </div>
 
-                              <div className="grid grid-cols-2 gap-3 text-sm">
-                                <div className="min-w-0">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Campaign</div>
-                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
-                                  {campaignLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Campaign</div>
+                                    <div className="truncate font-medium text-gray-900 dark:text-slate-100">{campaignLabel || campaignId}</div>
+                                    {campaignLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{campaignId}</div>}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Creative</div>
+                                    <div className="truncate font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
+                                    {creativeLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
+                                  </div>
                                 </div>
-                                <div className="min-w-0">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Creative</div>
-                                  <div className="truncate font-medium text-gray-900 dark:text-slate-100">{creativeLabel || creativeId || "—"}</div>
-                                  {creativeLabel && <div className="truncate text-xs text-gray-500 dark:text-slate-400">{creativeId}</div>}
-                                </div>
-                              </div>
-                            </article>
-                          );
-                        })
+                              </article>
+                            );
+                          })}
+                          <div className="bg-slate-50 px-4 py-4 text-sm dark:bg-slate-900/70">
+                            <div className="font-black text-gray-900 dark:text-slate-100">Filtered total</div>
+                            <div className="mt-3 grid grid-cols-2 gap-3">
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">Orders</span><div className="font-semibold text-gray-900 dark:text-slate-100">{adTrackingOrderTotals.orders}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">Delivered</span><div className="font-semibold text-gray-900 dark:text-slate-100">{adTrackingOrderTotals.delivered} · {adTrackingOrderTotalDeliveryRate}%</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">Order value</span><div className="font-semibold text-gray-900 dark:text-slate-100">{formatMoney(adTrackingOrderTotals.amount)}</div></div>
+                              <div><span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">Delivered revenue</span><div className="font-semibold text-emerald-700 dark:text-emerald-300">{formatMoney(adTrackingOrderTotals.deliveredRevenue)}</div></div>
+                            </div>
+                          </div>
+                        </>
                       )}
                     </div>
 
@@ -41733,6 +41855,20 @@ ${waybillLineItems(w).length > 1
                             })
                           )}
                         </tbody>
+                        {filteredAdTrackingOrders.length > 0 && (
+                          <tfoot>
+                            <tr className="border-t border-gray-200 bg-slate-50/90 font-black dark:border-slate-700 dark:bg-slate-900/70">
+                              <td className="px-5 py-4 text-gray-900 dark:text-slate-100">Total</td>
+                              <td className="px-5 py-4 text-gray-700 dark:text-slate-200">{adTrackingOrderTotals.orders} attributed</td>
+                              <td className="px-5 py-4 text-gray-700 dark:text-slate-200">{adTrackingOrderTotals.delivered} delivered · {adTrackingOrderTotalDeliveryRate}%</td>
+                              <td className="px-5 py-4 text-gray-400 dark:text-slate-500">—</td>
+                              <td className="px-5 py-4 text-gray-400 dark:text-slate-500">—</td>
+                              <td className="px-5 py-4 text-emerald-700 dark:text-emerald-300">Delivered {formatMoney(adTrackingOrderTotals.deliveredRevenue)}</td>
+                              <td className="px-5 py-4 text-right text-gray-900 dark:text-slate-100">{formatMoney(adTrackingOrderTotals.amount)}</td>
+                              <td className="px-5 py-4 text-gray-400 dark:text-slate-500">—</td>
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
 
@@ -41989,61 +42125,70 @@ ${waybillLineItems(w).length > 1
                         <>
                           <div className="sm:hidden divide-y divide-gray-100">
                             {pagedTrackedCarts.map(({ cart, attribution, linkedOrder }, index) => {
-                              const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
-                              const creativeId = attribution.utmContent?.trim() || "";
-                              const campaignLabel = campaignCardLabelFor(campaignId);
-                              const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
-                              const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
-                              const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
-                              const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
-                              const statusTone = cart.status === "Converted"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : cart.status === "Contacted"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : cart.status === "Assigned"
-                                    ? "bg-violet-100 text-violet-700"
-                                    : "bg-amber-100 text-amber-700";
-                              return (
-                                <article
-                                  key={`tracked-cart-mobile-${cart.id}`}
-                                  className="px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 transition-colors"
-                                  onClick={() => openCartModal(cart, "cartDetails")}
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className="text-[11px] font-semibold text-gray-400">#{(cartPageClamped - 1) * CART_PAGE + index + 1} · {cart.id}</div>
-                                      <div className="text-base font-bold text-gray-900 truncate">{cart.customer || "Partial lead"}</div>
-                                      <div className="text-xs text-gray-500 truncate">{cart.phone || "No phone yet"}</div>
+                                const campaignId = attribution.utmCampaign?.trim() || "Unlabelled";
+                                const creativeId = attribution.utmContent?.trim() || "";
+                                const campaignLabel = campaignCardLabelFor(campaignId);
+                                const creativeLabel = creativeId ? creativeCardLabelFor(creativeId) : "";
+                                const sourceKey = normalizeAdTrackingSource(attribution.utmSource || cart.source);
+                                const sourceLabel = sourceKey ? adTrackingSourceLabel(sourceKey) : (attribution.utmSource || cart.source);
+                                const conversionStatus = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
+                                const statusTone = cart.status === "Converted"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : cart.status === "Contacted"
+                                    ? "bg-blue-100 text-blue-700"
+                                    : cart.status === "Assigned"
+                                      ? "bg-violet-100 text-violet-700"
+                                      : "bg-amber-100 text-amber-700";
+                                return (
+                                  <article
+                                    key={`tracked-cart-mobile-${cart.id}`}
+                                    className="px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 transition-colors"
+                                    onClick={() => openCartModal(cart, "cartDetails")}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="text-[11px] font-semibold text-gray-400">#{(cartPageClamped - 1) * CART_PAGE + index + 1} · {cart.id}</div>
+                                        <div className="text-base font-bold text-gray-900 truncate">{cart.customer || "Partial lead"}</div>
+                                        <div className="text-xs text-gray-500 truncate">{cart.phone || "No phone yet"}</div>
+                                      </div>
+                                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold shrink-0 ${statusTone}`}>{cart.status}</span>
                                     </div>
-                                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold shrink-0 ${statusTone}`}>{cart.status}</span>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-3 text-sm">
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
-                                      <div className="font-semibold text-gray-900">{sourceLabel}</div>
+                                    <div className="grid grid-cols-2 gap-3 text-sm">
+                                      <div>
+                                        <span className="text-[10px] uppercase tracking-wider text-gray-400">Source</span>
+                                        <div className="font-semibold text-gray-900">{sourceLabel}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
+                                        <div className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</div>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
+                                        <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
+                                        {campaignLabel && campaignLabel !== campaignId && <div className="text-[11px] text-gray-500">{campaignId}</div>}
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
+                                        <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
+                                        {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
+                                      </div>
                                     </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Amount</span>
-                                      <div className="font-semibold text-gray-900">{formatProductMoney(cart.amount, cart.currency)}</div>
+                                    <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                                      <span>{formatMoment(cart.createdAt || cart.lastActivity)}</span>
+                                      <span>{conversionStatus || (linkedOrder ? `Linked order ${linkedOrder.status ?? "New"}` : "Tap to view cart details")}</span>
                                     </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Campaign</span>
-                                      <div className="font-semibold text-gray-900">{campaignLabel || campaignId}</div>
-                                      {campaignLabel && campaignLabel !== campaignId && <div className="text-[11px] text-gray-500">{campaignId}</div>}
-                                    </div>
-                                    <div>
-                                      <span className="text-[10px] uppercase tracking-wider text-gray-400">Creative</span>
-                                      <div className="font-semibold text-gray-900">{creativeLabel || creativeId || "—"}</div>
-                                      {creativeLabel && creativeLabel !== creativeId && <div className="text-[11px] text-gray-500">{creativeId}</div>}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
-                                    <span>{formatMoment(cart.createdAt || cart.lastActivity)}</span>
-                                    <span>{conversionStatus || (linkedOrder ? `Linked order ${linkedOrder.status ?? "New"}` : "Tap to view cart details")}</span>
-                                  </div>
-                                </article>
-                              );
-                            })}
+                                  </article>
+                                );
+                              })}
+                            <div className="bg-gray-50 px-4 py-4 text-sm">
+                              <div className="font-black text-gray-900">Filtered total</div>
+                              <div className="mt-3 grid grid-cols-2 gap-3">
+                                <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Carts</span><div className="font-semibold text-gray-900">{adTrackingCartTotals.carts}</div></div>
+                                <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Recovered</span><div className="font-semibold text-emerald-700">{adTrackingCartTotals.recovered} · {adTrackingCartTotalRecoveryRate}%</div></div>
+                                <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Delivered</span><div className="font-semibold text-gray-900">{adTrackingCartTotals.delivered}</div></div>
+                                <div><span className="text-[10px] uppercase tracking-wider text-gray-400">Cart value</span><div className="font-semibold text-gray-900">{formatMoney(adTrackingCartTotals.value)}</div></div>
+                              </div>
+                            </div>
                           </div>
 
                           <div className="hidden sm:block overflow-x-auto">
@@ -42103,6 +42248,18 @@ ${waybillLineItems(w).length > 1
                                   );
                                 })}
                               </tbody>
+                              <tfoot>
+                                <tr className="border-t border-gray-200 bg-gray-50 font-black">
+                                  <td className="px-5 py-4 text-gray-900">Total</td>
+                                  <td className="px-5 py-4 text-gray-700">{adTrackingCartTotals.carts} tracked carts</td>
+                                  <td className="px-5 py-4 text-emerald-700">{adTrackingCartTotals.recovered} recovered · {adTrackingCartTotalRecoveryRate}%</td>
+                                  <td className="px-5 py-4 text-gray-400">—</td>
+                                  <td className="px-5 py-4 text-gray-400">—</td>
+                                  <td className="px-5 py-4 text-gray-700">{adTrackingCartTotals.delivered} delivered</td>
+                                  <td className="px-5 py-4 text-right text-gray-900">{formatMoney(adTrackingCartTotals.value)}</td>
+                                  <td className="px-5 py-4 text-gray-400">—</td>
+                                </tr>
+                              </tfoot>
                             </table>
                           </div>
 
