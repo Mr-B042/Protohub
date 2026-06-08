@@ -10783,6 +10783,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter(Boolean);
     return marketerScopeVariants.some((tag) => values.some((value) => value.includes(tag)));
   };
+  const orderMatchesCurrentViewerScope = (order: TrackedOrder) => {
+    if (currentRole === "Marketer") return marketingOrderMatchesMarketerTags(order);
+    return viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
+  };
   const marketingCampaignForOrder = (order: TrackedOrder) => {
     const hiddenCampaign = marketingContextText(order, ["campaignId", "campaign_id"]);
     const raw = order.utmCampaign?.trim() || hiddenCampaign || "Unlabelled";
@@ -11746,7 +11750,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   };
   const periodOrders = trackedOrders
-    .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
+    .filter((order) => orderMatchesCurrentViewerScope(order))
     .filter((order) => isInPeriod(orderCreatedKey(order), ordersPeriod, ordersDateRange));
   const orderAssignmentActorId = currentManagedUser?.id ?? authUser?.id ?? null;
   const canFilterOrdersByAssigner = currentRole === "Owner" || currentRole === "Admin";
@@ -12653,7 +12657,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const scheduledDeliveryBaseRows = trackedOrders.filter((order) => {
     const matchesSchedule = scheduledKeyForOrder(order) === scheduleTargetKey;
     const matchesProduct = matchesProductFilter(order.productId, order.productName, scheduleProductIds);
-    const matchesViewer = viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId;
+    const matchesViewer = orderMatchesCurrentViewerScope(order);
     return matchesSchedule && matchesProduct && matchesViewer;
   });
   const scheduledDeliveryRows = scheduledDeliveryBaseRows.filter((order) => matchesScheduleAuditMode(order, scheduleAuditMode, scheduleTodayKey));
@@ -16574,7 +16578,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const customerRecords = Object.values(
     trackedOrders
-      .filter((order) => viewerScopeRepId === null || order.assignedRepId === viewerScopeRepId)
+      .filter((order) => orderMatchesCurrentViewerScope(order))
       .filter(o => matchesProductFilter(o.productId, o.productName, customerProductIds))
       .filter((order) => isInPeriod(orderCreatedKey(order), customerPeriod, customerDateRange)).reduce<Record<string, CustomerDirectoryRecord>>((acc, order) => {
       const key = customerIdentityKeyForOrder(order);
@@ -32741,7 +32745,7 @@ ${waybillLineItems(w).length > 1
                       const dayKey = formatDateKey(d);
                       const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
                       const count = trackedOrders.filter((o) => {
-                        const matchesViewer = viewerScopeRepId === null || o.assignedRepId === viewerScopeRepId;
+                        const matchesViewer = orderMatchesCurrentViewerScope(o);
                         return scheduledKeyForOrder(o) === dayKey
                           && matchesViewer
                           && matchesProductFilter(o.productId, o.productName, scheduleProductIds)
