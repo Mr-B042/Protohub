@@ -9754,10 +9754,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
     if (changed) iframe.src = beforeHash + hashPath + "?" + embedParams.toString();
 
-    // Auto-resize iframe to fit form content.
+    // Auto-resize iframe to fit form content, and let the embedded form move
+    // this landing page to the configured thank-you URL after a successful order.
     window.addEventListener("message", function(e) {
       if (e.data && e.data.type === "ordo-resize") {
         iframe.style.height = (e.data.height + 20) + "px";
+      }
+      if (e.data && e.data.type === "ordo-redirect" && e.data.url) {
+        try {
+          var target = new URL(e.data.url, window.location.href);
+          if (target.protocol === "http:" || target.protocol === "https:") {
+            window.location.href = target.toString();
+          }
+        } catch (_) {}
       }
     });
   })();
@@ -24298,6 +24307,7 @@ ${waybillLineItems(w).length > 1
     const isAdminPreview = auth.isLoggedIn();
     setPublicOrderSubmitting(true);
     let createdOrderId = "";
+    let skipPostSubmitRedirect = false;
     try {
       if (isAdminPreview) {
         // Authenticated admin previewing the form — keep the full create payload.
@@ -24410,6 +24420,7 @@ ${waybillLineItems(w).length > 1
           company: publicHoneypot
         });
         createdOrderId = saved.id;
+        skipPostSubmitRedirect = Boolean(saved.reviewHold);
       }
     } catch (err: any) {
       setPublicOrderSubmitting(false);
@@ -24436,16 +24447,22 @@ ${waybillLineItems(w).length > 1
     setOrderFormCrossSells([]);
     setPublicOrderSubmitting(false);
     // After submit: redirect if a redirect URL was passed in the embed link,
-    // otherwise show the built-in confirmation screen.
-    if (publicRedirectUrl) {
+    // otherwise show the built-in confirmation screen. Embedded forms notify the
+    // parent landing page because browsers can block iframe-initiated top redirects.
+    if (publicRedirectUrl && !skipPostSubmitRedirect) {
       // Allow the success state to flash briefly so the customer sees confirmation.
       setPublicOrderSubmitted({ orderId: createdOrderId, customer: orderFormName.trim() });
+      try {
+        window.parent?.postMessage({ type: "ordo-redirect", url: publicRedirectUrl }, "*");
+      } catch {
+        // Parent may be unavailable in preview/direct-link mode; the fallback below still handles it.
+      }
       setTimeout(() => {
         try {
           // Use window.top so the redirect escapes the iframe if embedded.
-          (window.top ?? window).location.href = publicRedirectUrl;
+          (window.top ?? window).location.assign(publicRedirectUrl);
         } catch {
-          window.location.href = publicRedirectUrl;
+          window.location.assign(publicRedirectUrl);
         }
       }, 800);
     } else {

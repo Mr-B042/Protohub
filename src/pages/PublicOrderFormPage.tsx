@@ -2405,33 +2405,37 @@ export default function PublicOrderFormPage() {
           source: orderSourceFromUtm(publicUtmSource)
         }
       });
-      if (redirectTimerRef.current) {
-        window.clearTimeout(redirectTimerRef.current);
-        redirectTimerRef.current = null;
-      }
-      try {
-        (window.top ?? window).location.href = publicRedirectUrl;
-      } catch {
-        window.location.href = publicRedirectUrl;
-      }
+      redirectToPublicTarget();
       return;
     }
     setPublicOrderSubmitted({ orderId, customer, mode: "confirmed_order" });
+  }
+
+  function redirectToPublicTarget() {
+    if (!publicRedirectUrl) return;
+    if (redirectTimerRef.current) {
+      window.clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = null;
+    }
+    try {
+      window.parent?.postMessage({ type: "ordo-redirect", url: publicRedirectUrl }, "*");
+    } catch {
+      // Direct-link or blocked parent access; the fallback below still runs.
+    }
+    redirectTimerRef.current = window.setTimeout(() => {
+      try {
+        (window.top ?? window).location.assign(publicRedirectUrl);
+      } catch {
+        window.location.assign(publicRedirectUrl);
+      }
+    }, 350);
   }
 
   function finishOutageCaptureJourney(orderId: string, customer: string) {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     if (publicRedirectUrl) {
-      if (redirectTimerRef.current) {
-        window.clearTimeout(redirectTimerRef.current);
-        redirectTimerRef.current = null;
-      }
-      try {
-        (window.top ?? window).location.href = publicRedirectUrl;
-      } catch {
-        window.location.href = publicRedirectUrl;
-      }
+      redirectToPublicTarget();
       return;
     }
     setPublicOrderSubmitted({ orderId, customer, mode: "outage_capture" });
@@ -2447,15 +2451,7 @@ export default function PublicOrderFormPage() {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     if (publicRedirectUrl) {
-      if (redirectTimerRef.current) {
-        window.clearTimeout(redirectTimerRef.current);
-        redirectTimerRef.current = null;
-      }
-      try {
-        (window.top ?? window).location.href = publicRedirectUrl;
-      } catch {
-        window.location.href = publicRedirectUrl;
-      }
+      redirectToPublicTarget();
       return;
     }
     setPublicOrderSubmitted({ orderId: "Preview only", customer, mode: "preview_only" });
@@ -2465,6 +2461,10 @@ export default function PublicOrderFormPage() {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     const testOrderId = `LOCAL-TEST-${Date.now().toString(36).toUpperCase()}`;
+    if (publicRedirectUrl) {
+      redirectToPublicTarget();
+      return;
+    }
     setPublicOrderSubmitted({ orderId: testOrderId, customer, mode: "local_test" });
   }
 
