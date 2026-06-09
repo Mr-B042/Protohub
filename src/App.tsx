@@ -22655,7 +22655,10 @@ ${waybillLineItems(w).length > 1
       if (companion.packageId) {
         return line.packageId === companion.packageId || (!line.packageId && Boolean(companionPackage?.name && line.packageName === companionPackage.name));
       }
-      return !line.packageId;
+      // Product-only add-ons can exist as multiple quantity offers (2pcs, 5pcs,
+      // 8pcs, etc.) with the same productId and no packageId. Quantity is what
+      // separates those offers in stored order lines.
+      return !line.packageId && Math.max(0, Number(line.quantity) || 0) === Math.max(0, Number(companion.quantity) || 0);
     };
     const safePercent = (top: number, bottom: number) => bottom > 0 ? Math.round((top / bottom) * 100) : 0;
     const average = (values: number[]) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
