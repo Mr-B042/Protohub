@@ -22866,7 +22866,10 @@ ${waybillLineItems(w).length > 1
                         <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">{row.addOnProductName}</td>
                         <td className="px-4 py-4 text-gray-700">{row.acceptedOrders}</td>
                         <td className="px-4 py-4 text-gray-700">{row.deliveredOrders}</td>
-                        <td className="px-4 py-4 font-bold text-gray-900">{row.deliveryRate}%</td>
+                        <td className="px-4 py-4">
+                          <div className="font-bold text-gray-900">{row.deliveryRate}%</div>
+                          <div className="text-[11px] font-semibold text-gray-400">{row.deliveredOrders} of {row.acceptedOrders} delivered</div>
+                        </td>
                         <td className="px-4 py-4 text-gray-700">{row.units}</td>
                         <td className="px-4 py-4 font-bold text-gray-900">{formatProductMoney(row.placedRevenue, moneyCode)}</td>
                         <td className="px-4 py-4 font-bold text-emerald-700">{formatProductMoney(row.deliveredRevenue, moneyCode)}</td>
@@ -22909,7 +22912,10 @@ ${waybillLineItems(w).length > 1
                         <td className="px-4 py-4 text-gray-700">{row.eligibleOrders}</td>
                         <td className="px-4 py-4 font-bold text-gray-900">{row.acceptedOrders}</td>
                         <td className="px-4 py-4 font-bold text-[#1F8FE0]">{row.attachRate}%</td>
-                        <td className="px-4 py-4 font-bold text-gray-900">{row.deliveredRate}%</td>
+                        <td className="px-4 py-4">
+                          <div className="font-bold text-gray-900">{row.deliveredOrders} of {row.acceptedOrders}</div>
+                          <div className="text-[11px] font-semibold text-gray-400">{row.deliveredRate}% delivered</div>
+                        </td>
                         <td className="px-4 py-4 text-amber-700 font-semibold">{formatProductMoney(row.pendingValue, moneyCode)}</td>
                         <td className="px-4 py-4 text-rose-700 font-semibold">{formatProductMoney(row.failedValue, moneyCode)}</td>
                         <td className="px-4 py-4 font-bold text-emerald-700">{formatProductMoney(row.deliveredRevenue, moneyCode)}</td>
