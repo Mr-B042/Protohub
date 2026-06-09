@@ -1454,6 +1454,10 @@ const payrollTabs: PayrollTab[] = ["Pay Rates", "Run Payroll", "History"];
 const customerSources: CustomerSource[] = ["Source: All", "TikTok", "Facebook", "WhatsApp", "Website"];
 const customerQuantityFilters = ["Qty: All", "Qty: 1", "Qty: 2-4", "Qty: 5+"] as const;
 type CustomerQuantityFilter = (typeof customerQuantityFilters)[number];
+const customerTypeFilters = ["Customer Type: All", "New Customers", "Repeat Buyers", "Delivered Customers", "High-Risk Customers"] as const;
+type CustomerTypeFilter = (typeof customerTypeFilters)[number];
+const customerDeliveryFilters = ["Delivery History: All", "Has Delivered", "No Delivered Yet", "Has Cancelled", "Needs Attention"] as const;
+type CustomerDeliveryFilter = (typeof customerDeliveryFilters)[number];
 const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
@@ -6574,6 +6578,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [customerSource, setCustomerSource] = useState<CustomerSource>("Source: All");
   const [customerStateFilter, setCustomerStateFilter] = useState("State: All");
   const [customerQuantityFilter, setCustomerQuantityFilter] = useState<CustomerQuantityFilter>("Qty: All");
+  const [customerTypeFilter, setCustomerTypeFilter] = useState<CustomerTypeFilter>("Customer Type: All");
+  const [customerDeliveryFilter, setCustomerDeliveryFilter] = useState<CustomerDeliveryFilter>("Delivery History: All");
   const [customerPage, setCustomerPage] = useState(1);
   const [expensePeriod, setExpensePeriod] = useState<Period>("This Month");
   const [showExpenseDateRange, setShowExpenseDateRange] = useState(false);
@@ -6757,7 +6763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.deliveries.productIds", JSON.stringify(Array.from(deliveriesProductIds))); }, [deliveriesProductIds]);
   useEffect(() => { writePref("protohub.inventory.view", inventoryView); }, [inventoryView]);
   const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
-  // Customer Directory product filter
+  // Customers product filter
   const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(() =>
     readPref<Set<string>>("protohub.customers.productIds", new Set<string>(), (raw) => {
       try { const arr = JSON.parse(raw); return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : null; } catch { return null; }
@@ -16883,9 +16889,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     "State: All",
     ...Array.from(new Set(customerRecords.map((customer) => customer.latestOrderState).filter((value) => value && value.trim().length > 0))).sort((a, b) => a.localeCompare(b))
   ];
+  const canViewCustomerContact = (["Owner", "Admin", "Manager", "Sales Rep"] as EditableUserRole[]).includes(currentRole);
+  const canManageCustomerFlags = (["Owner", "Admin", "Manager"] as EditableUserRole[]).includes(currentRole);
+  const canSeeCustomerRisk = canManageCustomerFlags;
+  const canExportCustomers = canManageCustomerFlags;
   const filteredCustomers = customerRecords.filter((customer) => {
     const search = customerSearch.trim().toLowerCase();
-    const matchesSearch = !search || `${customer.name} ${customer.email} ${customer.phone}`.toLowerCase().includes(search);
+    const flagged = isCustomerFlagged(customer.phone);
+    const searchableText = canViewCustomerContact ? `${customer.name} ${customer.email} ${customer.phone}` : customer.name;
+    const matchesSearch = !search || searchableText.toLowerCase().includes(search);
     const matchesSource = customerSource === "Source: All" || customer.source === customerSource;
     const matchesState = customerStateFilter === "State: All" || customer.latestOrderState === customerStateFilter;
     const matchesQuantity =
@@ -16893,17 +16905,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || (customerQuantityFilter === "Qty: 1" && customer.latestQuantity === 1)
         || (customerQuantityFilter === "Qty: 2-4" && customer.latestQuantity >= 2 && customer.latestQuantity <= 4)
         || (customerQuantityFilter === "Qty: 5+" && customer.latestQuantity >= 5);
-    return matchesSearch && matchesSource && matchesState && matchesQuantity;
+    const matchesType =
+      customerTypeFilter === "Customer Type: All"
+        || (customerTypeFilter === "New Customers" && customer.orders <= 1)
+        || (customerTypeFilter === "Repeat Buyers" && customer.orders > 1)
+        || (customerTypeFilter === "Delivered Customers" && customer.successful > 0)
+        || (customerTypeFilter === "High-Risk Customers" && canSeeCustomerRisk && flagged);
+    const matchesDelivery =
+      customerDeliveryFilter === "Delivery History: All"
+        || (customerDeliveryFilter === "Has Delivered" && customer.successful > 0)
+        || (customerDeliveryFilter === "No Delivered Yet" && customer.successful === 0)
+        || (customerDeliveryFilter === "Has Cancelled" && customer.cancelled > 0)
+        || (customerDeliveryFilter === "Needs Attention" && ((canSeeCustomerRisk && flagged) || (customer.cancelled > 0 && customer.successful === 0)));
+    return matchesSearch && matchesSource && matchesState && matchesQuantity && matchesType && matchesDelivery;
   });
   const deliveredCustomerCount = customerRecords.filter((customer) => customer.successful > 0).length;
   const repeatBuyerCount = customerRecords.filter((customer) => customer.orders > 1).length;
   const returningRate = customerRecords.length === 0 ? 0 : Math.round((repeatBuyerCount / customerRecords.length) * 1000) / 10;
   const highRiskCustomerCount = customerRecords.filter((customer) => isCustomerFlagged(customer.phone)).length;
   const avgCustomerValue = customerRecords.length === 0 ? 0 : Math.round(customerRecords.reduce((sum, customer) => sum + customer.totalSpend, 0) / customerRecords.length);
-  const canViewCustomerContact = (["Owner", "Admin", "Manager", "Sales Rep"] as EditableUserRole[]).includes(currentRole);
-  const canManageCustomerFlags = (["Owner", "Admin", "Manager"] as EditableUserRole[]).includes(currentRole);
-  const canSeeCustomerRisk = canManageCustomerFlags;
-  const canExportCustomers = canManageCustomerFlags;
+  const resetCustomerFilters = () => {
+    setCustomerSearch("");
+    setCustomerSource("Source: All");
+    setCustomerStateFilter("State: All");
+    setCustomerQuantityFilter("Qty: All");
+    setCustomerTypeFilter("Customer Type: All");
+    setCustomerDeliveryFilter("Delivery History: All");
+    setCustomerProductIds(new Set());
+    setCustomerPage(1);
+    showToast("Customer filters reset.");
+  };
   const payrollPreviewRows = payrollPreviewData?.rows ?? [];
   const topPerformerInfo = payrollPreviewData?.topPerformer ?? null;
   const payrollGrandTotal = payrollPreviewData?.total ?? 0;
@@ -21139,7 +21170,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const rows: (string | number)[][] = [
-      ["Customer Directory"],
+      ["Customers Report"],
       csvWorkspaceRow(),
       csvGeneratedRow(),
       ["Period", selectedCustomerPeriodLabel],
@@ -21148,6 +21179,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["Source", customerSource],
       ["State", customerStateFilter],
       ["Qty", customerQuantityFilter],
+      ["Customer Type", customerTypeFilter],
+      ["Delivery History", customerDeliveryFilter],
       ["Total Customers", String(customerRecords.length)],
       ["Delivered Customers", String(deliveredCustomerCount)],
       ["Repeat Buyers", `${repeatBuyerCount} (${returningRate}%)`],
@@ -38546,8 +38579,8 @@ ${waybillLineItems(w).length > 1
             <div className="space-y-6">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Customer Directory</h1>
-                  <p className="text-sm font-medium text-gray-500">Manage your customer relationships and track lifetime value performance</p>
+                  <h1 className="text-2xl font-bold text-[#1F8FE0]">Customers</h1>
+                  <p className="text-sm font-medium text-gray-500">Track repeat buyers, delivery history, value, and risk from real orders.</p>
                 </div>
                 {/* Desktop-only action button — on mobile this appears below the controls */}
                 {canExportCustomers && (
@@ -38623,23 +38656,43 @@ ${waybillLineItems(w).length > 1
                 </label>
                 <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer source" value={customerSource} onChange={(event) => {
                   setCustomerSource(event.target.value as CustomerSource);
+                  setCustomerPage(1);
                   showToast(`Customer source filter set to ${event.target.value}.`);
                 }}>
                   {customerSources.map((source) => <option key={source}>{source}</option>)}
                 </select>
                 <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer state" value={customerStateFilter} onChange={(event) => {
                   setCustomerStateFilter(event.target.value);
+                  setCustomerPage(1);
                   showToast(`Customer state filter set to ${event.target.value}.`);
                 }}>
                   {customerStateOptions.map((state) => <option key={state}>{state}</option>)}
                 </select>
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer type" value={customerTypeFilter} onChange={(event) => {
+                  setCustomerTypeFilter(event.target.value as CustomerTypeFilter);
+                  setCustomerPage(1);
+                  showToast(`Customer type filter set to ${event.target.value}.`);
+                }}>
+                  {customerTypeFilters.filter((type) => canSeeCustomerRisk || type !== "High-Risk Customers").map((type) => <option key={type}>{type}</option>)}
+                </select>
+                <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Delivery history" value={customerDeliveryFilter} onChange={(event) => {
+                  setCustomerDeliveryFilter(event.target.value as CustomerDeliveryFilter);
+                  setCustomerPage(1);
+                  showToast(`Delivery history filter set to ${event.target.value}.`);
+                }}>
+                  {customerDeliveryFilters.map((history) => <option key={history}>{history}</option>)}
+                </select>
                 <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] transition-colors" aria-label="Customer quantity" value={customerQuantityFilter} onChange={(event) => {
                   setCustomerQuantityFilter(event.target.value as CustomerQuantityFilter);
+                  setCustomerPage(1);
                   showToast(`Customer quantity filter set to ${event.target.value}.`);
                 }}>
                   {customerQuantityFilters.map((quantity) => <option key={quantity}>{quantity}</option>)}
                 </select>
                 {renderProductFilter(customerProductIds, setCustomerProductIds, showCustomerProductFilter, setShowCustomerProductFilter)}
+                <button className="!min-h-0 w-full sm:w-auto h-9 inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors" onClick={resetCustomerFilters}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Reset
+                </button>
                 <button className="!min-h-0 w-full sm:w-9 h-9 flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors" title="Refresh customers" aria-label="Refresh customers" onClick={() => { retryLoadData.current(); showToast("Refreshing customer data…"); }}><RefreshCw className="w-4 h-4" /></button>
               </div>
 
@@ -38659,11 +38712,15 @@ ${waybillLineItems(w).length > 1
                       const reliability = customer.orders === 0 ? 0 : Math.round((customer.successful / customer.orders) * 100);
                       const flagged = isCustomerFlagged(customer.phone);
                       const flagData = customerFlags[normalizePhone(customer.phone)];
+                      const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
+                      const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
+                      const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
                       return (
                         <article key={customer.id} className={`px-4 py-4 flex flex-col gap-3 ${flagged && canSeeCustomerRisk ? "bg-red-50/30" : ""}`}>
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="font-bold text-gray-900 truncate">{customer.name}</div>
+                              <span className={`mt-1 inline-flex w-fit rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${customerStatusClass}`}>{customerStatusLabel}</span>
                               {canViewCustomerContact ? (
                                 <>
                                   <div className="text-xs text-gray-500">{customer.phone}</div>
@@ -38689,7 +38746,7 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Orders</span>
-                              <span className="text-gray-700">{customer.orders}</span>
+                              <span className="text-gray-700">{customer.orders} total</span>
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Delivered</span>
@@ -38702,6 +38759,10 @@ ${waybillLineItems(w).length > 1
                             <div className="flex flex-col gap-0.5 col-span-2">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Delivered revenue</span>
                               <span className="font-semibold text-gray-900">{formatMoney(customer.totalSpend)}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5 col-span-2">
+                              <span className="font-semibold uppercase tracking-wide text-gray-400">Reliability note</span>
+                              <span className="text-gray-700">{reliabilityLabel}</span>
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
@@ -38722,47 +38783,60 @@ ${waybillLineItems(w).length > 1
                   <table className="w-full min-w-[1120px] text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Customer", "Contact Details", "Latest Order", "Orders", "Source", "Delivered", "Cancelled", "Delivered Revenue", "Reliability", "Actions"].map((h) => (
+                        {["Customer", "Latest Order", "Customer Status", "Order History", "Value", "Reliability", "Actions"].map((h) => (
                           <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {pagedCustomers.length === 0 ? (
-                        <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
+                        <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 font-medium italic">No customers found</td></tr>
                       ) : (
                         pagedCustomers.map((customer) => {
                           const reliability = customer.orders === 0 ? 0 : Math.round((customer.successful / customer.orders) * 100);
                           const flagged = isCustomerFlagged(customer.phone);
                           const flagData = customerFlags[normalizePhone(customer.phone)];
+                          const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
+                          const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
+                          const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
                           return (
                             <tr key={customer.id} className={`hover:bg-gray-50 transition-colors ${flagged && canSeeCustomerRisk ? "bg-red-50/40" : ""}`}>
-                              <td className="px-4 py-4 max-w-[220px]">
+                              <td className="px-4 py-4 max-w-[260px]">
                                 <div className="font-bold text-gray-900">{customer.name}</div>
                                 {flagged && canSeeCustomerRisk && <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-2.5 h-2.5" /> Flagged</span>}
-                              </td>
-                              <td className="px-4 py-4">
                                 {canViewCustomerContact ? (
-                                  <>
+                                  <div className="mt-1">
                                     <div className="text-gray-700 whitespace-nowrap">{customer.phone}</div>
                                     {customer.email && customer.email !== "-" ? <div className="text-xs text-gray-400 max-w-[190px] truncate">{customer.email}</div> : <div className="text-xs text-gray-300">No email</div>}
-                                  </>
+                                  </div>
                                 ) : (
-                                  <span className="text-xs font-semibold text-gray-400">Hidden</span>
+                                  <span className="mt-1 block text-xs font-semibold text-gray-400">Contact hidden</span>
                                 )}
+                                <span className="mt-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">{customer.source}</span>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</div>
                                 <div className="text-xs text-gray-500">Qty {customer.latestQuantity} · {formatProductMoney(customer.latestAmount, customer.latestCurrency)}</div>
                                 <div className="text-xs text-gray-400">{customer.latestOrderState} · Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</div>
                               </td>
-                              <td className="px-4 py-4 text-gray-700 whitespace-nowrap">{customer.orders}</td>
-                              <td className="px-4 py-4 text-gray-700">{customer.source}</td>
-                              <td className="px-4 py-4 font-semibold text-green-600 whitespace-nowrap">{customer.successful}</td>
-                              <td className="px-4 py-4 font-semibold text-red-500 whitespace-nowrap">{customer.cancelled}</td>
-                              <td className="px-4 py-4 font-bold text-[#1F8FE0] whitespace-nowrap">{formatMoney(customer.totalSpend)}</td>
+                              <td className="px-4 py-4">
+                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${customerStatusClass}`}>{customerStatusLabel}</span>
+                                <div className="mt-1 text-xs text-gray-400">{customer.orders > 1 ? "2+ orders" : "First-time buyer"}</div>
+                              </td>
+                              <td className="px-4 py-4">
+                                <div className="grid grid-cols-3 gap-3 text-center">
+                                  <span><strong className="block text-gray-900">{customer.orders}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
+                                  <span><strong className="block text-green-600">{customer.successful}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
+                                  <span><strong className="block text-red-500">{customer.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-4 whitespace-nowrap">
+                                <div className="font-bold text-[#1F8FE0]">{formatMoney(customer.totalSpend)}</div>
+                                <div className="text-xs text-gray-400">Delivered revenue</div>
+                              </td>
                               <td className="px-4 py-4">
                                 <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${reliability >= 70 ? "bg-green-100 text-green-700" : reliability >= 40 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>{reliability}%</span>
+                                <div className="mt-1 max-w-[150px] text-xs text-gray-400">{reliabilityLabel}</div>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="flex items-center gap-1.5">
