@@ -22531,6 +22531,40 @@ ${waybillLineItems(w).length > 1
     });
   };
 
+  const togglePackageCompanionActive = (item: ProductPackage, companionIndex: number) => {
+    if (!selectedProduct) return;
+    if (isTemporaryPackageId(item.id)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return;
+    }
+    const currentCompanions = item.companionProducts ?? [];
+    const target = currentCompanions[companionIndex];
+    if (!target) {
+      showToast("Offer not found. Refresh and try again.");
+      return;
+    }
+    const nextActive = !companionIsActive(target);
+    const previousCompanions = currentCompanions.map((companion) => normalisePackageCompanion(companion));
+    const nextCompanions = currentCompanions.map((companion, idx) =>
+      normalisePackageCompanion(idx === companionIndex ? { ...companion, active: nextActive } : companion)
+    );
+    const _offerProdId = selectedProduct.id;
+    setProducts((value) =>
+      value.map((p) => p.id === _offerProdId
+        ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, companionProducts: nextCompanions } : pkg) }
+        : p)
+    );
+    showToast(`${nextActive ? "Showing" : "Hiding"} this add-on on the customer form.`);
+    productsApi.updatePackage(_offerProdId, item.id, { companionProducts: nextCompanions }).catch((err: any) => {
+      setProducts((value) =>
+        value.map((p) => p.id === _offerProdId
+          ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, companionProducts: previousCompanions } : pkg) }
+          : p)
+      );
+      showToast(`Failed to ${nextActive ? "show" : "hide"} add-on: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
   // Reorder: move a package up/down by swapping displayOrder with neighbour.
   const movePackage = (item: ProductPackage, direction: "up" | "down") => {
     if (!selectedProduct) return;
@@ -47144,6 +47178,7 @@ ${waybillLineItems(w).length > 1
                           [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder).map((item, sortedIdx, sortedArr) => {
                             const packageComponentCount = item.packageComponents?.length ?? 0;
                             const freeGiftCount = (item.packageComponents ?? []).filter((component) => component.isFreeGift).length;
+                            const companionRows = item.companionProducts ?? [];
                             const visibleOfferCount = (item.companionProducts ?? []).filter(companionIsActive).length;
                             const hiddenOfferCount = (item.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length;
                             const extraOfferCount = visibleOfferCount + hiddenOfferCount;
@@ -47202,6 +47237,36 @@ ${waybillLineItems(w).length > 1
                                           Carousel
                                         </span>
                                       )}
+                                    </div>
+                                  )}
+                                  {companionRows.length > 0 && (
+                                    <div className="mt-1 space-y-1.5">
+                                      {companionRows.map((companion, companionIdx) => {
+                                        const offerProduct = products.find((p) => p.id === companion.productId);
+                                        const offerPackage = offerProduct?.packages.find((pkg) => pkg.id === companion.packageId);
+                                        const offerActive = companionIsActive(companion);
+                                        const offerLabel = offerPackage
+                                          ? `${offerProduct?.name ?? "Offer"} · ${offerPackage.name}`
+                                          : offerProduct?.name ?? "Saved add-on";
+                                        return (
+                                          <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
+                                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${offerActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                                              {offerActive ? "Visible" : "Hidden"}
+                                            </span>
+                                            <span className="min-w-0 flex-1 text-gray-700 font-semibold leading-snug">
+                                              {offerLabel} · {companion.quantity} pc{companion.quantity === 1 ? "" : "s"}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className={`!min-h-0 inline-flex items-center justify-center rounded-md border px-2.5 py-1 text-[11px] font-bold transition-colors ${offerActive ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                                              onClick={() => togglePackageCompanionActive(item, companionIdx)}
+                                              title={offerActive ? "Hide this add-on from the customer form" : "Show this add-on on the customer form"}
+                                            >
+                                              {offerActive ? "Hide" : "Show"}
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>
