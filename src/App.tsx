@@ -665,6 +665,10 @@ type CrossSellLine = {
   quantity: number;
   amount: number;
   selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
+  addedById?: string;
+  addedByName?: string;
+  addedByRole?: string;
+  addedAt?: string;
 };
 type FreeGiftLine = {
   id: string;
@@ -15636,13 +15640,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Pick a product");
       return;
     }
+    const actorName = currentManagedUser?.name ?? authUser?.name ?? ownerName;
+    const actorRole = currentRole;
     const line: CrossSellLine = {
       id: makeCrossSellLineId(),
       productId: product.id,
       productName: product.name,
       quantity: qty,
       amount: price,
-      selectionSource: "manual_rep"
+      selectionSource: "manual_rep",
+      addedById: currentManagedUser?.id ?? authUser?.id,
+      addedByName: actorName,
+      addedByRole: actorRole,
+      addedAt: nowIso()
     };
     const orderSnapshot = order;
     const nextCrossSellLines = [...(order.crossSellLines ?? []), line];
@@ -22621,6 +22631,8 @@ ${waybillLineItems(w).length > 1
       key: string;
       addOnProduct?: Product;
       addOnProductName: string;
+      addedByName: string;
+      addedByRole?: string;
       addedOrders: number;
       deliveredOrders: number;
       units: number;
@@ -22818,12 +22830,16 @@ ${waybillLineItems(w).length > 1
       const delivered = order.status === "Delivered";
       const failed = order.status === "Failed" || order.status === "Cancelled";
       for (const line of manualLines) {
-        const key = line.productId ?? `name:${line.productName}`;
+        const actorLabel = line.addedByName?.trim() || "Unknown / older records";
+        const actorRole = line.addedByRole;
+        const key = `${line.productId ?? `name:${line.productName}`}::${actorLabel}`;
         const addOnProduct = products.find((item) => item.id === line.productId);
         const existing = manualUpsellMap.get(key) ?? {
           key,
           addOnProduct,
           addOnProductName: addOnProduct?.name ?? line.productName ?? "Manual upsell",
+          addedByName: actorLabel,
+          addedByRole: actorRole,
           addedOrders: 0,
           deliveredOrders: 0,
           units: 0,
@@ -22866,6 +22882,8 @@ ${waybillLineItems(w).length > 1
         key: row.key,
         addOnProduct: row.addOnProduct,
         addOnProductName: row.addOnProductName,
+        addedByName: row.addedByName,
+        addedByRole: row.addedByRole,
         addedOrders,
         deliveredOrders,
         units: row.units,
@@ -23047,7 +23065,7 @@ ${waybillLineItems(w).length > 1
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                        {["Add-on product","Added orders","Delivered","Delivery","Units","Placed revenue","Pending","Failed","Delivered revenue","Est. COGS","Gross profit","Margin"].map((h) => (
+                        {["Add-on product","Added by","Added orders","Delivered","Delivery","Units","Placed revenue","Pending","Failed","Delivered revenue","Est. COGS","Gross profit","Margin"].map((h) => (
                           <th key={h} className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-gray-500">{h}</th>
                         ))}
                       </tr>
@@ -23056,6 +23074,10 @@ ${waybillLineItems(w).length > 1
                       {manualUpsellRows.map((row) => (
                         <tr key={row.key} className="hover:bg-gray-50">
                           <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">{row.addOnProductName}</td>
+                          <td className="px-4 py-4 min-w-[180px]">
+                            <div className="font-bold text-gray-900">{row.addedByName}</div>
+                            {row.addedByRole && <div className="text-[11px] font-semibold text-gray-400">{row.addedByRole}</div>}
+                          </td>
                           <td className="px-4 py-4 font-bold text-gray-900">{row.addedOrders}</td>
                           <td className="px-4 py-4 text-gray-700">{row.deliveredOrders}</td>
                           <td className="px-4 py-4">

@@ -109,6 +109,10 @@ type ResolvedLine = {
   packageQuantity?: number;
   packageComponentsSnapshot?: Awaited<ReturnType<typeof buildPackageComponentSnapshot>>;
   selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
+  addedById?: string;
+  addedByName?: string;
+  addedByRole?: string;
+  addedAt?: string;
 };
 
 const PublicUpsellAcceptSchema = z.object({

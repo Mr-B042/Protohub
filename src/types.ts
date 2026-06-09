@@ -276,6 +276,10 @@ export type CrossSellLine = {
   quantity: number;
   amount: number;
   selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
+  addedById?: string;
+  addedByName?: string;
+  addedByRole?: string;
+  addedAt?: string;
 };
 
 export type PackageComponentSnapshotLine = {
